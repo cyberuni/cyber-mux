@@ -24,10 +24,17 @@ Drives [herdr](https://herdr.dev) via its CLI (`pane split`, `tab create`, `work
 `pane run`, `pane read`, …). herdr is agent-aware and returns rich JSON envelopes, which the adapter
 parses defensively.
 
-- herdr has a native `worktree create` that creates a git worktree **and** opens it in a new
-  workspace in one call — so herdr implements the optional `openInNewWorktree`. tmux has no such
-  primitive and omits it; callers fall back to creating the worktree themselves and opening with
-  `at: 'workspace'`.
+- herdr binds a git worktree to a workspace as a first-class record, and that binding is what its UI
+  shows a repo's primary checkout and its worktrees as one **group** by — so herdr implements the
+  optional `worktree` capability. tmux has no workspace tier to bind to and omits it; callers fall
+  back to plain git plus a placement-appropriate `open()`.
+- Only the `worktree` route binds. `git worktree add` followed by `workspace create --cwd <checkout>`
+  yields a workspace with **no** worktree record — herdr does not know it is a worktree at all, and
+  leaves it out of the group. Only `worktree create` / `worktree open` produce the binding. (herdr's
+  `worktree list` still shows such a checkout with an `open_workspace_id`, matching it by path after
+  the fact — the list view is misleading here; the workspace record is the truth.)
+- Creating a worktree opens a workspace for the **source** checkout too when the repo has none — a
+  group needs its parent.
 - `listPanes` reports each pane's running harness (herdr knows which agent is in each pane); tmux
   cannot, so it leaves `harness` unset.
 
