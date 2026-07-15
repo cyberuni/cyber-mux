@@ -153,5 +153,9 @@ describe('spec:cyber-mux/mux', () => {
 		it('listPanes() returns empty when tmux reports nothing', () => {
 			expect(tmuxSessionAdapter.listPanes(() => null)).toEqual([])
 		})
+
+		it('binds no worktree to a workspace — tmux has no workspace tier to bind one to', () => {
+			expect(tmuxSessionAdapter.worktree).toBeUndefined()
+		})
 	})
 })

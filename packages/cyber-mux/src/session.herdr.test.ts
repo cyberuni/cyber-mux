@@ -10,6 +10,24 @@ function fakeExec(calls: string[][], responses: Record<string, string | null> = 
 	}
 }
 
+/** The capability under test — herdr always has it, so the optional member is asserted, not guessed. */
+function worktree() {
+	const capability = herdrSessionAdapter.worktree
+	if (!capability) throw new Error('the herdr adapter must implement the worktree capability')
+	return capability
+}
+
+/** The envelope `worktree create` and `worktree open` share, for tests that assert argv, not parsing. */
+function worktreeOut() {
+	return JSON.stringify({
+		result: {
+			root_pane: { pane_id: 'w9:p1' },
+			workspace: { workspace_id: 'w9' },
+			worktree: { path: '/p', branch: 'b' },
+		},
+	})
+}
+
 describe('spec:cyber-mux/mux', () => {
 	describe('herdrSessionAdapter (mocked exec — herdr is not installed in this environment)', () => {
 		it('open() splits a pane at the given cwd, extracts the pane id from herdr JSON, and runs the launch command', () => {
@@ -82,7 +100,7 @@ describe('spec:cyber-mux/mux', () => {
 			)
 		})
 
-		it('openInNewWorktree() creates the worktree and opens it in one call, extracting pane + worktree', () => {
+		it('worktree.createInWorkspace() creates the worktree and opens its bound workspace in one call', () => {
 			const calls: string[][] = []
 			const createOut = JSON.stringify({
 				id: 'cli:worktree:create',
@@ -93,7 +111,7 @@ describe('spec:cyber-mux/mux', () => {
 				},
 			})
 			const exec = fakeExec(calls, { 'worktree create': createOut })
-			const result = herdrSessionAdapter.openInNewWorktree!(exec, {
+			const result = worktree().createInWorkspace(exec, {
 				primaryRoot: '/repo',
 				branch: 'cyber-mux/unit-abc123',
 				path: '/repo.worktrees/mux-abc123',
@@ -101,6 +119,8 @@ describe('spec:cyber-mux/mux', () => {
 			})
 			expect(result.target).toEqual({ id: 'w9:p1' })
 			expect(result.worktree).toEqual({ root: '/repo.worktrees/mux-abc123', branch: 'cyber-mux/unit-abc123' })
+			// The workspace id IS the binding — the whole reason to route through herdr rather than git.
+			expect(result.workspace).toBe('w9')
 			expect(calls[0]).toEqual([
 				'worktree',
 				'create',
@@ -115,41 +135,116 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls[1]).toEqual(['pane', 'run', 'w9:p1', 'claude'])
 		})
 
-		it('openInNewWorktree() throws when herdr reports no root pane id', () => {
-			const exec = fakeExec([], { 'worktree create': JSON.stringify({ id: 'cli:worktree:create', result: {} }) })
-			expect(() =>
-				herdrSessionAdapter.openInNewWorktree!(exec, {
-					primaryRoot: '/repo',
-					branch: 'b',
-					path: '/p',
-					launch: 'claude',
-				}),
-			).toThrow(/root_pane/)
+		it('worktree.createInWorkspace() passes a base as the branch start-point', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'worktree create': worktreeOut() })
+			worktree().createInWorkspace(exec, { primaryRoot: '/repo', branch: 'b', path: '/p', base: 'origin/main' })
+			expect(calls[0]).toEqual([
+				'worktree',
+				'create',
+				'--cwd',
+				'/repo',
+				'--branch',
+				'b',
+				'--path',
+				'/p',
+				'--base',
+				'origin/main',
+				'--no-focus',
+			])
 		})
 
-		it('openInNewWorktree() throws when herdr reports no worktree path/branch', () => {
+		it('worktree.createInWorkspace() leaves the pane blank when no launch is given', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'worktree create': worktreeOut() })
+			worktree().createInWorkspace(exec, { primaryRoot: '/repo', branch: 'b', path: '/p' })
+			expect(calls.some((c) => c[0] === 'pane' && c[1] === 'run')).toBe(false)
+		})
+
+		it('worktree.createInWorkspace() throws when herdr reports no root pane id', () => {
+			const exec = fakeExec([], { 'worktree create': JSON.stringify({ id: 'cli:worktree:create', result: {} }) })
+			expect(() => worktree().createInWorkspace(exec, { primaryRoot: '/repo', branch: 'b', path: '/p' })).toThrow(
+				/root_pane/,
+			)
+		})
+
+		it('worktree.createInWorkspace() throws when herdr reports no worktree path/branch', () => {
 			const out = JSON.stringify({ id: 'cli:worktree:create', result: { root_pane: { pane_id: 'w9:p1' } } })
 			const exec = fakeExec([], { 'worktree create': out })
-			expect(() =>
-				herdrSessionAdapter.openInNewWorktree!(exec, {
-					primaryRoot: '/repo',
-					branch: 'b',
-					path: '/p',
-					launch: 'claude',
-				}),
-			).toThrow(/worktree/)
+			expect(() => worktree().createInWorkspace(exec, { primaryRoot: '/repo', branch: 'b', path: '/p' })).toThrow(
+				/worktree/,
+			)
 		})
 
-		it('openInNewWorktree() throws when herdr reports nothing', () => {
+		it('worktree.createInWorkspace() throws when herdr reports no bound workspace', () => {
+			const out = JSON.stringify({
+				id: 'cli:worktree:create',
+				result: { root_pane: { pane_id: 'w9:p1' }, worktree: { path: '/p', branch: 'b' } },
+			})
+			const exec = fakeExec([], { 'worktree create': out })
+			expect(() => worktree().createInWorkspace(exec, { primaryRoot: '/repo', branch: 'b', path: '/p' })).toThrow(
+				/workspace_id/,
+			)
+		})
+
+		it('worktree.createInWorkspace() throws when herdr reports nothing', () => {
 			const exec: Exec = () => null
-			expect(() =>
-				herdrSessionAdapter.openInNewWorktree!(exec, {
-					primaryRoot: '/repo',
-					branch: 'b',
-					path: '/p',
-					launch: 'claude',
-				}),
-			).toThrow(/herdr worktree create/)
+			expect(() => worktree().createInWorkspace(exec, { primaryRoot: '/repo', branch: 'b', path: '/p' })).toThrow(
+				/herdr worktree create/,
+			)
+		})
+
+		it('worktree.openInWorkspace() opens an existing checkout in a workspace bound to it', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'worktree open': worktreeOut() })
+			const result = worktree().openInWorkspace(exec, { primaryRoot: '/repo', path: '/p', launch: 'claude' })
+			expect(result.workspace).toBe('w9')
+			expect(calls[0]).toEqual(['worktree', 'open', '--cwd', '/repo', '--path', '/p', '--no-focus'])
+			expect(calls[1]).toEqual(['pane', 'run', 'w9:p1', 'claude'])
+		})
+
+		it('worktree.openInWorkspace() throws when herdr reports nothing', () => {
+			expect(() => worktree().openInWorkspace(() => null, { primaryRoot: '/repo', path: '/p' })).toThrow(
+				/herdr worktree open/,
+			)
+		})
+
+		it('worktree.bindings() reports only the worktrees a workspace is currently open on', () => {
+			const calls: string[][] = []
+			const listOut = JSON.stringify({
+				id: 'cli:worktree:list',
+				result: {
+					worktrees: [
+						{ branch: 'main', path: '/repo', open_workspace_id: 'w19' },
+						{ branch: 'feat/x', path: '/repo.worktrees/x', open_workspace_id: 'w21' },
+						{ branch: 'feat/y', path: '/repo.worktrees/y' },
+					],
+				},
+			})
+			const exec = fakeExec(calls, { 'worktree list': listOut })
+			const bindings = worktree().bindings(exec, { primaryRoot: '/repo' })
+			expect(calls[0]).toEqual(['worktree', 'list', '--cwd', '/repo'])
+			expect([...bindings]).toEqual([
+				['/repo', 'w19'],
+				['/repo.worktrees/x', 'w21'],
+			])
+			expect(bindings.has('/repo.worktrees/y')).toBe(false)
+		})
+
+		it.each([
+			['nothing', null],
+			['unparseable output', 'not json'],
+			['no worktrees array', JSON.stringify({ result: {} })],
+			['a non-array worktrees field', JSON.stringify({ result: { worktrees: 'nope' } })],
+		])('worktree.bindings() reports no bindings when herdr returns %s', (_label, out) => {
+			expect(worktree().bindings(() => out, { primaryRoot: '/repo' }).size).toBe(0)
+		})
+
+		it('worktree.releaseWorkspace() closes the workspace without touching the checkout', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'workspace close': '' })
+			worktree().releaseWorkspace(exec, 'w21')
+			expect(calls).toEqual([['workspace', 'close', 'w21']])
 		})
 
 		it('open() throws when herdr reports no pane id', () => {
