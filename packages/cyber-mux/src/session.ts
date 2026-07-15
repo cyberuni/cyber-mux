@@ -141,15 +141,41 @@ export interface SessionAdapter {
 	 * with no such concept (tmux), where callers fall back to plain git plus `open()`.
 	 */
 	readonly worktree?: WorktreeWorkspaceCapability
-	/** Type text into the target session (submitted, not queued). */
-	send(exec: Exec, target: SessionTarget, text: string): void
 	/**
-	 * Submit the target's already-staged input buffer via a bare Enter keystroke — no new text is
-	 * typed. Used to complete a turn whose atomic `send` was swallowed by a booting harness (the
-	 * text staged in the input box, unsent); flushing never re-types the message, so a re-submit
-	 * cannot duplicate it.
+	 * Type `text` into the target as literal characters, pressing **no** Enter — the text is left
+	 * staged in the pane's input box. Literal means literal: text that happens to name a key
+	 * (`Enter`, `Up`) is typed as those characters, never interpreted as that key. That guarantee is
+	 * why this is its own method rather than a mode of `sendKeys` — tmux's `send-keys` resolves an
+	 * ambiguous token by *guessing* which was meant ("if the string is not recognised as a key, it is
+	 * sent as a series of characters"), so only the explicit literal form is safe.
 	 */
-	submit(exec: Exec, target: SessionTarget): void
+	sendText(exec: Exec, target: SessionTarget, text: string): void
+	/**
+	 * Press each named key in order, typing nothing. Keys are named in the portable core vocabulary —
+	 * `Up` `Down` `Left` `Right` `Enter` `Escape` `Tab` `Space` `Backspace` `C-c` `F1`–`F12` — which
+	 * each adapter maps onto whatever its backend calls them. A token *outside* the core is forwarded
+	 * verbatim, reaching backend-specific keys at the cost of portability; whether it is honored or
+	 * refused is then the backend's own answer, and the two differ (herdr refuses an unknown key;
+	 * tmux cannot refuse one and types it instead).
+	 *
+	 * `Enter` is a key like any other here: `sendKeys(exec, t, ['Enter'])` presses it and takes the
+	 * pane's turn — because the caller asked for it. What this method never does is *add* an Enter
+	 * the caller did not write. Supplying one is `submit`'s job alone.
+	 */
+	sendKeys(exec: Exec, target: SessionTarget, keys: string[]): void
+	/**
+	 * Take the target's turn: type `text` if given, then **always** press Enter.
+	 *
+	 * With `text`, the guarantee is the observable outcome — the text typed *literally* (same bar as
+	 * `sendText`), then Enter — never a particular backend command: a backend with a native
+	 * text-plus-Enter primitive uses it, one without composes typing and Enter.
+	 *
+	 * Without `text` (or with an empty one), it sends a **bare Enter only**, flushing an
+	 * already-staged input buffer without re-typing it. That is how a turn is completed when a
+	 * booting harness swallowed the Enter of an earlier submit and left the text staged unsent;
+	 * because flushing never re-types, a repeated flush cannot duplicate the message.
+	 */
+	submit(exec: Exec, target: SessionTarget, text?: string): void
 	/** Capture the target session's current output. */
 	read(exec: Exec, target: SessionTarget, opts?: SessionReadOptions): string
 	/**

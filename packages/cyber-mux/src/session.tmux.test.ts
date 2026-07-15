@@ -17,18 +17,27 @@ describe('spec:cyber-mux/mux', () => {
 			const target = tmuxSessionAdapter.open(exec, { cwd: '/unit', launch: 'claude', at: 'pane:right' })
 			expect(target).toEqual({ id: '%9' })
 			expect(calls[0]).toEqual(['split-window', '-h', '-c', '/unit', '-P', '-F', '#{pane_id}'])
-			expect(calls[1]).toEqual(['send-keys', '-t', '%9', 'claude', 'Enter'])
+			// --launch SUBMITS: typed literally, then Enter — so the command actually runs rather than
+			// sitting staged. Two calls, since tmux has no atomic literal-text-plus-Enter primitive.
+			expect(calls[1]).toEqual(['send-keys', '-t', '%9', '-l', 'claude'])
+			expect(calls[2]).toEqual(['send-keys', '-t', '%9', 'Enter'])
 		})
 
 		it('open() defaults to tab and honors pane:right / pane:down / tab placement', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'split-window': '%1', 'new-window': '%2' })
 			tmuxSessionAdapter.open(exec, { cwd: '/u', launch: 'x', at: 'pane:right' })
-			expect(calls[0]).toEqual(['split-window', '-h', '-c', '/u', '-P', '-F', '#{pane_id}'])
 			tmuxSessionAdapter.open(exec, { cwd: '/u', launch: 'x', at: 'pane:down' })
-			expect(calls[2]).toEqual(['split-window', '-v', '-c', '/u', '-P', '-F', '#{pane_id}'])
 			tmuxSessionAdapter.open(exec, { cwd: '/u', launch: 'x', at: 'tab' })
-			expect(calls[4]).toEqual(['new-window', '-d', '-c', '/u', '-P', '-F', '#{pane_id}'])
+			// Assert on the placement calls themselves rather than fixed offsets into `calls`: a
+			// `--launch` now costs two send-keys calls (literal text, then Enter), so positional
+			// indexing would break on a change that has nothing to do with placement.
+			const placements = calls.filter((c) => c[0] === 'split-window' || c[0] === 'new-window')
+			expect(placements).toEqual([
+				['split-window', '-h', '-c', '/u', '-P', '-F', '#{pane_id}'],
+				['split-window', '-v', '-c', '/u', '-P', '-F', '#{pane_id}'],
+				['new-window', '-d', '-c', '/u', '-P', '-F', '#{pane_id}'],
+			])
 		})
 
 		it('--at omitted falls back to tab', () => {
@@ -48,7 +57,8 @@ describe('spec:cyber-mux/mux', () => {
 			// session that the attached client can't see or beam to.
 			expect(calls[0]).toEqual(['new-window', '-d', '-c', '/unit', '-P', '-F', '#{pane_id}'])
 			expect(calls.some((c) => c[0] === 'new-session')).toBe(false)
-			expect(calls[1]).toEqual(['send-keys', '-t', '%20', 'claude', 'Enter'])
+			expect(calls[1]).toEqual(['send-keys', '-t', '%20', '-l', 'claude'])
+			expect(calls[2]).toEqual(['send-keys', '-t', '%20', 'Enter'])
 		})
 
 		it('open() with no launch creates a blank pane and sends nothing', () => {
@@ -65,18 +75,88 @@ describe('spec:cyber-mux/mux', () => {
 			expect(() => tmuxSessionAdapter.open(exec, { cwd: '/unit', launch: 'claude' })).toThrow(/new-window/)
 		})
 
-		it('send() types text into the target pane', () => {
+		it('sendText() types literal text and presses no Enter', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls)
-			tmuxSessionAdapter.send(exec, { id: '%3' }, 'hello')
-			expect(calls[0]).toEqual(['send-keys', '-t', '%3', 'hello', 'Enter'])
+			tmuxSessionAdapter.sendText(exec, { id: '%3' }, 'hello')
+			expect(calls).toEqual([['send-keys', '-t', '%3', '-l', 'hello']])
 		})
 
-		it('submit() flushes the staged buffer with a bare Enter, never re-typing the text', () => {
+		it('sendText() passes -l so a key-named word is typed, not interpreted as that key', () => {
+			// Without -l, tmux resolves 'Up' as the arrow key and moves the cursor (recalling shell
+			// history) instead of typing the word.
+			const calls: string[][] = []
+			const exec = fakeExec(calls)
+			tmuxSessionAdapter.sendText(exec, { id: '%3' }, 'Up')
+			expect(calls[0]).toEqual(['send-keys', '-t', '%3', '-l', 'Up'])
+		})
+
+		it('sendKeys() presses each key in order, typing nothing', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls)
+			tmuxSessionAdapter.sendKeys(exec, { id: '%3' }, ['Escape', 'Up', 'C-c'])
+			expect(calls).toEqual([['send-keys', '-t', '%3', 'Escape', 'Up', 'C-c']])
+		})
+
+		it('sendKeys() renames Backspace to tmux BSpace — the core vocabulary’s only rename', () => {
+			// tmux has no 'Backspace' key name and would type the word; BSpace is its name for the key.
+			const calls: string[][] = []
+			const exec = fakeExec(calls)
+			tmuxSessionAdapter.sendKeys(exec, { id: '%3' }, ['Backspace'])
+			expect(calls[0]).toEqual(['send-keys', '-t', '%3', 'BSpace'])
+		})
+
+		it('sendKeys() forwards a non-core token verbatim rather than rejecting it', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls)
+			tmuxSessionAdapter.sendKeys(exec, { id: '%3' }, ['Home', 'M-x'])
+			expect(calls[0]).toEqual(['send-keys', '-t', '%3', 'Home', 'M-x'])
+		})
+
+		it('sendKeys() Enter presses Enter, because the caller asked for it', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls)
+			tmuxSessionAdapter.sendKeys(exec, { id: '%3' }, ['Enter'])
+			expect(calls[0]).toEqual(['send-keys', '-t', '%3', 'Enter'])
+		})
+
+		it('submit() with text types it literally then presses Enter — two calls, no atomic primitive', () => {
+			// -l applies to the whole arg list, so `send-keys -l <text> Enter` would type a literal
+			// "Enter". The text must be typed literally and the Enter pressed as a key: two calls.
+			const calls: string[][] = []
+			const exec = fakeExec(calls)
+			tmuxSessionAdapter.submit(exec, { id: '%3' }, 'echo hi')
+			expect(calls).toEqual([
+				['send-keys', '-t', '%3', '-l', 'echo hi'],
+				['send-keys', '-t', '%3', 'Enter'],
+			])
+		})
+
+		it('submit() types key-named text literally, never recalling and re-running pane history', () => {
+			// The regression this CR exists for: `send-keys -t %3 Up Enter` presses Up (recalling the
+			// previous command) and then Enter, RE-RUNNING it. Verified live against tmux 3.6b.
+			const calls: string[][] = []
+			const exec = fakeExec(calls)
+			tmuxSessionAdapter.submit(exec, { id: '%3' }, 'Up')
+			expect(calls).toEqual([
+				['send-keys', '-t', '%3', '-l', 'Up'],
+				['send-keys', '-t', '%3', 'Enter'],
+			])
+			expect(calls).not.toContainEqual(['send-keys', '-t', '%3', 'Up', 'Enter'])
+		})
+
+		it('submit() with no text flushes the staged buffer with a bare Enter, never re-typing it', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls)
 			tmuxSessionAdapter.submit(exec, { id: '%3' })
-			expect(calls[0]).toEqual(['send-keys', '-t', '%3', 'Enter'])
+			expect(calls).toEqual([['send-keys', '-t', '%3', 'Enter']])
+		})
+
+		it('submit() with empty text is the bare flush, not a second contract', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls)
+			tmuxSessionAdapter.submit(exec, { id: '%3' }, '')
+			expect(calls).toEqual([['send-keys', '-t', '%3', 'Enter']])
 		})
 
 		it('read() captures pane output, optionally scoped to N lines', () => {

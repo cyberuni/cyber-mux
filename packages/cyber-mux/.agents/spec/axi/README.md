@@ -17,7 +17,7 @@ scenarios.
 
 > This is the **same** contract `cyberplace` (`.agents/specs/cyberplace/axi/`) and
 > `packages/universal-plugin` (its ADR-0003) adopted; `cyber-mux` shares the output shape so an
-> agent moving between bins sees one interface.
+> agent moving between bins sees one interface. One open question — see **#8**.
 
 ## Subject
 
@@ -56,11 +56,21 @@ scenarios.
    flag).
 7. *(#7 ambient context — out of scope, see Scope of adoption above.)*
 8. **Content-first (#8)** — a **command group** invoked with no subcommand shows live data, not
-   help. `cyber-mux` is a flat verb surface with no command groups today, so this principle has no
-   surface to apply to yet; revisit if `nudge`/`worktree` land behind their own group (see the
-   provisional-verb-surface note in `cli.ts`).
+   help. `send` (`send text` / `send keys`, see [`mux/`](../mux/README.md)) **does not meet this**:
+   it drives a pane and has no view of its own to show — every view it could render already belongs
+   to a verb (`list`, `doctor`) — so bare `cyber-mux send` writes help to **stderr** and **exits 1**,
+   stdout clean (commander's default, no custom code; the shape #6 already blesses for an unknown
+   flag, and no third exit code). Whether #8 should carve out a group like this is **open** and
+   belongs to the contract, not to `cyber-mux` — a follow-up is filed; nothing is asserted here about
+   the other adopters.
+
+   The trigger this principle used to name — "revisit if `nudge`/`worktree` land behind their own
+   group" — has **fired**: `worktree` (`add`/`open`/`list`/`remove`) is a group on this surface, and
+   unlike `send` it **is** data-bearing (`worktree list` is its live view), so #8 covers it as written
+   and needs no amendment. Its bare form ships help + exit 1 today, which is a divergence owned by the
+   worktree capability, not by this note and not closed here.
 9. **Next-step suggestions (#9)** — every command ends with a next-step line naming the natural
-   follow-up (`→ cyber-mux focus <pane>` after `open`; `→ cyber-mux read <pane>` after `send`), so
+   follow-up (`→ cyber-mux focus <pane>` after `open`; `→ cyber-mux read <pane>` after `submit`), so
    an agent is handed the next move. Not yet implemented.
 10. **Consistent help (#10)** — every subcommand answers `--help` with a concise reference (synopsis,
     flags, one example) — already true via commander's built-in `--help`, one example per command

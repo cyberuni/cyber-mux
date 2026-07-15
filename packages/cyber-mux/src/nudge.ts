@@ -1,7 +1,7 @@
 import type { Exec } from './exec.ts'
 import type { SessionAdapter, SessionTarget } from './session.ts'
 
-/** Max flush re-submits after the initial `send`, before nudge fails loud. */
+/** Max flush re-submits after the initial submit, before nudge fails loud. */
 const DEFAULT_ATTEMPTS = 10
 /** Wait after a submit before reading the pane back, in ms. */
 const DEFAULT_SETTLE_MS = 400
@@ -45,10 +45,10 @@ export function isStaged(visible: string | null | undefined, message: string): b
 
 /**
  * Submit `message` to `target` and verify the peer actually took the turn — a booting harness can
- * swallow the Enter of the initial atomic `send`, leaving the text staged unsent while nudge
- * would otherwise report false success. Sends exactly once; a swallowed submit is recovered by
- * flushing the staged buffer (`adapter.submit`, a bare Enter) — never re-typing the message — up
- * to a bounded number of attempts. Throws if the turn is never taken within the cap.
+ * swallow the Enter of the initial `submit`, leaving the text staged unsent while nudge would
+ * otherwise report false success. Types the message exactly once; a swallowed Enter is recovered by
+ * flushing the staged buffer (`adapter.submit` with no text, a bare Enter) — never re-typing the
+ * message — up to a bounded number of attempts. Throws if the turn is never taken within the cap.
  *
  * A pane that no longer exists is rejected up front rather than retried: a gone pane and a booting
  * one both read back empty, so without the liveness probe the retry loop reports a dead peer as
@@ -69,7 +69,7 @@ export async function nudge(
 		throw new Error(`nudge failed: pane ${target.id} no longer exists — the peer's session is gone, not busy.`)
 	}
 
-	adapter.send(exec, target, message)
+	adapter.submit(exec, target, message)
 	await sleep(settleMs)
 	if (!isStaged(adapter.read(exec, target), message)) return { taken: true, resubmits: 0 }
 

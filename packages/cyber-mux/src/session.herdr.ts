@@ -48,22 +48,42 @@ export const herdrSessionAdapter: SessionAdapter = {
 			if (opts.label) exec('herdr', ['pane', 'rename', id, opts.label])
 		}
 		const target: SessionTarget = { id }
-		// `pane run` submits text plus Enter atomically — herdr's documented preference over
-		// send-text + send-keys Enter for launching a command.
-		if (opts.launch) exec('herdr', ['pane', 'run', id, opts.launch])
+		// `submit`, not `sendText` — a launch command has to actually run, and `submit` is the only
+		// verb that supplies the Enter.
+		if (opts.launch) herdrSessionAdapter.submit(exec, target, opts.launch)
 		return target
 	},
 
 	worktree: herdrWorktreeCapability(),
 
-	send(exec, target, text) {
-		exec('herdr', ['pane', 'run', target.id, text])
+	sendText(exec, target, text) {
+		// herdr splits the two intents at its own CLI, so this maps straight onto `send-text` — no
+		// literal-escaping flag needed (unlike tmux, whose one `send-keys` guesses between them).
+		exec('herdr', ['pane', 'send-text', target.id, text])
 	},
 
-	submit(exec, target) {
-		// `pane run <id> ""` is a no-op in herdr, so a bare Enter keystroke is the only way to flush
-		// an already-staged buffer without re-typing it.
-		exec('herdr', ['pane', 'send-keys', target.id, 'Enter'])
+	sendKeys(exec, target, keys) {
+		// Verbatim: every core key is already herdr's own name for it, so there is nothing to rename.
+		// herdr refuses a key it does not know (`unsupported key <k>`) rather than typing it — so at
+		// THIS boundary the divergence is loud, unlike tmux, which types an unknown token instead.
+		// That loudness stops here, though: `Exec` discards stderr and reports a failed command as
+		// `null`, which this ignores, so the caller sees exit 0 either way. Surfacing it is the
+		// `Exec` seam's job (it affects every verb), not this method's — a follow-up owns it.
+		exec('herdr', ['pane', 'send-keys', target.id, ...keys])
+	},
+
+	submit(exec, target, text) {
+		// A bare Enter keystroke is the only form that types nothing by construction, which is what the
+		// flush contract requires. (`pane run <id> ""` also presses Enter — verified against a live
+		// herdr — so it would work; `send-keys Enter` says what it means.)
+		if (!text) {
+			exec('herdr', ['pane', 'send-keys', target.id, 'Enter'])
+			return
+		}
+		// `pane run` submits text plus Enter atomically — herdr's documented preference over
+		// send-text + send-keys Enter, and it types the text literally (a command named `Up` is typed,
+		// not interpreted), which is exactly submit's guarantee.
+		exec('herdr', ['pane', 'run', target.id, text])
 	},
 
 	read(exec, target, opts?: SessionReadOptions) {
@@ -199,9 +219,10 @@ function herdrWorktreeCapability(): WorktreeWorkspaceCapability {
 			const out = exec('herdr', args)
 			if (!out) throw new Error('herdr worktree create failed')
 			const created = parseWorktreeWorkspace(out, 'herdr worktree create')
-			// `pane run` submits text plus Enter atomically — herdr's documented preference over
-			// send-text + send-keys Enter for launching a command.
-			if (opts.launch) exec('herdr', ['pane', 'run', created.target.id, opts.launch])
+			// `submit`, not `sendText` — a launch command has to actually run, and `submit` is the only
+			// verb that supplies the Enter. (It lowers to `pane run`, herdr's atomic text-plus-Enter
+			// primitive, so this is the same call it always made — now routed through the seam.)
+			if (opts.launch) herdrSessionAdapter.submit(exec, created.target, opts.launch)
 			return created
 		},
 
@@ -212,7 +233,8 @@ function herdrWorktreeCapability(): WorktreeWorkspaceCapability {
 			const out = exec('herdr', args)
 			if (!out) throw new Error('herdr worktree open failed')
 			const opened = parseWorktreeWorkspace(out, 'herdr worktree open')
-			if (opts.launch) exec('herdr', ['pane', 'run', opened.target.id, opts.launch])
+			// `submit` for the same reason as `createInWorkspace` above.
+			if (opts.launch) herdrSessionAdapter.submit(exec, opened.target, opts.launch)
 			return opened
 		},
 

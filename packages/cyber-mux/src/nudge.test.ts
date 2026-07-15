@@ -12,6 +12,9 @@ function fakeAdapter(
 	reads: string[],
 	opts: { paneExists?: boolean } = {},
 ): { adapter: SessionAdapter; sendCalls: string[]; submitCalls: number[] } {
+	// `sendCalls` = every message nudge TYPED (submit with text). `submitCalls` = every bare flush
+	// (submit with no text). Both now arrive through `submit`, so the stub splits them on the
+	// presence of `text` — which is exactly the distinction nudge's no-duplicate guarantee rests on.
 	const sendCalls: string[] = []
 	let submitCount = 0
 	const submitCalls: number[] = []
@@ -21,10 +24,17 @@ function fakeAdapter(
 		open: () => {
 			throw new Error('not used')
 		},
-		send: (_exec, _t, text) => {
-			sendCalls.push(text)
+		sendText: () => {
+			throw new Error('nudge must not type without submitting — it takes turns via submit')
 		},
-		submit: () => {
+		sendKeys: () => {
+			throw new Error('nudge must not press raw keys — it takes turns via submit')
+		},
+		submit: (_exec, _t, text) => {
+			if (text !== undefined) {
+				sendCalls.push(text)
+				return
+			}
 			submitCount++
 			submitCalls.push(submitCount)
 		},

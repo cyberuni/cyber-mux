@@ -306,5 +306,124 @@ describe('spec:cyber-mux/mux', () => {
 				expect(logs.join('\n')).toContain('main')
 			})
 		})
+
+		it('open --launch submits the command, so it actually runs', async () => {
+			const calls: string[][] = []
+			const exec = fakeTmuxExec(calls, { 'new-window': '%2' })
+			const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec })
+			await run(program, ['open', '--launch', 'claude'])
+			// Typed literally, then Enter — not left staged unsent.
+			expect(calls[1]).toEqual(['send-keys', '-t', '%2', '-l', 'claude'])
+			expect(calls[2]).toEqual(['send-keys', '-t', '%2', 'Enter'])
+		})
+
+		it('send text types literal text and presses no Enter', async () => {
+			const calls: string[][] = []
+			const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: fakeTmuxExec(calls) })
+			await run(program, ['send', 'text', '%3', 'Up'])
+			// The key-named word is typed, not interpreted; no Enter is appended.
+			expect(calls).toEqual([['send-keys', '-t', '%3', '-l', 'Up']])
+		})
+
+		it('send keys presses core-vocabulary keys and types nothing', async () => {
+			const calls: string[][] = []
+			const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: fakeTmuxExec(calls) })
+			await run(program, ['send', 'keys', '%3', 'Escape', 'Up', 'C-c'])
+			expect(calls).toEqual([['send-keys', '-t', '%3', 'Escape', 'Up', 'C-c']])
+		})
+
+		it('send keys Enter presses Enter and takes the turn, because the caller asked for it', async () => {
+			const calls: string[][] = []
+			const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: fakeTmuxExec(calls) })
+			await run(program, ['send', 'keys', '%3', 'Enter'])
+			expect(calls).toEqual([['send-keys', '-t', '%3', 'Enter']])
+		})
+
+		it('send keys with no key tokens is rejected before anything is sent', async () => {
+			const calls: string[][] = []
+			const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: fakeTmuxExec(calls) })
+			await expect(run(program, ['send', 'keys', '%3'])).rejects.toThrow()
+			expect(calls).toEqual([])
+		})
+
+		it('send text with no text argument is rejected before anything is sent', async () => {
+			const calls: string[][] = []
+			const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: fakeTmuxExec(calls) })
+			await expect(run(program, ['send', 'text', '%3'])).rejects.toThrow()
+			expect(calls).toEqual([])
+		})
+
+		it('bare send is incomplete input, so it fails loud with help rather than acting', async () => {
+			const calls: string[][] = []
+			const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: fakeTmuxExec(calls) })
+			const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+			const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+			try {
+				await expect(run(program, ['send'])).rejects.toMatchObject({ exitCode: 1 })
+				const help = stderr.mock.calls.map((c) => String(c[0])).join('')
+				expect(help).toContain('text')
+				expect(help).toContain('keys')
+				expect(stdout).not.toHaveBeenCalled()
+			} finally {
+				stderr.mockRestore()
+				stdout.mockRestore()
+			}
+			expect(calls).toEqual([])
+		})
+
+		it('submit with text types the text and presses Enter, taking the pane’s turn', async () => {
+			const calls: string[][] = []
+			const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: fakeTmuxExec(calls) })
+			await run(program, ['submit', '%3', 'echo hi'])
+			expect(calls).toEqual([
+				['send-keys', '-t', '%3', '-l', 'echo hi'],
+				['send-keys', '-t', '%3', 'Enter'],
+			])
+		})
+
+		it('submit types its text literally, never interpreting it as a key', async () => {
+			const calls: string[][] = []
+			const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: fakeTmuxExec(calls) })
+			await run(program, ['submit', '%3', 'Up'])
+			// Never `send-keys -t %3 Up Enter`, which would recall and re-run the pane's last command.
+			expect(calls).not.toContainEqual(['send-keys', '-t', '%3', 'Up', 'Enter'])
+			expect(calls[0]).toEqual(['send-keys', '-t', '%3', '-l', 'Up'])
+		})
+
+		it('submit with no text presses a bare Enter and retypes nothing', async () => {
+			const calls: string[][] = []
+			const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: fakeTmuxExec(calls) })
+			await run(program, ['submit', '%3'])
+			expect(calls).toEqual([['send-keys', '-t', '%3', 'Enter']])
+		})
+
+		it('submit with empty text is the bare flush, not a second contract', async () => {
+			const calls: string[][] = []
+			const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: fakeTmuxExec(calls) })
+			await run(program, ['submit', '%3', ''])
+			expect(calls).toEqual([['send-keys', '-t', '%3', 'Enter']])
+		})
+
+		it('submit with no pane is rejected, naming pane as the missing argument', async () => {
+			const calls: string[][] = []
+			const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: fakeTmuxExec(calls) })
+			await expect(run(program, ['submit'])).rejects.toThrow(/pane/)
+			expect(calls).toEqual([])
+		})
+
+		it('herdr: send text / send keys / submit map onto herdr’s own three primitives', async () => {
+			const calls: string[][] = []
+			const env = { CYBER_MUX: 'herdr' }
+			await run(buildProgram({ env, exec: fakeHerdrExec(calls) }), ['send', 'text', 'w1:p1', 'hello'])
+			await run(buildProgram({ env, exec: fakeHerdrExec(calls) }), ['send', 'keys', 'w1:p1', 'Up'])
+			await run(buildProgram({ env, exec: fakeHerdrExec(calls) }), ['submit', 'w1:p1', 'echo hi'])
+			await run(buildProgram({ env, exec: fakeHerdrExec(calls) }), ['submit', 'w1:p1'])
+			expect(calls).toEqual([
+				['pane', 'send-text', 'w1:p1', 'hello'],
+				['pane', 'send-keys', 'w1:p1', 'Up'],
+				['pane', 'run', 'w1:p1', 'echo hi'],
+				['pane', 'send-keys', 'w1:p1', 'Enter'],
+			])
+		})
 	})
 })
