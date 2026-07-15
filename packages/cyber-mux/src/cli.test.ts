@@ -36,6 +36,9 @@ describe('spec:cyber-mux/mux', () => {
 			vi.spyOn(console, 'log').mockImplementation((line: string) => {
 				logs.push(line)
 			})
+			// commander writes its own error text to stderr even with exitOverride() — silence it here so
+			// the deliberate --at rejection test doesn't spam the runner's real stderr.
+			vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
 		})
 
 		afterEach(() => {
