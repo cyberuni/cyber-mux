@@ -3,9 +3,9 @@ todos:
   - content: Add a mux.feature scenario for open with no --launch (blank pane)
     status: completed
   - content: Verify the new scenario BOUND+PASS via the scenario bridge
-    status: in_progress
+    status: completed
   - content: Commit
-    status: pending
+    status: completed
 ---
 
 # Backfill mux.feature: open with no --launch
@@ -30,5 +30,7 @@ opens`, etc.). Adapter-level unit tests in `session.tmux.test.ts` / `session.her
 the same behavior per-backend but stay unbound, consistent with existing adapter-level coverage.
 
 ## NEXT
-Run `pnpm verify` to confirm no regressions, spot-check the scenario bridge binds the new scenario,
-then commit as `test(mux): backfill spec for optional open --launch`.
+Done. `pnpm verify` green; JUnit test name `open with no --launch creates a blank pane` matches the
+new scenario title exactly (BOUND). Landed direct-to-main as `5271bfa` (`fix` for the unrelated dev
+script landed separately as `9a9d1be`), with a changeset (`optional-open-launch.md`, minor). No
+follow-up.
