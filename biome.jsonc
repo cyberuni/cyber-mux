@@ -1,0 +1,21 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.5.3/schema.json",
+	"extends": ["@repobuddy/biome/recommended"],
+	"files": {
+		"includes": ["!**/bin", "!**/dist", "!**/node_modules", "!.turbo", "!apps"]
+	},
+	"overrides": [
+		{
+			"includes": ["packages/cyber-mux/src/**/*.ts", "packages/cyber-mux/src/**/*.mts"],
+			"linter": {
+				"rules": {
+					"suspicious": {
+						"noConsole": {
+							"level": "off"
+						}
+					}
+				}
+			}
+		}
+	]
+}

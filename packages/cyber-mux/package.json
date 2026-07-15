@@ -1,0 +1,57 @@
+{
+	"name": "cyber-mux",
+	"version": "0.0.0",
+	"description": "Cross-multiplexer pane control — one contract over tmux and herdr",
+	"keywords": [
+		"tmux",
+		"herdr",
+		"multiplexer",
+		"terminal",
+		"pane",
+		"agent",
+		"claude-code"
+	],
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/cyberuni/cyber-mux.git",
+		"directory": "packages/cyber-mux"
+	},
+	"license": "MIT",
+	"author": "unional <homawong@gmail.com>",
+	"type": "module",
+	"bin": {
+		"cyber-mux": "bin/cyber-mux.mjs"
+	},
+	"exports": {
+		"./package.json": "./package.json"
+	},
+	"files": [
+		"bin",
+		"dist"
+	],
+	"scripts": {
+		"build": "tsdown",
+		"dev": "tsx src/cli.ts",
+		"prepack": "pnpm build",
+		"test": "vitest run src",
+		"test:watch": "vitest",
+		"typecheck": "tsc --noEmit"
+	},
+	"dependencies": {
+		"commander": "^14.0.3"
+	},
+	"devDependencies": {
+		"@types/node": "^24.10.1",
+		"tsdown": "^0.22.0",
+		"tsx": "^4.22.3",
+		"typescript": "^6.0.0",
+		"vitest": "^4.1.7"
+	},
+	"engines": {
+		"node": ">=22"
+	},
+	"publishConfig": {
+		"access": "public",
+		"provenance": true
+	}
+}

@@ -1,0 +1,2 @@
+pnpm exec biome check --write --staged --no-errors-on-unmatched --files-ignore-unknown=true
+git update-index --again
