@@ -25,7 +25,7 @@ export const tmuxSessionAdapter: SessionAdapter = {
 		const pane = exec('tmux', args)
 		if (!pane) throw new Error(`tmux ${args[0]} failed`)
 		const target: SessionTarget = { id: pane }
-		tmuxSessionAdapter.send(exec, target, opts.launch)
+		if (opts.launch) tmuxSessionAdapter.send(exec, target, opts.launch)
 		return target
 	},
 

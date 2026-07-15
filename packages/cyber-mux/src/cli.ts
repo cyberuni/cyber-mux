@@ -88,12 +88,12 @@ function modeCommand(deps: CliDeps): Command {
 
 function openCommand(deps: CliDeps): Command {
 	return new Command('open')
-		.description('Open a new pane/tab/workspace and launch a command in it')
-		.requiredOption('--launch <command>', 'Command line to run in the new pane')
+		.description('Open a new pane/tab/workspace, optionally launching a command in it')
+		.option('--launch <command>', 'Command line to run in the new pane')
 		.option('--cwd <path>', 'Working directory for the new pane', process.cwd())
 		.addOption(AT_OPTION)
 		.addOption(FORMAT_OPTION)
-		.action((opts: { launch: string; cwd: string; at?: SessionPlacement }) => {
+		.action((opts: { launch?: string; cwd: string; at?: SessionPlacement }) => {
 			const t = adapter(deps).open(deps.exec, { cwd: opts.cwd, launch: opts.launch, at: opts.at })
 			output({ pane: t.id }, () => printFields({ pane: t.id }))
 		})

@@ -125,5 +125,14 @@ describe('spec:cyber-mux/mux', () => {
 			await run(program, ['open', '--launch', 'claude', '--at', 'tab'])
 			expect(calls[0]).toEqual(['new-window', '-d', '-c', process.cwd(), '-P', '-F', '#{pane_id}'])
 		})
+
+		it('open with no --launch creates a blank pane', async () => {
+			const calls: string[][] = []
+			const exec = fakeTmuxExec(calls, { 'new-window': '%2' })
+			const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec })
+			await run(program, ['open'])
+			expect(calls).toHaveLength(1)
+			expect(calls.some((c) => c[0] === 'send-keys')).toBe(false)
+		})
 	})
 })

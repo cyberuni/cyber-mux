@@ -45,7 +45,7 @@ export const herdrSessionAdapter: SessionAdapter = {
 		const target: SessionTarget = { id }
 		// `pane run` submits text plus Enter atomically — herdr's documented preference over
 		// send-text + send-keys Enter for launching a command.
-		exec('herdr', ['pane', 'run', id, opts.launch])
+		if (opts.launch) exec('herdr', ['pane', 'run', id, opts.launch])
 		return target
 	},
 

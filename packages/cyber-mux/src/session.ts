@@ -12,8 +12,8 @@ export type SessionPlacement = 'pane:right' | 'pane:down' | 'tab' | 'workspace'
 interface SessionOpenOptions {
 	/** Working directory the new pane/window/session should start in. */
 	cwd: string
-	/** Command line to launch inside the new pane once it is open. */
-	launch: string
+	/** Command line to launch inside the new pane once it is open; omit for a blank pane. */
+	launch?: string
 	/** Placement relative to the caller; defaults to 'tab'. */
 	at?: SessionPlacement
 }
@@ -54,7 +54,7 @@ export interface OpenInNewWorktreeOptions {
 export interface SessionAdapter {
 	/** Backend name, e.g. "tmux" or "herdr". */
 	readonly name: string
-	/** Create a new pane/window running `opts.launch` in `opts.cwd`; returns its target handle. */
+	/** Create a new pane/window in `opts.cwd`, running `opts.launch` if given; returns its target handle. */
 	open(exec: Exec, opts: SessionOpenOptions): SessionTarget
 	/**
 	 * Atomically create a new worktree AND open it in a genuinely new workspace/session, when the

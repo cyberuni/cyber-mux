@@ -76,6 +76,14 @@ Feature: mux — the pane abstraction
     When it passes an --at value outside pane:right|pane:down|tab|workspace
     Then the command is rejected before any pane opens
 
+  # ── --launch is optional — a blank pane is a valid open() outcome ──
+
+  Scenario: open with no --launch creates a blank pane
+    Given a caller running cyber-mux open with no --launch
+    When open runs
+    Then a new pane opens through the adapter
+    And no launch command is sent or run into it
+
   # ── Multiplexer detection is two-mode ──
 
   Scenario: $CYBER_MUX is trusted outright as a fast-path

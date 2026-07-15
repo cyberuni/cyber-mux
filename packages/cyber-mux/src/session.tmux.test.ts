@@ -51,6 +51,15 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls[1]).toEqual(['send-keys', '-t', '%20', 'claude', 'Enter'])
 		})
 
+		it('open() with no launch creates a blank pane and sends nothing', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'split-window': '%9' })
+			const target = tmuxSessionAdapter.open(exec, { cwd: '/unit', at: 'pane:right' })
+			expect(target).toEqual({ id: '%9' })
+			expect(calls).toHaveLength(1)
+			expect(calls.some((c) => c[0] === 'send-keys')).toBe(false)
+		})
+
 		it('open() throws when tmux reports no pane', () => {
 			const exec: Exec = () => null
 			expect(() => tmuxSessionAdapter.open(exec, { cwd: '/unit', launch: 'claude' })).toThrow(/new-window/)

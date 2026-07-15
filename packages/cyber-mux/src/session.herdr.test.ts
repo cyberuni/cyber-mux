@@ -62,6 +62,19 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls[1]).toEqual(['pane', 'run', 'w7:p1', 'claude'])
 		})
 
+		it('open() with no launch creates a blank pane and runs nothing', () => {
+			const calls: string[][] = []
+			const splitOut = JSON.stringify({
+				id: 'cli:pane:split',
+				result: { pane: { pane_id: 'w3:pB', tab_id: 'w3:t1', workspace_id: 'w3' }, type: 'pane_info' },
+			})
+			const exec = fakeExec(calls, { 'pane split': splitOut })
+			const target = herdrSessionAdapter.open(exec, { cwd: '/unit', at: 'pane:right' })
+			expect(target).toEqual({ id: 'w3:pB' })
+			expect(calls).toHaveLength(1)
+			expect(calls.some((c) => c[0] === 'pane' && c[1] === 'run')).toBe(false)
+		})
+
 		it('open() throws when workspace create reports no root pane id', () => {
 			const exec = fakeExec([], { 'workspace create': JSON.stringify({ id: 'cli:workspace:create', result: {} }) })
 			expect(() => herdrSessionAdapter.open(exec, { cwd: '/unit', launch: 'claude', at: 'workspace' })).toThrow(
