@@ -3,4 +3,5 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const dir = dirname(fileURLToPath(import.meta.url))
-await import(join(dir, '..', 'dist', 'cli.mjs'))
+const { main } = await import(join(dir, '..', 'dist', 'cli.mjs'))
+await main()
