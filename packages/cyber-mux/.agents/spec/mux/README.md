@@ -26,8 +26,10 @@ once opened:
   fallback is reachable and observable** (`session.tmux.ts`, `session.herdr.ts`) — so it carries a
   scenario here. `tab` maps to each backend's native Tab primitive — tmux `new-window`, herdr
   `tab create` — never a split pane. `workspace` maps to each backend's own **visible** space — herdr
-  `worktree create` (a new workspace nested under the source), tmux `new-window` (a window visible in
-  the status bar). Every placement opens without stealing the caller's focus.
+  `workspace create`, tmux `new-window` (a window visible in the status bar). Every placement opens
+  without stealing the caller's focus. `open` is placement and nothing more: the workspace it makes
+  carries no worktree record even when its cwd is a checkout, so it is never grouped with a repo —
+  that is the `worktree` verbs' job, below.
 - **Multiplexer detection is two-mode** — `probeMultiplexer` first trusts `$CYBER_MUX`
   (`tmux`|`herdr`|`screen`|`none`) outright — this doubles as an override (`=none` forces no-mux even
   inside a real multiplexer). Failing that it walks the process ancestry from `$$` looking for a
@@ -47,19 +49,77 @@ once opened:
   suppressing behavior on a mux that simply can't tell. This is a **read-only** probe: it moves no
   focus and opens nothing (unlike `focus`, which drives the attached client's view to a pane).
 
-- **`worktree add`/`worktree remove` drive plain `git worktree`** — host-neutral, no legion/unit-registry
+- **The checkout itself is always plain `git worktree`** — host-neutral, no legion/unit-registry
   concepts. `add` defaults the checkout path to a sibling of the primary checkout
   (`<parent>/<repo>.worktrees/<branch>`, ported from `cyberlegion`'s `resolveUnitWorktreePath`
-  convention), never nested inside the primary's own working tree; `--path` overrides it. `remove`
-  is the safe path ported from `cyberlegion`'s `decommission`: it refuses the primary checkout
-  (absolute — `--force` never overrides it), tolerates a worktree already gone from disk, and
-  refuses to discard uncommitted changes unless `--force` is passed.
+  convention), never nested inside the primary's own working tree; `--path` overrides it, `--base`
+  sets the branch's start-point. The default holds on **every** backend rather than deferring to a
+  multiplexer's own layout (herdr would use `~/.herdr/worktrees/<repo>/<branch>`), so a path means
+  the same thing everywhere. `remove` is the safe path ported from `cyberlegion`'s `decommission`:
+  it refuses the primary checkout (absolute — `--force` never overrides it), tolerates a worktree
+  already gone from disk, and refuses to discard uncommitted changes unless `--force` is passed.
+
+- **A backend either binds a worktree to a workspace, or it does not** — and that binding, *not*
+  "knows what a git worktree is", is the capability a backend has or lacks. It is what a
+  multiplexer's UI groups a repo's primary checkout and its worktrees by. Established
+  **empirically**, because it is not visible in either tool's documentation: `git worktree add`
+  followed by herdr `workspace create --cwd <checkout>` yields a workspace with **no worktree
+  record** — herdr does not know it is a worktree and leaves it out of the repo's group; only
+  routing through herdr's own `worktree create`/`worktree open` produces one. (herdr's `worktree
+  list` still shows the ungrouped checkout with an `open_workspace_id`, matching it by path after
+  the fact — the list view is misleading here; the workspace record is the truth.) tmux has no
+  workspace tier at all and never binds.
+
+- **git owns the worktree facts; a backend contributes only the binding** — path, branch, linked,
+  and prunable are read from git on **every** backend, so two backends can never report a different
+  branch for the same worktree. A multiplexer that also enumerates worktrees is merely re-reading
+  git; the one fact git cannot answer is which workspace a worktree is currently open in, and that
+  is the only thing asked of a backend.
+
+- **`worktree add` is plain git until a placement is asked for** — with neither `--at` nor
+  `--launch` it creates a checkout, opens nothing, and resolves no backend, so it works outside any
+  multiplexer. There is nothing to group because nothing was opened. `--launch` implies
+  `--at workspace`: a launch wants its own space rather than a pane crowding the caller's, and
+  `workspace` is the only placement a binding can attach to.
+
+- **Grouping happens iff the backend binds and the placement is `workspace`** — herdr's `worktree
+  create` *always* opens a workspace, so it cannot serve a pane or tab placement. (It also opens a
+  workspace for the **source** checkout when the repo has none — a group needs its parent.)
+
+- **A placement the binding cannot serve degrades; it never fails** — `--at pane:right --branch b`
+  on herdr yields a worktree open in a split pane: a complete, useful outcome, just not a grouped
+  one. Refusing would make identical flags succeed on tmux and fail on herdr — precisely the backend
+  leak this seam exists to prevent. The report is a **field, not prose**: `workspace: null`, with a
+  note on stderr so `--format json` stays machine-readable on stdout. Degradation is claimed only
+  where the backend *could* have grouped and the placement is what cost it — never on tmux, where no
+  grouping was ever on offer.
+
+- **`worktree open` groups a worktree plain git created earlier** — the remedy that makes "add now,
+  group later" a first-class story rather than a dead end, and the counterpart to a bare `add`.
+
+- **`worktree list` and `worktree remove` answer outside a multiplexer** — both are git questions; a
+  backend can only ever add a binding to the answer, so its absence must not deny one.
+
+- **Removal is never delegated to a backend** — only the binding's release is. A backend's own
+  worktree-removal primitive addresses a *workspace* (herdr's takes a workspace id), so it cannot
+  reach an unbound worktree at all, and whether it dirty-checks is unknown; delegating would make a
+  destructive operation's safety depend on whether a workspace happened to be open. **Gate order is
+  a specified property, not an implementation detail**: every gate runs *before* the workspace is
+  released, so a refused removal has no side effect; the release runs *before* git removes the
+  checkout, so no workspace is left pointing at a directory that no longer exists.
+
+- **A worktree's label is the backend's own business** — no `--label` flag. Every other flag has a
+  neutral cross-backend meaning, but a label simply evaporates on a backend with no workspace to
+  name, and herdr already derives a sane one (the checkout path's basename, else the branch).
 
 **Non-goals** — the `nudge` (send-and-verify-turn-taken) helper (`nudge.ts`) — a provisional
 standalone concern per the `cli.ts` verb-surface note, not yet exposed as a CLI verb and not yet
 specced; the unit registry, mail, and doorbell that `cyberlegion` layers on top of a pane once
 opened — those stayed behind in `cyberlegion`, this repo owns only backend selection, placement,
-multiplexer detection, per-pane send/read/focus/close, and the worktree helpers above.
+multiplexer detection, per-pane send/read/focus/close, and the worktree surface above.
+
+Also a non-goal: **naming a backend's workspace** (`--label`) and **any worktree fact a backend
+reports of its own** — see the use cases above for why each is refused rather than merely unbuilt.
 
 ## Multiplexer concept vocabulary
 
@@ -71,7 +131,7 @@ concept onto whatever the live backend calls it:
 | Concept       | tmux    | screen | zellij  | cmux                          | Orca                  | herdr     |
 | ------------- | ------- | ------ | ------- | ----------------------------- | --------------------- | --------- |
 | **Session**   | Session | Session| Session | App (state saved on restart)  | ----                  | Session   |
-| **Workspace** | ----    | ----   | ----    | Window/Workspace              | Worktree (git branch) | Workspace |
+| **Workspace** | ----    | ----   | ----    | Window/Workspace              | Worktree (git branch) | Workspace (bindable to a git worktree) |
 | **Tab**       | Window  | Window | Tab     | Vertical Tab (w/ git status)  | Tab                   | Tab       |
 | **Pane**      | Pane    | Region | Pane    | Split Pane                    | Pane                  | Pane      |
 
@@ -91,8 +151,11 @@ Every scenario in [`mux.feature`](./mux.feature) maps to one of these behaviors:
 | Behavior | What it covers |
 |---|---|
 | **backend selected by environment** | tmux vs herdr selection; neither present errors |
-| **placement** | `--at` choices; tab honored per backend, never a split; `workspace` → each backend's own visible space (herdr nested workspace, tmux window), never a detached tmux session; omitted `--at` falls back to `tab` |
+| **placement** | `--at` choices; tab honored per backend, never a split; `workspace` → each backend's own visible space (herdr `workspace create`, tmux window), never a detached tmux session; a workspace `open` makes is bound to no repo; omitted `--at` falls back to `tab` |
 | **multiplexer detection is two-mode** | `$CYBER_MUX` fast-path + override; ancestry walk; hint fallback; `doctor` hint |
 | **mux mode** | reports the detected session backend; "none" (exit 0) when no adapter is selectable |
 | **pane focus reporting** | tri-state focused / not-focused / unknown per backend (tmux: pane+window active & session attached; herdr: pane record `focused`); a query that can't be answered → unknown so callers fail open |
-| **git worktree helpers** | `worktree add` defaults the path to a sibling of the primary checkout; `worktree remove` refuses the primary checkout, tolerates an already-gone worktree, and refuses uncommitted changes unless `--force` |
+| **git worktree helpers** | `worktree add` defaults the path to a sibling of the primary checkout on every backend; `--base` sets the start-point; `worktree remove` refuses the primary checkout, tolerates an already-gone worktree, and refuses uncommitted changes unless `--force` |
+| **worktree/workspace binding** | a bare `add` opens nothing and resolves no backend; `--launch` implies `--at workspace`; `--at workspace` groups where the backend binds and falls back where it does not; a pane/tab placement degrades (reports no workspace) rather than failing, and only where a grouping was on offer; `open` groups a checkout plain git made |
+| **worktree facts vs binding** | `list` reads path/branch/linked/prunable from git on every backend and reports only the binding from the backend; `list`/`remove` answer with no multiplexer |
+| **worktree removal ordering** | never delegated to a backend — cyber-mux's gates plus git, the backend only releasing its binding; gates run before the release (a refused removal has no side effect); the release runs before git's removal (no workspace on a dead directory), including for a checkout already gone |
