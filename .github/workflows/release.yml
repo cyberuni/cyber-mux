@@ -10,13 +10,13 @@ permissions:
 
 jobs:
   code:
-    uses: cyberuni/.github/.github/workflows/pnpm-verify.yml@main
+    uses: cyberuni/.github/.github/workflows/pnpm-verify.yml@v1
     with:
       os: '["ubuntu-latest"]'
       skip-playwright: true
 
   release:
-    uses: cyberuni/.github/.github/workflows/pnpm-release-changeset.yml@main
+    uses: cyberuni/.github/.github/workflows/pnpm-release-changeset.yml@v1
     needs: code
     secrets: inherit
     with:
