@@ -1,4 +1,5 @@
-import { dirname, resolve } from 'node:path'
+import { existsSync } from 'node:fs'
+import { basename, dirname, join, resolve } from 'node:path'
 import type { Exec } from './exec.ts'
 
 /** Generic worktree seam — no host-specific concepts. */
@@ -58,4 +59,33 @@ export function assertDistinctFromPrimary(worktreeRoot: string, primaryRoot: str
 	if (resolve(worktreeRoot) === resolve(primaryRoot)) {
 		throw new Error('refusing to run in the primary checkout — spawn a worktree distinct from the primary checkout')
 	}
+}
+
+/**
+ * Default worktree location — a sibling of the primary checkout (`<parent>/<repo>.worktrees/<name>`),
+ * never nested inside the primary's own working tree (an untracked-but-present nested worktree
+ * pollutes `git status` in the primary and confuses tools that walk the tree expecting only the
+ * primary's own files).
+ */
+export function resolveWorktreePath(primaryRoot: string, name: string): string {
+	return join(dirname(primaryRoot), `${basename(primaryRoot)}.worktrees`, name)
+}
+
+/** Whether a worktree has uncommitted changes — gates a safe remove unless the caller forces it. */
+function isDirty(exec: Exec, worktreeRoot: string): boolean {
+	return !!exec('git', ['-C', worktreeRoot, 'status', '--porcelain'])
+}
+
+/**
+ * Remove a worktree the safe way: refuse the primary checkout (absolute — `force` never overrides
+ * it), tolerate a worktree already gone from disk, and refuse to discard uncommitted changes unless
+ * `force` is set.
+ */
+export function removeWorktreeSafely(exec: Exec, path: string, opts: { primaryRoot: string; force?: boolean }): void {
+	assertDistinctFromPrimary(path, opts.primaryRoot)
+	if (!existsSync(path)) return
+	if (!opts.force && isDirty(exec, path)) {
+		throw new Error(`worktree "${path}" has uncommitted changes — pass --force to discard them`)
+	}
+	gitWorktreeAdapter.remove(exec, path, { primaryRoot: opts.primaryRoot })
 }

@@ -5,9 +5,10 @@ import { type Exec, realExec } from './exec.ts'
 import { currentPane, probeMultiplexer } from './mux-probe.ts'
 import { output, printFields, printTable } from './output.ts'
 import type { SessionPlacement, SessionTarget } from './session.ts'
+import { gitWorktreeAdapter, removeWorktreeSafely, resolvePrimaryRoot, resolveWorktreePath } from './worktree.ts'
 
 // NOTE: the verb surface below is provisional — the behavior spec is the next milestone and may
-// rename verbs, adjust flags, or split concerns (e.g. move `nudge`/`worktree` behind their own group).
+// rename verbs, adjust flags, or split concerns (e.g. move `nudge` behind its own group).
 
 /** The env/exec pair every command resolves the backend and multiplexer through — injected so the
  * CLI can be driven deterministically in tests, the same seam every adapter already takes. */
@@ -180,6 +181,46 @@ function existsCommand(deps: CliDeps): Command {
 		})
 }
 
+function worktreeAddCommand(deps: CliDeps): Command {
+	return new Command('add')
+		.description('Create a git worktree, defaulting to a sibling of the primary checkout')
+		.requiredOption('--branch <branch>', 'Branch to create the worktree on')
+		.option('--path <path>', 'Where to check out the worktree (default: a sibling of the primary checkout)')
+		.addOption(FORMAT_OPTION)
+		.action((opts: { branch: string; path?: string }) => {
+			try {
+				const primaryRoot = resolvePrimaryRoot(deps.exec)
+				const path = opts.path ?? resolveWorktreePath(primaryRoot, opts.branch)
+				const wt = gitWorktreeAdapter.add(deps.exec, { primaryRoot, path, branch: opts.branch })
+				output(wt, () => printFields({ root: wt.root, branch: wt.branch }))
+			} catch (err) {
+				fail(err instanceof Error ? err.message : String(err))
+			}
+		})
+}
+
+function worktreeRemoveCommand(deps: CliDeps): Command {
+	return new Command('remove')
+		.description('Remove a git worktree — refuses the primary checkout and uncommitted changes unless --force')
+		.argument('<path>', 'Worktree path to remove')
+		.option('--force', 'Discard uncommitted changes in the worktree')
+		.action((path: string, opts: { force?: boolean }) => {
+			try {
+				const primaryRoot = resolvePrimaryRoot(deps.exec)
+				removeWorktreeSafely(deps.exec, path, { primaryRoot, force: opts.force })
+			} catch (err) {
+				fail(err instanceof Error ? err.message : String(err))
+			}
+		})
+}
+
+function worktreeCommand(deps: CliDeps): Command {
+	const cmd = new Command('worktree').description('Git worktree helpers for spawning/tearing down a session')
+	cmd.addCommand(worktreeAddCommand(deps))
+	cmd.addCommand(worktreeRemoveCommand(deps))
+	return cmd
+}
+
 /** Assembles the full command tree against the given deps (real env/exec in production, fakes in
  * tests). `exitOverride()` makes commander throw a `CommanderError` instead of calling
  * `process.exit` directly, so a rejection (e.g. an invalid `--at` choice) is catchable both here and
@@ -201,6 +242,7 @@ export function buildProgram(deps: CliDeps = REAL_DEPS): Command {
 	program.addCommand(closeCommand(deps))
 	program.addCommand(listCommand(deps))
 	program.addCommand(existsCommand(deps))
+	program.addCommand(worktreeCommand(deps))
 
 	return program
 }

@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import type { Exec } from './exec.ts'
-import { assertDistinctFromPrimary, gitWorktreeAdapter, resolvePrimaryRoot } from './worktree.ts'
+import {
+	assertDistinctFromPrimary,
+	gitWorktreeAdapter,
+	removeWorktreeSafely,
+	resolvePrimaryRoot,
+	resolveWorktreePath,
+} from './worktree.ts'
 
 describe('gitWorktreeAdapter', () => {
 	it('add() runs git worktree add against the primary root and returns the new worktree', () => {
@@ -50,6 +56,59 @@ describe('resolvePrimaryRoot', () => {
 	it('throws clearly when not inside a git repository', () => {
 		const exec: Exec = () => null
 		expect(() => resolvePrimaryRoot(exec)).toThrow(/not inside a git repository/)
+	})
+})
+
+describe('resolveWorktreePath', () => {
+	it('resolves a sibling of the primary checkout, never nested inside it', () => {
+		expect(resolveWorktreePath('/home/x/repo', 'my-branch')).toBe('/home/x/repo.worktrees/my-branch')
+	})
+})
+
+describe('removeWorktreeSafely', () => {
+	it('tolerates a worktree already gone from disk — no git call, no throw', () => {
+		const calls: string[][] = []
+		const exec: Exec = (_cmd, args) => {
+			calls.push(args)
+			return ''
+		}
+		expect(() => removeWorktreeSafely(exec, '/repo/.worktrees/does-not-exist', { primaryRoot: '/repo' })).not.toThrow()
+		expect(calls).toEqual([])
+	})
+
+	it('refuses the primary checkout even with --force', () => {
+		const exec: Exec = () => ''
+		expect(() => removeWorktreeSafely(exec, '/repo', { primaryRoot: '/repo', force: true })).toThrow(/primary checkout/)
+	})
+
+	// This module's own directory stands in for "a worktree that exists on disk" — existsSync is real,
+	// so the dirty-check path needs a real path; git itself is fully faked via exec.
+	const realExistingDir = new URL('.', import.meta.url).pathname
+
+	it('refuses to discard uncommitted changes unless --force', () => {
+		const exec: Exec = (_cmd, args) => (args[2] === 'status' ? ' M some/file' : '')
+		expect(() => removeWorktreeSafely(exec, realExistingDir, { primaryRoot: '/repo' })).toThrow(/uncommitted changes/)
+	})
+
+	it('removes a clean worktree without needing --force', () => {
+		const calls: string[][] = []
+		const exec: Exec = (_cmd, args) => {
+			calls.push(args)
+			return ''
+		}
+		removeWorktreeSafely(exec, realExistingDir, { primaryRoot: '/repo' })
+		expect(calls.at(-1)).toEqual(['-C', '/repo', 'worktree', 'remove', realExistingDir, '--force'])
+	})
+
+	it('--force skips the dirty check and removes anyway', () => {
+		const calls: string[][] = []
+		const exec: Exec = (_cmd, args) => {
+			calls.push(args)
+			return args[2] === 'status' ? ' M some/file' : ''
+		}
+		removeWorktreeSafely(exec, realExistingDir, { primaryRoot: '/repo', force: true })
+		expect(calls.some((c) => c[2] === 'status')).toBe(false)
+		expect(calls.at(-1)).toEqual(['-C', '/repo', 'worktree', 'remove', realExistingDir, '--force'])
 	})
 })
 

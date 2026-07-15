@@ -157,3 +157,35 @@ Feature: mux — the pane abstraction
     Given a backend with a mix of panes, some running an agent/harness and some running none
     When it runs cyber-mux list
     Then every live pane is reported, whether or not it is running an agent/harness
+
+  # ── git worktree helpers — plain git worktree, no legion/unit-registry concepts ──
+
+  Scenario: worktree add defaults the path to a sibling of the primary checkout
+    Given a caller running cyber-mux worktree add --branch <branch> with no --path
+    When add runs
+    Then the worktree is checked out at <parent>/<repo>.worktrees/<branch>, never nested inside the primary checkout
+
+  Scenario: worktree add honors an explicit --path
+    Given a caller running cyber-mux worktree add --branch <branch> --path <path>
+    When add runs
+    Then the worktree is checked out at <path>
+
+  Scenario: worktree remove refuses the primary checkout, even with --force
+    Given a caller running cyber-mux worktree remove against the primary checkout's own path
+    When remove runs
+    Then it refuses and removes nothing, regardless of --force
+
+  Scenario: worktree remove tolerates a worktree already gone from disk
+    Given a caller running cyber-mux worktree remove against a path with nothing checked out there
+    When remove runs
+    Then it succeeds without error and runs no git removal command
+
+  Scenario: worktree remove refuses uncommitted changes unless --force
+    Given a caller running cyber-mux worktree remove against a worktree with uncommitted changes and no --force
+    When remove runs
+    Then it refuses, naming --force as the way to discard them
+
+  Scenario: worktree remove --force discards uncommitted changes without the dirty check
+    Given a caller running cyber-mux worktree remove --force against a worktree with uncommitted changes
+    When remove runs
+    Then it removes the worktree without checking whether it is dirty

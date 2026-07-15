@@ -150,5 +150,53 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls).toHaveLength(1)
 			expect(calls.some((c) => c[0] === 'send-keys')).toBe(false)
 		})
+
+		describe('worktree', () => {
+			/** git replies keyed by the sub-command word (rev-parse, add, remove); every call is recorded. */
+			function fakeGitExec(
+				calls: string[][],
+				responses: Record<string, string | null> = { 'rev-parse': '/repo/.git' },
+			): Exec {
+				return (_cmd, args) => {
+					calls.push(args)
+					const key = args.includes('worktree') ? args[args.indexOf('worktree') + 1]! : args[0]!
+					return responses[key] ?? ''
+				}
+			}
+
+			it('worktree add defaults the path to a sibling of the primary checkout', async () => {
+				const calls: string[][] = []
+				const exec = fakeGitExec(calls)
+				const program = buildProgram({ env: {}, exec })
+				await run(program, ['worktree', 'add', '--branch', 'my-feature'])
+				expect(calls.at(-1)).toEqual([
+					'-C',
+					'/repo',
+					'worktree',
+					'add',
+					'-b',
+					'my-feature',
+					'/repo.worktrees/my-feature',
+				])
+				expect(logs.join('\n')).toContain('/repo.worktrees/my-feature')
+			})
+
+			it('worktree add honors an explicit --path', async () => {
+				const calls: string[][] = []
+				const exec = fakeGitExec(calls)
+				const program = buildProgram({ env: {}, exec })
+				await run(program, ['worktree', 'add', '--branch', 'my-feature', '--path', '/elsewhere/x'])
+				expect(calls.at(-1)).toEqual(['-C', '/repo', 'worktree', 'add', '-b', 'my-feature', '/elsewhere/x'])
+			})
+
+			it('worktree remove refuses the primary checkout', async () => {
+				vi.spyOn(process, 'exit').mockImplementation(() => {
+					throw new Error('exit')
+				})
+				const exec = fakeGitExec([])
+				const program = buildProgram({ env: {}, exec })
+				await expect(run(program, ['worktree', 'remove', '/repo'])).rejects.toThrow()
+			})
+		})
 	})
 })

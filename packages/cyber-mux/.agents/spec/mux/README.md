@@ -47,11 +47,19 @@ once opened:
   suppressing behavior on a mux that simply can't tell. This is a **read-only** probe: it moves no
   focus and opens nothing (unlike `focus`, which drives the attached client's view to a pane).
 
-**Non-goals** — the `nudge` (send-and-verify-turn-taken) and `worktree` (git-worktree) helpers
-(`nudge.ts`, `worktree.ts`) — provisional standalone concerns per the `cli.ts` verb-surface note,
-not yet exposed as CLI verbs and not yet specced; the unit registry, mail, and doorbell that
-`cyberlegion` layers on top of a pane once opened — those stayed behind in `cyberlegion`, this repo
-owns only backend selection, placement, multiplexer detection, and per-pane send/read/focus/close.
+- **`worktree add`/`worktree remove` drive plain `git worktree`** — host-neutral, no legion/unit-registry
+  concepts. `add` defaults the checkout path to a sibling of the primary checkout
+  (`<parent>/<repo>.worktrees/<branch>`, ported from `cyberlegion`'s `resolveUnitWorktreePath`
+  convention), never nested inside the primary's own working tree; `--path` overrides it. `remove`
+  is the safe path ported from `cyberlegion`'s `decommission`: it refuses the primary checkout
+  (absolute — `--force` never overrides it), tolerates a worktree already gone from disk, and
+  refuses to discard uncommitted changes unless `--force` is passed.
+
+**Non-goals** — the `nudge` (send-and-verify-turn-taken) helper (`nudge.ts`) — a provisional
+standalone concern per the `cli.ts` verb-surface note, not yet exposed as a CLI verb and not yet
+specced; the unit registry, mail, and doorbell that `cyberlegion` layers on top of a pane once
+opened — those stayed behind in `cyberlegion`, this repo owns only backend selection, placement,
+multiplexer detection, per-pane send/read/focus/close, and the worktree helpers above.
 
 ## Multiplexer concept vocabulary
 
@@ -87,3 +95,4 @@ Every scenario in [`mux.feature`](./mux.feature) maps to one of these behaviors:
 | **multiplexer detection is two-mode** | `$CYBER_MUX` fast-path + override; ancestry walk; hint fallback; `doctor` hint |
 | **mux mode** | reports the detected session backend; "none" (exit 0) when no adapter is selectable |
 | **pane focus reporting** | tri-state focused / not-focused / unknown per backend (tmux: pane+window active & session attached; herdr: pane record `focused`); a query that can't be answered → unknown so callers fail open |
+| **git worktree helpers** | `worktree add` defaults the path to a sibling of the primary checkout; `worktree remove` refuses the primary checkout, tolerates an already-gone worktree, and refuses uncommitted changes unless `--force` |
