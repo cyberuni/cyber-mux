@@ -1,0 +1,4 @@
+[[source]]
+adapter    = "junit"
+command    = "pnpm --filter=cyber-mux exec vitest run src --reporter=junit --outputFile=.agents/.scenario-report.xml"
+reportPath = "packages/cyber-mux/.agents/.scenario-report.xml"
