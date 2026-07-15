@@ -30,16 +30,37 @@ export const tmuxSessionAdapter: SessionAdapter = {
 		if (!pane) throw new Error(`tmux ${args[0]} failed`)
 		const target: SessionTarget = { id: pane }
 		if (!window && opts.label) exec('tmux', ['select-pane', '-t', pane, '-T', opts.label])
-		if (opts.launch) tmuxSessionAdapter.send(exec, target, opts.launch)
+		// `submit`, not `sendText` — a launch command has to actually run, and `submit` is the only
+		// verb that supplies the Enter.
+		if (opts.launch) tmuxSessionAdapter.submit(exec, target, opts.launch)
 		return target
 	},
 
-	send(exec, target, text) {
-		exec('tmux', ['send-keys', '-t', target.id, text, 'Enter'])
+	sendText(exec, target, text) {
+		// `-l` is mandatory, not a nicety: without it tmux resolves each argument as a key name first
+		// and only falls back to characters ("if the string is not recognised as a key, it is sent as
+		// a series of characters"), so a bare `send-keys -t <p> Up` would press the arrow instead of
+		// typing the word. `-l` disables that lookup outright.
+		exec('tmux', ['send-keys', '-t', target.id, '-l', text])
 	},
 
-	submit(exec, target) {
-		// Bare Enter — flushes an already-staged buffer without re-typing it.
+	sendKeys(exec, target, keys) {
+		exec('tmux', ['send-keys', '-t', target.id, ...keys.map(toTmuxKey)])
+	},
+
+	submit(exec, target, text) {
+		// No `-l` here: a bare Enter must resolve as the KEY, which is exactly what the key lookup is
+		// for. `''` is the bare-flush case too — `send-keys -l ''` would be a no-op typing nothing,
+		// leaving the staged buffer unsent.
+		if (!text) {
+			exec('tmux', ['send-keys', '-t', target.id, 'Enter'])
+			return
+		}
+		// Two calls, unavoidably: tmux has no atomic literal-text-plus-Enter primitive. `-l` applies to
+		// the whole argument list, so `send-keys -l <text> Enter` would type a literal "Enter" after the
+		// text rather than pressing it. The composed path is what `submit`'s outcome-not-command
+		// contract exists to permit.
+		tmuxSessionAdapter.sendText(exec, target, text)
 		exec('tmux', ['send-keys', '-t', target.id, 'Enter'])
 	},
 
@@ -104,6 +125,23 @@ export const tmuxSessionAdapter: SessionAdapter = {
 			})
 			.filter((p) => p.id !== '')
 	},
+}
+
+/**
+ * The core vocabulary's tmux spelling. Exactly one member differs — probed, not read off tmux(1):
+ * tmux has no `Backspace` key name, so it would *type* the word (its unrecognized-token fallback);
+ * its name for that key is `BSpace` (tmux(1): "the following special key names are accepted: Up,
+ * Down, Left, Right, BSpace, BTab, DC ..."). Every other core key — `Up` `Down` `Left` `Right`
+ * `Enter` `Escape` `Tab` `Space` `C-c` `F1`-`F12` — is already tmux's own name for it.
+ *
+ * Deliberately a rename table, NOT a validation table: a token outside the core is forwarded
+ * verbatim (the contract), so this must not reject what it does not recognize. Keeping a full tmux
+ * key list here would make the passthrough a second vocabulary to maintain.
+ */
+const TMUX_KEY_RENAMES: Readonly<Record<string, string>> = { Backspace: 'BSpace' }
+
+function toTmuxKey(key: string): string {
+	return TMUX_KEY_RENAMES[key] ?? key
 }
 
 /**

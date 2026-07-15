@@ -85,9 +85,10 @@ describe.skipIf(!hasTmux())('spec:cyber-mux/mux', () => {
 			expect(tmuxSessionAdapter.paneExists(exec, target)).toBe(false)
 		})
 
-		it('send()/read() actually type into and capture from a real pane', async () => {
+		it('submit()/read() actually run a command in and capture from a real pane', async () => {
 			const target = tmuxSessionAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
-			tmuxSessionAdapter.send(exec, target, 'echo cyber-mux-itest-marker')
+			// submit, not sendText: the marker has to RUN, which needs the Enter submit supplies.
+			tmuxSessionAdapter.submit(exec, target, 'echo cyber-mux-itest-marker')
 			const output = await pollUntil(
 				() => tmuxSessionAdapter.read(exec, target),
 				(out) => out.includes('cyber-mux-itest-marker'),

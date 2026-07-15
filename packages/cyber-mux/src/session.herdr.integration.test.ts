@@ -101,8 +101,9 @@ describe.skipIf(!hasHerdr())('spec:cyber-mux/mux', () => {
 			expect(Array.isArray(panes)).toBe(true)
 		})
 
-		it('send()/read() actually type into and capture from a real pane', async () => {
-			herdrSessionAdapter.send(realExec, target, 'echo cyber-mux-itest-marker')
+		it('submit()/read() actually run a command in and capture from a real pane', async () => {
+			// submit, not sendText: the marker has to RUN, which needs the Enter submit supplies.
+			herdrSessionAdapter.submit(realExec, target, 'echo cyber-mux-itest-marker')
 			const output = await pollUntil(
 				() => herdrSessionAdapter.read(realExec, target),
 				(out) => out.includes('cyber-mux-itest-marker'),

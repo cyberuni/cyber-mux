@@ -132,6 +132,52 @@ backend, so a multiplexer is never asked; see the use cases above. Naming a **ta
 workspace is likewise out: herdr labels a new workspace's root tab `1` with no flag to change it
 (only `tab rename` after the fact), and the workspace label is what its UI groups by.
 
+- **Typing text and pressing keys are separate verbs; only `submit` presses Enter *for you*** —
+  driving a pane's input splits on whether Enter is **implied**. `send text` and `send keys` never add
+  an Enter the caller did not write; `submit` always adds one. Three verbs cover it:
+  - **`send text <pane> <text>`** — type literal characters, press **no** Enter. A word that happens
+    to name a key (`Enter`, `Up`) is typed as those characters, never interpreted as that key.
+  - **`send keys <pane> <keys...>`** — press named keys in order, each its own key, typing nothing.
+    Keys are named in a **portable core vocabulary** — `Up` `Down` `Left` `Right` `Enter` `Escape`
+    `Tab` `Space` `Backspace` `C-c` `F1`–`F12` — normalized onto whatever each backend calls them
+    (`Backspace` → tmux's `BSpace` is the only rename). A token **outside** the core is forwarded
+    verbatim: it reaches backend-specific keys (`Home`, `M-x`) at the cost of portability, and its
+    failure is the backend's own — herdr refuses an unknown key (`unsupported key <k>`), while
+    **tmux has no refusal path** and types the token as characters. Neither reaches the caller today:
+    the `Exec` seam discards a backend's stderr and reports failure as `null`, so `send keys` exits 0
+    either way. That gap is the seam's, not this verb's — it predates the split and affects every
+    verb; a follow-up owns it. `Enter` is a key like any other: `send keys <pane>
+    Enter` **does** press it and **does** take the pane's turn — because the caller asked for it, not
+    because the verb implied it. `send keys` adds nothing.
+  - **`submit <pane> [text]`** — **always** presses Enter. Given text it types it — **literally, on
+    the same guarantee `send text` gives**: text that happens to name a key is typed, never
+    interpreted — and presses Enter, taking the pane's turn. Given no text (or empty text) it sends a
+    **bare Enter only**, flushing an already-staged input buffer without re-typing it, so a repeated
+    flush cannot duplicate the message. `submit` is the verb *for* taking a turn — `open --launch`
+    uses it — and the only one that supplies the Enter itself. The guarantee is that **outcome**,
+    never a particular
+    backend command: a backend with an atomic text-plus-Enter primitive uses it, one without composes
+    typing and Enter.
+
+  Every live view a bare `cyber-mux send` could derive already belongs to a verb — the pane
+  enumeration to `list`, the current pane to `doctor` — so rather than ship a second name for an
+  existing verb, a bare `send` is treated as *incomplete input*: help to stderr, exit 1, stdout clean.
+  That is an acknowledged **amendment** to [`axi/`](../axi/README.md)'s content-first principle (#8),
+  scoped and filed there — not an application of it.
+
+  The core vocabulary is **probed, not derived** from either backend's documentation, and it is the
+  whole of the portable set: everything else diverges, `C-c` is the only portable control key, and
+  the `Backspace` spelling is a judgment call the probe underdetermines. Why each of these was
+  decided the way it was — and what it costs — is logged in
+  [`design/decisions/`](../design/decisions/README.md), not restated here.
+
+**Non-goals** — the `nudge` (send-and-verify-turn-taken) and `worktree` (git-worktree) helpers
+(`nudge.ts`, `worktree.ts`) — provisional standalone concerns per the `cli.ts` verb-surface note,
+not yet exposed as CLI verbs and not yet specced; the unit registry, mail, and doorbell that
+`cyberlegion` layers on top of a pane once opened — those stayed behind in `cyberlegion`, this repo
+owns only backend selection, placement, multiplexer detection, and per-pane
+send/submit/read/focus/close.
+
 ## Multiplexer concept vocabulary
 
 `--at` names a **placement concept**, not a backend-specific command. Every multiplexer nests the
@@ -163,6 +209,9 @@ Every scenario in [`mux.feature`](./mux.feature) maps to one of these behaviors:
 |---|---|
 | **backend selected by environment** | tmux vs herdr selection; neither present errors |
 | **placement** | `--at` choices; tab honored per backend, never a split; `workspace` → each backend's own visible space (herdr `workspace create`, tmux window), never a detached tmux session; a workspace `open` makes is bound to no repo; omitted `--at` falls back to `tab` |
+
+| **placement** | `--at` choices; tab honored per backend, never a split; `workspace` → each backend's own visible space (herdr nested workspace, tmux window), never a detached tmux session; omitted `--at` falls back to `tab` |
+| **text and keys are separate; only submit presses Enter for you** | `send text` types literal characters and presses no Enter (a key-named word is typed, not interpreted; no text → rejected); `send keys` presses named keys in order and types nothing — core keys normalized onto each backend, a non-core token forwarded verbatim to the backend's own semantics (no tokens at all → rejected); `send keys Enter` presses Enter and takes the turn, because the caller wrote it; bare `send` is incomplete input — help to stderr, exit 1, stdout clean (an acknowledged amendment to axi #8, not an application of it); `submit` always presses Enter — with text it types it literally then Enters, with none (or empty text) it bare-Enter flushes without retyping; `open --launch` submits |
 | **multiplexer detection is two-mode** | `$CYBER_MUX` fast-path + override; ancestry walk; hint fallback; `doctor` hint |
 | **mux mode** | reports the detected session backend; "none" (exit 0) when no adapter is selectable |
 | **pane focus reporting** | tri-state focused / not-focused / unknown per backend (tmux: pane+window active & session attached; herdr: pane record `focused`); a query that can't be answered → unknown so callers fail open |

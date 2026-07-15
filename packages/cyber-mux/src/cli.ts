@@ -1,4 +1,4 @@
-import { Command } from 'commander'
+import { Command, CommanderError } from 'commander'
 import { selectSessionAdapter } from './backend.ts'
 import { AT_OPTION, FORMAT_OPTION, LABEL_OPTION } from './cli-options.ts'
 import { type Exec, realExec } from './exec.ts'
@@ -149,22 +149,43 @@ function openCommand(deps: CliDeps): Command {
 		})
 }
 
+/** The `send` group: drive a pane's input WITHOUT taking its turn. Neither subcommand presses an
+ * Enter the caller did not write — supplying one is `submit`'s job. Bare `cyber-mux send` is
+ * incomplete input, not a content request: commander answers it with help on stderr and exit 1
+ * (see the AXI content-first note in `.agents/spec/axi/README.md`). */
 function sendCommand(deps: CliDeps): Command {
-	return new Command('send')
-		.description('Type text into a pane and submit it')
-		.argument('<pane>', 'Target pane id')
-		.argument('<text>', 'Text to send')
-		.action((pane: string, text: string) => {
-			adapter(deps).send(deps.exec, target(pane), text)
-		})
+	const send = new Command('send').description('Drive a pane without taking its turn (text | keys)')
+	send.addCommand(
+		new Command('text')
+			.description('Type literal text into a pane, pressing no Enter (a key-named word is typed, not pressed)')
+			.argument('<pane>', 'Target pane id')
+			.argument('<text>', 'Literal text to type')
+			.action((pane: string, text: string) => {
+				adapter(deps).sendText(deps.exec, target(pane), text)
+			}),
+	)
+	send.addCommand(
+		new Command('keys')
+			.description('Press named keys in a pane, typing nothing (Up, Enter, Escape, C-c, F1 …)')
+			.argument('<pane>', 'Target pane id')
+			.argument(
+				'<keys...>',
+				'Key names, in order — core vocabulary is portable, anything else is passed to the backend as-is',
+			)
+			.action((pane: string, keys: string[]) => {
+				adapter(deps).sendKeys(deps.exec, target(pane), keys)
+			}),
+	)
+	return send
 }
 
 function submitCommand(deps: CliDeps): Command {
 	return new Command('submit')
-		.description("Flush a pane's already-staged buffer with a bare Enter")
+		.description("Take a pane's turn: type the text if given, then always press Enter (no text = bare-Enter flush)")
 		.argument('<pane>', 'Target pane id')
-		.action((pane: string) => {
-			adapter(deps).submit(deps.exec, target(pane))
+		.argument('[text]', 'Text to type before Enter; omit to flush an already-staged buffer without retyping it')
+		.action((pane: string, text: string | undefined) => {
+			adapter(deps).submit(deps.exec, target(pane), text)
 		})
 }
 
@@ -355,16 +376,26 @@ function worktreeCommand(deps: CliDeps): Command {
 	return cmd
 }
 
+/** `exitOverride()` binds to one command only — it is NOT inherited by subcommands. With a flat verb
+ * surface that was invisible, but `send` is a group: without this walk, `cyber-mux send` with no
+ * subcommand would call `process.exit(1)` straight from the group and kill the caller's process
+ * (in tests, the runner itself) instead of throwing a catchable `CommanderError`. */
+function exitOverrideTree(command: Command): Command {
+	command.exitOverride()
+	for (const sub of command.commands) exitOverrideTree(sub)
+	return command
+}
+
 /** Assembles the full command tree against the given deps (real env/exec in production, fakes in
- * tests). `exitOverride()` makes commander throw a `CommanderError` instead of calling
- * `process.exit` directly, so a rejection (e.g. an invalid `--at` choice) is catchable both here and
- * in tests, rather than killing the test runner's own process. */
+ * tests). Every command in the tree gets `exitOverride()`, so commander throws a `CommanderError`
+ * instead of calling `process.exit` directly and a rejection (an invalid `--at` choice, a missing
+ * argument, a bare `send`) is catchable both here and in tests, rather than killing the test
+ * runner's own process. */
 export function buildProgram(deps: CliDeps = REAL_DEPS): Command {
 	const program = new Command()
 		.name('cyber-mux')
 		.description('Cross-multiplexer pane control — one contract over tmux and herdr')
 		.version('0.0.0')
-		.exitOverride()
 
 	program.addCommand(doctorCommand(deps))
 	program.addCommand(modeCommand(deps))
@@ -378,7 +409,7 @@ export function buildProgram(deps: CliDeps = REAL_DEPS): Command {
 	program.addCommand(existsCommand(deps))
 	program.addCommand(worktreeCommand(deps))
 
-	return program
+	return exitOverrideTree(program)
 }
 
 /** The real CLI entry point — called explicitly by `bin/cyber-mux.mjs`, never as an import-time
@@ -387,6 +418,11 @@ export async function main(): Promise<void> {
 	try {
 		await buildProgram().parseAsync(process.argv)
 	} catch (err) {
+		// commander has already written its own text to stderr (the help for a bare group, the
+		// `error: missing required argument` line) before throwing, so re-printing its internal message
+		// would double it — and for help that message is the literal placeholder "(outputHelp)". Honor
+		// the exit code it chose and add nothing.
+		if (err instanceof CommanderError) process.exit(err.exitCode)
 		process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`)
 		process.exit(1)
 	}

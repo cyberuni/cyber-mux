@@ -344,18 +344,79 @@ describe('spec:cyber-mux/mux', () => {
 			)
 		})
 
-		it('send() runs text in the target pane', () => {
+		it('sendText() types literal text and presses no Enter', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls)
-			herdrSessionAdapter.send(exec, { id: 'p-1' }, 'hello')
-			expect(calls[0]).toEqual(['pane', 'run', 'p-1', 'hello'])
+			herdrSessionAdapter.sendText(exec, { id: 'p-1' }, 'hello')
+			expect(calls).toEqual([['pane', 'send-text', 'p-1', 'hello']])
 		})
 
-		it('submit() flushes the staged buffer with a bare Enter, never re-typing the text', () => {
+		it('sendText() types a key-named word rather than interpreting it as that key', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls)
+			herdrSessionAdapter.sendText(exec, { id: 'p-1' }, 'Up')
+			expect(calls[0]).toEqual(['pane', 'send-text', 'p-1', 'Up'])
+		})
+
+		it('sendKeys() presses each key in order, typing nothing', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls)
+			herdrSessionAdapter.sendKeys(exec, { id: 'p-1' }, ['Escape', 'Up', 'C-c'])
+			expect(calls).toEqual([['pane', 'send-keys', 'p-1', 'Escape', 'Up', 'C-c']])
+		})
+
+		it('sendKeys() sends every core key unrenamed — herdr already speaks the core vocabulary', () => {
+			// Backspace is the one key tmux renames; herdr takes the core name as-is.
+			const calls: string[][] = []
+			const exec = fakeExec(calls)
+			herdrSessionAdapter.sendKeys(exec, { id: 'p-1' }, ['Backspace'])
+			expect(calls[0]).toEqual(['pane', 'send-keys', 'p-1', 'Backspace'])
+		})
+
+		it('sendKeys() forwards a non-core token verbatim, leaving herdr to refuse it', () => {
+			// herdr answers an unknown key with `unsupported key <k>` rather than typing it, so the
+			// divergence is loud AT THE HERDR BOUNDARY (tmux types it instead). It is not loud at the
+			// CLI: `Exec` drops stderr and reports failure as `null`, so exit 0 either way. What this
+			// pins is only that cyber-mux forwards the token instead of pre-rejecting it.
+			const calls: string[][] = []
+			const exec = fakeExec(calls)
+			herdrSessionAdapter.sendKeys(exec, { id: 'p-1' }, ['Home'])
+			expect(calls[0]).toEqual(['pane', 'send-keys', 'p-1', 'Home'])
+		})
+
+		it('sendKeys() Enter presses Enter, because the caller asked for it', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls)
+			herdrSessionAdapter.sendKeys(exec, { id: 'p-1' }, ['Enter'])
+			expect(calls[0]).toEqual(['pane', 'send-keys', 'p-1', 'Enter'])
+		})
+
+		it('submit() with text uses pane run, herdr’s atomic text-plus-Enter primitive', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls)
+			herdrSessionAdapter.submit(exec, { id: 'p-1' }, 'echo hi')
+			expect(calls).toEqual([['pane', 'run', 'p-1', 'echo hi']])
+		})
+
+		it('submit() types key-named text literally — pane run does not interpret it as a key', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls)
+			herdrSessionAdapter.submit(exec, { id: 'p-1' }, 'Up')
+			expect(calls).toEqual([['pane', 'run', 'p-1', 'Up']])
+		})
+
+		it('submit() with no text flushes the staged buffer with a bare Enter, never re-typing it', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls)
 			herdrSessionAdapter.submit(exec, { id: 'p-1' })
-			expect(calls[0]).toEqual(['pane', 'send-keys', 'p-1', 'Enter'])
+			expect(calls).toEqual([['pane', 'send-keys', 'p-1', 'Enter']])
+		})
+
+		it('submit() with empty text is the bare flush, not a second contract', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls)
+			herdrSessionAdapter.submit(exec, { id: 'p-1' }, '')
+			expect(calls).toEqual([['pane', 'send-keys', 'p-1', 'Enter']])
 		})
 
 		it('read() captures visible pane output, optionally scoped to N lines', () => {
