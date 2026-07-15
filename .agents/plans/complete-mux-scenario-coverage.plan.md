@@ -5,7 +5,7 @@ todos:
   - content: Verify all 22 scenarios BOUND+PASS via the SDD scenario bridge
     status: completed
   - content: Commit
-    status: pending
+    status: completed
 ---
 
 # Complete mux.feature scenario coverage
@@ -28,4 +28,4 @@ scenarios not already covered at the adapter level, since they describe the CLI'
 itself, not adapter internals.
 
 ## NEXT
-Write the tests, run `pnpm test`, re-run `verify-scenarios`, confirm 22/22 BOUND+PASS, commit.
+Done. Landed direct-to-main as `1d980d9`; 22/22 BOUND+PASS confirmed. No follow-up.
