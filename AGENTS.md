@@ -85,11 +85,17 @@ shared workflows arrive as a new major tag to opt into.
 
 ## Validation After Changes
 
-Always run before committing:
+Match validation cost to the change:
+
+- For code, configuration, dependency, or website changes, run:
 
 ```bash
 pnpm verify   # turbo: build + typecheck + lint + test + biome ci
 ```
+
+- For changes limited to repository guidance such as `AGENTS.md` or `CLAUDE.md`, run
+  `git diff --check` instead. Do not run `pnpm verify`; these files do not affect the build or test
+  suite.
 
 ## Language
 
