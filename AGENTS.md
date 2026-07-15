@@ -6,6 +6,7 @@ worktree, and turn-taking (nudge) helpers. It is the mux seam extracted from `cy
 solely on driving panes across multiplexers.
 
 - **scripts:** repository scripts are in `package.json` such as `test` and `verify`
+- **toolchain:** node and pnpm are pinned in `mise.toml`; run `mise install` to get them
 
 ## Commit Discipline
 

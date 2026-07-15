@@ -40,7 +40,10 @@ npx cyber-mux mux mode
 
 ## Development
 
+Node and pnpm are pinned in `mise.toml` and managed by [mise](https://mise.jdx.dev):
+
 ```bash
+mise install  # node + pnpm at the pinned versions
 pnpm install
 pnpm verify   # build + typecheck + lint + test
 ```
