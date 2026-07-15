@@ -11,7 +11,7 @@ todos:
   - content: Tests + pnpm verify
     status: completed
   - content: Commit per AGENTS.md discipline
-    status: pending
+    status: completed
 ---
 
 # add-worktree-verb
