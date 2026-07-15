@@ -22,6 +22,25 @@ solely on driving panes across multiplexers.
 - **Releases:** user-facing changes to the published `cyber-mux` package need a changeset. The
   `website` app is excluded from versioning and never needs one
 
+## Delegation
+
+Delegate independent, bounded work when doing so materially improves speed, quality, or context
+management. Keep judgment and final integration with the primary agent.
+
+Brief every subagent with the relevant context, why the task is delegated, its exact scope, what
+completion looks like, and whether it may edit files. Subagents may start with an isolated context,
+so do not assume they know the parent conversation.
+
+| Task class                   | Capability      | Delegation guidance                                  |
+| ---------------------------- | --------------- | ---------------------------------------------------- |
+| Mechanical, repetitive work | Fast, low-cost  | Delegate when parallelism helps                      |
+| Scoped research             | Balanced        | Delegate to keep exploration out of the main context |
+| Complex multi-step work     | High reasoning  | Delegate on clear benefit                            |
+| Judgment and architecture   | Highest capable | Keep primary unless independent review helps         |
+
+Use the models and agent types available in the active client. These capability tiers are guidance,
+not literal cross-provider model names.
+
 ### References
 
 - `commit` / `commit-work` skills — staging, splitting, and message authoring
