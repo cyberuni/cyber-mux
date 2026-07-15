@@ -24,8 +24,10 @@ solely on driving panes across multiplexers.
 
 ## Delegation
 
-Delegate independent, bounded work when doing so materially improves speed, quality, or context
-management. Keep judgment and final integration with the primary agent.
+Before starting work, classify whether an independent, bounded part can be completed by a cheaper
+agent. Proactively delegate mechanical edits and focused analysis to the fastest suitable agent;
+do not wait for the user to request delegation. Keep judgment and final integration with the
+primary agent.
 
 Brief every subagent with the relevant context, why the task is delegated, its exact scope, what
 completion looks like, and whether it may edit files. Subagents may start with an isolated context,
@@ -33,16 +35,17 @@ so do not assume they know the parent conversation.
 
 | Task class                   | Capability      | Delegation guidance                                  |
 | ---------------------------- | --------------- | ---------------------------------------------------- |
-| Mechanical, repetitive work | Fast, low-cost  | Delegate when parallelism helps                      |
-| Scoped research             | Balanced        | Delegate to keep exploration out of the main context |
+| Mechanical, repetitive work | Fast, low-cost  | Delegate by default                                  |
+| Scoped research             | Balanced        | Delegate by default                                  |
 | Complex multi-step work     | High reasoning  | Delegate on clear benefit                            |
 | Judgment and architecture   | Highest capable | Keep primary unless independent review helps         |
 
 Use the models and agent types available in the active client. These capability tiers are guidance,
 not literal cross-provider model names.
 
-In Codex, use the project-scoped `fast_worker` agent for bounded mechanical edits and focused
-repository analysis. The primary agent reviews and integrates its result.
+In Codex, automatically spawn the project-scoped `fast_worker` agent for bounded mechanical edits
+and focused repository analysis, even when parallelism is unnecessary. The primary agent reviews
+and integrates its result.
 
 ### References
 
