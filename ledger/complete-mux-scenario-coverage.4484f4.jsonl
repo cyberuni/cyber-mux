@@ -1,0 +1,1 @@
+{"kind":"leash","cr":"complete-mux-scenario-coverage","project":"cyber-mux/mux","leash":"auto-all","by":"derived","approach":["test-only addition, no spec/suite content change, all 4 target scenarios already existed verbatim, node status stays draft"]}

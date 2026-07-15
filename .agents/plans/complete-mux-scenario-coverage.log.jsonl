@@ -1,0 +1,1 @@
+{"ts":"2026-07-15T04:23:45Z","kind":"report","cr":"complete-mux-scenario-coverage","summary":"Added 6 CLI-level tests to cli.test.ts closing the 4 remaining UNBOUND mux.feature scenarios (2 were Scenario Outlines needing a tmux+herdr case each). 86/86 vitest tests pass, typecheck clean, scenario bridge now reports 22/22 BOUND+PASS, 0 unbound."}
