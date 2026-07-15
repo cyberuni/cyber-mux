@@ -22,7 +22,7 @@ host-specific concepts**, so it composes with any caller.
 | `isPaneFocused` | Read-only focus probe (`true` / `false` / `undefined` = unknown) |
 | `listPanes` | Enumerate every live pane the backend can see |
 
-## Placement
+## Placement and naming
 
 `open` takes a placement relative to the caller:
 
@@ -30,6 +30,11 @@ host-specific concepts**, so it composes with any caller.
 - `tab` — a new tab/window in the current space (the default).
 - `workspace` — a genuinely separate workspace/session; the caller's current space is left
   untouched.
+
+...and an optional `label` for whatever it opens, at whatever tier it opens it. That is host-neutral
+because every backend names every tier: on herdr a workspace, tab, or pane label; on tmux a window
+name (`workspace` and `tab` both collapse to a Window there) or a pane title. An adapter passes it in
+the opening call where its CLI allows and names the space immediately after where it does not.
 
 ## The `worktree` capability
 

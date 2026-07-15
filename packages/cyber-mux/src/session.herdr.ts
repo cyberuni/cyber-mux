@@ -24,17 +24,20 @@ export const herdrSessionAdapter: SessionAdapter = {
 
 	open(exec, opts) {
 		const at = opts.at ?? 'tab'
+		// herdr takes a label at birth for a workspace and a tab, but not for a split — a pane is
+		// named afterwards, via `pane rename`.
+		const label = opts.label ? ['--label', opts.label] : []
 		let id: string
 		if (at === 'workspace') {
 			// A genuinely separate workspace, not a pane inside the caller's current one — `--no-focus`
 			// so spawning doesn't steal the caller's attention/focus.
-			const out = exec('herdr', ['workspace', 'create', '--cwd', opts.cwd, '--no-focus'])
+			const out = exec('herdr', ['workspace', 'create', '--cwd', opts.cwd, ...label, '--no-focus'])
 			if (!out) throw new Error('herdr workspace create failed')
 			id = parseRootPaneId(out, 'herdr workspace create')
 		} else if (at === 'tab') {
 			// A real tab in the current window, not a split pane — `--no-focus` so spawning doesn't
 			// steal the caller's attention/focus, matching workspace/worktree spawns.
-			const out = exec('herdr', ['tab', 'create', '--cwd', opts.cwd, '--no-focus'])
+			const out = exec('herdr', ['tab', 'create', '--cwd', opts.cwd, ...label, '--no-focus'])
 			if (!out) throw new Error('herdr tab create failed')
 			id = parseRootPaneId(out, 'herdr tab create')
 		} else {
@@ -42,6 +45,7 @@ export const herdrSessionAdapter: SessionAdapter = {
 			const out = exec('herdr', ['pane', 'split', '--current', '--direction', direction, '--cwd', opts.cwd])
 			if (!out) throw new Error('herdr pane split failed')
 			id = parsePaneId(out)
+			if (opts.label) exec('herdr', ['pane', 'rename', id, opts.label])
 		}
 		const target: SessionTarget = { id }
 		// `pane run` submits text plus Enter atomically — herdr's documented preference over
@@ -188,6 +192,9 @@ function herdrWorktreeCapability(): WorktreeWorkspaceCapability {
 		createInWorkspace(exec, opts) {
 			const args = ['worktree', 'create', '--cwd', opts.primaryRoot, '--branch', opts.branch, '--path', opts.path]
 			if (opts.base) args.push('--base', opts.base)
+			// Without this herdr names the workspace after the checkout path's basename, because we always
+			// pass `--path` — it would use the branch if we let it choose the location itself.
+			if (opts.label) args.push('--label', opts.label)
 			args.push('--no-focus')
 			const out = exec('herdr', args)
 			if (!out) throw new Error('herdr worktree create failed')
@@ -199,7 +206,10 @@ function herdrWorktreeCapability(): WorktreeWorkspaceCapability {
 		},
 
 		openInWorkspace(exec, opts) {
-			const out = exec('herdr', ['worktree', 'open', '--cwd', opts.primaryRoot, '--path', opts.path, '--no-focus'])
+			const args = ['worktree', 'open', '--cwd', opts.primaryRoot, '--path', opts.path]
+			if (opts.label) args.push('--label', opts.label)
+			args.push('--no-focus')
+			const out = exec('herdr', args)
 			if (!out) throw new Error('herdr worktree open failed')
 			const opened = parseWorktreeWorkspace(out, 'herdr worktree open')
 			if (opts.launch) exec('herdr', ['pane', 'run', opened.target.id, opts.launch])

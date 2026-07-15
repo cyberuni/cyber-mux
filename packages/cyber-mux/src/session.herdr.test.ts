@@ -67,7 +67,7 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls[1]).toEqual(['pane', 'run', 'w3:pT', 'claude'])
 		})
 
-		it('herdr --at workspace creates its own workspace nested under the source', () => {
+		it('herdr --at workspace creates its own workspace, unattached to any repo', () => {
 			const calls: string[][] = []
 			const createOut = JSON.stringify({
 				id: 'cli:workspace:create',
@@ -76,6 +76,8 @@ describe('spec:cyber-mux/mux', () => {
 			const exec = fakeExec(calls, { 'workspace create': createOut })
 			const target = herdrSessionAdapter.open(exec, { cwd: '/unit', launch: 'claude', at: 'workspace' })
 			expect(target).toEqual({ id: 'w7:p1' })
+			// `workspace create` — NOT `worktree create`. It carries no --branch/--path and produces no
+			// worktree record, so the workspace is bound to no repo even when its cwd is a checkout.
 			expect(calls[0]).toEqual(['workspace', 'create', '--cwd', '/unit', '--no-focus'])
 			expect(calls[1]).toEqual(['pane', 'run', 'w7:p1', 'claude'])
 		})
@@ -133,6 +135,80 @@ describe('spec:cyber-mux/mux', () => {
 				'--no-focus',
 			])
 			expect(calls[1]).toEqual(['pane', 'run', 'w9:p1', 'claude'])
+		})
+
+		it('open({at:workspace}) labels the workspace', () => {
+			const calls: string[][] = []
+			const out = JSON.stringify({ result: { root_pane: { pane_id: 'w7:p1' } } })
+			herdrSessionAdapter.open(fakeExec(calls, { 'workspace create': out }), {
+				cwd: '/unit',
+				at: 'workspace',
+				label: 'my-name',
+			})
+			expect(calls[0]).toEqual(['workspace', 'create', '--cwd', '/unit', '--label', 'my-name', '--no-focus'])
+		})
+
+		it('open({at:tab}) labels the tab', () => {
+			const calls: string[][] = []
+			const out = JSON.stringify({ result: { root_pane: { pane_id: 'w7:p1' } } })
+			herdrSessionAdapter.open(fakeExec(calls, { 'tab create': out }), { cwd: '/unit', at: 'tab', label: 'my-name' })
+			expect(calls[0]).toEqual(['tab', 'create', '--cwd', '/unit', '--label', 'my-name', '--no-focus'])
+		})
+
+		it('open({at:pane:right}) renames the pane after the split — herdr has no label flag there', () => {
+			const calls: string[][] = []
+			const out = JSON.stringify({ result: { pane: { pane_id: 'w3:pB' } } })
+			herdrSessionAdapter.open(fakeExec(calls, { 'pane split': out }), {
+				cwd: '/unit',
+				at: 'pane:right',
+				label: 'my-name',
+			})
+			expect(calls[0]).toEqual(['pane', 'split', '--current', '--direction', 'right', '--cwd', '/unit'])
+			expect(calls[1]).toEqual(['pane', 'rename', 'w3:pB', 'my-name'])
+		})
+
+		it('open() names nothing when no label is given', () => {
+			const calls: string[][] = []
+			const out = JSON.stringify({ result: { root_pane: { pane_id: 'w7:p1' } } })
+			herdrSessionAdapter.open(fakeExec(calls, { 'workspace create': out }), { cwd: '/unit', at: 'workspace' })
+			expect(calls[0]).toEqual(['workspace', 'create', '--cwd', '/unit', '--no-focus'])
+		})
+
+		it('worktree.createInWorkspace() labels the bound workspace', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'worktree create': worktreeOut() })
+			worktree().createInWorkspace(exec, { primaryRoot: '/repo', branch: 'b', path: '/p', label: 'my-name' })
+			// Without it herdr names the workspace after the path basename, since we always pass --path.
+			expect(calls[0]).toEqual([
+				'worktree',
+				'create',
+				'--cwd',
+				'/repo',
+				'--branch',
+				'b',
+				'--path',
+				'/p',
+				'--label',
+				'my-name',
+				'--no-focus',
+			])
+		})
+
+		it('worktree.openInWorkspace() labels the bound workspace', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'worktree open': worktreeOut() })
+			worktree().openInWorkspace(exec, { primaryRoot: '/repo', path: '/p', label: 'my-name' })
+			expect(calls[0]).toEqual([
+				'worktree',
+				'open',
+				'--cwd',
+				'/repo',
+				'--path',
+				'/p',
+				'--label',
+				'my-name',
+				'--no-focus',
+			])
 		})
 
 		it('worktree.createInWorkspace() passes a base as the branch start-point', () => {

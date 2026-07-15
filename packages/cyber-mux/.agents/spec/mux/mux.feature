@@ -244,6 +244,27 @@ Feature: mux — the pane abstraction
     Then it reports no workspace, and does not claim the placement cost anything
     And no grouping was ever on offer — there is nothing to report about a feature the backend lacks
 
+  Scenario Outline: --label names whatever --at opened, on every backend
+    Given a caller running cyber-mux with --at <placement> --label <name>
+    When the command opens the space
+    Then <name> is the label of the <herdr tier> on herdr, and the <tmux tier> on tmux
+    And a backend that takes the label at birth passes it in the opening call, and one that does not names the space immediately after
+
+    Examples:
+      | placement  | herdr tier      | tmux tier   |
+      | workspace  | workspace label | window name |
+      | tab        | tab label       | window name |
+      | pane:right | pane label      | pane title  |
+
+  Scenario: --label omitted leaves each backend its own default
+    Given a caller running cyber-mux with no --label
+    When the command opens the space
+    Then no name is passed, and the backend's own default label stands
+    # worktree add always passes --path to hold the sibling convention across backends, and herdr
+    # labels a workspace by the checkout path's basename when given one — using the branch only when
+    # it picks the location itself. So branch `feat/deep/name` defaults to a workspace named `name`.
+    And a worktree's default label is the checkout path's basename on a backend that derives one from the path
+
   Scenario: worktree open groups a worktree that plain git created earlier
     Given a worktree checked out by a bare cyber-mux worktree add, open in no workspace
     When a caller runs cyber-mux worktree open against its path on a backend that binds

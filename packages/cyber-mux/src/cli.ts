@@ -1,6 +1,6 @@
 import { Command } from 'commander'
 import { selectSessionAdapter } from './backend.ts'
-import { AT_OPTION, FORMAT_OPTION } from './cli-options.ts'
+import { AT_OPTION, FORMAT_OPTION, LABEL_OPTION } from './cli-options.ts'
 import { type Exec, realExec } from './exec.ts'
 import { currentPane, probeMultiplexer } from './mux-probe.ts'
 import { output, printFields, printTable } from './output.ts'
@@ -141,9 +141,10 @@ function openCommand(deps: CliDeps): Command {
 		.option('--launch <command>', 'Command line to run in the new pane')
 		.option('--cwd <path>', 'Working directory for the new pane', process.cwd())
 		.addOption(AT_OPTION)
+		.addOption(LABEL_OPTION)
 		.addOption(FORMAT_OPTION)
-		.action((opts: { launch?: string; cwd: string; at?: SessionPlacement }) => {
-			const t = adapter(deps).open(deps.exec, { cwd: opts.cwd, launch: opts.launch, at: opts.at })
+		.action((opts: { launch?: string; cwd: string; at?: SessionPlacement; label?: string }) => {
+			const t = adapter(deps).open(deps.exec, { cwd: opts.cwd, launch: opts.launch, at: opts.at, label: opts.label })
 			output({ pane: t.id }, () => printFields({ pane: t.id }))
 		})
 }
@@ -237,38 +238,49 @@ function worktreeAddCommand(deps: CliDeps): Command {
 		.option('--base <ref>', 'Start point for the new branch (default: the current HEAD)')
 		.option('--launch <command>', 'Command to run in the opened pane; implies --at workspace')
 		.addOption(AT_OPTION)
+		.addOption(LABEL_OPTION)
 		.addOption(FORMAT_OPTION)
-		.action((opts: { branch: string; path?: string; base?: string; launch?: string; at?: SessionPlacement }) => {
-			try {
-				const primaryRoot = resolvePrimaryRoot(deps.exec)
-				const path = opts.path ?? resolveWorktreePath(primaryRoot, opts.branch)
-				// With no placement asked for, this IS a git operation: it creates a checkout, opens
-				// nothing, and needs no multiplexer to be inside of. There is nothing to group because
-				// nothing was opened — `worktree open` is how that checkout gets grouped later.
-				if (!opts.at && !opts.launch) {
-					const wt = gitWorktreeAdapter.add(deps.exec, { primaryRoot, path, branch: opts.branch, base: opts.base })
-					output({ root: wt.root, branch: wt.branch, pane: null, workspace: null }, () =>
-						printFields({ root: wt.root, branch: wt.branch }),
+		.action(
+			(opts: {
+				branch: string
+				path?: string
+				base?: string
+				launch?: string
+				at?: SessionPlacement
+				label?: string
+			}) => {
+				try {
+					const primaryRoot = resolvePrimaryRoot(deps.exec)
+					const path = opts.path ?? resolveWorktreePath(primaryRoot, opts.branch)
+					// With no placement asked for, this IS a git operation: it creates a checkout, opens
+					// nothing, and needs no multiplexer to be inside of. There is nothing to group because
+					// nothing was opened — `worktree open` is how that checkout gets grouped later.
+					if (!opts.at && !opts.launch) {
+						const wt = gitWorktreeAdapter.add(deps.exec, { primaryRoot, path, branch: opts.branch, base: opts.base })
+						output({ root: wt.root, branch: wt.branch, pane: null, workspace: null }, () =>
+							printFields({ root: wt.root, branch: wt.branch }),
+						)
+						return
+					}
+					// A launch with no placement wants its own space, not a pane crowding the caller's — and
+					// `workspace` is the only placement a backend can bind a worktree to.
+					const at = opts.at ?? 'workspace'
+					reportOpenedWorktree(
+						addAndOpenWorktree(deps.exec, adapter(deps), {
+							primaryRoot,
+							branch: opts.branch,
+							path,
+							base: opts.base,
+							launch: opts.launch,
+							at,
+							label: opts.label,
+						}),
 					)
-					return
+				} catch (err) {
+					fail(err instanceof Error ? err.message : String(err))
 				}
-				// A launch with no placement wants its own space, not a pane crowding the caller's — and
-				// `workspace` is the only placement a backend can bind a worktree to.
-				const at = opts.at ?? 'workspace'
-				reportOpenedWorktree(
-					addAndOpenWorktree(deps.exec, adapter(deps), {
-						primaryRoot,
-						branch: opts.branch,
-						path,
-						base: opts.base,
-						launch: opts.launch,
-						at,
-					}),
-				)
-			} catch (err) {
-				fail(err instanceof Error ? err.message : String(err))
-			}
-		})
+			},
+		)
 }
 
 function worktreeOpenCommand(deps: CliDeps): Command {
@@ -277,12 +289,19 @@ function worktreeOpenCommand(deps: CliDeps): Command {
 		.argument('<path>', 'Worktree path to open')
 		.option('--launch <command>', 'Command to run in the opened pane')
 		.addOption(AT_OPTION)
+		.addOption(LABEL_OPTION)
 		.addOption(FORMAT_OPTION)
-		.action((path: string, opts: { launch?: string; at?: SessionPlacement }) => {
+		.action((path: string, opts: { launch?: string; at?: SessionPlacement; label?: string }) => {
 			try {
 				const primaryRoot = resolvePrimaryRoot(deps.exec)
 				reportOpenedWorktree(
-					openExistingWorktree(deps.exec, adapter(deps), { primaryRoot, path, launch: opts.launch, at: opts.at }),
+					openExistingWorktree(deps.exec, adapter(deps), {
+						primaryRoot,
+						path,
+						launch: opts.launch,
+						at: opts.at,
+						label: opts.label,
+					}),
 				)
 			} catch (err) {
 				fail(err instanceof Error ? err.message : String(err))

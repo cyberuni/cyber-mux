@@ -10,3 +10,10 @@ export const AT_OPTION = new Option('--at <placement>', 'Where to place the new 
 	'tab',
 	'workspace',
 ])
+
+/**
+ * Name for whatever `--at` opens. Host-neutral because every backend names every tier: on herdr a
+ * workspace/tab/pane label, on tmux a window name (where `workspace` and `tab` both collapse to a
+ * Window) or a pane title.
+ */
+export const LABEL_OPTION = new Option('--label <label>', 'Name for the opened workspace/tab/pane')

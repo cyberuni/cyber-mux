@@ -94,6 +94,26 @@ describe('spec:cyber-mux/mux', () => {
 			expect(ran(calls, 'git', '-C', '/repo', 'worktree', 'add')).toBe(true)
 		})
 
+		it('passes a label through both routes — each backend names the tier it opened', () => {
+			// herdr, grouped: the label names the bound workspace.
+			const herdrCalls: string[][] = []
+			addAndOpenWorktree(fakeExec(herdrCalls, { 'herdr worktree create': HERDR_WORKTREE_OUT }), herdrSessionAdapter, {
+				...addOpts,
+				at: 'workspace',
+				label: 'my-name',
+			})
+			expect(herdrCalls[0]).toContain('--label')
+
+			// tmux, no binding: the same label names the window `workspace` collapses to.
+			const tmuxCalls: string[][] = []
+			addAndOpenWorktree(fakeExec(tmuxCalls, { 'tmux new-window': '%9' }), tmuxSessionAdapter, {
+				...addOpts,
+				at: 'workspace',
+				label: 'my-name',
+			})
+			expect(tmuxCalls.some((c) => c[0] === 'tmux' && c.includes('-n') && c.includes('my-name'))).toBe(true)
+		})
+
 		it('passes a base through both routes', () => {
 			const herdrCalls: string[][] = []
 			addAndOpenWorktree(fakeExec(herdrCalls, { 'herdr worktree create': HERDR_WORKTREE_OUT }), herdrSessionAdapter, {

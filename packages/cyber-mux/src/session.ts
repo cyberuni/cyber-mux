@@ -16,6 +16,13 @@ interface SessionOpenOptions {
 	launch?: string
 	/** Placement relative to the caller; defaults to 'tab'. */
 	at?: SessionPlacement
+	/**
+	 * Name for the space this opens, at whatever tier `at` opens it — every backend can name every
+	 * tier, so this is host-neutral: on herdr a workspace/tab/pane label, on tmux a window name
+	 * (`workspace` and `tab` both collapse to a Window there) or a pane title. Omit for the backend's
+	 * own default.
+	 */
+	label?: string
 }
 
 /** Opaque handle to an open pane/window/session; backend-specific id lives in `id`. */
@@ -51,6 +58,8 @@ export interface CreateWorktreeWorkspaceOptions {
 	base?: string
 	/** Command line to launch inside the new workspace's root pane; omit for a blank pane. */
 	launch?: string
+	/** Name for the bound workspace; omit for the backend's own default. */
+	label?: string
 }
 
 export interface OpenWorktreeWorkspaceOptions {
@@ -60,6 +69,8 @@ export interface OpenWorktreeWorkspaceOptions {
 	path: string
 	/** Command line to launch inside the new workspace's root pane; omit for a blank pane. */
 	launch?: string
+	/** Name for the bound workspace; omit for the backend's own default. */
+	label?: string
 }
 
 /** A worktree open in a workspace bound to it — the capability's whole product. */
