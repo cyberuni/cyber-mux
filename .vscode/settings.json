@@ -1,3 +1,5 @@
 {
-	"cSpell.words": ["repobuddy"]
+	"cSpell.words": ["herdr", "repobuddy"],
+	"cucumber.features": ["packages/**/*.feature"],
+	"cucumber.glue": [".vscode/cucumber-glue.js"]
 }
