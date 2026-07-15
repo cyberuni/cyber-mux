@@ -126,6 +126,22 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls[0]).toEqual(['new-window', '-d', '-c', process.cwd(), '-P', '-F', '#{pane_id}'])
 		})
 
+		it('list enumerates every live pane, including one running no agent/harness', async () => {
+			const listOut = JSON.stringify({
+				result: {
+					panes: [
+						{ pane_id: 'w3:p1', agent: 'claude', cwd: '/repo/a' },
+						{ pane_id: 'w3:p2', cwd: '/repo/b' },
+					],
+				},
+			})
+			const exec = fakeHerdrExec([], { 'pane list': listOut })
+			const program = buildProgram({ env: { CYBER_MUX: 'herdr' }, exec })
+			await run(program, ['list'])
+			expect(logs.some((l) => l.includes('w3:p1'))).toBe(true)
+			expect(logs.some((l) => l.includes('w3:p2'))).toBe(true)
+		})
+
 		it('open with no --launch creates a blank pane', async () => {
 			const calls: string[][] = []
 			const exec = fakeTmuxExec(calls, { 'new-window': '%2' })

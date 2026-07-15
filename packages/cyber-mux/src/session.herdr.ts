@@ -140,11 +140,13 @@ export const herdrSessionAdapter: SessionAdapter = {
 		}
 		if (!Array.isArray(panes)) return []
 		return panes
-			.filter(
-				(p): p is { pane_id: string; agent: string; cwd?: string } =>
-					typeof p?.pane_id === 'string' && typeof p?.agent === 'string' && p.agent !== '',
-			)
-			.map((p) => ({ id: p.pane_id, mux: 'herdr' as const, harness: p.agent, cwd: p.cwd }))
+			.filter((p): p is { pane_id: string; agent?: string; cwd?: string } => typeof p?.pane_id === 'string')
+			.map((p) => ({
+				id: p.pane_id,
+				mux: 'herdr' as const,
+				harness: p.agent || undefined,
+				cwd: p.cwd,
+			}))
 	},
 }
 

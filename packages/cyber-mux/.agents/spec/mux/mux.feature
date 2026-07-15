@@ -150,3 +150,10 @@ Feature: mux — the pane abstraction
     Given a backend with no primitive to report focus, or a pane the backend can no longer resolve, or a focus query that errors
     When it is asked whether a pane is focused
     Then it answers unknown rather than a boolean, so callers fail open instead of treating the pane as absent
+
+  # ── list enumerates every live pane, not just agent-bearing ones ──
+
+  Scenario: list enumerates every live pane, including one running no agent/harness
+    Given a backend with a mix of panes, some running an agent/harness and some running none
+    When it runs cyber-mux list
+    Then every live pane is reported, whether or not it is running an agent/harness

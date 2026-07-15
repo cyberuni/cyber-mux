@@ -253,19 +253,34 @@ describe('spec:cyber-mux/mux', () => {
 			expect(herdrSessionAdapter.isPaneFocused(() => 'not json', { id: 'w3:pB' })).toBeUndefined()
 		})
 
-		it('listPanes() reports only panes with an agent, dropping scaffold panes with none', () => {
+		it('listPanes() reports every live pane, agent-bearing or not', () => {
 			const listOut = JSON.stringify({
 				result: {
 					panes: [
 						{ pane_id: 'w3:p1', agent: 'claude', cwd: '/repo/a' },
 						{ pane_id: 'w3:p2', agent: 'codex', cwd: '/repo/b' },
-						{ pane_id: 'w3:p3' }, // scaffold pane, no agent — dropped
+						{ pane_id: 'w3:p3', cwd: '/repo/c' }, // blank/scaffold pane, no agent — still reported
 					],
 				},
 			})
 			expect(herdrSessionAdapter.listPanes(fakeExec([], { 'pane list': listOut }))).toEqual([
 				{ id: 'w3:p1', mux: 'herdr', harness: 'claude', cwd: '/repo/a' },
 				{ id: 'w3:p2', mux: 'herdr', harness: 'codex', cwd: '/repo/b' },
+				{ id: 'w3:p3', mux: 'herdr', harness: undefined, cwd: '/repo/c' },
+			])
+		})
+
+		it("listPanes() drops entries herdr reports with no pane_id, but keeps a bare '' agent as no harness", () => {
+			const listOut = JSON.stringify({
+				result: {
+					panes: [
+						{ agent: 'claude', cwd: '/repo/a' }, // no pane_id — dropped
+						{ pane_id: 'w3:p9', agent: '' },
+					],
+				},
+			})
+			expect(herdrSessionAdapter.listPanes(fakeExec([], { 'pane list': listOut }))).toEqual([
+				{ id: 'w3:p9', mux: 'herdr', harness: undefined, cwd: undefined },
 			])
 		})
 
