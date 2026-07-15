@@ -1,12 +1,13 @@
 import { resolve } from 'node:path'
 import type {
 	LivePane,
-	OpenInNewWorktreeOptions,
 	SessionAdapter,
 	SessionReadOptions,
 	SessionTarget,
+	WorktreeWorkspace,
+	WorktreeWorkspaceCapability,
 } from './session.ts'
-import type { Worktree } from './worktree.ts'
+import { normalizeWorktreePath } from './worktree.ts'
 
 /**
  * herdr backend — detected via `$HERDR_ENV`. herdr (https://herdr.dev) is an agent-aware terminal
@@ -23,17 +24,20 @@ export const herdrSessionAdapter: SessionAdapter = {
 
 	open(exec, opts) {
 		const at = opts.at ?? 'tab'
+		// herdr takes a label at birth for a workspace and a tab, but not for a split — a pane is
+		// named afterwards, via `pane rename`.
+		const label = opts.label ? ['--label', opts.label] : []
 		let id: string
 		if (at === 'workspace') {
 			// A genuinely separate workspace, not a pane inside the caller's current one — `--no-focus`
 			// so spawning doesn't steal the caller's attention/focus.
-			const out = exec('herdr', ['workspace', 'create', '--cwd', opts.cwd, '--no-focus'])
+			const out = exec('herdr', ['workspace', 'create', '--cwd', opts.cwd, ...label, '--no-focus'])
 			if (!out) throw new Error('herdr workspace create failed')
 			id = parseRootPaneId(out, 'herdr workspace create')
 		} else if (at === 'tab') {
 			// A real tab in the current window, not a split pane — `--no-focus` so spawning doesn't
 			// steal the caller's attention/focus, matching workspace/worktree spawns.
-			const out = exec('herdr', ['tab', 'create', '--cwd', opts.cwd, '--no-focus'])
+			const out = exec('herdr', ['tab', 'create', '--cwd', opts.cwd, ...label, '--no-focus'])
 			if (!out) throw new Error('herdr tab create failed')
 			id = parseRootPaneId(out, 'herdr tab create')
 		} else {
@@ -41,6 +45,7 @@ export const herdrSessionAdapter: SessionAdapter = {
 			const out = exec('herdr', ['pane', 'split', '--current', '--direction', direction, '--cwd', opts.cwd])
 			if (!out) throw new Error('herdr pane split failed')
 			id = parsePaneId(out)
+			if (opts.label) exec('herdr', ['pane', 'rename', id, opts.label])
 		}
 		const target: SessionTarget = { id }
 		// `pane run` submits text plus Enter atomically — herdr's documented preference over
@@ -49,29 +54,7 @@ export const herdrSessionAdapter: SessionAdapter = {
 		return target
 	},
 
-	openInNewWorktree(exec, opts: OpenInNewWorktreeOptions) {
-		// `herdr worktree create` both creates the git worktree AND opens it in a new workspace,
-		// nested under the source workspace in herdr's own sidebar — one call instead of a plain
-		// `git worktree add` followed by a disconnected `workspace create`. `--cwd` pins the source
-		// repo explicitly rather than relying on the caller's ambient process cwd (matches how the
-		// plain git adapter always passes `-C primaryRoot`); `--no-focus` avoids stealing focus.
-		const out = exec('herdr', [
-			'worktree',
-			'create',
-			'--cwd',
-			opts.primaryRoot,
-			'--branch',
-			opts.branch,
-			'--path',
-			opts.path,
-			'--no-focus',
-		])
-		if (!out) throw new Error('herdr worktree create failed')
-		const { paneId, worktree } = parseWorktreeCreate(out)
-		const target: SessionTarget = { id: paneId }
-		exec('herdr', ['pane', 'run', paneId, opts.launch])
-		return { target, worktree }
-	},
+	worktree: herdrWorktreeCapability(),
 
 	send(exec, target, text) {
 		exec('herdr', ['pane', 'run', target.id, text])
@@ -194,6 +177,58 @@ function parsePaneLocation(out: string | null, id: string): { workspaceId: strin
 }
 
 /**
+ * herdr binds a git worktree to a workspace as a first-class record, and that binding is what its UI
+ * groups a repo's checkouts by. Only `worktree create`/`worktree open` produce it: `git worktree add`
+ * followed by `workspace create --cwd <checkout>` yields a workspace herdr does not know is a
+ * worktree at all, left out of the group. Hence this capability — see `WorktreeWorkspaceCapability`
+ * for what it deliberately does not own.
+ *
+ * Every call pins the source repo with `--cwd <primaryRoot>` rather than relying on the caller's
+ * ambient process cwd (matching how the git adapter always passes `-C <primaryRoot>`), and opens
+ * with `--no-focus` so spawning never steals the caller's attention.
+ */
+function herdrWorktreeCapability(): WorktreeWorkspaceCapability {
+	return {
+		createInWorkspace(exec, opts) {
+			const args = ['worktree', 'create', '--cwd', opts.primaryRoot, '--branch', opts.branch, '--path', opts.path]
+			if (opts.base) args.push('--base', opts.base)
+			// Without this herdr names the workspace after the checkout path's basename, because we always
+			// pass `--path` — it would use the branch if we let it choose the location itself.
+			if (opts.label) args.push('--label', opts.label)
+			args.push('--no-focus')
+			const out = exec('herdr', args)
+			if (!out) throw new Error('herdr worktree create failed')
+			const created = parseWorktreeWorkspace(out, 'herdr worktree create')
+			// `pane run` submits text plus Enter atomically — herdr's documented preference over
+			// send-text + send-keys Enter for launching a command.
+			if (opts.launch) exec('herdr', ['pane', 'run', created.target.id, opts.launch])
+			return created
+		},
+
+		openInWorkspace(exec, opts) {
+			const args = ['worktree', 'open', '--cwd', opts.primaryRoot, '--path', opts.path]
+			if (opts.label) args.push('--label', opts.label)
+			args.push('--no-focus')
+			const out = exec('herdr', args)
+			if (!out) throw new Error('herdr worktree open failed')
+			const opened = parseWorktreeWorkspace(out, 'herdr worktree open')
+			if (opts.launch) exec('herdr', ['pane', 'run', opened.target.id, opts.launch])
+			return opened
+		},
+
+		bindings(exec, opts) {
+			return parseWorktreeBindings(exec('herdr', ['worktree', 'list', '--cwd', opts.primaryRoot]))
+		},
+
+		releaseWorkspace(exec, workspace) {
+			// Closes the workspace only — the checkout stays on disk for `git worktree remove` to take
+			// under cyber-mux's own gates. Verified against a live herdr: worktrees survive the close.
+			exec('herdr', ['workspace', 'close', workspace])
+		},
+	}
+}
+
+/**
  * `herdr workspace create` and `herdr tab create` both emit their new root pane at
  * `.result.root_pane.pane_id` (a different path than `pane split`'s `.result.pane.pane_id`).
  * `label` names the command in error messages (e.g. "herdr workspace create").
@@ -212,27 +247,65 @@ function parseRootPaneId(out: string, label: string): string {
 }
 
 /**
- * `herdr worktree create` emits the same `.result.root_pane.pane_id` shape as `workspace create`,
- * plus the created worktree's own checkout at `.result.worktree.{path,branch}`.
+ * `herdr worktree create` and `herdr worktree open` emit the same envelope: the root pane at
+ * `.result.root_pane.pane_id` (as `workspace create` does), the checkout at
+ * `.result.worktree.{path,branch}`, and the bound workspace at `.result.workspace.workspace_id`.
+ * That workspace id IS the binding — the whole reason to route through these instead of plain git.
+ * `label` names the command in error messages (e.g. "herdr worktree create").
  */
-function parseWorktreeCreate(out: string): { paneId: string; worktree: Worktree } {
+function parseWorktreeWorkspace(out: string, label: string): WorktreeWorkspace {
 	let parsed: unknown
 	try {
 		parsed = JSON.parse(out)
 	} catch {
-		throw new Error(`herdr worktree create returned unparseable output: ${out.slice(0, 200)}`)
+		throw new Error(`${label} returned unparseable output: ${out.slice(0, 200)}`)
 	}
 	const result = (parsed as { result?: unknown })?.result as
-		| { root_pane?: { pane_id?: unknown }; worktree?: { path?: unknown; branch?: unknown } }
+		| {
+				root_pane?: { pane_id?: unknown }
+				workspace?: { workspace_id?: unknown }
+				worktree?: { path?: unknown; branch?: unknown }
+		  }
 		| undefined
 	const paneId = result?.root_pane?.pane_id
+	const workspace = result?.workspace?.workspace_id
 	const path = result?.worktree?.path
 	const branch = result?.worktree?.branch
 	if (typeof paneId !== 'string' || paneId === '') {
-		throw new Error(`herdr worktree create output had no result.root_pane.pane_id: ${out.slice(0, 200)}`)
+		throw new Error(`${label} output had no result.root_pane.pane_id: ${out.slice(0, 200)}`)
 	}
 	if (typeof path !== 'string' || path === '' || typeof branch !== 'string' || branch === '') {
-		throw new Error(`herdr worktree create output had no result.worktree.{path,branch}: ${out.slice(0, 200)}`)
+		throw new Error(`${label} output had no result.worktree.{path,branch}: ${out.slice(0, 200)}`)
 	}
-	return { paneId, worktree: { root: resolve(path), branch } }
+	if (typeof workspace !== 'string' || workspace === '') {
+		throw new Error(`${label} output had no result.workspace.workspace_id: ${out.slice(0, 200)}`)
+	}
+	return { target: { id: paneId }, worktree: { root: resolve(path), branch }, workspace }
+}
+
+/**
+ * `herdr worktree list` reports every worktree of the repo, each carrying `open_workspace_id` ONLY
+ * while a workspace is currently open on it. Everything else it reports (branch, linked, prunable)
+ * is herdr re-reading git — deliberately ignored here; git answers those for every backend.
+ * Defensive like `listPanes`: a query that cannot be read reports nothing rather than throwing.
+ */
+function parseWorktreeBindings(out: string | null): Map<string, string> {
+	const bindings = new Map<string, string>()
+	if (!out) return bindings
+	let parsed: unknown
+	try {
+		parsed = JSON.parse(out)
+	} catch {
+		return bindings
+	}
+	const worktrees = ((parsed as { result?: { worktrees?: unknown } })?.result?.worktrees ?? []) as unknown
+	if (!Array.isArray(worktrees)) return bindings
+	for (const entry of worktrees as { path?: unknown; open_workspace_id?: unknown }[]) {
+		const path = entry?.path
+		const workspace = entry?.open_workspace_id
+		if (typeof path === 'string' && path !== '' && typeof workspace === 'string' && workspace !== '') {
+			bindings.set(normalizeWorktreePath(path), workspace)
+		}
+	}
+	return bindings
 }

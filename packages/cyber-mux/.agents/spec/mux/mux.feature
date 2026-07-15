@@ -50,10 +50,14 @@ Feature: mux — the pane abstraction
     Then the tmux adapter opens a new window in the caller's current session, visible in its status bar
     And it does not open a detached (new-session) session the attached client cannot see or beam to
 
-  Scenario: herdr --at workspace creates its own workspace nested under the source
+  Scenario: herdr --at workspace creates its own workspace, unattached to any repo
     Given a caller running cyber-mux open --at workspace with $HERDR_ENV set and no $TMUX
     When open runs
-    Then the herdr adapter creates a new workspace of its own, nested under the source workspace
+    Then the herdr adapter creates a new workspace of its own
+    # `open` is placement, not worktree work: the workspace it creates carries no worktree record,
+    # so herdr does not know it belongs to a repo and never groups it. Grouping is the `worktree`
+    # verbs' job — see the worktree/workspace binding section below.
+    And the workspace is not bound to any repo, even when its cwd is a worktree checkout
 
   Scenario Outline: --at tab opens a new tab in the current window, never a split pane
     Given a caller running cyber-mux open --at tab with <env>
@@ -157,3 +161,156 @@ Feature: mux — the pane abstraction
     Given a backend with a mix of panes, some running an agent/harness and some running none
     When it runs cyber-mux list
     Then every live pane is reported, whether or not it is running an agent/harness
+
+  # ── git worktree helpers — the checkout itself, plain git, no legion/unit-registry concepts ──
+
+  Scenario: worktree add defaults the path to a sibling of the primary checkout
+    Given a caller running cyber-mux worktree add --branch <branch> with no --path
+    When add runs
+    Then the worktree is checked out at <parent>/<repo>.worktrees/<branch>, never nested inside the primary checkout
+
+  Scenario: worktree add honors an explicit --path
+    Given a caller running cyber-mux worktree add --branch <branch> --path <path>
+    When add runs
+    Then the worktree is checked out at <path>
+
+  Scenario: worktree remove refuses the primary checkout, even with --force
+    Given a caller running cyber-mux worktree remove against the primary checkout's own path
+    When remove runs
+    Then it refuses and removes nothing, regardless of --force
+
+  Scenario: worktree remove tolerates a worktree already gone from disk
+    Given a caller running cyber-mux worktree remove against a path with nothing checked out there
+    When remove runs
+    Then it succeeds without error and runs no git removal command
+
+  Scenario: worktree remove refuses uncommitted changes unless --force
+    Given a caller running cyber-mux worktree remove against a worktree with uncommitted changes and no --force
+    When remove runs
+    Then it refuses, naming --force as the way to discard them
+
+  Scenario: worktree remove --force discards uncommitted changes without the dirty check
+    Given a caller running cyber-mux worktree remove --force against a worktree with uncommitted changes
+    When remove runs
+    Then it removes the worktree without checking whether it is dirty
+
+  # ── worktree/workspace binding — only the backend that binds can group ──
+  # A backend either binds a worktree to a workspace as a first-class record, or has no such concept.
+  # That binding is what a multiplexer's UI groups a repo's checkouts by, and it is the ONLY thing a
+  # backend contributes here: every other worktree fact is git's, on every backend.
+
+  Scenario: a bare worktree add opens nothing, so there is nothing to group
+    Given a caller running cyber-mux worktree add --branch <branch> with neither --at nor --launch
+    When add runs outside any multiplexer
+    Then it creates the checkout with plain git and opens no pane, tab, or workspace
+    And it reports no pane and no workspace
+    And it resolves no backend — with nothing opened, a multiplexer has no part in the answer
+
+  Scenario: worktree add --launch defaults the placement to workspace
+    Given a caller running cyber-mux worktree add --branch <branch> --launch <command> with no --at
+    When add runs
+    Then the worktree opens in a workspace — a launch wants its own space, not a pane crowding the caller's
+    And workspace is the only placement a backend can bind a worktree to
+
+  Scenario Outline: worktree add --at workspace groups the worktree where the backend binds
+    Given a caller running cyber-mux worktree add --branch <branch> --at workspace with <env>
+    When add runs
+    Then the worktree opens through the <adapter> adapter and is reported as <grouping>
+
+    Examples:
+      | env                         | adapter | grouping                                      |
+      | $HERDR_ENV set and no $TMUX | herdr   | bound to a workspace — one call creates both  |
+      | $TMUX set                   | tmux    | ungrouped — tmux binds nothing, plain git plus a plain open |
+
+  Scenario Outline: a placement the binding cannot serve falls back rather than failing
+    Given a caller running cyber-mux worktree add --branch <branch> --at <placement> on a backend that binds
+    When add runs
+    Then the checkout is created with plain git and opened at <placement>
+    # A worktree open in a split pane is a complete, useful outcome — just not a grouped one.
+    # Refusing would make identical flags succeed on tmux and fail on herdr, which is the backend
+    # leak this seam exists to prevent.
+    And it succeeds, reporting no workspace rather than refusing
+    And the caller is told the placement is what cost the grouping
+
+    Examples:
+      | placement  |
+      | pane:right |
+      | pane:down  |
+      | tab        |
+
+  Scenario: a backend that binds nothing falls back without reporting a lost grouping
+    Given a caller running cyber-mux worktree add --branch <branch> --at pane:right with $TMUX set
+    When add runs
+    Then it reports no workspace, and does not claim the placement cost anything
+    And no grouping was ever on offer — there is nothing to report about a feature the backend lacks
+
+  Scenario Outline: --label names whatever --at opened, on every backend
+    Given a caller running cyber-mux with --at <placement> --label <name>
+    When the command opens the space
+    Then <name> is the label of the <herdr tier> on herdr, and the <tmux tier> on tmux
+    And a backend that takes the label at birth passes it in the opening call, and one that does not names the space immediately after
+
+    Examples:
+      | placement  | herdr tier      | tmux tier   |
+      | workspace  | workspace label | window name |
+      | tab        | tab label       | window name |
+      | pane:right | pane label      | pane title  |
+
+  Scenario: --label omitted leaves each backend its own default
+    Given a caller running cyber-mux with no --label
+    When the command opens the space
+    Then no name is passed, and the backend's own default label stands
+    # worktree add always passes --path to hold the sibling convention across backends, and herdr
+    # labels a workspace by the checkout path's basename when given one — using the branch only when
+    # it picks the location itself. So branch `feat/deep/name` defaults to a workspace named `name`.
+    And a worktree's default label is the checkout path's basename on a backend that derives one from the path
+
+  Scenario: worktree open groups a worktree that plain git created earlier
+    Given a worktree checked out by a bare cyber-mux worktree add, open in no workspace
+    When a caller runs cyber-mux worktree open against its path on a backend that binds
+    Then the existing checkout opens in a workspace bound to it, and no new checkout is created
+    And add-now-group-later is a first-class story rather than a dead end
+
+  Scenario: worktree list reads every worktree fact from git, whatever the backend
+    Given a backend that also enumerates worktrees and reports a branch of its own
+    When a caller runs cyber-mux worktree list
+    Then every reported path, branch, linked, and prunable value is git's answer, not the backend's
+    And two backends can never report a different branch for the same worktree
+
+  Scenario: worktree list reports which workspace each worktree is open in
+    Given a repo whose worktrees are open in workspaces on a backend that binds
+    When a caller runs cyber-mux worktree list
+    Then each worktree is reported with the workspace bound to it, and those open in none report no workspace
+    And the primary checkout is listed alongside the linked worktrees
+
+  Scenario: worktree list and remove answer outside a multiplexer
+    Given a caller running cyber-mux worktree list or worktree remove with no multiplexer to be inside of
+    When the command runs
+    Then it answers from git rather than failing — a multiplexer can only add a binding to the answer
+
+  Scenario: worktree remove refuses uncommitted changes BEFORE releasing the workspace
+    Given a worktree with uncommitted changes, open in a workspace on a backend that binds
+    When a caller runs cyber-mux worktree remove without --force
+    Then it refuses, naming --force as the way to discard them
+    And the workspace is still open — a refused removal has no side effect
+
+  Scenario: worktree remove releases the workspace before git removes the checkout
+    Given a worktree open in a workspace on a backend that binds
+    When a caller runs cyber-mux worktree remove and every gate passes
+    Then the workspace is closed first, and only then does git remove the checkout
+    And no workspace is left pointing at a directory that no longer exists
+
+  Scenario: worktree remove releases the workspace of a checkout already gone from disk
+    Given a path with nothing checked out there, still open in a workspace on a backend that binds
+    When a caller runs cyber-mux worktree remove against it
+    Then the workspace is closed, and no git removal command runs
+    And the orphan this prevents — a workspace bound to a checkout that is gone — cannot persist
+
+  Scenario: worktree removal is never delegated to the backend
+    Given a backend with a worktree-removal primitive of its own
+    When a caller runs cyber-mux worktree remove on it
+    Then removal is cyber-mux's own gates plus git, and the backend is asked only to release its binding
+    # The backend's own removal addresses a workspace, not a path, so it cannot even reach an unbound
+    # worktree — delegating would make a destructive operation's safety depend on whether a workspace
+    # happened to be open.
+    And the gates behave identically whether or not a workspace is open on the worktree

@@ -13,18 +13,23 @@ export const tmuxSessionAdapter: SessionAdapter = {
 		// (`new-session -d`) session — that is invisible to the attached client and unreachable by
 		// beaming; a truly-detached session would be a separate explicit intent.
 		const at = opts.at ?? 'tab'
-		const args =
-			at === 'workspace' || at === 'tab'
-				? // `-d` keeps focus on the caller (opens the window in the background) — without it tmux
-					// switches the attached client to the new window, stealing the caller's focus. The
-					// returned pane id and subsequent `send-keys -t` still target the new pane.
-					['new-window', '-d', '-c', opts.cwd, '-P', '-F', '#{pane_id}']
-				: at === 'pane:down'
-					? ['split-window', '-v', '-c', opts.cwd, '-P', '-F', '#{pane_id}']
-					: ['split-window', '-h', '-c', opts.cwd, '-P', '-F', '#{pane_id}']
+		const window = at === 'workspace' || at === 'tab'
+		const args = window
+			? // `-d` keeps focus on the caller (opens the window in the background) — without it tmux
+				// switches the attached client to the new window, stealing the caller's focus. The
+				// returned pane id and subsequent `send-keys -t` still target the new pane.
+				['new-window', '-d', '-c', opts.cwd, '-P', '-F', '#{pane_id}']
+			: at === 'pane:down'
+				? ['split-window', '-v', '-c', opts.cwd, '-P', '-F', '#{pane_id}']
+				: ['split-window', '-h', '-c', opts.cwd, '-P', '-F', '#{pane_id}']
+		// A window takes its name at birth — `-n` also turns tmux's `automatic-rename` off for it, so
+		// the name survives whatever the pane goes on to run. A pane has no such flag; its title is
+		// set after the split.
+		if (window && opts.label) args.splice(1, 0, '-n', opts.label)
 		const pane = exec('tmux', args)
 		if (!pane) throw new Error(`tmux ${args[0]} failed`)
 		const target: SessionTarget = { id: pane }
+		if (!window && opts.label) exec('tmux', ['select-pane', '-t', pane, '-T', opts.label])
 		if (opts.launch) tmuxSessionAdapter.send(exec, target, opts.launch)
 		return target
 	},

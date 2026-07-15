@@ -153,5 +153,32 @@ describe('spec:cyber-mux/mux', () => {
 		it('listPanes() returns empty when tmux reports nothing', () => {
 			expect(tmuxSessionAdapter.listPanes(() => null)).toEqual([])
 		})
+
+		it('binds no worktree to a workspace — tmux has no workspace tier to bind one to', () => {
+			expect(tmuxSessionAdapter.worktree).toBeUndefined()
+		})
+
+		it.each(['workspace', 'tab'] as const)('open({at:%s}) names the window with --label', (at) => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'new-window': '%9' })
+			tmuxSessionAdapter.open(exec, { cwd: '/unit', at, label: 'my-name' })
+			// `-n` at birth also turns tmux's automatic-rename off, so the name survives what the pane runs.
+			expect(calls[0]).toEqual(['new-window', '-n', 'my-name', '-d', '-c', '/unit', '-P', '-F', '#{pane_id}'])
+		})
+
+		it('open({at:pane:right}) titles the pane after the split — tmux has no name flag there', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'split-window': '%9' })
+			tmuxSessionAdapter.open(exec, { cwd: '/unit', at: 'pane:right', label: 'my-name' })
+			expect(calls[0]).toEqual(['split-window', '-h', '-c', '/unit', '-P', '-F', '#{pane_id}'])
+			expect(calls[1]).toEqual(['select-pane', '-t', '%9', '-T', 'my-name'])
+		})
+
+		it('open() names nothing when no label is given', () => {
+			const calls: string[][] = []
+			tmuxSessionAdapter.open(fakeExec(calls, { 'new-window': '%9' }), { cwd: '/unit', at: 'tab' })
+			expect(calls[0]).not.toContain('-n')
+			expect(calls.some((c) => c[0] === 'select-pane')).toBe(false)
+		})
 	})
 })

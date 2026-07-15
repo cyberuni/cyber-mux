@@ -1,13 +1,21 @@
 import { Command } from 'commander'
 import { selectSessionAdapter } from './backend.ts'
-import { AT_OPTION, FORMAT_OPTION } from './cli-options.ts'
+import { AT_OPTION, FORMAT_OPTION, LABEL_OPTION } from './cli-options.ts'
 import { type Exec, realExec } from './exec.ts'
 import { currentPane, probeMultiplexer } from './mux-probe.ts'
 import { output, printFields, printTable } from './output.ts'
-import type { SessionPlacement, SessionTarget } from './session.ts'
+import type { SessionAdapter, SessionPlacement, SessionTarget } from './session.ts'
+import { gitWorktreeAdapter, resolvePrimaryRoot, resolveWorktreePath } from './worktree.ts'
+import {
+	addAndOpenWorktree,
+	listWorktrees,
+	type OpenedWorktree,
+	openExistingWorktree,
+	removeWorktree,
+} from './worktree-session.ts'
 
 // NOTE: the verb surface below is provisional — the behavior spec is the next milestone and may
-// rename verbs, adjust flags, or split concerns (e.g. move `nudge`/`worktree` behind their own group).
+// rename verbs, adjust flags, or split concerns (e.g. move `nudge` behind its own group).
 
 /** The env/exec pair every command resolves the backend and multiplexer through — injected so the
  * CLI can be driven deterministically in tests, the same seam every adapter already takes. */
@@ -34,6 +42,47 @@ function adapter(deps: CliDeps) {
 
 function target(pane: string): SessionTarget {
 	return { id: pane }
+}
+
+/**
+ * The backend when there is one, `undefined` when there is not — unlike `adapter`, which fails. For
+ * verbs whose subject is git (`worktree list`/`remove`): a multiplexer can only ever add to the
+ * answer, so its absence must not deny one.
+ */
+function optionalAdapter(deps: CliDeps): SessionAdapter | undefined {
+	try {
+		return selectSessionAdapter(deps.env, deps.exec)
+	} catch {
+		return undefined
+	}
+}
+
+/**
+ * One shape for every verb that opens a worktree. `printFields` drops nullish entries, so a bare
+ * `worktree add` — which opens nothing — prints exactly what it always did.
+ */
+function reportOpenedWorktree(opened: OpenedWorktree): void {
+	output(
+		{
+			root: opened.worktree.root,
+			branch: opened.worktree.branch,
+			pane: opened.target.id,
+			workspace: opened.workspace ?? null,
+		},
+		() =>
+			printFields({
+				root: opened.worktree.root,
+				branch: opened.worktree.branch,
+				pane: opened.target.id,
+				workspace: opened.workspace,
+			}),
+	)
+	// The backend could have grouped this worktree and the placement is what cost it — worth saying
+	// out loud, on stderr so `--format json` stays clean on stdout. `workspace: null` is the
+	// machine-readable half of the same report.
+	if (opened.degraded) {
+		process.stderr.write('opened ungrouped — pass --at workspace to group it with the repo\n')
+	}
 }
 
 function doctorCommand(deps: CliDeps): Command {
@@ -92,9 +141,10 @@ function openCommand(deps: CliDeps): Command {
 		.option('--launch <command>', 'Command line to run in the new pane')
 		.option('--cwd <path>', 'Working directory for the new pane', process.cwd())
 		.addOption(AT_OPTION)
+		.addOption(LABEL_OPTION)
 		.addOption(FORMAT_OPTION)
-		.action((opts: { launch?: string; cwd: string; at?: SessionPlacement }) => {
-			const t = adapter(deps).open(deps.exec, { cwd: opts.cwd, launch: opts.launch, at: opts.at })
+		.action((opts: { launch?: string; cwd: string; at?: SessionPlacement; label?: string }) => {
+			const t = adapter(deps).open(deps.exec, { cwd: opts.cwd, launch: opts.launch, at: opts.at, label: opts.label })
 			output({ pane: t.id }, () => printFields({ pane: t.id }))
 		})
 }
@@ -180,6 +230,131 @@ function existsCommand(deps: CliDeps): Command {
 		})
 }
 
+function worktreeAddCommand(deps: CliDeps): Command {
+	return new Command('add')
+		.description('Create a git worktree, and open it when given a placement — grouped where the backend can')
+		.requiredOption('--branch <branch>', 'Branch to create the worktree on')
+		.option('--path <path>', 'Where to check out the worktree (default: a sibling of the primary checkout)')
+		.option('--base <ref>', 'Start point for the new branch (default: the current HEAD)')
+		.option('--launch <command>', 'Command to run in the opened pane; implies --at workspace')
+		.addOption(AT_OPTION)
+		.addOption(LABEL_OPTION)
+		.addOption(FORMAT_OPTION)
+		.action(
+			(opts: {
+				branch: string
+				path?: string
+				base?: string
+				launch?: string
+				at?: SessionPlacement
+				label?: string
+			}) => {
+				try {
+					const primaryRoot = resolvePrimaryRoot(deps.exec)
+					const path = opts.path ?? resolveWorktreePath(primaryRoot, opts.branch)
+					// With no placement asked for, this IS a git operation: it creates a checkout, opens
+					// nothing, and needs no multiplexer to be inside of. There is nothing to group because
+					// nothing was opened — `worktree open` is how that checkout gets grouped later.
+					if (!opts.at && !opts.launch) {
+						const wt = gitWorktreeAdapter.add(deps.exec, { primaryRoot, path, branch: opts.branch, base: opts.base })
+						output({ root: wt.root, branch: wt.branch, pane: null, workspace: null }, () =>
+							printFields({ root: wt.root, branch: wt.branch }),
+						)
+						return
+					}
+					// A launch with no placement wants its own space, not a pane crowding the caller's — and
+					// `workspace` is the only placement a backend can bind a worktree to.
+					const at = opts.at ?? 'workspace'
+					reportOpenedWorktree(
+						addAndOpenWorktree(deps.exec, adapter(deps), {
+							primaryRoot,
+							branch: opts.branch,
+							path,
+							base: opts.base,
+							launch: opts.launch,
+							at,
+							label: opts.label,
+						}),
+					)
+				} catch (err) {
+					fail(err instanceof Error ? err.message : String(err))
+				}
+			},
+		)
+}
+
+function worktreeOpenCommand(deps: CliDeps): Command {
+	return new Command('open')
+		.description('Open an existing git worktree — groups it with the repo where the backend can bind')
+		.argument('<path>', 'Worktree path to open')
+		.option('--launch <command>', 'Command to run in the opened pane')
+		.addOption(AT_OPTION)
+		.addOption(LABEL_OPTION)
+		.addOption(FORMAT_OPTION)
+		.action((path: string, opts: { launch?: string; at?: SessionPlacement; label?: string }) => {
+			try {
+				const primaryRoot = resolvePrimaryRoot(deps.exec)
+				reportOpenedWorktree(
+					openExistingWorktree(deps.exec, adapter(deps), {
+						primaryRoot,
+						path,
+						launch: opts.launch,
+						at: opts.at,
+						label: opts.label,
+					}),
+				)
+			} catch (err) {
+				fail(err instanceof Error ? err.message : String(err))
+			}
+		})
+}
+
+function worktreeListCommand(deps: CliDeps): Command {
+	return new Command('list')
+		.description('Every worktree of the repo, and the workspace each is open in')
+		.addOption(FORMAT_OPTION)
+		.action(() => {
+			try {
+				const primaryRoot = resolvePrimaryRoot(deps.exec)
+				const worktrees = listWorktrees(deps.exec, optionalAdapter(deps), { primaryRoot })
+				output({ worktrees }, () =>
+					printTable(worktrees, [
+						{ label: 'branch', get: (w) => w.branch ?? '(detached)' },
+						{ label: 'root', get: (w) => w.root },
+						{ label: 'linked', get: (w) => String(w.linked) },
+						{ label: 'workspace', get: (w) => w.workspace ?? '' },
+					]),
+				)
+			} catch (err) {
+				fail(err instanceof Error ? err.message : String(err))
+			}
+		})
+}
+
+function worktreeRemoveCommand(deps: CliDeps): Command {
+	return new Command('remove')
+		.description('Remove a git worktree — refuses the primary checkout and uncommitted changes unless --force')
+		.argument('<path>', 'Worktree path to remove')
+		.option('--force', 'Discard uncommitted changes in the worktree')
+		.action((path: string, opts: { force?: boolean }) => {
+			try {
+				const primaryRoot = resolvePrimaryRoot(deps.exec)
+				removeWorktree(deps.exec, optionalAdapter(deps), path, { primaryRoot, force: opts.force })
+			} catch (err) {
+				fail(err instanceof Error ? err.message : String(err))
+			}
+		})
+}
+
+function worktreeCommand(deps: CliDeps): Command {
+	const cmd = new Command('worktree').description('Git worktree helpers for spawning/tearing down a session')
+	cmd.addCommand(worktreeAddCommand(deps))
+	cmd.addCommand(worktreeOpenCommand(deps))
+	cmd.addCommand(worktreeListCommand(deps))
+	cmd.addCommand(worktreeRemoveCommand(deps))
+	return cmd
+}
+
 /** Assembles the full command tree against the given deps (real env/exec in production, fakes in
  * tests). `exitOverride()` makes commander throw a `CommanderError` instead of calling
  * `process.exit` directly, so a rejection (e.g. an invalid `--at` choice) is catchable both here and
@@ -201,6 +376,7 @@ export function buildProgram(deps: CliDeps = REAL_DEPS): Command {
 	program.addCommand(closeCommand(deps))
 	program.addCommand(listCommand(deps))
 	program.addCommand(existsCommand(deps))
+	program.addCommand(worktreeCommand(deps))
 
 	return program
 }

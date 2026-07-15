@@ -150,5 +150,161 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls).toHaveLength(1)
 			expect(calls.some((c) => c[0] === 'send-keys')).toBe(false)
 		})
+
+		describe('worktree', () => {
+			/** git replies keyed by the sub-command word (rev-parse, add, remove); every call is recorded. */
+			function fakeGitExec(
+				calls: string[][],
+				responses: Record<string, string | null> = { 'rev-parse': '/repo/.git' },
+			): Exec {
+				return (_cmd, args) => {
+					calls.push(args)
+					const key = args.includes('worktree') ? args[args.indexOf('worktree') + 1]! : args[0]!
+					return responses[key] ?? ''
+				}
+			}
+
+			it('worktree add defaults the path to a sibling of the primary checkout', async () => {
+				const calls: string[][] = []
+				const exec = fakeGitExec(calls)
+				const program = buildProgram({ env: {}, exec })
+				await run(program, ['worktree', 'add', '--branch', 'my-feature'])
+				expect(calls.at(-1)).toEqual([
+					'-C',
+					'/repo',
+					'worktree',
+					'add',
+					'-b',
+					'my-feature',
+					'/repo.worktrees/my-feature',
+				])
+				expect(logs.join('\n')).toContain('/repo.worktrees/my-feature')
+			})
+
+			it('worktree add honors an explicit --path', async () => {
+				const calls: string[][] = []
+				const exec = fakeGitExec(calls)
+				const program = buildProgram({ env: {}, exec })
+				await run(program, ['worktree', 'add', '--branch', 'my-feature', '--path', '/elsewhere/x'])
+				expect(calls.at(-1)).toEqual(['-C', '/repo', 'worktree', 'add', '-b', 'my-feature', '/elsewhere/x'])
+			})
+
+			it('worktree remove refuses the primary checkout', async () => {
+				vi.spyOn(process, 'exit').mockImplementation(() => {
+					throw new Error('exit')
+				})
+				const exec = fakeGitExec([])
+				const program = buildProgram({ env: {}, exec })
+				await expect(run(program, ['worktree', 'remove', '/repo'])).rejects.toThrow()
+			})
+
+			it('worktree add opens nothing and needs no multiplexer when given no placement', async () => {
+				const calls: string[][] = []
+				// env: {} — no backend at all. A bare add must still work; it is a git operation.
+				const program = buildProgram({ env: {}, exec: fakeGitExec(calls) })
+				await run(program, ['worktree', 'add', '--branch', 'my-feature'])
+				expect(calls.every((c) => c.includes('worktree') || c[0] === 'rev-parse')).toBe(true)
+				expect(logs.join('\n')).not.toContain('pane')
+			})
+
+			it('worktree add passes --base as the branch start-point', async () => {
+				const calls: string[][] = []
+				const program = buildProgram({ env: {}, exec: fakeGitExec(calls) })
+				await run(program, ['worktree', 'add', '--branch', 'b', '--path', '/x', '--base', 'origin/main'])
+				expect(calls.at(-1)).toEqual(['-C', '/repo', 'worktree', 'add', '-b', 'b', '/x', 'origin/main'])
+			})
+
+			/** herdr replies keyed by the first two args; git is answered on the same fake, by binary. */
+			function fakeRepoExec(calls: string[][], responses: Record<string, string | null> = {}): Exec {
+				return (cmd, args) => {
+					calls.push([cmd, ...args])
+					if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
+					return responses[args.slice(0, 2).join(' ')] ?? ''
+				}
+			}
+
+			const worktreeOut = JSON.stringify({
+				result: {
+					root_pane: { pane_id: 'w9:p1' },
+					workspace: { workspace_id: 'w9' },
+					worktree: { path: '/repo.worktrees/my-feature', branch: 'my-feature' },
+				},
+			})
+
+			it('worktree add --at workspace groups the worktree through a backend that binds', async () => {
+				const calls: string[][] = []
+				const exec = fakeRepoExec(calls, { 'worktree create': worktreeOut })
+				const program = buildProgram({ env: { CYBER_MUX: 'herdr' }, exec })
+				await run(program, ['worktree', 'add', '--branch', 'my-feature', '--at', 'workspace'])
+				expect(calls.some((c) => c[0] === 'herdr' && c[1] === 'worktree' && c[2] === 'create')).toBe(true)
+				expect(logs.join('\n')).toContain('w9')
+			})
+
+			it('worktree add --launch implies the workspace placement — the only one that can bind', async () => {
+				const calls: string[][] = []
+				const exec = fakeRepoExec(calls, { 'worktree create': worktreeOut })
+				const program = buildProgram({ env: { CYBER_MUX: 'herdr' }, exec })
+				await run(program, ['worktree', 'add', '--branch', 'my-feature', '--launch', 'claude'])
+				expect(calls.some((c) => c[0] === 'herdr' && c[1] === 'worktree' && c[2] === 'create')).toBe(true)
+				expect(calls.some((c) => c[0] === 'herdr' && c[1] === 'pane' && c[2] === 'run')).toBe(true)
+			})
+
+			it('worktree add reports an ungrouped placement on stderr rather than failing', async () => {
+				const stderr: string[] = []
+				vi.spyOn(process.stderr, 'write').mockImplementation((line) => {
+					stderr.push(String(line))
+					return true
+				})
+				const calls: string[][] = []
+				const exec = fakeRepoExec(calls, { 'pane split': '{"result":{"pane":{"pane_id":"w3:pB"}}}' })
+				const program = buildProgram({ env: { CYBER_MUX: 'herdr' }, exec })
+				await run(program, ['worktree', 'add', '--branch', 'my-feature', '--at', 'pane:right'])
+				// It succeeded — a worktree in a split pane is a complete outcome...
+				expect(calls.some((c) => c[0] === 'git' && c.includes('add'))).toBe(true)
+				// ...and the caller is told what the placement cost.
+				expect(stderr.join('')).toContain('--at workspace')
+			})
+
+			it('worktree open groups an existing checkout', async () => {
+				const calls: string[][] = []
+				const exec = fakeRepoExec(calls, { 'worktree open': worktreeOut })
+				const program = buildProgram({ env: { CYBER_MUX: 'herdr' }, exec })
+				await run(program, ['worktree', 'open', '/repo.worktrees/my-feature'])
+				expect(calls.some((c) => c[0] === 'herdr' && c[1] === 'worktree' && c[2] === 'open')).toBe(true)
+				expect(logs.join('\n')).toContain('w9')
+			})
+
+			it('worktree list reports every worktree and the workspace each is open in', async () => {
+				const porcelain = [
+					'worktree /repo',
+					'branch refs/heads/main',
+					'',
+					'worktree /repo.worktrees/x',
+					'branch refs/heads/feat/x',
+					'',
+				].join('\n')
+				const bindings = JSON.stringify({
+					result: { worktrees: [{ path: '/repo.worktrees/x', open_workspace_id: 'w21' }] },
+				})
+				const exec: Exec = (cmd, args) => {
+					if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : porcelain
+					return args.slice(0, 2).join(' ') === 'worktree list' ? bindings : ''
+				}
+				const program = buildProgram({ env: { CYBER_MUX: 'herdr' }, exec })
+				await run(program, ['worktree', 'list'])
+				const out = logs.join('\n')
+				expect(out).toContain('main')
+				expect(out).toContain('feat/x')
+				expect(out).toContain('w21')
+			})
+
+			it('worktree list answers outside a multiplexer — listing is a git question', async () => {
+				const porcelain = ['worktree /repo', 'branch refs/heads/main', ''].join('\n')
+				const exec: Exec = (_cmd, args) => (args[0] === 'rev-parse' ? '/repo/.git' : porcelain)
+				const program = buildProgram({ env: {}, exec })
+				await run(program, ['worktree', 'list'])
+				expect(logs.join('\n')).toContain('main')
+			})
+		})
 	})
 })
