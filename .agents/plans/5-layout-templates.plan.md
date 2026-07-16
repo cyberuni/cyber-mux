@@ -2,7 +2,7 @@
 cr: 5-layout-templates
 project: cyber-mux
 source: https://github.com/cyberuni/cyber-mux/issues/5
-status: in-progress
+status: done
 todos:
   - content: Author layout/ node — README.md use cases + layout.feature scenarios
     status: completed
@@ -19,11 +19,11 @@ todos:
   - content: cli.ts — layout list|show|validate group; --layout on open + worktree add
     status: completed
   - content: Fix impl-gate findings — root-leaf env honored at region tier, root-leaf dir honored or warned+reported honestly
-    status: in_progress
+    status: completed
   - content: Impl gate — cold impl-judge over frozen scenarios
-    status: in_progress
+    status: completed
   - content: Handoff — PR closing #5, changeset, follow-ups
-    status: pending
+    status: completed
 ---
 
 # CR 5 — layout templates
@@ -60,5 +60,7 @@ Design: [`docs/design/layout-templates.md`](../../docs/design/layout-templates.m
 
 ## NEXT
 
-Author `packages/cyber-mux/.agents/spec/layout/README.md` + `layout.feature` from the design doc,
-scoped to the intake decisions above. Then spec gate.
+Nothing — the mission landed. PR #7 carries the CR and closes #5 on merge; the project spec is at
+`implemented` with both gates recorded. Five backlog follow-ups were recorded and filed as #8–#12.
+
+Keep this brief until #7 merges and is doctrine-distilled.
