@@ -4,6 +4,9 @@ import type { LivePane, SessionAdapter, SessionReadOptions, SessionTarget } from
 export const tmuxSessionAdapter: SessionAdapter = {
 	name: 'tmux',
 
+	// `split-window -l N%` sizes a split; see `toTmuxSize` for the inversion it needs.
+	canSizeSplits: true,
+
 	open(exec, opts) {
 		// tmux has fewer tiers than herdr: no Workspace level, and "window" is its name for the Tab
 		// concept. So both 'workspace' (own visible space) and 'tab' collapse to a new WINDOW — the
@@ -20,14 +23,22 @@ export const tmuxSessionAdapter: SessionAdapter = {
 		// %0 instead). The two coincide while a human types, which is why the default reads as
 		// harmless and is not; a program driving a pane it is not focused on gets the wrong one.
 		const from = !window && opts.from ? ['-t', opts.from.id] : []
+		// A window is not sized against a pane, so `-l` only reaches a split. Empty unless the caller
+		// asks, so every existing call site emits byte-identical argv.
+		const size = !window && opts.ratio != null ? ['-l', toTmuxSize(opts.ratio)] : []
+		// `-e` is on BOTH `split-window` and `new-window` (tmux(1): `new-window [-abdkPS] [-c
+		// start-directory] [-e environment] ...`), so env is native at EVERY tier — which it must be:
+		// a layout's root pane is the region's own pane, born by the window open rather than by any
+		// split, so scoping this to the split path would silently drop that pane's env.
+		const env = opts.env ? Object.entries(opts.env).flatMap(([k, v]) => ['-e', `${k}=${v}`]) : []
 		const args = window
 			? // `-d` keeps focus on the caller (opens the window in the background) — without it tmux
 				// switches the attached client to the new window, stealing the caller's focus. The
 				// returned pane id and subsequent `send-keys -t` still target the new pane.
-				['new-window', '-d', '-c', opts.cwd, '-P', '-F', '#{pane_id}']
+				['new-window', '-d', ...env, '-c', opts.cwd, '-P', '-F', '#{pane_id}']
 			: at === 'pane:down'
-				? ['split-window', '-v', ...from, '-c', opts.cwd, '-P', '-F', '#{pane_id}']
-				: ['split-window', '-h', ...from, '-c', opts.cwd, '-P', '-F', '#{pane_id}']
+				? ['split-window', '-v', ...from, ...size, ...env, '-c', opts.cwd, '-P', '-F', '#{pane_id}']
+				: ['split-window', '-h', ...from, ...size, ...env, '-c', opts.cwd, '-P', '-F', '#{pane_id}']
 		// A window takes its name at birth — `-n` also turns tmux's `automatic-rename` off for it, so
 		// the name survives whatever the pane goes on to run. A pane has no such flag; its title is
 		// set after the split.
@@ -131,6 +142,19 @@ export const tmuxSessionAdapter: SessionAdapter = {
 			})
 			.filter((p) => p.id !== '')
 	},
+}
+
+/**
+ * `ratio` is the fraction kept by the ORIGINAL pane; tmux's `-l` sizes the NEW one. So this INVERTS
+ * — `1 - ratio` — where herdr's `--ratio` passes the same number through untouched. The two backends
+ * genuinely convert in opposite directions, and applying the inversion to both (or to neither) is
+ * the way this gets silently backwards: a 0.333 template would size the original pane at 67%.
+ *
+ * Percent rather than cells: tmux takes `-l` as either, and a percentage is the only form that means
+ * the same thing without first querying the region's size.
+ */
+function toTmuxSize(ratio: number): string {
+	return `${Math.round((1 - ratio) * 100)}%`
 }
 
 /**

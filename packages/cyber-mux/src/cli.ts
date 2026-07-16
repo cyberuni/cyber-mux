@@ -1,7 +1,23 @@
-import { Command, CommanderError } from 'commander'
+import { Command, CommanderError, Option } from 'commander'
 import { callerPane, selectSessionAdapter } from './backend.ts'
 import { AT_OPTION, FORMAT_OPTION, LABEL_OPTION } from './cli-options.ts'
 import { type Exec, realExec } from './exec.ts'
+import { collectPanes, type LayoutTemplate, parseLayout, resolveTree, validateLayout } from './layout.ts'
+import {
+	applyLayoutToRegion,
+	LayoutApplyError,
+	type LayoutManifest,
+	layoutRootPane,
+	openLayout,
+} from './layout-session.ts'
+import {
+	type LayoutStore,
+	layoutDirs,
+	listLayouts,
+	type ResolvedLayout,
+	realLayoutStore,
+	resolveLayout,
+} from './layout-store.ts'
 import { currentPane, probeMultiplexer } from './mux-probe.ts'
 import { output, printFields, printTable } from './output.ts'
 import type { SessionAdapter, SessionPlacement, SessionTarget } from './session.ts'
@@ -22,9 +38,20 @@ import {
 export interface CliDeps {
 	env: NodeJS.ProcessEnv
 	exec: Exec
+	/** The filesystem half, for the `layout` group — injected for the same reason `exec` is: it is the
+	 * only way `layout` can be driven hermetically in tests, with no real templates on disk. Optional
+	 * at this boundary so a caller that drives no layout command need not know the seam exists. */
+	store?: LayoutStore
 }
 
-const REAL_DEPS: CliDeps = { env: process.env, exec: realExec }
+/** `CliDeps` with every optional dep resolved — what each command is actually handed. */
+interface Deps {
+	env: NodeJS.ProcessEnv
+	exec: Exec
+	store: LayoutStore
+}
+
+const REAL_DEPS: CliDeps = { env: process.env, exec: realExec, store: realLayoutStore }
 
 function fail(message: string): never {
 	process.stderr.write(`${message}\n`)
@@ -32,7 +59,7 @@ function fail(message: string): never {
 }
 
 /** Resolve the adapter for the multiplexer this process is inside, failing cleanly when there is none. */
-function adapter(deps: CliDeps) {
+function adapter(deps: Deps) {
 	try {
 		return selectSessionAdapter(deps.env, deps.exec)
 	} catch (err) {
@@ -49,7 +76,7 @@ function target(pane: string): SessionTarget {
  * verbs whose subject is git (`worktree list`/`remove`): a multiplexer can only ever add to the
  * answer, so its absence must not deny one.
  */
-function optionalAdapter(deps: CliDeps): SessionAdapter | undefined {
+function optionalAdapter(deps: Deps): SessionAdapter | undefined {
 	try {
 		return selectSessionAdapter(deps.env, deps.exec)
 	} catch {
@@ -85,7 +112,144 @@ function reportOpenedWorktree(opened: OpenedWorktree): void {
 	}
 }
 
-function doctorCommand(deps: CliDeps): Command {
+/**
+ * `--layout`, the exact sibling of `--launch`: both answer "what runs in the space you are opening",
+ * one for a single pane and one for a pool. Mutually exclusive by construction — commander rejects
+ * the pair rather than picking a winner.
+ */
+function layoutOption(): Option {
+	return new Option('--layout <name>', 'Named layout template to build in the opened space').conflicts('launch')
+}
+
+/**
+ * Resolve, parse and validate a template — the whole answer BEFORE any side effect. A typo in a
+ * layout name must never leave a worktree behind, and an invalid template must not either, so every
+ * caller runs this before it opens or creates anything.
+ */
+function resolveTemplate(
+	deps: Deps,
+	opts: { name?: string; file?: string },
+): ResolvedLayout & { template: LayoutTemplate } {
+	let resolved: ResolvedLayout
+	try {
+		resolved = resolveLayout({ name: opts.name, file: opts.file, store: deps.store, exec: deps.exec, env: deps.env })
+	} catch (err) {
+		return fail(err instanceof Error ? err.message : String(err))
+	}
+	let parsed: unknown
+	try {
+		parsed = parseLayout(resolved.raw)
+	} catch (err) {
+		return fail(`${resolved.path}: ${err instanceof Error ? err.message : String(err)}`)
+	}
+	// Every error at once, one per line, each naming its own JSON path — first-only would make a
+	// template with three mistakes take three runs to fix.
+	const errors = validateLayout(parsed, resolved.stem)
+	if (errors.length > 0) fail(errors.join('\n'))
+	return { ...resolved, template: parsed as LayoutTemplate }
+}
+
+/** The apply manifest — the handoff. `printFields`/`printTable` for humans, the raw object for json. */
+function reportManifest(manifest: LayoutManifest, extra: Record<string, string | null> = {}): void {
+	output({ ...extra, ...manifest }, () => {
+		printFields({ ...extra, layout: manifest.layout, cwd: manifest.cwd, workspace: manifest.workspace })
+		printTable(manifest.panes, [
+			{ label: 'label', get: (p) => p.label ?? '' },
+			{ label: 'pane', get: (p) => p.pane },
+			{ label: 'dir', get: (p) => p.dir },
+			{ label: 'command', get: (p) => p.command ?? '' },
+		])
+	})
+}
+
+/**
+ * A walk that threw reports what it BUILT and exits 1, killing nothing. Rolling back would mean
+ * killing panes, and a kill is not obviously safer than a half-built layout the caller can see and
+ * finish.
+ */
+function reportApplyFailure(err: unknown, extra: Record<string, string | null> = {}): never {
+	if (err instanceof LayoutApplyError) {
+		reportManifest(err.manifest, extra)
+		return fail(err.message)
+	}
+	return fail(err instanceof Error ? err.message : String(err))
+}
+
+function layoutListCommand(deps: Deps): Command {
+	return new Command('list')
+		.description('Every layout template resolvable from here, with its source and pane count')
+		.addOption(FORMAT_OPTION)
+		.action(() => {
+			try {
+				const dirs = layoutDirs(deps.exec, deps.env)
+				const layouts = listLayouts(deps.store, dirs).map((entry) => {
+					// A template that does not parse still LISTS — `list` answers "what is here", and
+					// `validate` answers "is it any good". Conflating them would hide a broken file entirely.
+					let panes = 0
+					try {
+						const raw = deps.store.read(entry.path)
+						if (raw) panes = collectPanes(resolveTree(parseLayout(raw) as LayoutTemplate)).length
+					} catch {
+						panes = 0
+					}
+					return { ...entry, panes }
+				})
+				output({ layouts }, () =>
+					printTable(layouts, [
+						{ label: 'name', get: (l) => l.name },
+						{ label: 'source', get: (l) => l.source },
+						{ label: 'panes', get: (l) => String(l.panes) },
+						{ label: 'shadowed', get: (l) => (l.shadowed ? 'yes' : '') },
+					]),
+				)
+			} catch (err) {
+				fail(err instanceof Error ? err.message : String(err))
+			}
+		})
+}
+
+function layoutShowCommand(deps: Deps): Command {
+	return new Command('show')
+		.description('Print a resolved template as JSON')
+		.argument('[name]', 'Template name')
+		.option('--file <path>', 'Read this path instead, skipping resolution entirely')
+		.option('--desugar', 'Print the canonical tree panes/arrange expands to — exactly what apply builds')
+		.action((name: string | undefined, opts: { file?: string; desugar?: boolean }) => {
+			if (!name && !opts.file) fail('layout show needs a template name or --file <path>')
+			const { template } = resolveTemplate(deps, { name, file: opts.file })
+			// One desugarer, so `--desugar` and the walk can never disagree about what a flat template means.
+			console.log(JSON.stringify(opts.desugar ? resolveTree(template) : template, null, 2))
+		})
+}
+
+function layoutValidateCommand(deps: Deps): Command {
+	return new Command('validate')
+		.description('Validate a template — exit 0 valid, 1 invalid, every error at once with a JSON path')
+		.argument('[name]', 'Template name')
+		.option('--file <path>', 'Validate this path instead, skipping resolution entirely')
+		.action((name: string | undefined, opts: { file?: string }) => {
+			if (!name && !opts.file) fail('layout validate needs a template name or --file <path>')
+			// resolveTemplate already fails with every error, one per line. Reaching here means valid, and
+			// a valid template says nothing at all — this is the CI hook, so silence is the pass signal.
+			resolveTemplate(deps, { name, file: opts.file })
+		})
+}
+
+/**
+ * The `layout` group manages templates and nothing else — there is deliberately no `layout apply`.
+ * Applying is what `open` and `worktree add` already do, told to build N panes instead of one, so it
+ * is `--layout` on those verbs. Every subcommand here takes a FILE as its subject, so none of them
+ * touches a multiplexer.
+ */
+function layoutCommand(deps: Deps): Command {
+	const cmd = new Command('layout').description('Manage named layout templates (apply one with open/worktree --layout)')
+	cmd.addCommand(layoutListCommand(deps))
+	cmd.addCommand(layoutShowCommand(deps))
+	cmd.addCommand(layoutValidateCommand(deps))
+	return cmd
+}
+
+function doctorCommand(deps: Deps): Command {
 	return new Command('doctor')
 		.description('Probe the multiplexer, self pane, and backend; print fast-path pins')
 		.addOption(FORMAT_OPTION)
@@ -120,7 +284,7 @@ function doctorCommand(deps: CliDeps): Command {
 		})
 }
 
-function modeCommand(deps: CliDeps): Command {
+function modeCommand(deps: Deps): Command {
 	return new Command('mode')
 		.description('Report the detected session backend (tmux / herdr / none)')
 		.addOption(FORMAT_OPTION)
@@ -135,15 +299,36 @@ function modeCommand(deps: CliDeps): Command {
 		})
 }
 
-function openCommand(deps: CliDeps): Command {
+function openCommand(deps: Deps): Command {
 	return new Command('open')
 		.description('Open a new pane/tab/workspace, optionally launching a command in it')
 		.option('--launch <command>', 'Command line to run in the new pane')
+		.addOption(layoutOption())
 		.option('--cwd <path>', 'Working directory for the new pane', process.cwd())
 		.addOption(AT_OPTION)
 		.addOption(LABEL_OPTION)
 		.addOption(FORMAT_OPTION)
-		.action((opts: { launch?: string; cwd: string; at?: SessionPlacement; label?: string }) => {
+		.action((opts: { launch?: string; layout?: string; cwd: string; at?: SessionPlacement; label?: string }) => {
+			if (opts.layout) {
+				// Resolve and validate BEFORE touching a backend, so an unresolvable name opens nothing.
+				const { template } = resolveTemplate(deps, { name: opts.layout })
+				const a = adapter(deps)
+				try {
+					reportManifest(
+						openLayout(deps.exec, a, template, {
+							cwd: opts.cwd,
+							// A fresh space is empty by construction, which is why the pool defaults there.
+							at: opts.at ?? 'workspace',
+							label: opts.label ?? template.name,
+							dirExists: deps.store.dirExists,
+							from: callerPane(a, deps.env),
+						}),
+					)
+				} catch (err) {
+					reportApplyFailure(err)
+				}
+				return
+			}
 			const a = adapter(deps)
 			const t = a.open(deps.exec, {
 				cwd: opts.cwd,
@@ -160,7 +345,7 @@ function openCommand(deps: CliDeps): Command {
  * Enter the caller did not write — supplying one is `submit`'s job. Bare `cyber-mux send` is
  * incomplete input, not a content request: commander answers it with help on stderr and exit 1
  * (see the AXI content-first note in `.agents/spec/axi/README.md`). */
-function sendCommand(deps: CliDeps): Command {
+function sendCommand(deps: Deps): Command {
 	const send = new Command('send').description('Drive a pane without taking its turn (text | keys)')
 	send.addCommand(
 		new Command('text')
@@ -186,7 +371,7 @@ function sendCommand(deps: CliDeps): Command {
 	return send
 }
 
-function submitCommand(deps: CliDeps): Command {
+function submitCommand(deps: Deps): Command {
 	return new Command('submit')
 		.description("Take a pane's turn: type the text if given, then always press Enter (no text = bare-Enter flush)")
 		.argument('<pane>', 'Target pane id')
@@ -196,7 +381,7 @@ function submitCommand(deps: CliDeps): Command {
 		})
 }
 
-function readCommand(deps: CliDeps): Command {
+function readCommand(deps: Deps): Command {
 	return new Command('read')
 		.description("Capture a pane's output")
 		.argument('<pane>', 'Target pane id')
@@ -207,7 +392,7 @@ function readCommand(deps: CliDeps): Command {
 		})
 }
 
-function focusCommand(deps: CliDeps): Command {
+function focusCommand(deps: Deps): Command {
 	return new Command('focus')
 		.description('Beam the attached client to a pane')
 		.argument('<pane>', 'Target pane id')
@@ -220,7 +405,7 @@ function focusCommand(deps: CliDeps): Command {
 		})
 }
 
-function closeCommand(deps: CliDeps): Command {
+function closeCommand(deps: Deps): Command {
 	return new Command('close')
 		.description('Close a pane')
 		.argument('<pane>', 'Target pane id')
@@ -229,7 +414,7 @@ function closeCommand(deps: CliDeps): Command {
 		})
 }
 
-function listCommand(deps: CliDeps): Command {
+function listCommand(deps: Deps): Command {
 	return new Command('list')
 		.description('Enumerate every live pane the current backend can see')
 		.addOption(FORMAT_OPTION)
@@ -246,7 +431,7 @@ function listCommand(deps: CliDeps): Command {
 		})
 }
 
-function existsCommand(deps: CliDeps): Command {
+function existsCommand(deps: Deps): Command {
 	return new Command('exists')
 		.description('Probe whether a single pane is still live (exit 0 = live, 1 = gone)')
 		.argument('<pane>', 'Target pane id')
@@ -258,13 +443,14 @@ function existsCommand(deps: CliDeps): Command {
 		})
 }
 
-function worktreeAddCommand(deps: CliDeps): Command {
+function worktreeAddCommand(deps: Deps): Command {
 	return new Command('add')
 		.description('Create a git worktree, and open it when given a placement — grouped where the backend can')
 		.requiredOption('--branch <branch>', 'Branch to create the worktree on')
 		.option('--path <path>', 'Where to check out the worktree (default: a sibling of the primary checkout)')
 		.option('--base <ref>', 'Start point for the new branch (default: the current HEAD)')
 		.option('--launch <command>', 'Command to run in the opened pane; implies --at workspace')
+		.addOption(layoutOption())
 		.addOption(AT_OPTION)
 		.addOption(LABEL_OPTION)
 		.addOption(FORMAT_OPTION)
@@ -274,11 +460,51 @@ function worktreeAddCommand(deps: CliDeps): Command {
 				path?: string
 				base?: string
 				launch?: string
+				layout?: string
 				at?: SessionPlacement
 				label?: string
 			}) => {
 				try {
 					const primaryRoot = resolvePrimaryRoot(deps.exec)
+					// The primary flow this feature exists for. Resolve and validate FIRST: a typo in a
+					// layout name, or a template that sets a cwd, must not leave a worktree behind.
+					if (opts.layout) {
+						const { template } = resolveTemplate(deps, { name: opts.layout })
+						const path = opts.path ?? resolveWorktreePath(primaryRoot, opts.branch)
+						const a = adapter(deps)
+						// No `launch`: the worktree's workspace opens blank and its root pane becomes the
+						// tree's root region — not a wasted pane, the one the walk splits into. Its `env`
+						// must ride in HERE, though: no split ever births that pane, so this is the only
+						// call that can set it.
+						const opened = addAndOpenWorktree(deps.exec, a, {
+							primaryRoot,
+							branch: opts.branch,
+							path,
+							base: opts.base,
+							env: layoutRootPane(template).env,
+							at: 'workspace',
+							label: opts.label ?? template.name,
+							from: callerPane(a, deps.env),
+						})
+						const extra = { root: opened.worktree.root, branch: opened.worktree.branch }
+						try {
+							reportManifest(
+								applyLayoutToRegion(deps.exec, a, template, {
+									root: opened.target,
+									cwd: opened.worktree.root,
+									workspace: opened.workspace ?? null,
+									// The route that opened the region is the only thing that knows whether it
+									// could carry the root pane's env; the walk falls back to a prefix when not.
+									rootEnvHonored: opened.envHonored,
+									dirExists: deps.store.dirExists,
+								}),
+								extra,
+							)
+						} catch (err) {
+							reportApplyFailure(err, extra)
+						}
+						return
+					}
 					const path = opts.path ?? resolveWorktreePath(primaryRoot, opts.branch)
 					// With no placement asked for, this IS a git operation: it creates a checkout, opens
 					// nothing, and needs no multiplexer to be inside of. There is nothing to group because
@@ -313,7 +539,7 @@ function worktreeAddCommand(deps: CliDeps): Command {
 		)
 }
 
-function worktreeOpenCommand(deps: CliDeps): Command {
+function worktreeOpenCommand(deps: Deps): Command {
 	return new Command('open')
 		.description('Open an existing git worktree — groups it with the repo where the backend can bind')
 		.argument('<path>', 'Worktree path to open')
@@ -341,7 +567,7 @@ function worktreeOpenCommand(deps: CliDeps): Command {
 		})
 }
 
-function worktreeListCommand(deps: CliDeps): Command {
+function worktreeListCommand(deps: Deps): Command {
 	return new Command('list')
 		.description('Every worktree of the repo, and the workspace each is open in')
 		.addOption(FORMAT_OPTION)
@@ -363,7 +589,7 @@ function worktreeListCommand(deps: CliDeps): Command {
 		})
 }
 
-function worktreeRemoveCommand(deps: CliDeps): Command {
+function worktreeRemoveCommand(deps: Deps): Command {
 	return new Command('remove')
 		.description('Remove a git worktree — refuses the primary checkout and uncommitted changes unless --force')
 		.argument('<path>', 'Worktree path to remove')
@@ -378,7 +604,7 @@ function worktreeRemoveCommand(deps: CliDeps): Command {
 		})
 }
 
-function worktreeCommand(deps: CliDeps): Command {
+function worktreeCommand(deps: Deps): Command {
 	const cmd = new Command('worktree').description('Git worktree helpers for spawning/tearing down a session')
 	cmd.addCommand(worktreeAddCommand(deps))
 	cmd.addCommand(worktreeOpenCommand(deps))
@@ -402,7 +628,8 @@ function exitOverrideTree(command: Command): Command {
  * instead of calling `process.exit` directly and a rejection (an invalid `--at` choice, a missing
  * argument, a bare `send`) is catchable both here and in tests, rather than killing the test
  * runner's own process. */
-export function buildProgram(deps: CliDeps = REAL_DEPS): Command {
+export function buildProgram(cliDeps: CliDeps = REAL_DEPS): Command {
+	const deps: Deps = { env: cliDeps.env, exec: cliDeps.exec, store: cliDeps.store ?? realLayoutStore }
 	const program = new Command()
 		.name('cyber-mux')
 		.description('Cross-multiplexer pane control — one contract over tmux and herdr')
@@ -419,6 +646,7 @@ export function buildProgram(deps: CliDeps = REAL_DEPS): Command {
 	program.addCommand(listCommand(deps))
 	program.addCommand(existsCommand(deps))
 	program.addCommand(worktreeCommand(deps))
+	program.addCommand(layoutCommand(deps))
 
 	return exitOverrideTree(program)
 }

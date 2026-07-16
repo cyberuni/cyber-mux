@@ -127,6 +127,126 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls[0]).toEqual(['pane', 'split', '--current', '--direction', 'right', '--cwd', '/unit'])
 		})
 
+		// `ratio` is the fraction kept by the ORIGINAL pane, and herdr's `--ratio` sizes exactly that —
+		// so it passes through UNCONVERTED, where tmux's `-l` sizes the new pane and inverts. Measured
+		// against 0.7.4 rather than documented, which is why the literal flag is asserted, not trusted.
+		it('open({ratio}) passes the ratio through unconverted, because herdr sizes the ORIGINAL pane', () => {
+			const calls: string[][] = []
+			const splitOut = JSON.stringify({ result: { pane: { pane_id: 'w3:pB' } } })
+			const exec = fakeExec(calls, { 'pane split': splitOut })
+			herdrSessionAdapter.open(exec, { cwd: '/u', at: 'pane:right', from: { id: 'w3:pA' }, ratio: 0.333 })
+			expect(calls[0]).toEqual(['pane', 'split', 'w3:pA', '--direction', 'right', '--cwd', '/u', '--ratio', '0.333'])
+			// 0.667 would be the inversion tmux needs — applying it here too is the failure this catches.
+			expect(calls[0]).not.toContain('0.667')
+		})
+
+		it('open() with no ratio emits no --ratio, leaving herdr its own even default', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'pane split': JSON.stringify({ result: { pane: { pane_id: 'w3:pB' } } }) })
+			herdrSessionAdapter.open(exec, { cwd: '/u', at: 'pane:right' })
+			expect(calls[0]).not.toContain('--ratio')
+		})
+
+		it('open({env}) sets each variable natively at the pane’s birth via a repeatable --env', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'pane split': JSON.stringify({ result: { pane: { pane_id: 'w3:pB' } } }) })
+			herdrSessionAdapter.open(exec, { cwd: '/u', at: 'pane:right', env: { ROLE: 'worker', TIER: 'gpu' } })
+			expect(calls[0]).toEqual([
+				'pane',
+				'split',
+				'--current',
+				'--direction',
+				'right',
+				'--cwd',
+				'/u',
+				'--env',
+				'ROLE=worker',
+				'--env',
+				'TIER=gpu',
+			])
+		})
+
+		it('open({env}) with no launch yields a blank shell with the env set, running nothing', () => {
+			// Native env means no command to prefix is needed, so a warm pane with no command is coherent.
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'pane split': JSON.stringify({ result: { pane: { pane_id: 'w3:pB' } } }) })
+			herdrSessionAdapter.open(exec, { cwd: '/u', at: 'pane:right', env: { ROLE: 'worker' } })
+			expect(calls[0]).toContain('ROLE=worker')
+			expect(calls.some((c) => c[1] === 'run')).toBe(false)
+		})
+
+		it('declares that it can size a split, so a ratio is never degraded away on herdr', () => {
+			expect(herdrSessionAdapter.canSizeSplits).toBe(true)
+		})
+
+		// `WorkspaceCreateParams` and `TabCreateParams` both carry a native `env` Record in herdr's
+		// socket schema (protocol 16), and the CLI takes the same repeatable `--env` there as `pane
+		// split` does — verified against 0.7.4. Env is therefore native at EVERY tier, which a layout's
+		// root pane depends on: it is born by the region open, never by a split.
+		it('open({at:workspace, env}) sets env natively on the workspace via --env', () => {
+			const calls: string[][] = []
+			const createOut = JSON.stringify({ result: { root_pane: { pane_id: 'w7:p1' } } })
+			const exec = fakeExec(calls, { 'workspace create': createOut })
+			herdrSessionAdapter.open(exec, { cwd: '/unit', at: 'workspace', env: { ROLE: 'planner', TIER: 'cpu' } })
+			expect(calls[0]).toEqual([
+				'workspace',
+				'create',
+				'--cwd',
+				'/unit',
+				'--env',
+				'ROLE=planner',
+				'--env',
+				'TIER=cpu',
+				'--no-focus',
+			])
+		})
+
+		it('open({at:tab, env}) sets env natively on the tab via --env', () => {
+			const calls: string[][] = []
+			const tabOut = JSON.stringify({ result: { root_pane: { pane_id: 'w3:pT' } } })
+			const exec = fakeExec(calls, { 'tab create': tabOut })
+			herdrSessionAdapter.open(exec, { cwd: '/unit', at: 'tab', env: { ROLE: 'planner' } })
+			expect(calls[0]).toEqual(['tab', 'create', '--cwd', '/unit', '--env', 'ROLE=planner', '--no-focus'])
+		})
+
+		// `worktree create` is the ONE tier with no env: `WorktreeCreateParams` is
+		// `[base, branch, cwd, focus, label, path, workspace_id]`, and 0.7.4 answers `--env` with
+		// `unknown option: --env` — which Exec turns into a null and the adapter into a thrown "worktree
+		// create failed". So passing env here must emit NOTHING, or the primary flow (a worktree pool
+		// whose root pane sets ROLE) breaks outright. The adapter stays honest about its backend; the
+		// caller honors env with the command prefix instead.
+		it('createInWorkspace({env}) emits NO --env — worktree create has no such param', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'worktree create': worktreeOut() })
+			worktree().createInWorkspace(exec, {
+				primaryRoot: '/repo',
+				branch: 'feat-x',
+				path: '/repo.worktrees/feat-x',
+				env: { ROLE: 'planner' },
+			})
+			expect(calls[0]).toEqual([
+				'worktree',
+				'create',
+				'--cwd',
+				'/repo',
+				'--branch',
+				'feat-x',
+				'--path',
+				'/repo.worktrees/feat-x',
+				'--no-focus',
+			])
+			expect(calls[0]).not.toContain('--env')
+			expect(calls[0]).not.toContain('ROLE=planner')
+		})
+
+		it('openInWorkspace({env}) emits NO --env either — worktree open has no such param', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'worktree open': worktreeOut() })
+			worktree().openInWorkspace(exec, { primaryRoot: '/repo', path: '/p', env: { ROLE: 'planner' } })
+			expect(calls[0]).toEqual(['worktree', 'open', '--cwd', '/repo', '--path', '/p', '--no-focus'])
+			expect(calls[0]).not.toContain('--env')
+		})
+
 		it('open({from}) is ignored by tab/workspace, which split nothing', () => {
 			const calls: string[][] = []
 			const created = JSON.stringify({

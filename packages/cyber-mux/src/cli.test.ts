@@ -2,6 +2,7 @@ import type { Command } from 'commander'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildProgram } from './cli.ts'
 import type { Exec } from './exec.ts'
+import type { LayoutStore } from './layout-store.ts'
 
 /** No ancestry available — forces every probe onto the env fast-path/hint, deterministic in CI. */
 const noAncestry: Exec = () => null
@@ -449,6 +450,566 @@ describe('spec:cyber-mux/mux', () => {
 			const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: fakeTmuxExec(calls) })
 			await expect(run(program, ['submit'])).rejects.toThrow(/pane/)
 			expect(calls).toEqual([])
+		})
+
+		describe('layout', () => {
+			const REPO_DIR = '/repo/.cyber-mux/layouts'
+			const USER_DIR = '/home/u/.config/cyber-mux/layouts'
+			/** Pinned, so the user directory is never the runner's real ~/.config. */
+			const XDG = { XDG_CONFIG_HOME: '/home/u/.config' }
+
+			const POOL_4 = { name: 'pool-4', arrange: 'tiled', panes: [{ label: 'w1' }, { label: 'w2' }] }
+			const AGENT_POOL_3 = {
+				name: 'agent-pool-3',
+				root: {
+					type: 'split',
+					direction: 'right',
+					ratio: 0.5,
+					first: { type: 'pane', label: 'planner', command: 'claude' },
+					second: {
+						type: 'split',
+						direction: 'down',
+						ratio: 0.5,
+						first: { type: 'pane', label: 'worker-a', command: 'claude' },
+						second: { type: 'pane', label: 'worker-b', command: 'claude' },
+					},
+				},
+			}
+
+			/** A `LayoutStore` over an in-memory file map — no templates on disk, ever. */
+			function fakeStore(files: Record<string, unknown>): LayoutStore & { reads: string[] } {
+				const raw: Record<string, string> = {}
+				for (const [path, body] of Object.entries(files)) {
+					raw[path] = typeof body === 'string' ? body : JSON.stringify(body)
+				}
+				const reads: string[] = []
+				return {
+					reads,
+					read(path) {
+						reads.push(path)
+						return raw[path] ?? null
+					},
+					list(dir) {
+						return Object.keys(raw)
+							.filter((p) => p.startsWith(`${dir}/`))
+							.map((p) => p.slice(dir.length + 1, -'.json'.length))
+							.sort()
+					},
+					dirExists: () => true,
+				}
+			}
+
+			function repo(name: string): string {
+				return `${REPO_DIR}/${name}.json`
+			}
+			function user(name: string): string {
+				return `${USER_DIR}/${name}.json`
+			}
+
+			/** git (rev-parse + worktree) and tmux on one fake, each call recorded as [cmd, ...args]. */
+			function repoExec(calls: string[][], responses: Record<string, string> = {}): Exec {
+				let n = 0
+				return (cmd, args) => {
+					calls.push([cmd, ...args])
+					if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
+					if (cmd === 'tmux') {
+						return args[0] === 'new-window' || args[0] === 'split-window' ? `%${n++}` : ''
+					}
+					const key = args.slice(0, 2).join(' ')
+					if (key === 'pane split') return JSON.stringify({ result: { pane: { pane_id: `w9:p${n++}` } } })
+					return responses[key] ?? ''
+				}
+			}
+
+			/** `fail()` exits the process; make that observable instead of fatal to the runner. */
+			function catchExit() {
+				return vi.spyOn(process, 'exit').mockImplementation((code) => {
+					throw new Error(`exit:${code}`)
+				})
+			}
+
+			/** Capture stderr rather than swallowing it, for the tests that assert on an error's text. */
+			function captureStderr(): string[] {
+				const lines: string[] = []
+				vi.spyOn(process.stderr, 'write').mockImplementation((line) => {
+					lines.push(String(line))
+					return true
+				})
+				return lines
+			}
+
+			/** `output()` reads the real process.argv to pick a format, so a json test must supply one. */
+			async function withArgv<T>(argv: string[], fn: () => Promise<T>): Promise<T> {
+				const original = process.argv
+				process.argv = ['node', 'cyber-mux', ...argv]
+				try {
+					return await fn()
+				} finally {
+					process.argv = original
+				}
+			}
+
+			describe('resolving a template by name', () => {
+				it('--file skips resolution entirely — neither layouts directory is consulted', async () => {
+					const store = fakeStore({ './scratch/pool.json': { name: 'pool', panes: [{ label: 'a' }] } })
+					const program = buildProgram({ env: XDG, exec: repoExec([]), store })
+					await run(program, ['layout', 'show', '--file', './scratch/pool.json'])
+					expect(store.reads).toEqual(['./scratch/pool.json'])
+					expect(logs.join('\n')).toContain('"name": "pool"')
+				})
+
+				it('a repo template shadows a user template of the same name', async () => {
+					const store = fakeStore({
+						[repo('pool-4')]: POOL_4,
+						[user('pool-4')]: { name: 'pool-4', panes: [{ label: 'mine-only' }] },
+					})
+					const program = buildProgram({ env: XDG, exec: repoExec([]), store })
+					await run(program, ['layout', 'show', 'pool-4'])
+					// The repo's answer is the one shown — a personal template must not silently displace it.
+					expect(logs.join('\n')).toContain('"w1"')
+					expect(logs.join('\n')).not.toContain('mine-only')
+				})
+
+				it('layout list reports the user template a repo template shadows', async () => {
+					const store = fakeStore({ [repo('pool-4')]: POOL_4, [user('pool-4')]: POOL_4 })
+					const program = buildProgram({ env: XDG, exec: repoExec([]), store })
+					await run(program, ['layout', 'list'])
+					const rows = logs.join('\n').split('\n')
+					expect(rows.some((r) => r.includes('pool-4') && r.includes('repo') && !r.includes('yes'))).toBe(true)
+					expect(rows.some((r) => r.includes('pool-4') && r.includes('user') && r.includes('yes'))).toBe(true)
+				})
+
+				it('a user template resolves when the repo has none of that name, and lists as user', async () => {
+					const store = fakeStore({ [user('scratch')]: { name: 'scratch', panes: [{ label: 'a' }, { label: 'b' }] } })
+					const program = buildProgram({ env: XDG, exec: repoExec([]), store })
+					await run(program, ['layout', 'show', 'scratch'])
+					expect(logs.join('\n')).toContain('"name": "scratch"')
+
+					logs.length = 0
+					await run(buildProgram({ env: XDG, exec: repoExec([]), store }), ['layout', 'list'])
+					expect(logs.join('\n')).toMatch(/scratch\s+user/)
+				})
+
+				it('the repo layouts directory resolves through the primary checkout, not the caller’s cwd', async () => {
+					// The template exists ONLY under the primary checkout — which is exactly the case of a
+					// worktree whose branch predates it. Reading ./.cyber-mux would report not-found here.
+					const store = fakeStore({ [repo('pool-4')]: POOL_4 })
+					const program = buildProgram({ env: XDG, exec: repoExec([]), store })
+					await run(program, ['layout', 'show', 'pool-4'])
+					expect(store.reads).toEqual([repo('pool-4')])
+				})
+
+				it('a name that resolves nowhere exits 1 naming both directories it searched', async () => {
+					catchExit()
+					const stderr = captureStderr()
+					const program = buildProgram({ env: XDG, exec: repoExec([]), store: fakeStore({}) })
+					await expect(run(program, ['layout', 'show', 'pool-9'])).rejects.toThrow('exit:1')
+					expect(stderr.join('')).toContain(REPO_DIR)
+					expect(stderr.join('')).toContain(USER_DIR)
+				})
+
+				// Two roads to the same exit-1: the stem rule refuses most of these, while `-pool` never
+				// reaches it — commander rejects it as an unknown option first. Both exit 1 having read
+				// nothing, which is the property that matters: a name is a lookup key, never a path.
+				it.each([
+					'../../../etc/pwd',
+					'pool/../../out',
+					'Pool-4',
+					'-pool',
+					'pool_4',
+				])('refuses the name "%s" before any file is read', async (name) => {
+					catchExit()
+					const store = fakeStore({})
+					const program = buildProgram({ env: XDG, exec: repoExec([]), store })
+					const failure = await run(program, ['layout', 'show', name]).catch((err: unknown) => err)
+					expect(failure).toBeInstanceOf(Error)
+					// `fail()` exits 1; commander's own rejection carries exitCode 1.
+					const code = (failure as { exitCode?: number }).exitCode ?? (failure as Error).message
+					expect([1, 'exit:1']).toContain(code)
+					expect(store.reads).toEqual([])
+				})
+
+				it('a name field that disagrees with the filename stem fails validation, naming both', async () => {
+					// The redundancy is the point: a copied file that kept its old name fails loudly.
+					catchExit()
+					const stderr = captureStderr()
+					const store = fakeStore({ [repo('pool-4')]: { name: 'pool-3', panes: [{ label: 'w1' }] } })
+					const program = buildProgram({ env: XDG, exec: repoExec([]), store })
+					await expect(run(program, ['layout', 'validate', 'pool-4'])).rejects.toThrow('exit:1')
+					expect(stderr.join('')).toContain('pool-4')
+					expect(stderr.join('')).toContain('pool-3')
+				})
+			})
+
+			describe('validate', () => {
+				it('a template that sets cwd fails, naming the JSON path, --cwd and dir', async () => {
+					catchExit()
+					const stderr = captureStderr()
+					const store = fakeStore({
+						[repo('bad-pool')]: {
+							name: 'bad-pool',
+							root: {
+								type: 'split',
+								direction: 'right',
+								first: { type: 'pane', label: 'a', cwd: '/home/someone/proj' },
+								second: { type: 'pane', label: 'b' },
+							},
+						},
+					})
+					const program = buildProgram({ env: XDG, exec: repoExec([]), store })
+					await expect(run(program, ['layout', 'validate', 'bad-pool'])).rejects.toThrow('exit:1')
+					expect(stderr.join('')).toContain('root.first.cwd')
+					expect(stderr.join('')).toContain('--cwd')
+					expect(stderr.join('')).toContain('dir')
+				})
+
+				it('reports every error at once, one per line, each naming its own JSON path', async () => {
+					catchExit()
+					const stderr = captureStderr()
+					const store = fakeStore({
+						[repo('bad-pool')]: {
+							name: 'bad-pool',
+							root: {
+								type: 'split',
+								direction: 'right',
+								ratio: 0,
+								first: { type: 'pane', label: 'dup', cwd: '/home/someone/proj' },
+								second: { type: 'pane', label: 'dup' },
+							},
+						},
+					})
+					const program = buildProgram({ env: XDG, exec: repoExec([]), store })
+					await expect(run(program, ['layout', 'validate', 'bad-pool'])).rejects.toThrow('exit:1')
+					const lines = stderr.join('').trim().split('\n')
+					expect(lines).toHaveLength(3)
+					expect(lines.some((l) => l.includes('root.ratio'))).toBe(true)
+					expect(lines.some((l) => l.includes('root.first.cwd'))).toBe(true)
+					expect(lines.some((l) => l.includes('label "dup"'))).toBe(true)
+				})
+
+				it('exits 0 on a valid template, saying nothing at all', async () => {
+					// This is the CI hook, so silence is the pass signal.
+					const exit = catchExit()
+					const stderr = captureStderr()
+					const store = fakeStore({ [repo('pool-4')]: POOL_4 })
+					const program = buildProgram({ env: XDG, exec: repoExec([]), store })
+					await run(program, ['layout', 'validate', 'pool-4'])
+					expect(exit).not.toHaveBeenCalled()
+					expect(stderr).toEqual([])
+				})
+			})
+
+			describe('show --desugar', () => {
+				it('prints exactly the tree apply will build', async () => {
+					const store = fakeStore({ [repo('pool-4')]: POOL_4 })
+					const program = buildProgram({ env: XDG, exec: repoExec([]), store })
+					await run(program, ['layout', 'show', 'pool-4', '--desugar'])
+					// The canonical tree the sugar expands to — one right split over the two panes, which is
+					// the same tree the walk splits from (both go through `resolveTree`).
+					expect(JSON.parse(logs.join('\n'))).toEqual({
+						type: 'split',
+						direction: 'right',
+						ratio: 0.5,
+						first: { type: 'pane', label: 'w1' },
+						second: { type: 'pane', label: 'w2' },
+					})
+				})
+
+				it('without --desugar prints the template as written, sugar and all', async () => {
+					const store = fakeStore({ [repo('pool-4')]: POOL_4 })
+					const program = buildProgram({ env: XDG, exec: repoExec([]), store })
+					await run(program, ['layout', 'show', 'pool-4'])
+					expect(JSON.parse(logs.join('\n'))).toEqual(POOL_4)
+				})
+			})
+
+			describe('managing templates needs no multiplexer', () => {
+				it.each([
+					['list', ['layout', 'list']],
+					['show pool-4', ['layout', 'show', 'pool-4']],
+					['validate pool-4', ['layout', 'validate', 'pool-4']],
+				])('%s answers without resolving a session backend', async (_name, argv) => {
+					// Their subject is a FILE, the same way `worktree list`'s subject is git.
+					const calls: string[][] = []
+					const store = fakeStore({ [repo('pool-4')]: POOL_4 })
+					// No $TMUX, no $HERDR_ENV, no override at all.
+					const program = buildProgram({ env: XDG, exec: repoExec(calls), store })
+					await run(program, argv)
+					expect(calls.every((c) => c[0] === 'git')).toBe(true)
+				})
+			})
+
+			describe('--layout, the exact sibling of --launch', () => {
+				it('--layout and --launch are mutually exclusive', async () => {
+					const store = fakeStore({ [repo('pool-4')]: POOL_4 })
+					const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'tmux' }, exec: repoExec([]), store })
+					await expect(run(program, ['open', '--layout', 'pool-4', '--launch', 'claude'])).rejects.toThrow()
+				})
+
+				it('--at defaults to workspace when --layout is given', async () => {
+					// A fresh space is empty by construction.
+					const calls: string[][] = []
+					const store = fakeStore({ [repo('pool-4')]: POOL_4 })
+					const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'tmux' }, exec: repoExec(calls), store })
+					await run(program, ['open', '--layout', 'pool-4'])
+					// tmux collapses workspace to a window — the region is a new-window, not a split.
+					expect(calls.find((c) => c[0] === 'tmux')?.[1]).toBe('new-window')
+				})
+
+				it('--label defaults to the template name', async () => {
+					const calls: string[][] = []
+					const store = fakeStore({ [repo('pool-4')]: POOL_4 })
+					const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'tmux' }, exec: repoExec(calls), store })
+					await run(program, ['open', '--layout', 'pool-4'])
+					expect(calls.find((c) => c[1] === 'new-window')).toEqual(expect.arrayContaining(['-n', 'pool-4']))
+				})
+
+				it('an explicit --label wins over the template name', async () => {
+					const calls: string[][] = []
+					const store = fakeStore({ [repo('pool-4')]: POOL_4 })
+					const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'tmux' }, exec: repoExec(calls), store })
+					await run(program, ['open', '--layout', 'pool-4', '--label', 'my-pool'])
+					expect(calls.find((c) => c[1] === 'new-window')).toEqual(expect.arrayContaining(['-n', 'my-pool']))
+				})
+			})
+
+			describe('resolution precedes side effects', () => {
+				it('open --layout with an unresolvable name opens nothing', async () => {
+					catchExit()
+					const calls: string[][] = []
+					const program = buildProgram({
+						env: { ...XDG, CYBER_MUX: 'tmux' },
+						exec: repoExec(calls),
+						store: fakeStore({}),
+					})
+					await expect(run(program, ['open', '--layout', 'pool-9'])).rejects.toThrow('exit:1')
+					expect(calls.some((c) => c[0] === 'tmux')).toBe(false)
+				})
+
+				it('worktree add --layout with a name that resolves nowhere leaves no worktree behind', async () => {
+					catchExit()
+					const calls: string[][] = []
+					const program = buildProgram({
+						env: { ...XDG, CYBER_MUX: 'tmux' },
+						exec: repoExec(calls),
+						store: fakeStore({}),
+					})
+					await expect(run(program, ['worktree', 'add', '--branch', 'feat-x', '--layout', 'pool-9'])).rejects.toThrow(
+						'exit:1',
+					)
+					expect(calls.some((c) => c.includes('worktree') && c.includes('add'))).toBe(false)
+				})
+
+				it('worktree add --layout with an invalid template leaves no worktree behind', async () => {
+					catchExit()
+					const stderr = captureStderr()
+					const calls: string[][] = []
+					const store = fakeStore({
+						[repo('bad-pool')]: { name: 'bad-pool', panes: [{ label: 'a', cwd: '/home/someone/proj' }] },
+					})
+					const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'tmux' }, exec: repoExec(calls), store })
+					await expect(run(program, ['worktree', 'add', '--branch', 'feat-x', '--layout', 'bad-pool'])).rejects.toThrow(
+						'exit:1',
+					)
+					expect(stderr.join('')).toContain('panes[0].cwd')
+					expect(calls.some((c) => c.includes('worktree') && c.includes('add'))).toBe(false)
+				})
+
+				it('applying with no multiplexer fails through the existing adapter path', async () => {
+					catchExit()
+					const stderr = captureStderr()
+					const store = fakeStore({ [repo('pool-4')]: POOL_4 })
+					// Neither $TMUX nor $HERDR_ENV — the template resolves and validates, then the backend does not.
+					const program = buildProgram({ env: XDG, exec: repoExec([]), store })
+					await expect(run(program, ['open', '--layout', 'pool-4'])).rejects.toThrow('exit:1')
+					expect(stderr.join('')).toContain('tmux')
+					expect(stderr.join('')).toContain('herdr')
+				})
+			})
+
+			describe('apply does not roll back', () => {
+				it('a throw mid-walk reports what was built, exits 1, and kills nothing', async () => {
+					catchExit()
+					const calls: string[][] = []
+					// A 4-pane comb: the region, then three splits. The THIRD split is refused.
+					let splits = 0
+					const exec: Exec = (cmd, args) => {
+						calls.push([cmd, ...args])
+						if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
+						if (args[0] === 'new-window') return '%0'
+						if (args[0] === 'split-window') return ++splits === 3 ? null : `%${splits}`
+						return ''
+					}
+					const store = fakeStore({
+						[repo('render-farm')]: {
+							name: 'render-farm',
+							arrange: 'even-horizontal',
+							panes: [{ label: 'a' }, { label: 'b' }, { label: 'c' }, { label: 'd' }],
+						},
+					})
+					const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'tmux' }, exec, store })
+					await withArgv(['open', '--layout', 'render-farm', '--format', 'json'], async () => {
+						await expect(run(program, ['open', '--layout', 'render-farm', '--format', 'json'])).rejects.toThrow(
+							'exit:1',
+						)
+					})
+					// The manifest still reports the panes that were built before the failure...
+					const manifest = JSON.parse(logs.join('\n'))
+					expect(manifest.panes.map((p: { label: string }) => p.label)).toEqual(['a', 'b', 'c'])
+					// ...and nothing is killed: a kill is not obviously safer than a half-built layout the
+					// caller can see and finish.
+					expect(calls.some((c) => c[1] === 'kill-pane')).toBe(false)
+				})
+			})
+
+			describe('the manifest is the handoff', () => {
+				it('--format json reports every pane apply created', async () => {
+					const store = fakeStore({ [repo('agent-pool-3')]: AGENT_POOL_3 })
+					const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'tmux' }, exec: repoExec([]), store })
+					await withArgv(['open', '--layout', 'agent-pool-3', '--format', 'json'], () =>
+						run(program, ['open', '--layout', 'agent-pool-3', '--cwd', '/w/feat-x', '--format', 'json']),
+					)
+					const manifest = JSON.parse(logs.join('\n'))
+					expect(manifest.layout).toBe('agent-pool-3')
+					expect(manifest.cwd).toBe('/w/feat-x')
+					expect(manifest).toHaveProperty('workspace')
+					// One entry per pane, each carrying its label, pane id, dir and command.
+					expect(manifest.panes).toEqual([
+						{ label: 'planner', pane: '%0', dir: '/w/feat-x', command: 'claude' },
+						{ label: 'worker-a', pane: '%1', dir: '/w/feat-x', command: 'claude' },
+						{ label: 'worker-b', pane: '%2', dir: '/w/feat-x', command: 'claude' },
+					])
+				})
+
+				it('the manifest’s workspace is null on tmux', async () => {
+					// Matching how reportOpenedWorktree already reports it.
+					const store = fakeStore({ [repo('pool-4')]: POOL_4 })
+					const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'tmux' }, exec: repoExec([]), store })
+					await withArgv(['open', '--layout', 'pool-4', '--format', 'json'], () =>
+						run(program, ['open', '--layout', 'pool-4', '--format', 'json']),
+					)
+					expect(JSON.parse(logs.join('\n')).workspace).toBeNull()
+				})
+			})
+
+			describe('worktree add --layout', () => {
+				const worktreeOut = JSON.stringify({
+					result: {
+						root_pane: { pane_id: 'w9:root' },
+						workspace: { workspace_id: 'w9' },
+						worktree: { path: '/repo.worktrees/feat-x', branch: 'feat-x' },
+					},
+				})
+
+				it('applies the template against the worktree root, reporting the manifest alongside root and branch', async () => {
+					const calls: string[][] = []
+					const store = fakeStore({ [repo('agent-pool-3')]: AGENT_POOL_3 })
+					const exec = repoExec(calls, { 'worktree create': worktreeOut })
+					const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'herdr' }, exec, store })
+					await withArgv(['worktree', 'add', '--format', 'json'], () =>
+						run(program, ['worktree', 'add', '--branch', 'feat-x', '--layout', 'agent-pool-3', '--format', 'json']),
+					)
+					const created = calls.find((c) => c[0] === 'herdr' && c[1] === 'worktree' && c[2] === 'create')!
+					expect(created).toBeDefined()
+					// The workspace opens with NO launch: the template owns what runs, and its root pane
+					// becomes the tree's root region rather than a pane to close.
+					expect(created).not.toContain('--launch')
+					const splits = calls.filter((c) => c[0] === 'herdr' && c[1] === 'pane' && c[2] === 'split')
+					expect(splits).toHaveLength(2)
+					// The walk's cwd is the worktree root...
+					for (const split of splits) expect(split[split.indexOf('--cwd') + 1]).toBe('/repo.worktrees/feat-x')
+					// ...and the first split targets the workspace's own root pane.
+					expect(splits[0]).toContain('w9:root')
+
+					const out = JSON.parse(logs.join('\n'))
+					expect(out.root).toBe('/repo.worktrees/feat-x')
+					expect(out.branch).toBe('feat-x')
+					expect(out.layout).toBe('agent-pool-3')
+					expect(out.workspace).toBe('w9')
+					expect(out.panes.map((p: { label: string }) => p.label)).toEqual(['planner', 'worker-a', 'worker-b'])
+				})
+
+				it('honors the root pane’s env by prefixing its command — herdr’s worktree create takes no env', async () => {
+					// The tree's root pane is the workspace's root pane, and no split ever births it. herdr's
+					// `worktree create` has no `env` param and rejects the flag, so the env rides on the
+					// command line instead (design §7.3 Gap C's first real customer).
+					const calls: string[][] = []
+					const store = fakeStore({
+						[repo('render-farm')]: {
+							name: 'render-farm',
+							root: {
+								type: 'split',
+								direction: 'right',
+								first: { type: 'pane', label: 'dispatcher', env: { TIER: 'gpu' }, command: 'render' },
+								second: { type: 'pane', label: 'encoder', env: { TIER: 'cpu' }, command: 'encode' },
+							},
+						},
+					})
+					const exec = repoExec(calls, { 'worktree create': worktreeOut })
+					const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'herdr' }, exec, store })
+					await run(program, ['worktree', 'add', '--branch', 'feat-x', '--layout', 'render-farm'])
+
+					// The flag is never emitted — that would throw on a live herdr.
+					const created = calls.find((c) => c[1] === 'worktree' && c[2] === 'create')!
+					expect(created).not.toContain('--env')
+					// The root pane's env reaches it via the prefix on its own command.
+					const rootRun = calls.find((c) => c[1] === 'pane' && c[2] === 'run' && c[3] === 'w9:root')!
+					expect(rootRun[4]).toBe("env TIER='gpu' render")
+					// The split-born pane still gets its env NATIVELY, and is never prefixed on top of it.
+					expect(calls.find((c) => c[1] === 'pane' && c[2] === 'split')!.join(' ')).toContain('--env TIER=cpu')
+					const childRun = calls.find((c) => c[1] === 'pane' && c[2] === 'run' && c[3] !== 'w9:root')!
+					expect(childRun[4]).toBe('encode')
+				})
+
+				it('warns once when the root pane has env but no command to carry it', async () => {
+					const stderr = captureStderr()
+					const calls: string[][] = []
+					const store = fakeStore({
+						[repo('render-farm')]: {
+							name: 'render-farm',
+							panes: [{ label: 'dispatcher', env: { TIER: 'gpu' } }, { label: 'encoder' }],
+						},
+					})
+					const exec = repoExec(calls, { 'worktree create': worktreeOut })
+					const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'herdr' }, exec, store })
+					await run(program, ['worktree', 'add', '--branch', 'feat-x', '--layout', 'render-farm'])
+					// Nothing to prefix, so nothing is run — and the loss is reported rather than silent.
+					expect(calls.some((c) => c[1] === 'pane' && c[2] === 'run')).toBe(false)
+					const warnings = stderr.filter((line) => line.includes('dispatcher'))
+					expect(warnings).toHaveLength(1)
+					expect(warnings[0]).toContain('TIER')
+				})
+
+				it('reports the root pane’s actual dir and warns that its dir could not be honored', async () => {
+					const stderr = captureStderr()
+					const calls: string[][] = []
+					const store = fakeStore({
+						[repo('render-farm')]: {
+							name: 'render-farm',
+							panes: [{ label: 'dispatcher', dir: 'apps/render' }, { label: 'encoder' }],
+						},
+					})
+					const exec = repoExec(calls, { 'worktree create': worktreeOut })
+					const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'herdr' }, exec, store })
+					await withArgv(['worktree', 'add', '--format', 'json'], () =>
+						run(program, ['worktree', 'add', '--branch', 'feat-x', '--layout', 'render-farm', '--format', 'json']),
+					)
+					// The workspace opens at the worktree root — that is what the binding pins...
+					const created = calls.find((c) => c[1] === 'worktree' && c[2] === 'create')!
+					expect(created).not.toContain('apps/render')
+					// ...so the manifest reports where the pane really is, rather than a place nothing opened.
+					const out = JSON.parse(logs.join('\n'))
+					expect(out.panes[0]).toEqual({
+						label: 'dispatcher',
+						pane: 'w9:root',
+						dir: '/repo.worktrees/feat-x',
+						command: null,
+					})
+					// Degraded loudly, on stderr, so stdout stays machine-readable.
+					expect(stderr.join('')).toContain('dispatcher')
+					expect(stderr.join('')).toContain('apps/render')
+				})
+			})
 		})
 
 		it('herdr: send text / send keys / submit map onto herdr’s own three primitives', async () => {

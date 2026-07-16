@@ -22,22 +22,32 @@ import { normalizeWorktreePath } from './worktree.ts'
 export const herdrSessionAdapter: SessionAdapter = {
 	name: 'herdr',
 
+	// `pane split --ratio` sizes a split — and sizes the ORIGINAL pane, which is the seam's own
+	// convention, so it passes through unconverted (unlike tmux's `-l`). Verified against 0.7.4.
+	canSizeSplits: true,
+
 	open(exec, opts) {
 		const at = opts.at ?? 'tab'
 		// herdr takes a label at birth for a workspace and a tab, but not for a split — a pane is
 		// named afterwards, via `pane rename`.
 		const label = opts.label ? ['--label', opts.label] : []
+		// Native at EVERY tier, not just the split: `WorkspaceCreateParams` and `TabCreateParams` both
+		// carry an `env` Record in herdr's socket schema (protocol 16), and the CLI takes the same
+		// repeatable `--env KEY=VALUE` there as `pane split` does — verified against 0.7.4. That
+		// matters because a layout's root pane is born by the region open rather than by a split, so
+		// scoping env to the split path would silently drop that pane's env.
+		const env = envFlags(opts.env)
 		let id: string
 		if (at === 'workspace') {
 			// A genuinely separate workspace, not a pane inside the caller's current one — `--no-focus`
 			// so spawning doesn't steal the caller's attention/focus.
-			const out = exec('herdr', ['workspace', 'create', '--cwd', opts.cwd, ...label, '--no-focus'])
+			const out = exec('herdr', ['workspace', 'create', '--cwd', opts.cwd, ...label, ...env, '--no-focus'])
 			if (!out) throw new Error('herdr workspace create failed')
 			id = parseRootPaneId(out, 'herdr workspace create')
 		} else if (at === 'tab') {
 			// A real tab in the current window, not a split pane — `--no-focus` so spawning doesn't
 			// steal the caller's attention/focus, matching workspace/worktree spawns.
-			const out = exec('herdr', ['tab', 'create', '--cwd', opts.cwd, ...label, '--no-focus'])
+			const out = exec('herdr', ['tab', 'create', '--cwd', opts.cwd, ...label, ...env, '--no-focus'])
 			if (!out) throw new Error('herdr tab create failed')
 			id = parseRootPaneId(out, 'herdr tab create')
 		} else {
@@ -47,8 +57,25 @@ export const herdrSessionAdapter: SessionAdapter = {
 			// pane instead — silently, so an unidentified caller splits whatever the user happens to be
 			// looking at. Verified against herdr 0.7.4. `--current` is kept only as the last resort for
 			// a caller that could not identify itself, where herdr's guess is still better than failing.
+			// Native means no command-prefix fallback is needed, so a pane with env and NO command still
+			// gets its env.
 			const from = opts.from ? [opts.from.id] : ['--current']
-			const out = exec('herdr', ['pane', 'split', ...from, '--direction', direction, '--cwd', opts.cwd])
+			// `--ratio` takes the seam's number VERBATIM: it sizes the original pane, which is exactly
+			// what `ratio` means. tmux's `-l` sizes the new pane and therefore inverts — the one place
+			// the two backends convert in opposite directions. Measured against 0.7.4 (splitting a
+			// 201-column region at `--ratio 0.333` left the original 67 columns), not documented.
+			const size = opts.ratio != null ? ['--ratio', String(opts.ratio)] : []
+			const out = exec('herdr', [
+				'pane',
+				'split',
+				...from,
+				'--direction',
+				direction,
+				'--cwd',
+				opts.cwd,
+				...size,
+				...env,
+			])
 			if (!out) throw new Error('herdr pane split failed')
 			id = parsePaneId(out)
 			if (opts.label) exec('herdr', ['pane', 'rename', id, opts.label])
@@ -160,6 +187,20 @@ export const herdrSessionAdapter: SessionAdapter = {
 }
 
 /**
+ * herdr's repeatable `--env KEY=VALUE` — spelled the same way by exactly three verbs: `pane split`,
+ * `workspace create` and `tab create`, each backed by a native `env` Record in the socket schema
+ * (protocol 16).
+ *
+ * `worktree create`/`worktree open` are deliberately NOT in that list: their params are
+ * `[base, branch, cwd, focus, label, path, workspace_id]` and
+ * `[branch, cwd, focus, label, path, workspace_id]` — no `env` — and 0.7.4 rejects the flag with
+ * `unknown option: --env`. A caller needing env on that route uses the command-prefix fallback.
+ */
+function envFlags(env: Record<string, string> | undefined): string[] {
+	return env ? Object.entries(env).flatMap(([k, v]) => ['--env', `${k}=${v}`]) : []
+}
+
+/**
  * `herdr pane split` emits a JSON envelope, not a bare id:
  * `{"id":"cli:pane:split","result":{"pane":{"pane_id":"w3:pB", ...},"type":"pane_info"}}`.
  * The pane id herdr's other `pane` subcommands accept lives at `.result.pane.pane_id`. Extract it —
@@ -221,6 +262,12 @@ function herdrWorktreeCapability(): WorktreeWorkspaceCapability {
 			// Without this herdr names the workspace after the checkout path's basename, because we always
 			// pass `--path` — it would use the branch if we let it choose the location itself.
 			if (opts.label) args.push('--label', opts.label)
+			// Deliberately NO `--env`, unlike every other tier: `WorktreeCreateParams` is
+			// `[base, branch, cwd, focus, label, path, workspace_id]` — no `env` — and herdr 0.7.4
+			// rejects the flag outright (`unknown option: --env`), which `Exec` would turn into a null
+			// and this into a thrown "worktree create failed". `opts.env` is accepted and NOT emitted;
+			// honoring it is the caller's job via the command-prefix fallback, because this adapter must
+			// stay honest about what its backend actually takes.
 			args.push('--no-focus')
 			const out = exec('herdr', args)
 			if (!out) throw new Error('herdr worktree create failed')
@@ -235,6 +282,8 @@ function herdrWorktreeCapability(): WorktreeWorkspaceCapability {
 		openInWorkspace(exec, opts) {
 			const args = ['worktree', 'open', '--cwd', opts.primaryRoot, '--path', opts.path]
 			if (opts.label) args.push('--label', opts.label)
+			// No `--env` here either — `WorktreeOpenParams` is
+			// `[branch, cwd, focus, label, path, workspace_id]`. See `createInWorkspace`.
 			args.push('--no-focus')
 			const out = exec('herdr', args)
 			if (!out) throw new Error('herdr worktree open failed')

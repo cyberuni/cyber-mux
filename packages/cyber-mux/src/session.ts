@@ -9,7 +9,7 @@ import type { Worktree } from './worktree.ts'
  * other placement, which adds a pane/window inside it. */
 export type SessionPlacement = 'pane:right' | 'pane:down' | 'tab' | 'workspace'
 
-interface SessionOpenOptions {
+export interface SessionOpenOptions {
 	/** Working directory the new pane/window/session should start in. */
 	cwd: string
 	/** Command line to launch inside the new pane once it is open; omit for a blank pane. */
@@ -28,6 +28,24 @@ interface SessionOpenOptions {
 	 * `pane:right` means the same thing on both backends.
 	 */
 	from?: SessionTarget
+	/**
+	 * Fraction of the split region kept by `first` — the ORIGINAL pane, not the new one. Only
+	 * meaningful for a `pane:*` placement; `0 < ratio < 1`, and omitting it takes the backend's own
+	 * even (50/50) default.
+	 *
+	 * The sign convention is the trap, and the two real backends convert in OPPOSITE directions:
+	 * herdr's `--ratio` sizes the original pane, so it is exactly this value and passes through
+	 * unconverted; tmux's `-l` sizes the NEW pane, so it takes `1 - ratio`. Applying the inversion to
+	 * both, or to neither, is the single most likely way to get a split backwards.
+	 */
+	ratio?: number
+	/**
+	 * Environment variables set in the new pane at birth. Native on both real backends (herdr
+	 * `--env KEY=VALUE`, tmux `-e KEY=VALUE`, each repeatable); only meaningful for a `pane:*`
+	 * placement. Valid with or without `launch` — a pane with env and no command is a blank shell
+	 * with that env set.
+	 */
+	env?: Record<string, string>
 	/**
 	 * Name for the space this opens, at whatever tier `at` opens it — every backend can name every
 	 * tier, so this is host-neutral: on herdr a workspace/tab/pane label, on tmux a window name
@@ -70,6 +88,8 @@ export interface CreateWorktreeWorkspaceOptions {
 	base?: string
 	/** Command line to launch inside the new workspace's root pane; omit for a blank pane. */
 	launch?: string
+	/** Environment variables set in the new workspace's root pane at birth. */
+	env?: Record<string, string>
 	/** Name for the bound workspace; omit for the backend's own default. */
 	label?: string
 }
@@ -81,6 +101,8 @@ export interface OpenWorktreeWorkspaceOptions {
 	path: string
 	/** Command line to launch inside the new workspace's root pane; omit for a blank pane. */
 	launch?: string
+	/** Environment variables set in the new workspace's root pane at birth. */
+	env?: Record<string, string>
 	/** Name for the bound workspace; omit for the backend's own default. */
 	label?: string
 }
@@ -148,6 +170,14 @@ export interface SessionAdapter {
 	readonly name: string
 	/** Create a new pane/window in `opts.cwd`, running `opts.launch` if given; returns its target handle. */
 	open(exec: Exec, opts: SessionOpenOptions): SessionTarget
+	/**
+	 * Whether this backend can size a split — i.e. whether it honors `SessionOpenOptions.ratio`. Both
+	 * real backends can (herdr `--ratio`, tmux `-l`), so both declare it. Absent/`false` means a
+	 * caller asking for a ratio gets the backend's own even default instead, which callers DEGRADE to
+	 * (with one warning) rather than reject: the layout schema is backend-agnostic, so a template's
+	 * validity must never depend on which multiplexer happens to be running.
+	 */
+	readonly canSizeSplits?: boolean
 	/**
 	 * Present only on a backend that binds a git worktree to a workspace (herdr); `undefined` on one
 	 * with no such concept (tmux), where callers fall back to plain git plus `open()`.
