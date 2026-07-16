@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildProgram } from './cli.ts'
 import type { Exec } from './exec.ts'
 import type { LayoutStore } from './layout-store.ts'
+import { tmuxSessionAdapter } from './session.tmux.ts'
 
 /** No ancestry available — forces every probe onto the env fast-path/hint, deterministic in CI. */
 const noAncestry: Exec = () => null
@@ -477,14 +478,18 @@ describe('spec:cyber-mux/mux', () => {
 			}
 
 			/** A `LayoutStore` over an in-memory file map — no templates on disk, ever. */
-			function fakeStore(files: Record<string, unknown>): LayoutStore & { reads: string[] } {
+			function fakeStore(
+				files: Record<string, unknown>,
+			): LayoutStore & { reads: string[]; writes: Record<string, string> } {
 				const raw: Record<string, string> = {}
 				for (const [path, body] of Object.entries(files)) {
 					raw[path] = typeof body === 'string' ? body : JSON.stringify(body)
 				}
 				const reads: string[] = []
+				const writes: Record<string, string> = {}
 				return {
 					reads,
+					writes,
 					read(path) {
 						reads.push(path)
 						return raw[path] ?? null
@@ -496,6 +501,12 @@ describe('spec:cyber-mux/mux', () => {
 							.sort()
 					},
 					dirExists: () => true,
+					// Writes land in `raw` too, so a `save` followed by a `read` sees the file — which is what
+					// makes the overwrite guard testable without a real filesystem.
+					write(path, contents) {
+						writes[path] = contents
+						raw[path] = contents
+					},
 				}
 			}
 
@@ -1025,6 +1036,317 @@ describe('spec:cyber-mux/mux', () => {
 				['pane', 'run', 'w1:p1', 'echo hi'],
 				['pane', 'send-keys', 'w1:p1', 'Enter'],
 			])
+		})
+	})
+})
+
+describe('spec:cyber-mux/layout', () => {
+	const REPO_DIR = '/repo/.cyber-mux/layouts'
+	const USER_DIR = '/home/u/.config/cyber-mux/layouts'
+	/** Pinned, so the user directory is never the runner's real ~/.config. */
+	const XDG = { XDG_CONFIG_HOME: '/home/u/.config' }
+
+	const POOL_4 = { name: 'pool-4', arrange: 'tiled', panes: [{ label: 'w1' }, { label: 'w2' }] }
+
+	/** A `LayoutStore` over an in-memory file map — no templates on disk, ever. */
+	function fakeStore(
+		files: Record<string, unknown>,
+	): LayoutStore & { reads: string[]; writes: Record<string, string> } {
+		const raw: Record<string, string> = {}
+		for (const [path, body] of Object.entries(files)) {
+			raw[path] = typeof body === 'string' ? body : JSON.stringify(body)
+		}
+		const reads: string[] = []
+		const writes: Record<string, string> = {}
+		return {
+			reads,
+			writes,
+			read(path) {
+				reads.push(path)
+				return raw[path] ?? null
+			},
+			list(dir) {
+				return Object.keys(raw)
+					.filter((p) => p.startsWith(`${dir}/`))
+					.map((p) => p.slice(dir.length + 1, -'.json'.length))
+					.sort()
+			},
+			dirExists: () => true,
+			write(path, contents) {
+				writes[path] = contents
+				raw[path] = contents
+			},
+		}
+	}
+
+	function repo(name: string): string {
+		return `${REPO_DIR}/${name}.json`
+	}
+	function user(name: string): string {
+		return `${USER_DIR}/${name}.json`
+	}
+
+	/** `fail()` exits the process; make that observable instead of fatal to the runner. */
+	function catchExit() {
+		return vi.spyOn(process, 'exit').mockImplementation((code) => {
+			throw new Error(`exit:${code}`)
+		})
+	}
+
+	/** Capture stderr rather than swallowing it, for the tests that assert on an error's text. */
+	function captureStderr(): string[] {
+		const lines: string[] = []
+		vi.spyOn(process.stderr, 'write').mockImplementation((line) => {
+			lines.push(String(line))
+			return true
+		})
+		return lines
+	}
+
+	let logs: string[]
+
+	beforeEach(() => {
+		logs = []
+		vi.spyOn(console, 'log').mockImplementation((line: string) => {
+			logs.push(line)
+		})
+		vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+	})
+
+	afterEach(() => {
+		vi.restoreAllMocks()
+	})
+
+	describe('layout save', () => {
+		/**
+		 * tmux, plus a region of three panes around `%1` — a live capture from tmux 3.6b, so the
+		 * divider column that makes the ratio arithmetic interesting is really there.
+		 */
+		function saveExec(calls: string[][], panes?: string): Exec {
+			return (cmd, args) => {
+				calls.push([cmd, ...args])
+				if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
+				if (args[0] === 'list-panes') {
+					return (
+						panes ??
+						[
+							'%0\t0\t0\t119\t34\t/repo\tzeta\tzeta',
+							'%2\t0\t35\t119\t15\t/repo/api\twatcher\tzeta',
+							'%1\t120\t0\t80\t50\t/repo\teditor\tzeta',
+						].join('\n')
+					)
+				}
+				return ''
+			}
+		}
+
+		const SAVE_ENV = { ...XDG, CYBER_MUX: 'tmux', CYBER_MUX_PANE: '%0' }
+
+		it('save writes to the repo layouts directory and prints the path', async () => {
+			const calls: string[][] = []
+			const store = fakeStore({})
+			const program = buildProgram({ env: SAVE_ENV, exec: saveExec(calls), store })
+			await run(program, ['layout', 'save', 'pool-3'])
+			// The path is stdout's whole content, so `$(cyber-mux layout save x)` composes.
+			expect(logs).toEqual([repo('pool-3')])
+			const written = JSON.parse(store.writes[repo('pool-3')]!)
+			expect(written.name).toBe('pool-3')
+			// The geometry survives: a 0.6 split right, with a 0.7 split down inside it.
+			expect(written.root.direction).toBe('right')
+			expect(written.root.ratio).toBe(0.6)
+			expect(written.root.first.ratio).toBe(0.7)
+			// The label someone set survives...
+			expect(written.root.second).toEqual({ type: 'pane', label: 'editor' })
+			// ...while the ONE pane whose title is merely the hostname gets no label at all. tmux defaults
+			// `pane_title` to the host, so capturing it blindly would hang `label: "zeta"` on every
+			// untouched pane. Exactly one pane carries the default on purpose: with two, a broken filter
+			// would label both `zeta`, and the duplicate-label drop would hide it by producing the right
+			// answer for the wrong reason.
+			expect(written.root.first.first).toEqual({ type: 'pane' })
+			expect(JSON.stringify(written)).not.toContain('zeta')
+			// cwd is never in a template — it comes back as a relative dir under the captured root.
+			expect(written.root.first.second).toEqual({ type: 'pane', label: 'watcher', dir: 'api' })
+			expect(JSON.stringify(written)).not.toContain('/repo')
+		})
+
+		it('save captures the region around the calling pane, not the one the user is looking at', async () => {
+			// The same reason `open`'s split names its pane: tmux's default is the ACTIVE pane, which
+			// tracks the user rather than us. A bare `layout save` must mean "the region I am in".
+			const calls: string[][] = []
+			const program = buildProgram({ env: SAVE_ENV, exec: saveExec(calls), store: fakeStore({}) })
+			await run(program, ['layout', 'save', 'pool-3'])
+			expect(calls.find((c) => c[1] === 'list-panes')?.[2]).toBe('-t')
+			expect(calls.find((c) => c[1] === 'list-panes')?.[3]).toBe('%0')
+		})
+
+		it('--from captures the region around a named pane', async () => {
+			const calls: string[][] = []
+			const program = buildProgram({ env: SAVE_ENV, exec: saveExec(calls), store: fakeStore({}) })
+			await run(program, ['layout', 'save', 'pool-3', '--from', '%7'])
+			expect(calls.find((c) => c[1] === 'list-panes')?.[3]).toBe('%7')
+		})
+
+		it('a captured template records in its own description that it is geometry only', async () => {
+			// The honest limit of the verb. A saved template is a DRAFT, and the file says so itself,
+			// since `layout list` will show it beside finished ones.
+			const store = fakeStore({})
+			const program = buildProgram({ env: SAVE_ENV, exec: saveExec([]), store })
+			await run(program, ['layout', 'save', 'pool-3'])
+			const written = JSON.parse(store.writes[repo('pool-3')]!)
+			// Both clauses of the scenario's Then. The note has to say what the capture IS...
+			expect(written.description).toMatch(/geometry only/)
+			// ...and what the author still owes it — the half that makes the note actionable rather than
+			// just a disclaimer.
+			expect(written.description).toMatch(/command/)
+		})
+
+		it('--description replaces the draft note', async () => {
+			const store = fakeStore({})
+			const program = buildProgram({ env: SAVE_ENV, exec: saveExec([]), store })
+			await run(program, ['layout', 'save', 'pool-3', '--description', 'the review pool'])
+			expect(JSON.parse(store.writes[repo('pool-3')]!).description).toBe('the review pool')
+		})
+
+		it('--to user writes to the user layouts directory instead', async () => {
+			const store = fakeStore({})
+			const program = buildProgram({ env: SAVE_ENV, exec: saveExec([]), store })
+			await run(program, ['layout', 'save', 'pool-3', '--to', 'user'])
+			expect(Object.keys(store.writes)).toEqual([user('pool-3')])
+		})
+
+		it('save refuses to overwrite an existing template, and reads no region finding out', async () => {
+			// A saved template is hand-edited afterwards (the commands are added by hand), so silently
+			// overwriting one would throw that work away. Checked BEFORE the capture, so the refusal
+			// is free.
+			catchExit()
+			const stderr = captureStderr()
+			const calls: string[][] = []
+			const store = fakeStore({ [repo('pool-3')]: POOL_4 })
+			const program = buildProgram({ env: SAVE_ENV, exec: saveExec(calls), store })
+			await expect(run(program, ['layout', 'save', 'pool-3'])).rejects.toThrow('exit:1')
+			expect(stderr.join('')).toContain('--force to overwrite')
+			expect(store.writes).toEqual({})
+			expect(calls.some((c) => c[1] === 'list-panes')).toBe(false)
+		})
+
+		it('--force overwrites an existing template', async () => {
+			const store = fakeStore({ [repo('pool-3')]: POOL_4 })
+			const program = buildProgram({ env: SAVE_ENV, exec: saveExec([]), store })
+			await run(program, ['layout', 'save', 'pool-3', '--force'])
+			expect(JSON.parse(store.writes[repo('pool-3')]!).root).toBeDefined()
+		})
+
+		it('save validates the name before touching the filesystem or the multiplexer', async () => {
+			// A name is a lookup key that must also be a filename — `../../etc/passwd` must never get
+			// as far as being a path.
+			catchExit()
+			const stderr = captureStderr()
+			const calls: string[][] = []
+			const store = fakeStore({})
+			const program = buildProgram({ env: SAVE_ENV, exec: saveExec(calls), store })
+			await expect(run(program, ['layout', 'save', '../escape'])).rejects.toThrow('exit:1')
+			expect(stderr.join('')).toContain('invalid layout name')
+			expect(store.writes).toEqual({})
+			expect(calls).toEqual([])
+		})
+
+		it('save with no pane to capture around refuses rather than guessing', async () => {
+			// No CYBER_MUX_PANE and no --from: this process is in no pane it can name. Falling back to the
+			// backend's own default would capture whichever region the USER happens to be looking at and
+			// save it under the name the caller asked for — a confident wrong answer, worse than none.
+			catchExit()
+			const stderr = captureStderr()
+			const calls: string[][] = []
+			const store = fakeStore({})
+			const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'tmux' }, exec: saveExec(calls), store })
+			await expect(run(program, ['layout', 'save', 'pool-3'])).rejects.toThrow('exit:1')
+			expect(stderr.join('')).toContain('--from')
+			expect(store.writes).toEqual({})
+			// It never asked the backend for a region either — the refusal precedes the read.
+			expect(calls.some((c) => c[1] === 'list-panes')).toBe(false)
+		})
+
+		it('a pane outside the captured root loses its dir and says so', async () => {
+			// Bound at CLI level, not on the pure module: the scenario's Then names stderr and "the
+			// template is still written", and neither is visible from captureLayout's return value.
+			const stderr = captureStderr()
+			const store = fakeStore({})
+			// The right-hand pane runs somewhere else entirely — a template cannot pin an absolute path.
+			const exec = saveExec(
+				[],
+				['%0\t0\t0\t119\t50\t/repo\tzeta\tzeta', '%1\t120\t0\t80\t50\t/elsewhere\tzeta\tzeta'].join('\n'),
+			)
+			const program = buildProgram({ env: SAVE_ENV, exec, store })
+			await run(program, ['layout', 'save', 'pool-2'])
+			expect(stderr.join('')).toContain('/elsewhere')
+			expect(stderr.join('')).toContain('not under the captured root')
+			// Still written, and that pane simply has no dir — the geometry is the verbose part.
+			expect(JSON.parse(store.writes[repo('pool-2')]!).root.second).toEqual({ type: 'pane' })
+			// The warning never reaches stdout: the path alone must stay there so `$(...)` composes.
+			expect(logs).toEqual([repo('pool-2')])
+		})
+
+		it("a label two panes share is dropped from both, because a template's labels must be unique", async () => {
+			// Bound at CLI level for the same reason: the Then names a warning on stderr.
+			const stderr = captureStderr()
+			const store = fakeStore({})
+			// Both panes deliberately titled `worker` — neither is tmux's hostname default, so both are real
+			// labels, and they collide.
+			const exec = saveExec(
+				[],
+				['%0\t0\t0\t119\t50\t/repo\tworker\tzeta', '%1\t120\t0\t80\t50\t/repo\tworker\tzeta'].join('\n'),
+			)
+			const program = buildProgram({ env: SAVE_ENV, exec, store })
+			await run(program, ['layout', 'save', 'pool-2'])
+			const written = JSON.parse(store.writes[repo('pool-2')]!)
+			expect(written.root.first).toEqual({ type: 'pane' })
+			expect(written.root.second).toEqual({ type: 'pane' })
+			expect(stderr.join('')).toContain('worker')
+			expect(logs).toEqual([repo('pool-2')])
+		})
+
+		it('a region no sequence of splits could have produced is refused', async () => {
+			// Bound at CLI level: the Then names an exit code and that nothing is written — neither is
+			// observable from the pure module, which only throws.
+			catchExit()
+			const store = fakeStore({})
+			// A true pinwheel: four panes wound around a fifth, no straight cut separating them.
+			const exec = saveExec(
+				[],
+				[
+					'%0\t0\t0\t150\t12\t/repo\tzeta\tzeta',
+					'%1\t150\t0\t50\t37\t/repo\tzeta\tzeta',
+					'%2\t50\t37\t150\t13\t/repo\tzeta\tzeta',
+					'%3\t0\t12\t50\t38\t/repo\tzeta\tzeta',
+					'%4\t50\t12\t100\t25\t/repo\tzeta\tzeta',
+				].join('\n'),
+			)
+			const program = buildProgram({ env: SAVE_ENV, exec, store })
+			await expect(run(program, ['layout', 'save', 'pool-5'])).rejects.toThrow('exit:1')
+			// Nothing written — a refusal must not leave a half-truth on disk.
+			expect(store.writes).toEqual({})
+		})
+
+		it("a backend that cannot report its region's geometry refuses save cleanly", async () => {
+			// describeRegion is OPTIONAL on the seam. Both real backends implement it, so the only way to
+			// reach this branch is to take it away: stand in for a backend that never had it (a future
+			// screen adapter, which fails the layout floor on three other counts too). Restored in
+			// `finally`, since the adapter is a module singleton every other test shares.
+			catchExit()
+			const stderr = captureStderr()
+			const store = fakeStore({})
+			const original = tmuxSessionAdapter.describeRegion
+			try {
+				delete (tmuxSessionAdapter as { describeRegion?: unknown }).describeRegion
+				const program = buildProgram({ env: SAVE_ENV, exec: saveExec([]), store })
+				await expect(run(program, ['layout', 'save', 'pool-3'])).rejects.toThrow('exit:1')
+			} finally {
+				tmuxSessionAdapter.describeRegion = original
+			}
+			// Names the backend, so the reader knows WHICH mux cannot do this rather than that save broke.
+			expect(stderr.join('')).toContain('tmux')
+			// Refuses rather than degrading: there is no half-geometry to fall back to.
+			expect(store.writes).toEqual({})
 		})
 	})
 })

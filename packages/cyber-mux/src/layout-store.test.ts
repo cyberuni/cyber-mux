@@ -36,6 +36,9 @@ function fakeStore(files: Record<string, string>): LayoutStore & { calls: Record
 				.sort()
 		},
 		dirExists: () => true,
+		write(path, contents) {
+			files[path] = contents
+		},
 	}
 }
 

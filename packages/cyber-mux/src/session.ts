@@ -77,6 +77,31 @@ export interface SessionReadOptions {
 	lines?: number
 }
 
+/**
+ * A pane's rectangle, in whatever coordinate space the backend measures its region in. Only the
+ * rects' relationship to EACH OTHER is meaningful — the origin is not comparable across backends
+ * (tmux reports window-relative, so a region starts at 0,0; herdr reports screen-absolute, so the
+ * same region starts wherever its workspace sits). Every consumer works off the panes' bounding box
+ * rather than an assumed origin, which is what makes the two reports interchangeable.
+ */
+export interface PaneRect {
+	x: number
+	y: number
+	/** In cells. Excludes the divider between this pane and the next, where the backend draws one. */
+	width: number
+	height: number
+}
+
+/** One pane of a region, as `describeRegion` reports it. */
+export interface RegionPane {
+	id: string
+	rect: PaneRect
+	/** The pane's working directory. */
+	cwd?: string
+	/** The pane's label, when it has one the AUTHOR set — see `describeRegion` on the tmux caveat. */
+	label?: string
+}
+
 export interface CreateWorktreeWorkspaceOptions {
 	/** The primary checkout's root — the repo the new worktree branches from. */
 	primaryRoot: string
@@ -248,4 +273,38 @@ export interface SessionAdapter {
 	 * against the mux the caller is actually inside; it never enumerates the other mux.
 	 */
 	listPanes(exec: Exec): LivePane[]
+	/**
+	 * Report the geometry of the region (tab/window) the target pane sits in — every pane in it, with
+	 * its rectangle. `layout save` runs this backwards into a template.
+	 *
+	 * **Optional, exactly as `worktree` is** — present on a backend that can describe its own region,
+	 * absent on one that cannot. Both real backends can, so both declare it; a caller that finds it
+	 * missing refuses (`layout save` exits naming the backend) rather than degrading, because there is
+	 * nothing to degrade to: no geometry, no capture.
+	 *
+	 * **Rects, not a tree, and that is the whole design of this verb.** Both backends can answer
+	 * "what does this region look like", and both answer in a DIFFERENT structure: tmux hands back a
+	 * nested tree encoded in a string (`#{window_layout}` — `83ae,200x50,0,0{133x50,0,0[...],...}`,
+	 * where `{}` is a side-by-side split and `[]` a stacked one), while herdr hands back a FLAT
+	 * `splits[]` array whose parent/child links exist only inside an undocumented id convention
+	 * (`split_1_0` meaning "split 1, child of split 0" — inferred from the shape, never specified).
+	 * Neither structure survives being made portable: one needs a bespoke parser for a string format
+	 * tmux does not promise to keep, and the other needs cyber-mux to bet on herdr's id spelling.
+	 *
+	 * Rects are the fact both report exactly and neither can spell differently. The tree is then
+	 * *derived* from them by recursive guillotine cuts (`layout-capture.ts`), which is sound because a
+	 * multiplexer region is built by splitting and therefore always guillotine-cuttable. That buys
+	 * two things: the tricky half — n-ary rows, ratios, ambiguous grids — is a PURE function testable
+	 * with no multiplexer at all, and a third backend owes this verb four numbers per pane rather
+	 * than a tree in its own dialect.
+	 *
+	 * **`label` is the author's, or absent.** Only a label someone deliberately set is reported —
+	 * herdr omits the field entirely until `pane rename`, and tmux defaults `pane_title` to the
+	 * HOSTNAME, so the tmux adapter drops a title equal to `#{host}` rather than exporting `zeta` as
+	 * every pane's name.
+	 *
+	 * Throws rather than returning empty when the region cannot be read: an export built from a
+	 * region the backend could not describe would be a confident lie about the user's screen.
+	 */
+	describeRegion?(exec: Exec, target: SessionTarget): RegionPane[]
 }
