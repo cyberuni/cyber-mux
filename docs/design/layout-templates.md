@@ -93,24 +93,37 @@ matches `Exec`'s existing convention, so the resolution chain is a plain `??` wa
 **JSON.** Reasoning, in order of weight:
 
 1. **Zero new dependency.** `packages/cyber-mux/package.json` has exactly one runtime dependency:
-   `commander`. There is no YAML or TOML parser anywhere in the monorepo, and Node 22 (the pinned
-   engine) ships neither. YAML would add a parser to a package whose whole pitch is being a narrow,
-   thin CLI — for a config file most users will write once.
-2. **It is already the wire shape.** herdr's socket API speaks JSON, and `session.herdr.ts` already
-   parses JSON envelopes out of every herdr CLI call. A JSON template is one `JSON.parse` from a
-   herdr `layout.apply` body if that route is ever taken (§7).
-3. **It is already the output shape.** `--format json` exists on every command that reports
+   `commander`. There is no YAML or TOML parser anywhere in the monorepo, and Node ships neither —
+   verified on the pinned 24.15.0, not merely assumed from the `>=22` engine floor. YAML would add a
+   parser to the *published* dependency tree, which every consumer of a package whose whole pitch is
+   being a narrow, thin CLI would inherit — for a config file most users write once. This reason
+   carries the decision on its own.
+2. **It is already the output shape.** `--format json` exists on every command that reports
    structure. `layout show` emitting the same format it consumes closes the loop, and makes a
    generated template (from a script, or a future `layout export`) trivial.
+
+Note what is deliberately **not** an argument here: that JSON is herdr's wire shape. It is, but this
+design compiles to the portable `SessionAdapter` verbs and never builds a `layout.apply` body (§7.1),
+so the encodings agreeing buys nothing — and the *schemas* deliberately disagree in three places
+(this schema forbids `cwd`; it makes `ratio` optional where herdr's `LayoutNode` requires it; its
+`command` is a shell string where herdr's is argv). Arguing from a wire shape this design does not
+speak would be borrowing credibility from a rejected route.
 
 Costs, acknowledged: no comments, and the nesting is noisier to hand-author than
 tmuxinator's YAML. The `panes` + `arrange` sugar (§5.3) removes the nesting for the common case,
 which is where most of that pain lives. A `description` field carries the one comment a template
 usually wants. If authoring ergonomics later prove to be the blocker, YAML can be added as a second
 accepted extension without changing the schema — the schema is the contract, the encoding is not.
+That reversibility is what makes this a cheap decision rather than a load-bearing one: `layout.ts` is
+pure and parses to an in-memory tree, so nothing downstream knows what bytes it came from. If the
+missing-comments cost is what bites (likelier than nesting, since `description` covers the template
+but not *"why is this pane's ratio 0.3?"*), JSONC is the smaller move than YAML — same schema, same
+`JSON.parse` after a strip.
 
-TOML is rejected outright: it represents a recursive tree badly, and the schema is a tree.
-KDL is rejected: Zellij's format, no Node parser worth the dependency, no gain over JSON here.
+TOML is rejected outright, and for a stronger reason than aesthetics: its array-of-tables syntax
+cannot express `first`/`second` recursion at all without inventing a flattening convention, and the
+schema is a recursive tree. KDL is rejected: Zellij's format, no Node parser worth the dependency, no
+gain over JSON here.
 
 Extension: `.json`. Filename stem is the template name; a name is `[a-z0-9][a-z0-9-]*` and is
 validated to be exactly the stem, so a name can never traverse out of the layouts directory.
@@ -172,7 +185,7 @@ validated to be exactly the stem, so a name can never traverse out of the layout
 | `type` | `"pane"` | yes | |
 | `label` | string | no | Passed to `open`'s `label` (herdr: `pane rename`; tmux: `select-pane -T`). Also the pane's key in the apply manifest (§6.4) — this is what a higher layer addresses the pane by. Must be unique within a template; duplicates are a validation error. |
 | `command` | string | no | Launched via `submit` after geometry is built (§7.2). Omit for a blank shell pane. |
-| `env` | `Record<string,string>` | no | See §7.4 — this one has a real backend gap. |
+| `env` | `Record<string,string>` | no | Set in the pane's environment at birth. Native on both backends (§7.3 Gap C). Valid with or without `command`. |
 | `dir` | string | no | A **relative** subdirectory, joined onto the apply-time cwd. Absolute paths and any `..` escape are validation errors. This is the pressure valve for "the test-watcher pane starts in `packages/cyber-mux`" without ever letting a machine-specific path into the template. |
 | `cwd` | — | **rejected** | Not "optional" — not in the schema. A template carrying a `cwd` fails validation with an error naming `--cwd` and `dir`. This is the single rule the whole feature exists to enforce; making it a hard error rather than an ignored key is what keeps a template reusable. |
 
@@ -358,7 +371,9 @@ Every backend, one algorithm:
    - `split` node: split the region's current pane in `direction` at `ratio` → a new pane. `first`
      inherits the original pane, `second` takes the new one. Recurse into both.
 3. **Launch, last.** For each leaf with a `command`, in template order:
-   `submit(exec, pane, command)` (or the env-prefixed form, §7.4).
+   `submit(exec, pane, command)` — a shell string typed into the pane's shell, which is what `open`'s
+   `launch` already is on both adapters. (Or, on a backend with no native env flag, the env-prefixed
+   form — §7.3 Gap C.)
 4. **Label**, if the backend did not take it at birth.
 
 **Geometry before commands is a deliberate ordering.** `open`'s `launch` couples creation to
@@ -398,11 +413,11 @@ interface SessionOpenOptions {
 ```
 
 tmux: `split-window -t <pane_id>` — documented and certain.
-herdr: `pane split <pane_id>` in place of `--current` — **strongly implied by the existence of a
-`--current` flag, but unverified.** See §12 Q1. If herdr's CLI cannot split by id, the herdr adapter
-needs `pane focus` + `--current` (racy, steals focus — bad) or a socket call for this one verb. Note
-what that is and is not: it is a **herdr adapter** problem, not a design problem. The schema, the
-compiler, and every other backend are unaffected, which is the point of §7.1.
+herdr: `pane split <pane_id>` in place of `--current` — **verified against herdr 0.7.4** (§12 Q1,
+closed). The CLI takes the id positionally (`herdr pane split [<pane_id>|--pane ID|--current]`), and
+the socket API exposes the same thing as `PaneSplitParams.target_pane_id` (`herdr api schema`,
+protocol 16). No focus-stealing fallback is needed on either backend, so Gap A is clear on both and
+the bar §7.1 sets is met by both.
 
 **Gap B — ratio. (Degradable.)**
 
@@ -411,25 +426,49 @@ ratio?: number   // fraction of the region retained by the ORIGINAL pane
 ```
 
 Sign convention, which is easy to get backwards: template `ratio` is the fraction kept by `first`
-(the original pane), so the **new** pane gets `1 - ratio`. tmux's `-l` sizes the **new** pane, so
-`split-window -h -t P -l <round((1-ratio)*100)>%`. herdr's flag name and convention are unverified
-(§12 Q2). Absent backend support, ratio degrades to the backend's 50/50 default and apply warns once
-on stderr — a wrong-looking split is not worth failing an otherwise-correct pool over.
+(the original pane), so the **new** pane gets `1 - ratio`.
 
-**Gap C — env. (Degradable, with a real hole.)**
+- **tmux** — `-l` sizes the **new** pane, so `split-window -h -t P -l <round((1-ratio)*100)>%`.
+- **herdr** — `--ratio` sizes the **original** pane, which is the template's convention exactly, so
+  it passes through **unconverted**. Verified empirically against 0.7.4 (§12 Q2, closed): splitting a
+  201-column region `right` at `--ratio 0.333` left the original pane 67 columns (0.333) and gave the
+  new pane 134 (0.667). Neither the socket schema nor herdr's docs state this — it was measured, so
+  it is worth an integration-test assertion rather than trust.
 
-tmux: `split-window -e K=V` (repeatable) — documented.
-herdr: unverified (§12 Q3).
+The two backends therefore convert in *opposite* directions, which is exactly the trap this
+subsection exists to name. Absent backend support, ratio degrades to the backend's 50/50 default and
+apply warns once on stderr — a wrong-looking split is not worth failing an otherwise-correct pool
+over.
 
-Uniform fallback: prefix the launch command — `submit(pane, 'env K=V K2=V2 claude')`. Works on any
-backend with no flag at all, since it is just a command line. Two costs, both worth stating:
+**Gap C — env. (Degradable. Native on both real backends.)**
 
-- The values land in `ps` output and the pane's shell history.
-- **A pane with `env` but no `command` gets no env at all** — there is nothing to prefix. Validation
-  rejects that combination rather than silently dropping it.
+```ts
+env?: Record<string, string>   // set in the new pane's environment at birth
+```
 
-Preference order per backend: native flag where verified, prefix otherwise, validation error for the
-no-command case.
+- **tmux** — `split-window -e K=V` (repeatable). Verified against tmux 3.6b.
+- **herdr** — `pane split --env KEY=VALUE`; `PaneSplitParams.env` is a native
+  `Record<string,string>` in the socket schema. **Verified against 0.7.4** (§12 Q3, closed).
+
+**Both backends do this natively, so the fallback below currently has no customer.** It is documented
+because a future backend (§12 Q7 — `screen`) may need it, not because anything uses it today.
+
+Fallback, if a backend has no env flag: prefix the launch command — `submit(pane, 'env K=V K2=V2
+claude')`. Works anywhere, since it is just a command line. Its costs, which are the reason it is a
+last resort: the values land in `ps` output and the pane's shell history, and it can only set env for
+a pane that *has* a `command` to prefix.
+
+**A pane with `env` and no `command` is valid** and works on both backends — `pane split --env
+ROLE=worker` with no command yields a blank shell with `ROLE` set, which is a coherent warm pane for
+something to attach to later. An earlier draft made that combination a *validation* error; that rule
+was written when herdr's env was unverified and the prefix looked load-bearing, and it is now
+removed. Rejecting it at the schema level would let the weakest hypothetical backend punch a hole in
+a contract both real ones honor — precisely what §7.1 says not to do.
+
+Preference order per backend: native flag where it exists; otherwise the prefix, degrading with one
+stderr warning when a pane has `env` but no `command` and the backend has no native flag. This
+mirrors Gap B exactly: **degrade and warn, never reject.** The schema is backend-agnostic, so a
+template's validity cannot depend on which multiplexer happens to be running.
 
 ## 8. Module layout
 
@@ -510,8 +549,8 @@ Policies:
 | Split tree | via portable walk | via portable walk | **None.** Same code path, same geometry. |
 | Workspace tier | real | collapses to a window | `--at workspace` yields a window. Already the documented behavior of `open`; layouts inherit it and add nothing. |
 | Worktree binding | yes | no | `workspace: null` in the manifest. Already handled by `degraded`. |
-| Ratio | §12 Q2 | `-l N%` | Degrades to 50/50 with one stderr warning (§7.3 Gap B). |
-| Env | §12 Q3 | `-e K=V` | Degrades to command prefix (§7.3 Gap C). |
+| Ratio | `--ratio` (sizes the **original** pane) | `-l N%` (sizes the **new** pane) | **None.** Both native; they convert in opposite directions (§7.3 Gap B). |
+| Env | `--env K=V` | `-e K=V` | **None.** Both native (§7.3 Gap C). The command-prefix fallback has no customer today. |
 | **Agent status** | `working`/`idle`/`blocked`/`done` | **nothing** | **No effect — by design.** |
 
 That last row is worth being explicit about, because the brief asks whether the schema must degrade
@@ -547,12 +586,22 @@ this shape was chosen:
   `arrange`. Pure; no mocks.
 - `layout-store.test.ts` — resolution order, shadowing, name/traversal rejection. Fake `LayoutStore`.
 - `layout-session.test.ts` — the walk emits the expected `open`/`submit` call sequence per backend,
-  against the mocked `Exec` both adapters are already tested with. Covers the ratio sign convention,
-  the env fallback, the `--if-populated` heuristic, and partial failure.
+  against the mocked `Exec` both adapters are already tested with. Covers the ratio sign convention
+  **in both directions** (herdr passes `ratio` through, tmux emits `1 - ratio` — a mocked `Exec`
+  asserting the literal flags is the cheapest guard against the inversion being applied twice, or to
+  the wrong backend), native `env` on both backends, a pane with `env` and no `command`, the
+  `--if-populated` heuristic, and partial failure. The env *prefix* fallback has no backend to
+  exercise it, so it is tested against a fake adapter declaring no native env — or left untested
+  until a backend needs it, which is the honest option.
 - `cli.test.ts` — the command group, flags, `--format json` manifest, mutual exclusion of
   `--layout`/`--launch`.
 - Integration (`*.integration.test.ts`, the existing opt-in tier) — one real 3-pane apply per
-  backend. This is what actually answers §12 Q1–Q3, and the research's own closing note:
+  backend. §12 Q1–Q3 are now closed ahead of it, so its job shifts from *discovering* the backend
+  facts to *pinning* them — in particular Gap B's opposite-direction ratio conversion, which was
+  measured rather than documented and is the single most likely thing to silently regress under a
+  herdr update. The committed `herdr api schema` snapshot (protocol 16) is the companion guard: a
+  test that diffs it catches a protocol move before the walk does. Also relevant is the research's
+  own closing note:
   *"validate the depth-first split/send-keys sequence ... for correctness on nested (3+ level) trees,
   which wasn't tested here."*
 
@@ -587,29 +636,41 @@ eventually, whether each is busy. It never decides who gets the work.**
 
 ## 12. Open questions
 
-Flagged rather than guessed. Q1 is the only one that can change the design.
+Flagged rather than guessed. Q1–Q3 and Q5 were **closed against herdr 0.7.4** (`herdr api schema`,
+protocol 16, plus a live probe); their findings are folded into §7.3 and §9.4 and recorded here so the
+answers are not re-litigated. Q4, Q6 and Q7 remain open. **Nothing that closed changed the design** —
+each answer went the way §7.1 predicted, which is itself the evidence that the portable-walk bet is
+sound.
 
-**Q1 — Can `herdr pane split` target a pane by id?** (§7.3 Gap A.) The adapter uses `--current`; a
-by-id form is strongly implied by that flag's existence but is unverified. If it cannot, that adapter
-needs `focus` + `--current` (racy, steals focus — unacceptable) or a socket call for this one verb.
-**Blocking for the herdr adapter, not for the design. Verify against a live herdr before
-implementation starts.**
+**Q1 — Can `herdr pane split` target a pane by id? — CLOSED: yes.** (§7.3 Gap A.) The CLI takes it
+positionally, and the socket API exposes `PaneSplitParams.target_pane_id`. Gap A — the one blocking
+bar — is clear on both backends. No focus-stealing fallback, no socket-only verb.
 
-**Q2 — herdr's split ratio flag.** Name and convention (does the size apply to the new pane or the
-old?). Non-blocking: degrades to 50/50.
+**Q2 — herdr's split ratio flag. — CLOSED: `--ratio`, sizing the ORIGINAL pane.** (§7.3 Gap B.) This
+is the template's own convention, so herdr passes through unconverted while tmux inverts. Measured,
+not documented: neither the socket schema nor herdr's docs state the convention, so §10's integration
+test must assert it rather than trust it.
 
-**Q3 — herdr's split env flag.** Non-blocking: degrades to the command prefix.
+**Q3 — herdr's split env flag. — CLOSED: `--env KEY=VALUE`, native.** (§7.3 Gap C.) Both backends set
+env natively, so the command-prefix fallback has no customer, and the "env without command is a
+validation error" rule it justified is **removed from the schema**. This is the one closure that
+changed a rule rather than confirming one.
 
 **Q4 — Pane-count / depth ceiling for a large pool.** The research flagged herdr `layout.apply`'s
 limits as untested; irrelevant here, since this design does not use it. The live question is the
 walk's own ceiling — an 8-pane pool is 7 sequential splits, and no backend's minimum pane size is
 known. The integration test in §10 should push past 4 and find where it breaks.
 
-**Q5 — Workspace-scoped pane enumeration.** A `herdr pane list --workspace <id>` (or equivalent)
-would replace §9.3's cwd heuristic with a real answer and make `--if-populated` precise. Unverified
-whether it exists. Note the heuristic is backend-agnostic and tmux will never do better, so a precise
-herdr answer would make `--if-populated` *more* accurate on one backend than another — which may not
-be worth having.
+**Q5 — Workspace-scoped pane enumeration. — CLOSED: it exists. The recommendation is to not use it.**
+`herdr pane list --workspace <id>` is real (`PaneListParams.workspace_id`), and it would make
+§9.3's `--if-populated` precise on herdr. **Take it anyway? No.** The question already anticipated
+why: the cwd heuristic is backend-agnostic and tmux will never do better, so adopting the precise
+herdr answer buys accuracy on one backend at the cost of `--if-populated` meaning two different
+things depending on which multiplexer is running — and §9.3's `fail` policy reports *"3 panes already
+report a cwd under <path>"*, an honest sentence that a workspace-scoped query would quietly make
+false on one backend only. A heuristic that is uniformly imprecise is easier to reason about than one
+that is precise on Tuesdays. Revisit only if `--if-populated`'s false-positive rate is a real
+complaint in practice, and if so, change the *reported sentence* too.
 
 **Q6 — `layout export`?** Capturing live panes back into a template would make templates capturable
 rather than hand-written. herdr has `layout.export`; nothing else does, and the portable path cannot
