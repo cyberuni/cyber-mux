@@ -28,6 +28,16 @@ export interface OpenedWorktree {
 	 * there is nothing to report about a feature the backend does not have.
 	 */
 	degraded: boolean
+	/**
+	 * Whether a requested `env` actually reached the opened root pane. `false` ONLY on herdr's binding
+	 * route, whose `worktree create` has no `env` param at all (unlike `workspace`/`tab`/`pane
+	 * create`) and rejects the flag outright. Vacuously `true` when no env was asked for.
+	 *
+	 * Reported rather than solved here because the remedy is a *command* — prefixing `env K=V` onto
+	 * what the pane runs — and this module opens panes; it does not decide what they run. Only the
+	 * route taken knows this fact, which is why it is reported rather than inferred by the caller.
+	 */
+	envHonored: boolean
 }
 
 /**
@@ -61,6 +71,8 @@ export function addAndOpenWorktree(
 		path: string
 		base?: string
 		launch?: string
+		/** Environment set in the opened root pane at birth — native at every tier on both backends. */
+		env?: Record<string, string>
 		at?: SessionPlacement
 		label?: string
 		/** Passed to `open` for a `pane:*` placement; see `SessionOpenOptions.from`. */
@@ -74,9 +86,12 @@ export function addAndOpenWorktree(
 			path: opts.path,
 			base: opts.base,
 			launch: opts.launch,
+			env: opts.env,
 			label: opts.label,
 		})
-		return { ...created, degraded: false }
+		// herdr's `worktree create` takes no env — the adapter accepts `env` and does not emit it, so
+		// say so rather than let the caller assume it landed.
+		return { ...created, degraded: false, envHonored: !opts.env }
 	}
 	const worktree = gitWorktreeAdapter.add(exec, {
 		primaryRoot: opts.primaryRoot,
@@ -87,11 +102,13 @@ export function addAndOpenWorktree(
 	const target = adapter.open(exec, {
 		cwd: worktree.root,
 		launch: opts.launch,
+		env: opts.env,
 		at: opts.at,
 		label: opts.label,
 		from: opts.from,
 	})
-	return { worktree, target, degraded: isDegraded(adapter, opts.at) }
+	// This route goes through `open`, where env is native at every tier on both backends.
+	return { worktree, target, degraded: isDegraded(adapter, opts.at), envHonored: true }
 }
 
 /**
@@ -119,13 +136,14 @@ export function openExistingWorktree(
 			launch: opts.launch,
 			label: opts.label,
 		})
-		return { ...opened, degraded: false }
+		// Vacuous: this verb takes no env to honor or lose.
+		return { ...opened, degraded: false, envHonored: true }
 	}
 	const root = normalizeWorktreePath(opts.path)
 	const target = adapter.open(exec, { cwd: root, launch: opts.launch, at, label: opts.label, from: opts.from })
 	// The branch is git's answer, not the backend's — same rule as `listWorktrees`.
 	const branch = listWorktreesFromGit(exec, opts.primaryRoot).find((entry) => entry.root === root)?.branch
-	return { worktree: { root, branch: branch ?? '' }, target, degraded: isDegraded(adapter, at) }
+	return { worktree: { root, branch: branch ?? '' }, target, degraded: isDegraded(adapter, at), envHonored: true }
 }
 
 /**
