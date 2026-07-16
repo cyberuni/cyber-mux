@@ -220,35 +220,12 @@ Feature: layout — named, reusable pane layouts
 
   # ── Ratio and env: degrade, never reject ──
   # The schema is backend-agnostic, so a template's validity cannot depend on the live multiplexer.
-
-  Scenario Outline: the ratio sign convention converts in opposite directions per backend
-    Given a split node with ratio 0.333 applied through the <backend> adapter
-    When the split is issued
-    Then the backend receives <flag>
-
-    Examples:
-      | backend | flag          |
-      | herdr   | --ratio 0.333 |
-      | tmux    | -l 67%        |
-
-    # template ratio is the fraction kept by `first`, the ORIGINAL pane. herdr's --ratio sizes the
-    # original, so it passes through unconverted; tmux's -l sizes the NEW pane, so it takes
-    # 1 - ratio. Applying the inversion to both backends, or to neither, fails one of these rows.
-
-  Scenario: ratio omitted splits the region evenly
-    Given a split node carrying no ratio
-    When it is applied
-    Then the region is split evenly between first and second
-
-  Scenario Outline: env is set natively on both backends, at the pane's birth
-    Given a pane node with env ROLE=worker applied through the <backend> adapter
-    When the pane is created
-    Then the backend receives <flag>
-
-    Examples:
-      | backend | flag              |
-      | herdr   | --env ROLE=worker |
-      | tmux    | -e ROLE=worker    |
+  #
+  # What `ratio` and `env` MEAN at the seam — the sign convention each backend converts in, the flag
+  # each renders, and the tier env reaches — belongs to the pane abstraction and is specified there
+  # (`mux/mux.feature`, "Split options"). This node owns only what a TEMPLATE does with them: that
+  # the desugared tree carries them, and that a backend which cannot size a split degrades rather
+  # than rejecting an otherwise-valid pool.
 
   Scenario: a pane with env and no command is valid and yields a blank shell with the env set
     Given a pane node with env ROLE=worker and no command

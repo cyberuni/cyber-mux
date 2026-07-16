@@ -139,6 +139,148 @@ Feature: mux — the pane abstraction
     When it passes an --at value outside pane:right|pane:down|tab|workspace
     Then the command is rejected before any pane opens
 
+  # ── Split options — what a split can be told: which pane, how big, what environment ──
+  # The seam's own contract, stated at the seam. A caller reaches these through the adapter, not
+  # through a CLI flag, so these scenarios address open() directly rather than a `cyber-mux open`
+  # command line. The layout capability is one such caller; what a template DOES with these is
+  # layout's business, what they MEAN is this node's.
+
+  Scenario Outline: from names the pane a pane:* split targets
+    Given a caller opening at pane:right through the <adapter> adapter, with from naming a pane
+    When open runs
+    Then the backend is told to split that named pane, via <how>
+
+    Examples:
+      | adapter | how                                        |
+      | tmux    | -t and the pane id                         |
+      | herdr   | the pane id passed positionally, no --from |
+
+  Scenario Outline: from omitted leaves each backend its own default, which tracks the USER's focus
+    Given a caller opening at pane:right through the <adapter> adapter, with no from
+    When open runs
+    Then the backend is left to choose the pane itself, receiving <marker>
+
+    Examples:
+      | adapter | marker                          |
+      | tmux    | no pane-targeting flag at all   |
+      | herdr   | its own --current placeholder   |
+
+    # This is why `from` exists and why a caller should pass it. The two defaults disagree, and both
+    # track the pane the USER is looking at: tmux always splits the session's ACTIVE pane and
+    # ignores $TMUX_PANE entirely; herdr resolves --current from $HERDR_PANE_ID, silently falling
+    # back to the UI-focused pane when that is unset. They agree while a human is typing and diverge
+    # exactly when a program is driving. Naming the pane is the only way pane:right means the same
+    # thing on both backends.
+
+  Scenario Outline: from is ignored by tab and workspace, which split nothing
+    Given a caller opening at <at> through the <adapter> adapter, with from naming a pane
+    When open runs
+    Then the pane id is not passed to the backend at all
+
+    Examples:
+      | at        | adapter |
+      | tab       | tmux    |
+      | workspace | tmux    |
+      | tab       | herdr   |
+      | workspace | herdr   |
+
+  Scenario Outline: the ratio sign convention converts in opposite directions per backend
+    Given a caller opening at pane:right through the <adapter> adapter, with ratio 0.333
+    When open runs
+    Then the backend receives <flag>
+
+    Examples:
+      | adapter | flag          |
+      | herdr   | --ratio 0.333 |
+      | tmux    | -l 67%        |
+
+    # ratio is the fraction kept by `first` — the ORIGINAL pane, not the new one. herdr's --ratio
+    # sizes the original, so it passes through unconverted; tmux's -l sizes the NEW pane, so it takes
+    # 1 - ratio. Applying the inversion to both backends, or to neither, is the single most likely
+    # way to get a split backwards, and fails one of these rows.
+
+  Scenario Outline: ratio omitted leaves each backend its own even default
+    Given a caller opening at pane:right through the <adapter> adapter, with no ratio
+    When open runs
+    Then no sizing flag reaches the backend, which splits the region evenly
+
+    Examples:
+      | adapter |
+      | tmux    |
+      | herdr   |
+
+  Scenario Outline: ratio is a split concept — a tab or workspace is never sized against a pane
+    Given a caller opening at <at> through the tmux adapter, with a ratio
+    When open runs
+    Then no sizing flag reaches the backend, because a window is not sized against a pane
+
+    Examples:
+      | at        |
+      | tab       |
+      | workspace |
+
+  Scenario Outline: env is set natively at the birth of whatever tier is opened
+    Given a caller opening at <at> through the <adapter> adapter, with env ROLE=worker
+    When open runs
+    Then the backend receives <flag> on the command that creates the space
+
+    Examples:
+      | at         | adapter | flag              |
+      | pane:right | tmux    | -e ROLE=worker    |
+      | tab        | tmux    | -e ROLE=worker    |
+      | workspace  | tmux    | -e ROLE=worker    |
+      | pane:right | herdr   | --env ROLE=worker |
+      | tab        | herdr   | --env ROLE=worker |
+      | workspace  | herdr   | --env ROLE=worker |
+
+    # env reaches EVERY tier, not just a split, and that is load-bearing rather than incidental: a
+    # pane pool's root pane is born by the region open and never by a split, so a seam that scoped
+    # env to pane:* would drop it silently exactly where a caller needs it.
+
+  Scenario Outline: each env variable gets its own flag, in the order given
+    Given a caller opening through the <adapter> adapter, with env ROLE=worker and TIER=gpu
+    When open runs
+    Then the backend receives one repeated flag per variable, ROLE before TIER
+
+    Examples:
+      | adapter |
+      | tmux    |
+      | herdr   |
+
+  Scenario Outline: env with no launch opens a blank shell carrying the env
+    Given a caller opening through the <adapter> adapter, with env and no launch
+    When open runs
+    Then the pane is created with the env set
+    And nothing is typed, sent, or run into it
+
+    Examples:
+      | adapter |
+      | tmux    |
+      | herdr   |
+
+  Scenario: herdr's worktree verbs cannot set env at birth, and drop it rather than failing
+    Given a caller creating or opening a worktree workspace through the herdr adapter, with env
+    When it runs
+    Then no env flag reaches herdr's worktree command
+    # The one tier where env is NOT native: herdr's worktree create/open take no env parameter and
+    # refuse the flag outright. Dropping it keeps the worktree route working; a caller that needs env
+    # there carries it some other way.
+
+  Scenario Outline: a backend declares whether it can size a split
+    Given a caller asking the <adapter> adapter whether it can size a split
+    When it reads the declaration
+    Then the adapter answers yes
+
+    Examples:
+      | adapter |
+      | tmux    |
+      | herdr   |
+
+    # The declaration is what lets a caller DEGRADE a ratio instead of failing when a backend cannot
+    # honor one. Both real backends can size, so both say yes; an adapter that stays silent is taken
+    # as cannot. What a caller does about a `no` is the caller's policy, not this seam's — see
+    # layout/, which warns once and takes the backend's own default.
+
   # ── --launch is optional — a blank pane is a valid open() outcome ──
 
   Scenario: open with no --launch creates a blank pane
