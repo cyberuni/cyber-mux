@@ -99,10 +99,23 @@ already cover the behavior, but their leaf titles are implementation-voiced, so 
 Binding this CR's scenarios is therefore a **test-rename** job (the canonical rename), not new
 coverage — with one exception, D7.
 
-### D7 — the one real coverage gap
+### D7 — the one real coverage gap (corrected at deliver)
 
-`ratio` is suppressed for `tab`/`workspace` on tmux by a `!window &&` guard that **no test
-exercises**. Every ratio test uses `at: 'pane:right'`. This CR adds that test.
+`ratio` is not passed to a `tab`/`workspace` on tmux, and no test exercised that. Every ratio test
+used `at: 'pane:right'`. This CR adds that test.
+
+**Corrected by mutation, having first got this wrong.** The claim as originally written was that the
+`!window &&` guard on `size` is the thing under test. It is not: `size` is only spread into the
+`split-window` branches, and the `new-window` branch never references it, so the guard is
+**structurally redundant** — deleting it changes no argv and fails no test. Mutating the guard alone
+left all 52 tests green, which is what exposed the mistake.
+
+The scenario is nonetheless **not inert**, and the miss test names the right wrong subject: an
+adapter author who wires `...size` into the window branch. Verified by mutation — spreading `size`
+into `new-window` *and* dropping the guard fails both rows of the new scenario. The contract being
+pinned is the emitted **argv**, not the guard; tmux is defended twice over and it takes breaking both
+defenses to lose the row. That is why the scenario is tmux-only: herdr cannot fail it at all, since
+its `size` is lexically scoped inside the pane-split branch.
 
 ## The 27 unbound
 
