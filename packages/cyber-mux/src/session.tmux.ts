@@ -14,14 +14,20 @@ export const tmuxSessionAdapter: SessionAdapter = {
 		// beaming; a truly-detached session would be a separate explicit intent.
 		const at = opts.at ?? 'tab'
 		const window = at === 'workspace' || at === 'tab'
+		// `-t` whenever the caller names a pane. Without it tmux does NOT split the calling pane — it
+		// splits the session's ACTIVE pane, ignoring `$TMUX_PANE` outright (verified on tmux 3.6b: a
+		// `split-window` run inside pane %1, with `$TMUX_PANE` correctly reading %1, split the active
+		// %0 instead). The two coincide while a human types, which is why the default reads as
+		// harmless and is not; a program driving a pane it is not focused on gets the wrong one.
+		const from = !window && opts.from ? ['-t', opts.from.id] : []
 		const args = window
 			? // `-d` keeps focus on the caller (opens the window in the background) — without it tmux
 				// switches the attached client to the new window, stealing the caller's focus. The
 				// returned pane id and subsequent `send-keys -t` still target the new pane.
 				['new-window', '-d', '-c', opts.cwd, '-P', '-F', '#{pane_id}']
 			: at === 'pane:down'
-				? ['split-window', '-v', '-c', opts.cwd, '-P', '-F', '#{pane_id}']
-				: ['split-window', '-h', '-c', opts.cwd, '-P', '-F', '#{pane_id}']
+				? ['split-window', '-v', ...from, '-c', opts.cwd, '-P', '-F', '#{pane_id}']
+				: ['split-window', '-h', ...from, '-c', opts.cwd, '-P', '-F', '#{pane_id}']
 		// A window takes its name at birth — `-n` also turns tmux's `automatic-rename` off for it, so
 		// the name survives whatever the pane goes on to run. A pane has no such flag; its title is
 		// set after the split.

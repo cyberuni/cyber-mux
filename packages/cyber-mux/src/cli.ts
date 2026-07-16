@@ -1,5 +1,5 @@
 import { Command, CommanderError } from 'commander'
-import { selectSessionAdapter } from './backend.ts'
+import { callerPane, selectSessionAdapter } from './backend.ts'
 import { AT_OPTION, FORMAT_OPTION, LABEL_OPTION } from './cli-options.ts'
 import { type Exec, realExec } from './exec.ts'
 import { currentPane, probeMultiplexer } from './mux-probe.ts'
@@ -144,7 +144,14 @@ function openCommand(deps: CliDeps): Command {
 		.addOption(LABEL_OPTION)
 		.addOption(FORMAT_OPTION)
 		.action((opts: { launch?: string; cwd: string; at?: SessionPlacement; label?: string }) => {
-			const t = adapter(deps).open(deps.exec, { cwd: opts.cwd, launch: opts.launch, at: opts.at, label: opts.label })
+			const a = adapter(deps)
+			const t = a.open(deps.exec, {
+				cwd: opts.cwd,
+				launch: opts.launch,
+				at: opts.at,
+				label: opts.label,
+				from: callerPane(a, deps.env),
+			})
 			output({ pane: t.id }, () => printFields({ pane: t.id }))
 		})
 }
@@ -286,8 +293,9 @@ function worktreeAddCommand(deps: CliDeps): Command {
 					// A launch with no placement wants its own space, not a pane crowding the caller's — and
 					// `workspace` is the only placement a backend can bind a worktree to.
 					const at = opts.at ?? 'workspace'
+					const a = adapter(deps)
 					reportOpenedWorktree(
-						addAndOpenWorktree(deps.exec, adapter(deps), {
+						addAndOpenWorktree(deps.exec, a, {
 							primaryRoot,
 							branch: opts.branch,
 							path,
@@ -295,6 +303,7 @@ function worktreeAddCommand(deps: CliDeps): Command {
 							launch: opts.launch,
 							at,
 							label: opts.label,
+							from: callerPane(a, deps.env),
 						}),
 					)
 				} catch (err) {
@@ -315,13 +324,15 @@ function worktreeOpenCommand(deps: CliDeps): Command {
 		.action((path: string, opts: { launch?: string; at?: SessionPlacement; label?: string }) => {
 			try {
 				const primaryRoot = resolvePrimaryRoot(deps.exec)
+				const a = adapter(deps)
 				reportOpenedWorktree(
-					openExistingWorktree(deps.exec, adapter(deps), {
+					openExistingWorktree(deps.exec, a, {
 						primaryRoot,
 						path,
 						launch: opts.launch,
 						at: opts.at,
 						label: opts.label,
+						from: callerPane(a, deps.env),
 					}),
 				)
 			} catch (err) {

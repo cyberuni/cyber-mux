@@ -81,6 +81,46 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls[0]?.[1]).toBe('-v') // pane:down maps to a vertical split
 		})
 
+		// The regression this fix exists for. `--at pane:*` is documented as placement "relative to the
+		// caller", but each backend's own default resolves a DIFFERENT pane, and neither is reliably
+		// the caller: tmux splits its session's ACTIVE pane (ignoring $TMUX_PANE), while herdr's
+		// `--current` falls back to the UI-FOCUSED pane when it cannot identify the caller. The same
+		// command therefore targeted two different panes depending on the backend, silently. Asserting
+		// the caller's pane id reaches the argv on BOTH backends is what pins them back together.
+		it('--at pane:* splits the CALLING pane on both backends, not whichever pane is focused', async () => {
+			const tmuxCalls: string[][] = []
+			const tmuxProgram = buildProgram({
+				env: { CYBER_MUX: 'tmux', CYBER_MUX_PANE: '%3' },
+				exec: fakeTmuxExec(tmuxCalls, { 'split-window': '%9' }),
+			})
+			await run(tmuxProgram, ['open', '--at', 'pane:right'])
+			expect(tmuxCalls[0]).toEqual(['split-window', '-h', '-t', '%3', '-c', process.cwd(), '-P', '-F', '#{pane_id}'])
+
+			const herdrCalls: string[][] = []
+			const herdrProgram = buildProgram({
+				env: { CYBER_MUX: 'herdr', CYBER_MUX_PANE: 'w3:pA' },
+				exec: fakeHerdrExec(herdrCalls, {
+					'pane split': JSON.stringify({ id: 'cli:pane:split', result: { pane: { pane_id: 'w3:pB' } } }),
+				}),
+			})
+			await run(herdrProgram, ['open', '--at', 'pane:right'])
+			expect(herdrCalls[0]).toEqual(['pane', 'split', 'w3:pA', '--direction', 'right', '--cwd', process.cwd()])
+			expect(herdrCalls[0]).not.toContain('--current')
+		})
+
+		it('--at pane:* with no caller identity still opens, on the backend’s own default', async () => {
+			// Degrade, never refuse: an unidentified caller (no pane env at all — a cron job, a shell
+			// outside any pane) still gets a pane. The backend's guess is worse than naming the pane
+			// but better than failing, and it is the pre-`from` behavior unchanged.
+			const calls: string[][] = []
+			const program = buildProgram({
+				env: { CYBER_MUX: 'tmux' },
+				exec: fakeTmuxExec(calls, { 'split-window': '%9' }),
+			})
+			await run(program, ['open', '--at', 'pane:right'])
+			expect(calls[0]).not.toContain('-t')
+		})
+
 		it("--at workspace opens the pane's own VISIBLE space on each backend", async () => {
 			const tmuxCalls: string[][] = []
 			const tmuxExec = fakeTmuxExec(tmuxCalls, { 'new-window': '%20' })

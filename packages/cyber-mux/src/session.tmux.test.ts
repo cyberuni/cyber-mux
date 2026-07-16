@@ -40,6 +40,45 @@ describe('spec:cyber-mux/mux', () => {
 			])
 		})
 
+		// `from` is what makes `pane:*` mean the CALLING pane. Without `-t`, tmux splits the session's
+		// ACTIVE pane and ignores $TMUX_PANE outright — verified against tmux 3.6b, where a
+		// `split-window` run inside %1 (with $TMUX_PANE=%1) split the active %0 instead. These assert
+		// the flag because that is the entire fix: the wrong-pane split is silent, so only the emitted
+		// argv distinguishes a correct call from a broken one.
+		it('open({at:pane:*, from}) splits the NAMED pane via -t rather than tmux’s active pane', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'split-window': '%9' })
+			tmuxSessionAdapter.open(exec, { cwd: '/u', at: 'pane:right', from: { id: '%3' } })
+			tmuxSessionAdapter.open(exec, { cwd: '/u', at: 'pane:down', from: { id: '%3' } })
+			expect(calls.filter((c) => c[0] === 'split-window')).toEqual([
+				['split-window', '-h', '-t', '%3', '-c', '/u', '-P', '-F', '#{pane_id}'],
+				['split-window', '-v', '-t', '%3', '-c', '/u', '-P', '-F', '#{pane_id}'],
+			])
+		})
+
+		it('open({from}) is ignored by tab/workspace, which split nothing', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'new-window': '%2' })
+			tmuxSessionAdapter.open(exec, { cwd: '/u', at: 'tab', from: { id: '%3' } })
+			tmuxSessionAdapter.open(exec, { cwd: '/u', at: 'workspace', from: { id: '%3' } })
+			// No `-t`: a window is not placed relative to a pane, so leaking `from` here would target
+			// the new window at an unrelated pane's session.
+			expect(calls.filter((c) => c[0] === 'new-window')).toEqual([
+				['new-window', '-d', '-c', '/u', '-P', '-F', '#{pane_id}'],
+				['new-window', '-d', '-c', '/u', '-P', '-F', '#{pane_id}'],
+			])
+		})
+
+		it('open({at:pane:*}) with no `from` falls back to tmux’s own default, emitting no -t', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'split-window': '%9' })
+			tmuxSessionAdapter.open(exec, { cwd: '/u', at: 'pane:right' })
+			// The pre-`from` behavior, kept for a caller that cannot identify itself: tmux's active
+			// pane is a guess, but it is a better outcome than refusing to open at all.
+			expect(calls[0]).toEqual(['split-window', '-h', '-c', '/u', '-P', '-F', '#{pane_id}'])
+			expect(calls[0]).not.toContain('-t')
+		})
+
 		it('--at omitted falls back to tab', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'new-window': '%2' })

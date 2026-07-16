@@ -17,6 +17,18 @@ interface SessionOpenOptions {
 	/** Placement relative to the caller; defaults to 'tab'. */
 	at?: SessionPlacement
 	/**
+	 * The pane a `pane:*` placement splits. Ignored by `tab`/`workspace`, which split nothing.
+	 *
+	 * Pass it. Omitting it does **not** mean "the calling pane" — it means "whatever this backend
+	 * defaults to", and the two backends default to opposite things: herdr resolves `--current` from
+	 * `$HERDR_PANE_ID`, silently falling back to the UI-focused pane when that is unset; tmux ignores
+	 * `$TMUX_PANE` entirely and always splits the session's ACTIVE pane. Both defaults track the pane
+	 * the *user* is looking at, which is only coincidentally the caller's — they agree whenever a
+	 * human is typing and diverge exactly when a program is driving. Naming the pane is the only way
+	 * `pane:right` means the same thing on both backends.
+	 */
+	from?: SessionTarget
+	/**
 	 * Name for the space this opens, at whatever tier `at` opens it — every backend can name every
 	 * tier, so this is host-neutral: on herdr a workspace/tab/pane label, on tmux a window name
 	 * (`workspace` and `tab` both collapse to a Window there) or a pane title. Omit for the backend's

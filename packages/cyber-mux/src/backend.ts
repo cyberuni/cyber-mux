@@ -1,8 +1,8 @@
 import { type Exec, realExec } from './exec.ts'
-import { probeMultiplexer } from './mux-probe.ts'
+import { currentPane, probeMultiplexer } from './mux-probe.ts'
 import { herdrSessionAdapter } from './session.herdr.ts'
 import { tmuxSessionAdapter } from './session.tmux.ts'
-import type { SessionAdapter } from './session.ts'
+import type { SessionAdapter, SessionTarget } from './session.ts'
 
 /**
  * Backend selection via the two-mode mux probe (`$CYBER_MUX` fast-path/override, else ancestry
@@ -14,4 +14,20 @@ export function selectSessionAdapter(env: NodeJS.ProcessEnv, exec: Exec = realEx
 	if (probe.mux === 'tmux') return tmuxSessionAdapter
 	if (probe.mux === 'herdr') return herdrSessionAdapter
 	throw new Error('cyber-mux requires a session backend — run inside tmux ($TMUX) or herdr ($HERDR_ENV=1)')
+}
+
+/**
+ * This process's own pane, as something `adapter` can address — `SessionOpenOptions.from`'s intended
+ * argument for a `pane:*` open, so a split lands on the caller rather than on whichever pane the
+ * user is looking at (see `from`'s note for why each backend's default gets that wrong).
+ *
+ * `undefined` when this session is in no pane, or in a pane belonging to a *different* multiplexer
+ * than `adapter` drives — that mismatch is reachable (a `$TMUX_PANE` inherited into a herdr pane,
+ * `$CYBER_MUX` overridden to the other backend), and handing one backend the other's pane id would
+ * turn a self-identity mixup into a split of some unrelated pane. Falling back to the backend's own
+ * default is the conservative answer: still possibly the wrong pane, but never a foreign id.
+ */
+export function callerPane(adapter: SessionAdapter, env: NodeJS.ProcessEnv): SessionTarget | undefined {
+	const self = currentPane(env)
+	return self && self.mux === adapter.name ? { id: self.pane } : undefined
 }
