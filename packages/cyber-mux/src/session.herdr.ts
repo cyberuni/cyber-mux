@@ -42,7 +42,13 @@ export const herdrSessionAdapter: SessionAdapter = {
 			id = parseRootPaneId(out, 'herdr tab create')
 		} else {
 			const direction = at === 'pane:down' ? 'down' : 'right'
-			const out = exec('herdr', ['pane', 'split', '--current', '--direction', direction, '--cwd', opts.cwd])
+			// Name the pane whenever the caller knows it. herdr's `--current` is not "the pane that
+			// called me": it reads `$HERDR_PANE_ID` and, when that is unset, resolves to the UI-FOCUSED
+			// pane instead — silently, so an unidentified caller splits whatever the user happens to be
+			// looking at. Verified against herdr 0.7.4. `--current` is kept only as the last resort for
+			// a caller that could not identify itself, where herdr's guess is still better than failing.
+			const from = opts.from ? [opts.from.id] : ['--current']
+			const out = exec('herdr', ['pane', 'split', ...from, '--direction', direction, '--cwd', opts.cwd])
 			if (!out) throw new Error('herdr pane split failed')
 			id = parsePaneId(out)
 			if (opts.label) exec('herdr', ['pane', 'rename', id, opts.label])

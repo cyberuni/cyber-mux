@@ -95,6 +95,50 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls.some((c) => c[0] === 'pane' && c[1] === 'run')).toBe(false)
 		})
 
+		// herdr's `--current` is not "the pane that called me": it reads $HERDR_PANE_ID and silently
+		// resolves to the UI-FOCUSED pane when that is unset (verified against herdr 0.7.4), so an
+		// unidentified caller splits whatever the user is looking at. Naming the pane is the fix, and
+		// the emitted argv is the only place the difference is visible.
+		it('open({at:pane:*, from}) splits the NAMED pane positionally instead of --current', () => {
+			const calls: string[][] = []
+			const splitOut = JSON.stringify({
+				id: 'cli:pane:split',
+				result: { pane: { pane_id: 'w3:pB' }, type: 'pane_info' },
+			})
+			const exec = fakeExec(calls, { 'pane split': splitOut })
+			herdrSessionAdapter.open(exec, { cwd: '/unit', at: 'pane:right', from: { id: 'w3:pA' } })
+			herdrSessionAdapter.open(exec, { cwd: '/unit', at: 'pane:down', from: { id: 'w3:pA' } })
+			expect(calls).toEqual([
+				['pane', 'split', 'w3:pA', '--direction', 'right', '--cwd', '/unit'],
+				['pane', 'split', 'w3:pA', '--direction', 'down', '--cwd', '/unit'],
+			])
+			expect(calls.every((c) => !c.includes('--current'))).toBe(true)
+		})
+
+		it('open({at:pane:*}) with no `from` falls back to --current', () => {
+			const calls: string[][] = []
+			const splitOut = JSON.stringify({
+				id: 'cli:pane:split',
+				result: { pane: { pane_id: 'w3:pB' }, type: 'pane_info' },
+			})
+			const exec = fakeExec(calls, { 'pane split': splitOut })
+			herdrSessionAdapter.open(exec, { cwd: '/unit', at: 'pane:right' })
+			// Kept for a caller that cannot identify itself: herdr's guess beats refusing to open.
+			expect(calls[0]).toEqual(['pane', 'split', '--current', '--direction', 'right', '--cwd', '/unit'])
+		})
+
+		it('open({from}) is ignored by tab/workspace, which split nothing', () => {
+			const calls: string[][] = []
+			const created = JSON.stringify({
+				id: 'cli:workspace:create',
+				result: { root_pane: { pane_id: 'w4:p1' }, type: 'workspace_created' },
+			})
+			const exec = fakeExec(calls, { 'workspace create': created, 'tab create': created })
+			herdrSessionAdapter.open(exec, { cwd: '/unit', at: 'tab', from: { id: 'w3:pA' } })
+			herdrSessionAdapter.open(exec, { cwd: '/unit', at: 'workspace', from: { id: 'w3:pA' } })
+			expect(calls.every((c) => !c.includes('w3:pA'))).toBe(true)
+		})
+
 		it('open() throws when workspace create reports no root pane id', () => {
 			const exec = fakeExec([], { 'workspace create': JSON.stringify({ id: 'cli:workspace:create', result: {} }) })
 			expect(() => herdrSessionAdapter.open(exec, { cwd: '/unit', launch: 'claude', at: 'workspace' })).toThrow(

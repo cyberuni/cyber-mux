@@ -63,6 +63,8 @@ export function addAndOpenWorktree(
 		launch?: string
 		at?: SessionPlacement
 		label?: string
+		/** Passed to `open` for a `pane:*` placement; see `SessionOpenOptions.from`. */
+		from?: SessionTarget
 	},
 ): OpenedWorktree {
 	if (canBind(adapter, opts.at)) {
@@ -82,7 +84,13 @@ export function addAndOpenWorktree(
 		branch: opts.branch,
 		base: opts.base,
 	})
-	const target = adapter.open(exec, { cwd: worktree.root, launch: opts.launch, at: opts.at, label: opts.label })
+	const target = adapter.open(exec, {
+		cwd: worktree.root,
+		launch: opts.launch,
+		at: opts.at,
+		label: opts.label,
+		from: opts.from,
+	})
 	return { worktree, target, degraded: isDegraded(adapter, opts.at) }
 }
 
@@ -93,7 +101,15 @@ export function addAndOpenWorktree(
 export function openExistingWorktree(
 	exec: Exec,
 	adapter: SessionAdapter,
-	opts: { primaryRoot: string; path: string; launch?: string; at?: SessionPlacement; label?: string },
+	opts: {
+		primaryRoot: string
+		path: string
+		launch?: string
+		at?: SessionPlacement
+		label?: string
+		/** Passed to `open` for a `pane:*` placement; see `SessionOpenOptions.from`. */
+		from?: SessionTarget
+	},
 ): OpenedWorktree {
 	const at = opts.at ?? 'workspace'
 	if (canBind(adapter, at)) {
@@ -106,7 +122,7 @@ export function openExistingWorktree(
 		return { ...opened, degraded: false }
 	}
 	const root = normalizeWorktreePath(opts.path)
-	const target = adapter.open(exec, { cwd: root, launch: opts.launch, at, label: opts.label })
+	const target = adapter.open(exec, { cwd: root, launch: opts.launch, at, label: opts.label, from: opts.from })
 	// The branch is git's answer, not the backend's — same rule as `listWorktrees`.
 	const branch = listWorktreesFromGit(exec, opts.primaryRoot).find((entry) => entry.root === root)?.branch
 	return { worktree: { root, branch: branch ?? '' }, target, degraded: isDegraded(adapter, at) }
