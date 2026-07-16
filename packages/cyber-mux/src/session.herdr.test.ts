@@ -28,6 +28,14 @@ function worktreeOut() {
 	})
 }
 
+/**
+ * `describeRegion` is OPTIONAL on the seam — a backend that cannot describe its own region omits
+ * it entirely. The herdr adapter must implement it, so bind it once here: if it ever goes missing
+ * these tests fail loudly on that fact rather than silently skipping every case below.
+ */
+const describeRegion = herdrSessionAdapter.describeRegion
+if (!describeRegion) throw new Error('the herdr adapter must implement describeRegion')
+
 describe('spec:cyber-mux/mux', () => {
 	describe('herdrSessionAdapter (mocked exec — herdr is not installed in this environment)', () => {
 		it('open() splits a pane at the given cwd, extracts the pane id from herdr JSON, and runs the launch command', () => {
@@ -683,6 +691,122 @@ describe('spec:cyber-mux/mux', () => {
 		it('listPanes() returns empty when herdr reports nothing or unparseable output', () => {
 			expect(herdrSessionAdapter.listPanes((): string | null => null)).toEqual([])
 			expect(herdrSessionAdapter.listPanes(() => 'not json')).toEqual([])
+		})
+
+		// Real capture from herdr 0.7.4 (`herdr pane layout --pane w3V:p1`): a workspace at x=36,y=1
+		// sized 201x45, split right at ratio 0.6 then down at 0.7 — three panes.
+		const LAYOUT_OUT = JSON.stringify({
+			id: 'cli:pane:layout',
+			result: {
+				layout: {
+					area: { height: 45, width: 201, x: 36, y: 1 },
+					focused_pane_id: 'w3V:p1',
+					panes: [
+						{ focused: true, pane_id: 'w3V:p1', rect: { height: 32, width: 121, x: 36, y: 1 } },
+						{ focused: false, pane_id: 'w3V:p3', rect: { height: 13, width: 121, x: 36, y: 33 } },
+						{ focused: false, pane_id: 'w3V:p2', rect: { height: 45, width: 80, x: 157, y: 1 } },
+					],
+					// Deliberately present but never read by describeRegion — see the "ignores splits" test below.
+					splits: [
+						{ direction: 'right', id: 'split_0_root', ratio: 0.6, rect: { height: 45, width: 201, x: 36, y: 1 } },
+						{ direction: 'down', id: 'split_1_0', ratio: 0.7, rect: { height: 45, width: 121, x: 36, y: 1 } },
+					],
+					tab_id: 'w3V:t1',
+					workspace_id: 'w3V',
+					zoomed: false,
+				},
+				type: 'pane_layout',
+			},
+		})
+
+		// `pane list` companion for LAYOUT_OUT — carries cwd/label, which `pane layout` does not.
+		const LIST_OUT = JSON.stringify({
+			id: 'cli:pane:list',
+			result: {
+				panes: [
+					{ pane_id: 'w3V:p1', cwd: '/repo', label: 'editor' },
+					{ pane_id: 'w3V:p2', cwd: '/repo' },
+					{ pane_id: 'w3V:p3', cwd: '/repo/logs', label: 'logs' },
+				],
+			},
+		})
+
+		it('describeRegion() queries pane layout by id, and pane list separately for cwd/label', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'pane layout': LAYOUT_OUT, 'pane list': LIST_OUT })
+			describeRegion(exec, { id: 'w3V:p1' })
+			expect(calls).toContainEqual(['pane', 'layout', '--pane', 'w3V:p1'])
+			expect(calls).toContainEqual(['pane', 'list'])
+		})
+
+		it('describeRegion() parses rects from layout.panes, screen-absolute and passed through verbatim', () => {
+			const exec = fakeExec([], { 'pane layout': LAYOUT_OUT, 'pane list': LIST_OUT })
+			const panes = describeRegion(exec, { id: 'w3V:p1' })
+			expect(panes.map((p) => ({ id: p.id, rect: p.rect }))).toEqual([
+				{ id: 'w3V:p1', rect: { height: 32, width: 121, x: 36, y: 1 } },
+				{ id: 'w3V:p3', rect: { height: 13, width: 121, x: 36, y: 33 } },
+				{ id: 'w3V:p2', rect: { height: 45, width: 80, x: 157, y: 1 } },
+			])
+			// Screen-absolute, not window-relative like tmux: a workspace can start at x=36, not 0.
+			expect(panes.every((p) => p.rect.x === 0)).toBe(false)
+		})
+
+		// `layout.splits[]` reports direction/ratio outright, but its parent links live only in an
+		// undocumented id convention ("split_1_0") — the rects say the same thing in a fact herdr
+		// actually promises, so the export must be derived from `panes[]`, never `splits[]`.
+		it('describeRegion() ignores layout.splits, deriving rects from panes only', () => {
+			const exec = fakeExec([], { 'pane layout': LAYOUT_OUT, 'pane list': LIST_OUT })
+			const panes = describeRegion(exec, { id: 'w3V:p1' })
+			// Two panes' worth of rects, not the splits' rects (which include the whole 201x45 area and a
+			// 121x45 sub-area that no reported pane actually has).
+			expect(panes.some((p) => p.rect.width === 201)).toBe(false)
+			expect(panes.some((p) => p.rect.height === 45 && p.rect.width === 121)).toBe(false)
+			expect(panes).toHaveLength(3)
+		})
+
+		it('describeRegion() attaches a label only when herdr reports one — no hostname filtering needed', () => {
+			const exec = fakeExec([], { 'pane layout': LAYOUT_OUT, 'pane list': LIST_OUT })
+			const panes = describeRegion(exec, { id: 'w3V:p1' })
+			expect(panes.find((p) => p.id === 'w3V:p1')?.label).toBe('editor')
+			expect(panes.find((p) => p.id === 'w3V:p3')?.label).toBe('logs')
+			// p2's `pane list` entry carries no label key at all — omitted, not a falsy placeholder.
+			expect(panes.find((p) => p.id === 'w3V:p2')?.label).toBeUndefined()
+		})
+
+		it('describeRegion() parses cwd from pane list, keyed by pane id', () => {
+			const exec = fakeExec([], { 'pane layout': LAYOUT_OUT, 'pane list': LIST_OUT })
+			const panes = describeRegion(exec, { id: 'w3V:p1' })
+			expect(panes.find((p) => p.id === 'w3V:p3')?.cwd).toBe('/repo/logs')
+		})
+
+		it('describeRegion() throws when herdr reports nothing', () => {
+			const exec: Exec = () => null
+			expect(() => describeRegion(exec, { id: 'w3V:p1' })).toThrow(/could not describe the region/)
+		})
+
+		it('describeRegion() throws when pane layout returns unparseable JSON', () => {
+			const exec = fakeExec([], { 'pane layout': 'not json' })
+			expect(() => describeRegion(exec, { id: 'w3V:p1' })).toThrow(/unparseable output/)
+		})
+
+		it('describeRegion() throws when herdr reports no panes', () => {
+			const out = JSON.stringify({ result: { layout: { panes: [] } } })
+			const exec = fakeExec([], { 'pane layout': out })
+			expect(() => describeRegion(exec, { id: 'w3V:p1' })).toThrow(/reported no panes/)
+		})
+
+		// Best-effort: the geometry is the verbose, hard-won part. A `pane list` failure must not take
+		// down a query whose rects came back fine — cwd/label are just visibly absent.
+		it('describeRegion() is best-effort: returns geometry without cwd/label when pane list fails', () => {
+			const exec = fakeExec([], { 'pane layout': LAYOUT_OUT, 'pane list': null })
+			const panes = describeRegion(exec, { id: 'w3V:p1' })
+			expect(panes).toHaveLength(3)
+			expect(panes.every((p) => p.cwd === undefined && p.label === undefined)).toBe(true)
+			expect(panes.map((p) => p.rect)).toEqual([
+				{ height: 32, width: 121, x: 36, y: 1 },
+				{ height: 13, width: 121, x: 36, y: 33 },
+				{ height: 45, width: 80, x: 157, y: 1 },
+			])
 		})
 	})
 })

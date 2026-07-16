@@ -48,6 +48,9 @@ function fakeAdapter(
 		paneExists: () => opts.paneExists ?? true,
 		isPaneFocused: () => undefined,
 		listPanes: () => [],
+		describeRegion: () => {
+			throw new Error('not used')
+		},
 	}
 	return { adapter, sendCalls, submitCalls }
 }

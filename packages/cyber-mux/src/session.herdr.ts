@@ -1,6 +1,8 @@
 import { resolve } from 'node:path'
+import type { Exec } from './exec.ts'
 import type {
 	LivePane,
+	RegionPane,
 	SessionAdapter,
 	SessionReadOptions,
 	SessionTarget,
@@ -184,6 +186,67 @@ export const herdrSessionAdapter: SessionAdapter = {
 				cwd: p.cwd,
 			}))
 	},
+
+	describeRegion(exec, target) {
+		// Two calls, because herdr splits the answer across two verbs: `pane layout` reports the
+		// region's rects (`layout.panes[].rect`) but carries no cwd and no label, while `pane list`
+		// carries both and no geometry. Neither alone can build a template.
+		//
+		// `layout.splits[]` is deliberately ignored even though it reports `direction` and `ratio`
+		// outright. It is FLAT — `[{id:"split_0_root",...},{id:"split_1_0",...}]` — so the tree is
+		// recoverable only by parsing the parent out of that id string, a convention herdr's CLI help
+		// never documents and could respell without warning. The rects say the same thing in a fact
+		// herdr does promise, so the derivation runs off those; see `describeRegion` in `session.ts`.
+		const out = exec('herdr', ['pane', 'layout', '--pane', target.id])
+		if (!out) throw new Error(`herdr could not describe the region around pane ${target.id}`)
+		let reported: unknown
+		try {
+			reported = JSON.parse(out)?.result?.layout?.panes
+		} catch {
+			throw new Error(`herdr pane layout returned unparseable output: ${out.slice(0, 200)}`)
+		}
+		if (!Array.isArray(reported) || reported.length === 0) {
+			throw new Error(`herdr pane layout reported no panes for ${target.id}: ${out.slice(0, 200)}`)
+		}
+		// Best-effort: a region whose geometry is known is still worth exporting when the cwd/label
+		// lookup fails — the geometry is the verbose part, and the missing dirs are visibly absent.
+		const details = herdrPaneDetails(exec)
+		return reported
+			.filter((p): p is { pane_id: string; rect: Record<string, number> } => typeof p?.pane_id === 'string')
+			.map((p) => {
+				const detail = details.get(p.pane_id)
+				const pane: RegionPane = {
+					id: p.pane_id,
+					// Screen-absolute, unlike tmux's window-relative origin — which is why nothing downstream
+					// may assume a region starts at 0,0. See `PaneRect`.
+					rect: { x: p.rect?.x ?? 0, y: p.rect?.y ?? 0, width: p.rect?.width ?? 0, height: p.rect?.height ?? 0 },
+				}
+				if (detail?.cwd) pane.cwd = detail.cwd
+				// herdr has no default label — the key is absent until `pane rename`, so whatever is here
+				// is one the author set. No hostname filtering needed, unlike tmux.
+				if (detail?.label) pane.label = detail.label
+				return pane
+			})
+	},
+}
+
+/** Each pane's cwd and label, keyed by pane id — the half `pane layout` does not report. */
+function herdrPaneDetails(exec: Exec): Map<string, { cwd?: string; label?: string }> {
+	const details = new Map<string, { cwd?: string; label?: string }>()
+	const out = exec('herdr', ['pane', 'list'])
+	if (!out) return details
+	let panes: unknown
+	try {
+		panes = JSON.parse(out)?.result?.panes
+	} catch {
+		return details
+	}
+	if (!Array.isArray(panes)) return details
+	for (const pane of panes) {
+		if (typeof pane?.pane_id !== 'string') continue
+		details.set(pane.pane_id, { cwd: pane.cwd, label: pane.label })
+	}
+	return details
 }
 
 /**

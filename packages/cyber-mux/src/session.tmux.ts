@@ -1,4 +1,4 @@
-import type { LivePane, SessionAdapter, SessionReadOptions, SessionTarget } from './session.ts'
+import type { LivePane, RegionPane, SessionAdapter, SessionReadOptions, SessionTarget } from './session.ts'
 
 /** tmux backend — detected via `$TMUX`. */
 export const tmuxSessionAdapter: SessionAdapter = {
@@ -141,6 +141,44 @@ export const tmuxSessionAdapter: SessionAdapter = {
 				return { id: id ?? '', mux: 'tmux' as const, cwd: cwdParts.length ? cwdParts.join(' ') : undefined }
 			})
 			.filter((p) => p.id !== '')
+	},
+
+	describeRegion(exec, target) {
+		// `-t <pane-id>` scopes `list-panes` to that pane's OWN window — the region tier, which is what
+		// export captures. Without `-a`, so this never reaches the panes of some other window.
+		//
+		// `#{pane_left}`/`#{pane_top}` are window-relative, and the widths exclude the divider column
+		// tmux draws between panes (a 200-wide window split side by side reports 119 + 80, not 200) —
+		// both are exactly what `RegionPane.rect` documents, so nothing is adjusted here.
+		//
+		// Tab-separated, not space: `pane_current_path` and `pane_title` can both contain spaces, and
+		// splitting a path on spaces is how a directory with one in it silently becomes the wrong pane.
+		const out = exec('tmux', [
+			'list-panes',
+			'-t',
+			target.id,
+			'-F',
+			'#{pane_id}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}\t#{pane_current_path}\t#{pane_title}\t#{host}',
+		])
+		if (!out) throw new Error(`tmux could not describe the region around pane ${target.id}`)
+		const panes: RegionPane[] = []
+		for (const line of out.split('\n').filter(Boolean)) {
+			const [id, left, top, width, height, cwd, title, host] = line.split('\t')
+			if (!id) continue
+			const pane: RegionPane = {
+				id,
+				rect: { x: Number(left), y: Number(top), width: Number(width), height: Number(height) },
+			}
+			if (cwd) pane.cwd = cwd
+			// tmux has no "unset title" — it defaults `pane_title` to the hostname, so every pane in an
+			// untouched window reports the same name. Exporting that would put `label: "zeta"` on all of
+			// them, which is not a label anyone chose. A title that differs from the host is one someone
+			// set (cyber-mux's own `select-pane -T` among them), so it is the author's and survives.
+			if (title && title !== host) pane.label = title
+			panes.push(pane)
+		}
+		if (panes.length === 0) throw new Error(`tmux reported no panes in the region around pane ${target.id}`)
+		return panes
 	},
 }
 

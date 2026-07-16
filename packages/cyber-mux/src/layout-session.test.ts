@@ -68,6 +68,9 @@ function fakeAdapter(opts: { canSizeSplits?: boolean; failOnOpen?: number } = {}
 		paneExists: () => true,
 		isPaneFocused: () => undefined,
 		listPanes: () => [],
+		describeRegion: () => {
+			throw new Error('not used')
+		},
 	}
 	return { adapter, calls }
 }

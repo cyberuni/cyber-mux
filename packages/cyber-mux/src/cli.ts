@@ -1,8 +1,17 @@
+import { join } from 'node:path'
 import { Command, CommanderError, Option } from 'commander'
 import { callerPane, selectSessionAdapter } from './backend.ts'
 import { AT_OPTION, FORMAT_OPTION, LABEL_OPTION } from './cli-options.ts'
 import { type Exec, realExec } from './exec.ts'
-import { collectPanes, type LayoutTemplate, parseLayout, resolveTree, validateLayout } from './layout.ts'
+import {
+	collectPanes,
+	isValidLayoutName,
+	type LayoutTemplate,
+	parseLayout,
+	resolveTree,
+	validateLayout,
+} from './layout.ts'
+import { captureLayout } from './layout-capture.ts'
 import {
 	applyLayoutToRegion,
 	LayoutApplyError,
@@ -236,16 +245,103 @@ function layoutValidateCommand(deps: Deps): Command {
 }
 
 /**
- * The `layout` group manages templates and nothing else — there is deliberately no `layout apply`.
- * Applying is what `open` and `worktree add` already do, told to build N panes instead of one, so it
- * is `--layout` on those verbs. Every subcommand here takes a FILE as its subject, so none of them
- * touches a multiplexer.
+ * `save` is the one verb here that reads a multiplexer rather than a file, and the only one that
+ * WRITES: it captures a live region into a named template, so a pool built by hand once can be named
+ * rather than hand-written. That is the schema's one real authoring cost — a 4+ pane grid needs
+ * nested `split` nodes nobody wants to type.
+ *
+ * **What it saves is a draft, and the file says so.** A capture recovers geometry, labels and dirs;
+ * it can never recover commands, because no multiplexer reports the command a pane was launched with
+ * (`layout-capture.ts` has the why). A saved template therefore lands with no `command` on any pane
+ * and is immediately listed by `layout list` alongside finished ones, so the draft has to announce
+ * itself IN the file — hence the `description` default. Saying it only on stderr would put the
+ * warning everywhere except where the reader is.
+ *
+ * `--to` defaults to `repo`, matching resolution's own precedence: a template is a statement about
+ * how the PROJECT is worked on, and that is the copy worth having by default.
+ */
+function layoutSaveCommand(deps: Deps): Command {
+	return new Command('save')
+		.description('Capture the live region around a pane into a named template')
+		.argument('<name>', 'Name for the captured template')
+		.option('--from <pane>', "Pane whose region to capture; defaults to this process's own pane")
+		.option('--description <text>', 'Description to record in the template')
+		.addOption(
+			new Option('--to <source>', 'Which layouts directory to write to').choices(['repo', 'user']).default('repo'),
+		)
+		.option('--force', 'Overwrite an existing template of this name')
+		.addHelpText(
+			'after',
+			'\nA capture recovers geometry, labels and dirs — NOT commands: no multiplexer can report the\n' +
+				'command a pane was launched with, so every pane is saved without one. Fill them in before\n' +
+				'the template is worth applying.',
+		)
+		.action((name: string, opts: { from?: string; description?: string; to: 'repo' | 'user'; force?: boolean }) => {
+			// Before the multiplexer is touched: a name is a lookup key that must also be a filename, so an
+			// unusable one should not cost a region read to find out.
+			if (!isValidLayoutName(name)) {
+				fail(`invalid layout name "${name}" — a name must match [a-z0-9][a-z0-9-]* and be a plain filename stem`)
+			}
+			try {
+				const path = join(layoutDirs(deps.exec, deps.env)[opts.to], `${name}.json`)
+				// Checked BEFORE the capture, so a refusal costs nothing — and refused by default, because a
+				// template is hand-edited after it is saved (the commands are added by hand) and silently
+				// overwriting one would throw that work away.
+				if (!opts.force && deps.store.read(path) !== null) {
+					fail(`layout "${name}" already exists at ${path} — pass --force to overwrite it`)
+				}
+				const adapter = selectSessionAdapter(deps.env, deps.exec)
+				// Geometry reporting is an optional capability, exactly as the worktree binding is. A
+				// backend that cannot describe its own region cannot be captured and there is nothing to
+				// degrade to — so this refuses, naming the backend, rather than guessing a tree.
+				const describeRegion = adapter.describeRegion
+				if (!describeRegion) {
+					fail(`${adapter.name} cannot report a region's geometry — layout save needs a backend that can`)
+				}
+				// `--from` names a pane explicitly; otherwise capture the region THIS process sits in, which
+				// is what makes a bare `layout save pool-4` mean "the screen I am looking at".
+				const target = opts.from ? { id: opts.from } : callerPane(adapter, deps.env)
+				if (!target) {
+					fail('layout save needs a pane to capture the region around — pass --from <pane>, or run it inside one')
+				}
+				const { template, warnings } = captureLayout(describeRegion(deps.exec, target), {
+					name,
+					description: opts.description ?? CAPTURED_DESCRIPTION,
+				})
+				deps.store.write(path, `${JSON.stringify(template, null, 2)}\n`)
+				// stderr, so stdout stays the path alone — `cyber-mux layout save x` composes into `$(...)`.
+				for (const warning of warnings) process.stderr.write(`${warning}\n`)
+				console.log(path)
+			} catch (err) {
+				fail(err instanceof Error ? err.message : String(err))
+			}
+		})
+}
+
+/**
+ * The default `description` on a captured template — the draft warning, written where the reader
+ * actually is. A saved capture is listed by `layout list` next to finished templates and shows up in
+ * `layout show`, so a note that only ever reached the terminal that ran `save` would be gone by the
+ * time anyone reads the file. Overridden by `--description`, since an author who names the template's
+ * purpose has said something more useful than this.
+ */
+const CAPTURED_DESCRIPTION = 'Captured from a live region — geometry only; add a command to each pane.'
+
+/**
+ * The `layout` group manages templates — there is deliberately no `layout apply`. Applying is what
+ * `open` and `worktree add` already do, told to build N panes instead of one, so it is `--layout` on
+ * those verbs.
+ *
+ * `list` / `show` / `validate` take a FILE as their subject and touch no multiplexer. `save` is the
+ * exception in both respects — it reads a live region and writes a file — and it belongs here anyway:
+ * it AUTHORS a template, which is what this group is for.
  */
 function layoutCommand(deps: Deps): Command {
 	const cmd = new Command('layout').description('Manage named layout templates (apply one with open/worktree --layout)')
 	cmd.addCommand(layoutListCommand(deps))
 	cmd.addCommand(layoutShowCommand(deps))
 	cmd.addCommand(layoutValidateCommand(deps))
+	cmd.addCommand(layoutSaveCommand(deps))
 	return cmd
 }
 

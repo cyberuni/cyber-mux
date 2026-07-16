@@ -1,6 +1,6 @@
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import type { Exec } from './exec.ts'
 import { isValidLayoutName } from './layout.ts'
 import { resolvePrimaryRoot } from './worktree.ts'
@@ -24,6 +24,11 @@ export interface LayoutStore {
 	 * the walk because this is the package's one filesystem seam, and a walk that reached for bare
 	 * `node:fs` would be untestable exactly where it matters. */
 	dirExists(path: string): boolean
+	/** Write a template, creating the layouts directory if it is not there yet — `layout save`. The
+	 * one WRITING member of this seam; `save` is the one verb that authors a file rather than reading
+	 * one, and it goes through the seam for the same reason the reads do. Overwrite protection is the
+	 * caller's, not this method's: a store is a filesystem, and a filesystem overwrites. */
+	write(path: string, contents: string): void
 }
 
 export const realLayoutStore: LayoutStore = {
@@ -47,6 +52,13 @@ export const realLayoutStore: LayoutStore = {
 	},
 	dirExists(path) {
 		return existsSync(path)
+	},
+	write(path, contents) {
+		// `recursive` because `.cyber-mux/layouts` usually does not exist yet — the first `save` in a
+		// repo is exactly the call that has to create it, and failing there would make the common case
+		// the broken one.
+		mkdirSync(dirname(path), { recursive: true })
+		writeFileSync(path, contents, 'utf8')
 	},
 }
 

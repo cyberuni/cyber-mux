@@ -9,6 +9,14 @@ function fakeExec(calls: string[][], responses: Record<string, string | null> = 
 	}
 }
 
+/**
+ * `describeRegion` is OPTIONAL on the seam — a backend that cannot describe its own region omits
+ * it entirely. The tmux adapter must implement it, so bind it once here: if it ever goes missing
+ * these tests fail loudly on that fact rather than silently skipping every case below.
+ */
+const describeRegion = tmuxSessionAdapter.describeRegion
+if (!describeRegion) throw new Error('the tmux adapter must implement describeRegion')
+
 describe('spec:cyber-mux/mux', () => {
 	describe('tmuxSessionAdapter', () => {
 		it('open() splits a pane at the given cwd and launches the command in it', () => {
@@ -388,6 +396,77 @@ describe('spec:cyber-mux/mux', () => {
 			tmuxSessionAdapter.open(fakeExec(calls, { 'new-window': '%9' }), { cwd: '/unit', at: 'tab' })
 			expect(calls[0]).not.toContain('-n')
 			expect(calls.some((c) => c[0] === 'select-pane')).toBe(false)
+		})
+
+		// Real capture from tmux 3.6b: a 200x50 window split into 3 panes (two stacked on the left,
+		// one full-height on the right), queried from pane %0.
+		const REGION_OUT = [
+			'%0\t0\t0\t119\t34\t/repo\tzeta\tzeta',
+			'%2\t0\t35\t119\t15\t/repo\tzeta\tzeta',
+			'%1\t120\t0\t80\t50\t/repo\teditor\tzeta',
+		].join('\n')
+
+		it('describeRegion() queries list-panes scoped to the pane\u2019s own window, not -a', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'list-panes': REGION_OUT })
+			describeRegion(exec, { id: '%0' })
+			expect(calls[0]).toEqual([
+				'list-panes',
+				'-t',
+				'%0',
+				'-F',
+				'#{pane_id}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}\t#{pane_current_path}\t#{pane_title}\t#{host}',
+			])
+			// Scoped to the target's own window: -a would reach every window server-wide, which is
+			// exactly what a region query must not do.
+			expect(calls[0]).not.toContain('-a')
+		})
+
+		it('describeRegion() parses every pane\u2019s rect from the real 3-pane capture', () => {
+			const exec = fakeExec([], { 'list-panes': REGION_OUT })
+			const panes = describeRegion(exec, { id: '%0' })
+			expect(panes.map((p) => p.rect)).toEqual([
+				{ x: 0, y: 0, width: 119, height: 34 },
+				{ x: 0, y: 35, width: 119, height: 15 },
+				{ x: 120, y: 0, width: 80, height: 50 },
+			])
+		})
+
+		// tmux defaults pane_title to the hostname on an untouched pane — exporting THAT as a label
+		// would tag every pane in the window "zeta". A title differing from the host is one someone
+		// actually set (cyber-mux's own \`select-pane -T\` among them), and that one survives.
+		it('describeRegion() drops a pane_title equal to the host, but keeps one that differs', () => {
+			const exec = fakeExec([], { 'list-panes': REGION_OUT })
+			const panes = describeRegion(exec, { id: '%0' })
+			expect(panes.find((p) => p.id === '%0')?.label).toBeUndefined()
+			expect(panes.find((p) => p.id === '%2')?.label).toBeUndefined()
+			expect(panes.find((p) => p.id === '%1')?.label).toBe('editor')
+		})
+
+		it('describeRegion() parses cwd for every pane', () => {
+			const exec = fakeExec([], { 'list-panes': REGION_OUT })
+			const panes = describeRegion(exec, { id: '%0' })
+			expect(panes.every((p) => p.cwd === '/repo')).toBe(true)
+		})
+
+		// Tab-separated, not space: pane_current_path (and pane_title) can contain a space, and
+		// splitting on spaces is exactly how a directory with one in it becomes the wrong pane.
+		it('describeRegion() survives a cwd containing a space, because the format is tab-separated', () => {
+			const out = '%0\t0\t0\t119\t34\t/repo with space\tzeta\tzeta'
+			const exec = fakeExec([], { 'list-panes': out })
+			const panes = describeRegion(exec, { id: '%0' })
+			expect(panes).toEqual([{ id: '%0', rect: { x: 0, y: 0, width: 119, height: 34 }, cwd: '/repo with space' }])
+		})
+
+		it('describeRegion() throws when tmux reports nothing', () => {
+			const exec: Exec = () => null
+			expect(() => describeRegion(exec, { id: '%0' })).toThrow(/could not describe the region/)
+		})
+
+		it('describeRegion() throws when tmux reports no panes', () => {
+			// A blank line, not '' — '' is falsy and would hit the null-output throw instead of this one.
+			const exec = fakeExec([], { 'list-panes': '\n' })
+			expect(() => describeRegion(exec, { id: '%0' })).toThrow(/reported no panes/)
 		})
 	})
 })
