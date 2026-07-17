@@ -73,7 +73,10 @@ Decisions (`send-submit-realign` grill — the `send`/`submit` seam):
   split introduced; a follow-up owns caller-observable failure.
 
 - **bare `send` fails loud** — DECIDED: help to stderr, exit 1, stdout clean — commander's default,
-  no custom code. Requester chose this shape. AXI's content-first principle (#8) says a bare group
+  no custom code. **SUPERSEDED by the `36-axi-error-surface` grill below: help to stdout, exit 2.**
+  The reasoning below is also retracted, not just the shape — see there. Left standing as the record
+  of what was decided, per this log's append-only rule; it is not the current behavior.
+  Requester chose this shape. AXI's content-first principle (#8) says a bare group
   shows live data rather than help, and `send` does not satisfy it: every view `send` could derive
   already belongs to a verb — the pane
   enumeration to `list`, the current pane to `doctor` (`src/cli.ts`) — and the key vocabulary is a
@@ -86,3 +89,53 @@ Decisions (`send-submit-realign` grill — the `send`/`submit` seam):
 - **`nudge`'s future stays undecided** — DECIDED: out of scope per the CR. `nudge` is rewired to the
   new contract (`submit(exec, target, message)` for the initial turn, bare `submit` for the flush
   retry) and nothing else about it is settled.
+
+Decisions (`36-axi-error-surface` grill — the CLI error surface vs AXI):
+
+- **errors move to stdout** — DECIDED: every structured error is written to stdout, and stderr is
+  reduced to diagnostics (warnings, progress, debug). Requester chose to follow AXI here rather than
+  fork. AXI defines stdout as "all structured output the agent consumes — data, errors, suggestions"
+  and stderr as what "agents don't read", so an agent-facing report on stderr is a report its own
+  reader never sees. This bin's node had stated the inversion, and `cyberplace`'s node states it word
+  for word — so the divergence was the org's adoption, not this bin's slip. **Accepted cost:** until
+  `cyberplace` follows, an agent moving between the two bins meets errors on different streams. Fixing
+  a node this bin does not own is recorded as a follow-up rather than ridden in here.
+
+- **bare `send` is a #6 usage error, not a #8 amendment** — DECIDED: help to stdout, exit 2, and the
+  earlier entry's reasoning is **retracted**. Two things were wrong with it. The shape: exit 1 was
+  commander's default restated as the contract, where AXI puts incomplete input — a missing required
+  parameter — at 2. The reasoning: it conceded an "amendment to #8" this repo never had to concede.
+  AXI's #8 governs the bare **binary** ("running your CLI with no arguments", example `$ tasks`) and
+  says nothing about a command **group** invoked with no subcommand. So #8 was never violated; it was
+  never addressed to this case, and #6 alone decides it. The "accepted cost" it recorded was a cost
+  paid for nothing.
+
+- **bare `worktree` is left alone, on scope** — DECIDED: the error-surface pass corrects the
+  `worktree` *subcommands* (`add`/`open`/`list`/`remove`) like every other verb and does **not** touch
+  the bare group, which still ships help + exit 1. That is the CR's scope (issue #36 names the
+  subcommands), and it is the only reason. An earlier draft of this CR justified it by arguing #8
+  wants bare `worktree` to print its live listing — that argument is **withdrawn**, resting on the
+  same #8 widening retracted above. Whether a data-bearing group should show its view is a real
+  question, still open, still the contract's.
+
+- **`exists` keeps `1` = `gone`, and it is a divergence, not an amendment** — DECIDED: unchanged
+  behavior, corrected label. `exists` is a predicate and spends `1` on an answer rather than an error,
+  the framing `grep`, POSIX `test` and `systemctl is-active` take. AXI reserves `1` for an error, so
+  this genuinely diverges — but the corpus called it "an amendment to axi #6's 0/1 code set", which
+  was wrong twice: the set was always 0/1/2 (nothing was amended), and what `exists` diverges on is
+  the *meaning* of `1`, which no amendment ever covered. Recorded rather than mislabeled; whether to
+  keep it is a separate question this CR does not settle.
+
+- **`layout`'s frozen exit codes are reclassified in the same pass** — DECIDED: the `36` grill's
+  Clearance was extended a second time, ratified in-session, to re-open `layout/`'s frozen suite —
+  because leaving it untouched was not a gap but a **Conflict**: one validator (`isValidLayoutName`)
+  was contracted at exit 1 by `layout.feature` and at exit 2 by this CR's new `layout save` row,
+  through the same function, so no implementation could satisfy both. The reclassification is narrow
+  and principled, not a sweep of all 22 exit-1 pins: only a **malformed name**, a **mutually
+  exclusive flag pair**, and a **missing required parameter** (`save` with no pane and no `--from`)
+  become `2` — four scenarios. Everything else stays `1`, and deliberately: a `validate` reporting a
+  template's content invalid is a predicate answer (the same shape as `exists`), and a mutating verb
+  (`apply`, `worktree add --layout`) refusing a bad template or a not-found name is a genuine
+  operation failure. Neither is the malformed-argument family AXI puts at `2`. The stream and
+  structure halves reached `layout` with **no** frozen conflict — no `layout` error was ever pinned to
+  a stream — so only the exit codes needed the re-open.

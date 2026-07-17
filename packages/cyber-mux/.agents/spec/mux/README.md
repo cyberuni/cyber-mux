@@ -334,9 +334,16 @@ here rather than silently contradicted.
 
   Every live view a bare `cyber-mux send` could derive already belongs to a verb — the pane
   enumeration to `list`, the current pane to `doctor` — so rather than ship a second name for an
-  existing verb, a bare `send` is treated as *incomplete input*: help to stderr, exit 1, stdout clean.
-  That is an acknowledged **amendment** to [`axi/`](../axi/README.md)'s content-first principle (#8),
-  scoped and filed there — not an application of it.
+  existing verb, a bare `send` is treated as *incomplete input*: help to **stdout**, **exit 2**.
+
+  **That is [`axi/`](../axi/README.md)'s #6 deciding it, not #8, and the difference is not
+  bookkeeping.** Bare `send` is a missing required parameter, which #6 already puts at `2` — the
+  decision needs no content-first reasoning at all. It was previously called an "acknowledged
+  amendment to #8", which conceded a divergence this repo never had to concede: AXI's #8 governs the
+  bare **binary** ("running your CLI with no arguments", its example being `$ tasks`) and says nothing
+  about a command **group** invoked without a subcommand. So #8 was never violated here — it was never
+  addressed to this case. What remains genuinely open is whether the contract *should* extend #8 to
+  groups; that question belongs to the contract, not to this node.
 
   The core vocabulary is **probed, not derived** from either backend's documentation, and it is the
   whole of the portable set: everything else diverges, `C-c` is the only portable control key, and
@@ -367,18 +374,30 @@ here rather than silently contradicted.
   - **Two or more matches fail and report the entries** — id, label, and working directory: the three
     that discriminate (a report listing `worker, worker` helps nobody), and within axi #2's 3–4-field
     default row. Each candidate's id is directly usable as the retry. The report is a **structured
-    error** under the stable code `ambiguous-pane`, on **stderr** per [`axi/`](../axi/README.md)'s
-    stream discipline, honoring `--format`; stdout stays clean. Zero matches is the existing
-    not-found path, not an ambiguity.
-  - **The outcome rides the exit code: `0` one match, `1` zero, `2` ambiguous.** A predicate that
-    cannot answer says so in its status — `grep` (2), POSIX `test` (`>1`, normative), `diff`, `expr`,
-    `pgrep`. The counter-case is instructive: `systemctl is-active` prints `inactive` for both a
-    stopped unit and a unit that does not exist, leaving only exit 3 vs 4 to tell them apart. So
-    `exists` keeps answering `live`/`gone` on stdout and spends a **third code** on ambiguity rather
-    than a fourth word. That is an acknowledged **amendment** to [`axi/`](../axi/README.md)'s `0`/`1`
-    code set (#6), scoped and filed there — not an application of it. Exit `2` means ambiguous on
-    **every** pane verb, not only `exists`; one meaning per code is what lets an agent detect it
-    without parsing.
+    error** under the stable code `ambiguous-pane`, on **stdout** per [`axi/`](../axi/README.md)'s
+    stream discipline, honoring `--format`. Zero matches is the existing not-found path, not an
+    ambiguity.
+
+    This report was originally contracted onto **stderr**, on the reading that stdout must stay clean
+    so a redirect never corrupts a parsed result. That inverted AXI, which puts errors on stdout
+    precisely "so the agent can read and act on them" and calls stderr the stream agents don't read —
+    and this report exists to hand a caller candidates to retry with, so it was the last thing that
+    belonged there. The clean-stdout worry does not survive: a verb writes its result or its error,
+    never both, so exit `2` separates them before anything is parsed.
+  - **The outcome rides the exit code: `0` one match, `1` zero, `2` ambiguous — and `2` is
+    [`axi/`](../axi/README.md)'s own `usage error` (#6), not a code this node invented.** An ambiguous
+    locator is a usage error in the strict sense AXI means: the argument is underspecified, nothing
+    was attempted, and the fix is a different argument — the same family as the missing required
+    parameter AXI already puts at `2`. So this is an **application** of the contract, not an amendment
+    to it; the earlier reading — that `2` was a third code added for a predicate that *couldn't
+    answer* — mistook an incomplete restatement of AXI (this repo's node listed only `0`/`1`) for
+    AXI's actual set. It reaches the same code either way: `grep` (2), POSIX `test` (`>1`, normative),
+    `diff`, `expr` and `pgrep` all reserve one for couldn't-answer, and `systemctl is-active` is the
+    counter-case that kills the alternative — it prints `inactive` for both a stopped unit and a
+    missing one, leaving only exit 3 vs 4 to tell them apart. So `exists` keeps answering
+    `live`/`gone` on stdout and spends the code rather than a fourth word. Exit `2` means the same
+    thing on **every** pane verb; one meaning per code is what lets an agent detect it without
+    parsing.
 
   **Uniqueness was considered and refused.** tmux and Docker both enforce unique names at creation,
   which is precisely why ambiguity is unrepresentable for them and their lookups stay binary. That
@@ -394,6 +413,36 @@ here rather than silently contradicted.
   hostname resolve to all of them — ambiguity manufactured out of nothing. A title differing from the
   host is the author's and is reported; the listing already applies this rule for a region
   (`describeRegion`). herdr has the honest primitive and simply omits the key until `pane rename`.
+
+- **Every failure is a structured error on stdout, coded, with the command that fixes it** — this
+  node is where [`axi/`](../axi/README.md)'s #6 is verified, because a reference node carries no suite
+  of its own. One `fail()` helper reaches all ~15 verbs, so the contract is pinned once at the surface
+  rather than twenty times per verb: an error goes to **stdout** (AXI's stream for what the agent
+  consumes), under a **stable `code`** a caller matches instead of parsing prose, with an actionable
+  **`help:`** naming this CLI's own fixing command — never `see --help`, and never the wrapped
+  multiplexer's raw diagnostic, which an agent cannot act on through `cyber-mux`.
+
+  - **A usage error is `2`; a failed operation is `1`.** `2` says *your invocation is wrong, fix it and
+    retry* — an unrecognized flag, a missing required parameter, incomplete input like a bare
+    `cyber-mux send`. `1` says *your invocation was fine, the operation failed*. Both were `1` before,
+    which is commander's default restated as the contract, and it left the repo exiting `2` for one
+    kind of bad input (an ambiguous locator) and `1` for the others — the confusing state, and the
+    reason this is one pass rather than a per-verb patch.
+  - **An unknown flag names the flag AND the command's valid flags**, validated against the
+    **subcommand's** set rather than the group's, since a group's subcommands need not share one:
+    `layout save` takes `--from`/`--workspace`/`--description`/`--force` and `layout list` takes none
+    of them, so validating against the group's union would accept `--force` on `list` and then
+    silently drop it — the exact failure fail-loud exists to prevent, and only the subcommand layer
+    knows which set is in play. (`send text` and `send keys` are **not** an example of this: they
+    define identical flag sets. An earlier draft cited them and was wrong on source.) AXI's reasoning
+    is a token argument: the
+    agent's deterministic next move is `--help`, so folding that answer into the error collapses a
+    two-turn correction into one. `--help` itself always passes, on every command.
+  - **`exists` is the deliberate exception, and it is a divergence rather than an amendment.** It
+    spends `1` on `gone` — an answer, not an error — the predicate framing `grep`, POSIX `test` and
+    `systemctl is-active` take. That is kept, but it is **not** AXI's code set, and calling it "an
+    amendment to the `0`/`1` set" (as this corpus did) was wrong twice: the set was always `0`/`1`/`2`,
+    and what `exists` actually diverges on is the *meaning* of `1`. Recorded, not settled here.
 
 **Non-goals** — the `nudge` (send-and-verify-turn-taken) and `worktree` (git-worktree) helpers
 (`nudge.ts`, `worktree.ts`) — provisional standalone concerns per the `cli.ts` verb-surface note,
@@ -437,8 +486,8 @@ Every scenario in [`mux.feature`](./mux.feature) maps to one of these behaviors:
 | **open returns the pane's tab, and reports it** | the tab the new pane landed in, per placement on both backends (herdr: a new tab reports itself, a created workspace its root tab, a split the caller's; tmux: the Window the pane landed in); reported by every backend and absent on none, because every multiplexer has the Tab level; read from the output the pane id already comes from, so it costs no extra call; it is what addresses a rename at the tab tier, which a pane id cannot do portably |
 | **naming a space after its birth** | every backend renames every tier it can name at birth (tmux a window name or pane title; herdr a tab or pane rename); a new workspace's root tab is named this way because herdr offers no flag to name it at birth; a rename moves no focus and opens nothing |
 | **the workspace group — carrying a grouping a backend has no tier for** | the open contract carries an opaque group id, never parsed, split, or derived from the label; a backend with no workspace tier stores it natively (tmux: a window option it can filter on, surviving a rename); a backend with a real workspace tier ignores it, its tier being the group; no id is invented for a caller that did not ask; the id is not a workspace, so `open` still reports the workspace absent; grouping is also a **verb** over an already-open space, which `open`'s own option routes through; a backend whose display name is composed stores the space's **own name** beside the group, since one name field means composing destroys the original |
-| **text and keys are separate; only submit presses Enter for you** | `send text` types literal characters and presses no Enter (a key-named word is typed, not interpreted; no text → rejected); `send keys` presses named keys in order and types nothing — core keys normalized onto each backend, a non-core token forwarded verbatim to the backend's own semantics (no tokens at all → rejected); `send keys Enter` presses Enter and takes the turn, because the caller wrote it; bare `send` is incomplete input — help to stderr, exit 1, stdout clean (an acknowledged amendment to axi #8, not an application of it); `submit` always presses Enter — with text it types it literally then Enters, with none (or empty text) it bare-Enter flushes without retyping; `open --launch` submits |
-| **addressing a pane by name or id** | every pane-taking verb accepts either; an id outranks a name and is recognized by matching a live pane rather than by the string's shape; exactly one match resolves; zero is the existing not-found path (exit 1); two or more fail with the candidates (id, label, cwd — each id usable as the retry) as a structured `ambiguous-pane` error on stderr honoring `--format`, stdout clean, exit 2 on every verb; `exists` keeps `live`/`gone` on stdout and spends the third code rather than a fourth word; the listing reports only a label a person set, never tmux's hostname default |
+| **text and keys are separate; only submit presses Enter for you** | `send text` types literal characters and presses no Enter (a key-named word is typed, not interpreted; no text → rejected); `send keys` presses named keys in order and types nothing — core keys normalized onto each backend, a non-core token forwarded verbatim to the backend's own semantics (no tokens at all → rejected); `send keys Enter` presses Enter and takes the turn, because the caller wrote it; bare `send` is incomplete input — help to **stdout**, **exit 2**, axi #6's `usage error` for a missing required parameter (it is #6 that decides this, not #8); `submit` always presses Enter — with text it types it literally then Enters, with none (or empty text) it bare-Enter flushes without retyping; `open --launch` submits |
+| **addressing a pane by name or id** | every pane-taking verb accepts either; an id outranks a name and is recognized by matching a live pane rather than by the string's shape; exactly one match resolves; zero is the existing not-found path (exit 1); two or more fail with the candidates (id, label, cwd — each id usable as the retry) as a structured `ambiguous-pane` error on **stdout** honoring `--format`, exit 2 on every verb — axi #6's own `usage error`, an underspecified argument, applied rather than amended; `exists` keeps `live`/`gone` on stdout and spends the code rather than a fourth word; the listing reports only a label a person set, never tmux's hostname default |
 | **multiplexer detection is two-mode** | `$CYBER_MUX` fast-path + override; ancestry walk; hint fallback; `doctor` hint |
 | **mux mode** | reports the detected session backend; "none" (exit 0) when no adapter is selectable |
 | **pane focus reporting** | tri-state focused / not-focused / unknown per backend (tmux: pane+window active & session attached; herdr: pane record `focused`); a query that can't be answered → unknown so callers fail open |

@@ -44,8 +44,10 @@ Feature: layout — named, reusable pane layouts
   Scenario Outline: a name that is not a plain stem is refused before any file is read
     Given a caller running cyber-mux layout show "<name>"
     When the name is validated
-    Then it exits 1
+    Then it exits 2, a usage error — the argument is malformed and the fix is a different name
     And no file is read
+    # 2, not 1: nothing was attempted and nothing failed. The name is bad input, the same family as a
+    # missing required parameter, which axi/'s #6 puts at 2. save's identical name check agrees.
 
     Examples:
       | name             |
@@ -55,6 +57,12 @@ Feature: layout — named, reusable pane layouts
       | -pool            |
       | pool_4           |
 
+  # Exit 1 below is deliberate and stays: a template's CONTENT being invalid is not a usage error.
+  # The invocation was well-formed — the fix is to the file, not to a different argument — so it is
+  # not the malformed-argument family axi/'s #6 puts at 2. `validate` is a predicate reporting invalid
+  # (an answer, the grep/test shape `exists` also takes), and a mutating verb like `apply` or
+  # `worktree add --layout` refusing a bad template is a genuine operation failure. Both are 1; only a
+  # malformed NAME or a missing required parameter (above, and in save's refusals) is the usage-error 2.
   Scenario: a template whose name field disagrees with its filename stem fails validation
     Given a repo template pool-4.json whose name field is "pool-3"
     When cyber-mux layout validate pool-4 runs
@@ -481,7 +489,7 @@ Feature: layout — named, reusable pane layouts
   Scenario: --layout and --launch are mutually exclusive
     Given a caller running cyber-mux open --layout pool-4 --launch claude
     When the command runs
-    Then it exits 1 rejecting the pair
+    Then it exits 2 rejecting the pair, a usage error — two flags that cannot both be given is malformed input
 
   Scenario: --at defaults to workspace when --layout is given
     Given a caller running cyber-mux open --layout pool-4 with no --at
@@ -811,7 +819,7 @@ Feature: layout — named, reusable pane layouts
   Scenario: save validates the name before touching the filesystem or the multiplexer
     Given a caller running cyber-mux layout save "../escape"
     When the command runs
-    Then it exits 1
+    Then it exits 2, a usage error — the same malformed-name family show refuses at 2
     And no file is written
     And no region is read
     # a name is a lookup key that must also be a filename, exactly as it is for show and validate
@@ -820,7 +828,7 @@ Feature: layout — named, reusable pane layouts
     Given a caller in no pane at all
     And no --from
     When cyber-mux layout save pool-3 runs
-    Then it exits 1 naming --from
+    Then it exits 2 naming --from, a usage error — a required parameter is missing, not an operation that failed
     And no template is written
     # falling back to the backend's own default would capture whichever region the user happens to be
     # looking at and name it after the caller's intent — a wrong answer is worse than no answer here

@@ -14,8 +14,8 @@ the shape of the string, so a pane labeled `%9` is still reachable by that name.
 
 A label is a human name, not a key, and nothing requires one to be unique. So a name matching two or
 more live panes **fails rather than guessing**, reporting each candidate's id, label and working
-directory — every id directly usable as the retry — as a structured `ambiguous-pane` error on stderr,
-honoring `--format`, with stdout left clean. A name matching nothing is the existing not-found path.
+directory — every id directly usable as the retry — as a structured `ambiguous-pane` error on stdout,
+honoring `--format`. A name matching nothing is the existing not-found path.
 
 **`cyber-mux exists` gains a third exit code.** `0` still means one match and `1` still means none,
 but `2` now means the locator matched two or more panes — there is no single pane the question is

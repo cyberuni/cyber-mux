@@ -1,6 +1,7 @@
 import { join } from 'node:path'
 import { Command, CommanderError, Option } from 'commander'
 import { callerPane, selectSessionAdapter } from './backend.ts'
+import { AmbiguousPaneError, CliError, reportError } from './cli-error.ts'
 import { AT_OPTION, ENV_OPTION, FORMAT_OPTION, LABEL_OPTION } from './cli-options.ts'
 import { type Exec, realExec } from './exec.ts'
 import {
@@ -28,7 +29,7 @@ import {
 	resolveLayout,
 } from './layout-store.ts'
 import { currentPane, probeMultiplexer } from './mux-probe.ts'
-import { isJsonOutput, output, printFields, printTable } from './output.ts'
+import { output, printFields, printTable } from './output.ts'
 import type { LivePane, SessionAdapter, SessionPlacement, SessionTarget } from './session.ts'
 import { gitWorktreeAdapter, resolvePrimaryRoot, resolveWorktreePath } from './worktree.ts'
 import {
@@ -62,56 +63,68 @@ interface Deps {
 
 const REAL_DEPS: CliDeps = { env: process.env, exec: realExec, store: realLayoutStore }
 
-function fail(message: string): never {
-	process.stderr.write(`${message}\n`)
-	process.exit(1)
-}
-
-/** Resolve the adapter for the multiplexer this process is inside, failing cleanly when there is none. */
-function adapter(deps: Deps) {
+/**
+ * Resolve the adapter for the multiplexer this process is inside, failing with a coded `no-mux` error
+ * when there is none. The underlying throw is TRANSLATED, never forwarded — `selectSessionAdapter`
+ * names `$TMUX`/`$HERDR_ENV`, which is backend plumbing an agent driving cyber-mux cannot act on; the
+ * help names how to get a backend through this CLI instead.
+ */
+function adapter(deps: Deps): SessionAdapter {
 	try {
 		return selectSessionAdapter(deps.env, deps.exec)
-	} catch (err) {
-		return fail(err instanceof Error ? err.message : String(err))
+	} catch {
+		throw noMux()
 	}
 }
 
-/**
- * The exit code an ambiguous locator leaves. Not 1: `fail()`'s 1 already means "this did not work",
- * which a caller cannot tell from "the pane is gone" — and for `exists` those are genuinely different
- * answers (1 IS its `gone`). A code of its own is what lets a script branch on ambiguity and retry
- * with a candidate's id, rather than parsing stderr prose to find out what happened.
- */
-const AMBIGUOUS_EXIT = 2
+/** No multiplexer around this process — an operation failure (exit 1), not a usage error. */
+function noMux(): CliError {
+	return new CliError(
+		'no-mux',
+		'no multiplexer detected around this process',
+		'run cyber-mux inside tmux or herdr, or set CYBER_MUX to name one',
+		1,
+	)
+}
 
-/** The stable code the ambiguity error carries, in both formats — what a caller matches on. */
-const AMBIGUOUS_CODE = 'ambiguous-pane'
+/** A locator that resolved to no live pane — a pane verb's not-found. Exit 1: a real operation
+ * failure, distinct from a malformed argument. */
+function paneNotFound(locator: string): CliError {
+	return new CliError(
+		'pane-not-found',
+		`pane "${locator}" matched no live pane`,
+		'list the live panes with: cyber-mux list',
+		1,
+	)
+}
 
-/** One candidate of an ambiguous locator: what tells it apart, and what retries it. */
-interface PaneCandidate {
-	id: string
-	label: string | null
-	cwd: string | null
+/** A malformed layout name — a usage error (exit 2): the fix is a different name, nothing was
+ * attempted. The same family a missing required argument is in. */
+function invalidLayoutName(name: string): CliError {
+	return new CliError(
+		'invalid-layout-name',
+		`invalid layout name "${name}" — a name must match [a-z0-9][a-z0-9-]* and be a plain filename stem`,
+		'use a lowercase stem like pool-4',
+		2,
+	)
 }
 
 /**
- * An ambiguous locator, THROWN rather than reported where it is found.
- *
- * Reporting in place would mean `process.exit(2)` from inside `resolveTarget` — and `layout save` calls
- * that from inside a catch-all that turns anything thrown into a generic exit-1 failure. In production
- * `process.exit` never returns so the catch never runs, which means the verb would work by relying on
- * exactly the control flow the code around it appears to deny. A typed error is what makes the
- * ambiguity path visible to the catch-alls it passes through, so each one can rethrow it deliberately
- * instead of swallowing it by accident.
+ * A git/worktree operation that refused or failed — exit 1. Its message is this CLI's own worktree
+ * text (a refusal naming `--force`, a primary-checkout guard), which is kept because the frozen
+ * worktree refusals are asserted on it; a coded surface on its way out (a `no-mux`, a resolved-template
+ * error, an apply failure) passes through untouched rather than being flattened into this generic one.
  */
-class AmbiguousPaneError extends Error {
-	constructor(
-		readonly locator: string,
-		readonly candidates: PaneCandidate[],
-	) {
-		super(`${AMBIGUOUS_CODE}: ${locator}`)
-		this.name = 'AmbiguousPaneError'
-	}
+function reportWorktreeFailure(err: unknown): never {
+	if (err instanceof CliError) reportError(err)
+	reportError(
+		new CliError(
+			'worktree-failed',
+			err instanceof Error ? err.message : String(err),
+			'check the worktree path and its state, then re-run',
+			1,
+		),
+	)
 }
 
 /**
@@ -161,46 +174,41 @@ function resolveTarget(deps: Deps, a: SessionAdapter, locator: string): SessionT
 }
 
 /**
- * Report the candidates and exit 2.
+ * Wrap a verb's action so ANY coded failure reports itself on stdout and exits — the one place that
+ * turns a `CliError` (an ambiguity, a `no-mux`, a `pane-not-found`, a layout refusal) into output, for
+ * every verb.
  *
- * **stderr, and stdout stays clean.** The report is an error, and a caller with a redirected or
- * discarded stdout must still get it — while a caller parsing stdout must never find an error mixed
- * into the data it expected. `exists` leans on this hardest: its stdout contract is `live`/`gone`, and
- * ambiguity is neither, so it writes nothing there at all.
- *
- * Each candidate carries its id, its label and its cwd: the id is the RETRY — paste it back and the
- * ambiguity is gone, since an id outranks every name — and the cwd is what actually tells three panes
- * all labeled `worker` apart.
- */
-function reportAmbiguous(err: AmbiguousPaneError): never {
-	const { locator, candidates } = err
-	if (isJsonOutput()) {
-		process.stderr.write(`${JSON.stringify({ error: { code: AMBIGUOUS_CODE, locator, candidates } }, null, 2)}\n`)
-	} else {
-		process.stderr.write(`${AMBIGUOUS_CODE}: "${locator}" names ${candidates.length} live panes — retry with an id\n`)
-		for (const c of candidates) {
-			process.stderr.write(`  ${c.id}  ${c.label ?? ''}  ${c.cwd ?? ''}\n`)
-		}
-	}
-	process.exit(AMBIGUOUS_EXIT)
-}
-
-/**
- * Wrap a verb's action so an ambiguous locator reports its candidates and exits 2 — the one place that
- * turns `AmbiguousPaneError` into output, for every verb that can raise one.
- *
- * Here rather than inside `resolveTarget` so the report is the OUTERMOST thing a verb does: by the time
- * it runs, every inner catch-all has already had its chance to rethrow, and nothing can convert an
- * exit-2 ambiguity into an exit-1 generic failure behind its back.
+ * Here rather than deeper so the report is the OUTERMOST thing a verb does: by the time it runs, every
+ * inner catch-all has already had its chance to rethrow, and nothing can convert an exit-2 usage error
+ * into an exit-1 generic failure behind its back. A non-`CliError` is a bug, not a surface — it is
+ * rethrown to the top-level handler rather than dressed up as a coded failure.
  */
 function guarded<A extends unknown[]>(action: (...args: A) => void): (...args: A) => void {
 	return (...args: A) => {
 		try {
 			action(...args)
 		} catch (err) {
-			if (err instanceof AmbiguousPaneError) reportAmbiguous(err)
+			if (err instanceof CliError) reportError(err)
 			throw err
 		}
+	}
+}
+
+/**
+ * Run a pane verb's body, translating a backend throw into a `pane-not-found` on the way out.
+ *
+ * `resolveTarget` hands an unmatched locator to the backend as an id, so a bad target surfaces as the
+ * backend's OWN diagnostic — which must never reach the caller: an agent handed a tmux/herdr error
+ * cannot act on it through cyber-mux. A `CliError` already on its way out (a `no-mux` from `adapter`,
+ * an ambiguity from `resolveTarget`) is a coded surface and passes through untouched; anything else is
+ * the multiplexer's raw failure and becomes this CLI's own code and help instead.
+ */
+function paneVerb(locator: string, body: () => void): void {
+	try {
+		body()
+	} catch (err) {
+		if (err instanceof CliError) throw err
+		throw paneNotFound(locator)
 	}
 }
 
@@ -269,22 +277,43 @@ function resolveTemplate(
 	deps: Deps,
 	opts: { name?: string; file?: string },
 ): ResolvedLayout & { template: LayoutTemplate } {
+	// A malformed NAME is a usage error (exit 2), and it is caught HERE — before `resolveLayout` reads —
+	// so it is told apart from a well-formed name that simply resolves nowhere (exit 1, below). The name
+	// is a lookup key that must also be a filename; `../../../etc/pwd` must never get as far as a read.
+	if (opts.name !== undefined && opts.file === undefined && !isValidLayoutName(opts.name)) {
+		throw invalidLayoutName(opts.name)
+	}
 	let resolved: ResolvedLayout
 	try {
 		resolved = resolveLayout({ name: opts.name, file: opts.file, store: deps.store, exec: deps.exec, env: deps.env })
 	} catch (err) {
-		return fail(err instanceof Error ? err.message : String(err))
+		// A well-formed name that resolves nowhere is a failed lookup, not malformed input (exit 1). The
+		// message is this CLI's own — it names the directories it searched — so it is kept, not a backend's.
+		throw new CliError(
+			'layout-not-found',
+			err instanceof Error ? err.message : String(err),
+			'list the templates resolvable from here with: cyber-mux layout list',
+			1,
+		)
 	}
 	let parsed: unknown
 	try {
 		parsed = parseLayout(resolved.raw)
 	} catch (err) {
-		return fail(`${resolved.path}: ${err instanceof Error ? err.message : String(err)}`)
+		throw new CliError(
+			'invalid-template',
+			`${resolved.path}: ${err instanceof Error ? err.message : String(err)}`,
+			'fix the template JSON, then re-run',
+			1,
+		)
 	}
-	// Every error at once, one per line, each naming its own JSON path — first-only would make a
-	// template with three mistakes take three runs to fix.
+	// A template's CONTENT being invalid is a predicate answer (exit 1), not a usage error — the
+	// invocation was well-formed, the fix is to the file. Every error at once, one per line, each naming
+	// its own JSON path — first-only would make a template with three mistakes take three runs to fix.
 	const errors = validateLayout(parsed, resolved.stem)
-	if (errors.length > 0) fail(errors.join('\n'))
+	if (errors.length > 0) {
+		throw new CliError('invalid-template', errors.join('\n'), 'fix the fields named above, then re-run', 1)
+	}
 	return { ...resolved, template: parsed as LayoutTemplate }
 }
 
@@ -308,18 +337,30 @@ function reportManifest(manifest: LayoutManifest, extra: Record<string, string |
  */
 function reportApplyFailure(err: unknown, extra: Record<string, string | null> = {}): never {
 	if (err instanceof LayoutApplyError) {
+		// The manifest is the WHOLE of stdout — one result payload, with the failed pane named inside it,
+		// never a second structured error concatenated after it. The message is supplementary debug, so it
+		// goes to stderr: moving it to stdout would break the "stdout carries exactly one payload" invariant
+		// the stream decision rests on.
 		reportManifest(err.manifest, extra)
-		return fail(err.message)
+		process.stderr.write(`${err.message}\n`)
+		process.exit(1)
 	}
-	return fail(err instanceof Error ? err.message : String(err))
+	// A totally-failed apply that produced no result — a predictable pre-open failure (a missing dir
+	// names the pane and the resolved path). Its message is this CLI's own text, exit 1.
+	throw new CliError(
+		'layout-apply-failed',
+		err instanceof Error ? err.message : String(err),
+		'check the template and the target directory, then re-run',
+		1,
+	)
 }
 
 function layoutListCommand(deps: Deps): Command {
 	return new Command('list')
 		.description('Every layout template resolvable from here, with its source and pane count')
 		.addOption(FORMAT_OPTION)
-		.action(() => {
-			try {
+		.action(
+			guarded(() => {
 				const dirs = layoutDirs(deps.exec, deps.env)
 				const layouts = listLayouts(deps.store, dirs).map((entry) => {
 					// A template that does not parse still LISTS — `list` answers "what is here", and
@@ -341,10 +382,8 @@ function layoutListCommand(deps: Deps): Command {
 						{ label: 'shadowed', get: (l) => (l.shadowed ? 'yes' : '') },
 					]),
 				)
-			} catch (err) {
-				fail(err instanceof Error ? err.message : String(err))
-			}
-		})
+			}),
+		)
 }
 
 function layoutShowCommand(deps: Deps): Command {
@@ -353,12 +392,21 @@ function layoutShowCommand(deps: Deps): Command {
 		.argument('[name]', 'Template name')
 		.option('--file <path>', 'Read this path instead, skipping resolution entirely')
 		.option('--desugar', 'Print the canonical tree panes/arrange expands to — exactly what apply builds')
-		.action((name: string | undefined, opts: { file?: string; desugar?: boolean }) => {
-			if (!name && !opts.file) fail('layout show needs a template name or --file <path>')
-			const { template } = resolveTemplate(deps, { name, file: opts.file })
-			// One desugarer, so `--desugar` and the walk can never disagree about what a flat template means.
-			console.log(JSON.stringify(opts.desugar ? resolveTree(template) : template, null, 2))
-		})
+		.action(
+			guarded((name: string | undefined, opts: { file?: string; desugar?: boolean }) => {
+				if (!name && !opts.file) {
+					throw new CliError(
+						'missing-argument',
+						'layout show needs a template name or --file <path>',
+						'pass a template name, or --file <path>',
+						2,
+					)
+				}
+				const { template } = resolveTemplate(deps, { name, file: opts.file })
+				// One desugarer, so `--desugar` and the walk can never disagree about what a flat template means.
+				console.log(JSON.stringify(opts.desugar ? resolveTree(template) : template, null, 2))
+			}),
+		)
 }
 
 function layoutValidateCommand(deps: Deps): Command {
@@ -366,12 +414,21 @@ function layoutValidateCommand(deps: Deps): Command {
 		.description('Validate a template — exit 0 valid, 1 invalid, every error at once with a JSON path')
 		.argument('[name]', 'Template name')
 		.option('--file <path>', 'Validate this path instead, skipping resolution entirely')
-		.action((name: string | undefined, opts: { file?: string }) => {
-			if (!name && !opts.file) fail('layout validate needs a template name or --file <path>')
-			// resolveTemplate already fails with every error, one per line. Reaching here means valid, and
-			// a valid template says nothing at all — this is the CI hook, so silence is the pass signal.
-			resolveTemplate(deps, { name, file: opts.file })
-		})
+		.action(
+			guarded((name: string | undefined, opts: { file?: string }) => {
+				if (!name && !opts.file) {
+					throw new CliError(
+						'missing-argument',
+						'layout validate needs a template name or --file <path>',
+						'pass a template name, or --file <path>',
+						2,
+					)
+				}
+				// resolveTemplate already fails with every error, one per line. Reaching here means valid, and
+				// a valid template says nothing at all — this is the CI hook, so silence is the pass signal.
+				resolveTemplate(deps, { name, file: opts.file })
+			}),
+		)
 }
 
 /**
@@ -422,32 +479,44 @@ function layoutSaveCommand(deps: Deps): Command {
 					opts: { from?: string; workspace?: boolean; description?: string; to: 'repo' | 'user'; force?: boolean },
 				) => {
 					// Before the multiplexer is touched: a name is a lookup key that must also be a filename, so an
-					// unusable one should not cost a region read to find out.
-					if (!isValidLayoutName(name)) {
-						fail(`invalid layout name "${name}" — a name must match [a-z0-9][a-z0-9-]* and be a plain filename stem`)
-					}
+					// unusable one should not cost a region read to find out. A usage error (exit 2), the same
+					// malformed-name family `show` refuses at 2.
+					if (!isValidLayoutName(name)) throw invalidLayoutName(name)
 					try {
 						const path = join(layoutDirs(deps.exec, deps.env)[opts.to], `${name}.json`)
 						// Checked BEFORE the capture, so a refusal costs nothing — and refused by default, because a
 						// template is hand-edited after it is saved (the commands are added by hand) and silently
 						// overwriting one would throw that work away.
 						if (!opts.force && deps.store.read(path) !== null) {
-							fail(`layout "${name}" already exists at ${path} — pass --force to overwrite it`)
+							throw new CliError(
+								'layout-exists',
+								`layout "${name}" already exists at ${path} — pass --force to overwrite it`,
+								're-run with --force to replace it',
+								1,
+							)
 						}
-						const adapter = selectSessionAdapter(deps.env, deps.exec)
+						const a = adapter(deps)
 						// Both geometry reads are optional capabilities, exactly as the worktree binding is — and
 						// each mode asks only for the one it needs, so a backend is never refused for lacking a
 						// member this run would not have called. A backend that cannot answer cannot be captured
 						// and there is nothing to degrade to, so this refuses NAMING the backend rather than
 						// guessing a tree.
-						const describeRegion = adapter.describeRegion
+						const describeRegion = a.describeRegion
 						if (!opts.workspace && !describeRegion) {
-							fail(`${adapter.name} cannot report a region's geometry — layout save needs a backend that can`)
+							throw new CliError(
+								'backend-unsupported',
+								`${a.name} cannot report a region's geometry — layout save needs a backend that can`,
+								'run layout save on a backend that reports geometry (tmux or herdr)',
+								1,
+							)
 						}
-						const describeWorkspace = adapter.describeWorkspace
+						const describeWorkspace = a.describeWorkspace
 						if (opts.workspace && !describeWorkspace) {
-							fail(
-								`${adapter.name} cannot enumerate a workspace's tabs — layout save --workspace needs a backend that can`,
+							throw new CliError(
+								'backend-unsupported',
+								`${a.name} cannot enumerate a workspace's tabs — layout save --workspace needs a backend that can`,
+								'run layout save --workspace on a backend that enumerates tabs (tmux or herdr)',
+								1,
 							)
 						}
 						// `--from` names a pane explicitly; otherwise capture around the pane THIS process sits in,
@@ -457,9 +526,15 @@ function layoutSaveCommand(deps: Deps): Command {
 						// built inline: `--from` is a pane locator like any other, and a name that works on `read`
 						// and silently means nothing here is the drift a second spelling guarantees. The caller's
 						// OWN pane needs no resolution — `callerPane` already answers with a concrete id.
-						const target = opts.from ? resolveTarget(deps, adapter, opts.from) : callerPane(adapter, deps.env)
+						const target = opts.from ? resolveTarget(deps, a, opts.from) : callerPane(a, deps.env)
 						if (!target) {
-							fail('layout save needs a pane to capture the region around — pass --from <pane>, or run it inside one')
+							// A required parameter is missing, not an operation that failed — a usage error (exit 2).
+							throw new CliError(
+								'missing-pane',
+								'layout save needs a pane to capture the region around — pass --from <pane>, or run it inside one',
+								'pass --from <pane>, or run layout save inside a pane',
+								2,
+							)
 						}
 						const captureOpts = { name, description: opts.description ?? CAPTURED_DESCRIPTION }
 						const { template, warnings } = opts.workspace
@@ -468,13 +543,20 @@ function layoutSaveCommand(deps: Deps): Command {
 						deps.store.write(path, `${JSON.stringify(template, null, 2)}\n`)
 						// stderr, so stdout stays the path alone — `cyber-mux layout save x` composes into `$(...)`.
 						for (const warning of warnings) process.stderr.write(`${warning}\n`)
-						if (!opts.workspace) noteTabsLeftOut(deps, adapter, target)
+						if (!opts.workspace) noteTabsLeftOut(deps, a, target)
 						console.log(path)
 					} catch (err) {
-						// The ambiguity owes the caller its candidates and exit 2. This catch-all would flatten it
-						// into a free-text exit 1 — the exact swallow `AmbiguousPaneError` exists to make visible.
-						if (err instanceof AmbiguousPaneError) throw err
-						fail(err instanceof Error ? err.message : String(err))
+						// A coded failure (the refusals above, an ambiguity, a no-mux) is already a surface and
+						// passes through to `guarded`. Anything else is a capture that could not produce a tree — a
+						// region no splits could have built, or an empty one — reported under this CLI's own code,
+						// never the backend's raw text. Exit 1: the capture failed, the invocation was well-formed.
+						if (err instanceof CliError) throw err
+						throw new CliError(
+							'unsplittable-region',
+							'this region could not be captured — it is not a tree any sequence of splits could have produced',
+							'layout save can only capture a region built by splitting',
+							1,
+						)
 					}
 				},
 			),
@@ -596,58 +678,60 @@ function openCommand(deps: Deps): Command {
 		.addOption(LABEL_OPTION)
 		.addOption(FORMAT_OPTION)
 		.action(
-			(opts: {
-				launch?: string
-				layout?: string
-				cwd: string
-				at?: SessionPlacement
-				env?: Record<string, string>
-				label?: string
-			}) => {
-				if (opts.layout) {
-					// Resolve and validate BEFORE touching a backend, so an unresolvable name opens nothing.
-					const { template } = resolveTemplate(deps, { name: opts.layout })
-					const a = adapter(deps)
-					try {
-						reportManifest(
-							openLayout(deps.exec, a, template, {
-								cwd: opts.cwd,
-								// A fresh space is empty by construction, which is why the pool defaults there.
-								at: opts.at ?? 'workspace',
-								label: opts.label ?? template.name,
-								dirExists: deps.store.dirExists,
-								from: callerPane(a, deps.env),
-							}),
-						)
-					} catch (err) {
-						reportApplyFailure(err)
+			guarded(
+				(opts: {
+					launch?: string
+					layout?: string
+					cwd: string
+					at?: SessionPlacement
+					env?: Record<string, string>
+					label?: string
+				}) => {
+					if (opts.layout) {
+						// Resolve and validate BEFORE touching a backend, so an unresolvable name opens nothing.
+						const { template } = resolveTemplate(deps, { name: opts.layout })
+						const a = adapter(deps)
+						try {
+							reportManifest(
+								openLayout(deps.exec, a, template, {
+									cwd: opts.cwd,
+									// A fresh space is empty by construction, which is why the pool defaults there.
+									at: opts.at ?? 'workspace',
+									label: opts.label ?? template.name,
+									dirExists: deps.store.dirExists,
+									from: callerPane(a, deps.env),
+								}),
+							)
+						} catch (err) {
+							reportApplyFailure(err)
+						}
+						return
 					}
-					return
-				}
-				const a = adapter(deps)
-				const t = a.open(deps.exec, {
-					cwd: opts.cwd,
-					launch: opts.launch,
-					at: opts.at,
-					env: opts.env,
-					label: opts.label,
-					from: callerPane(a, deps.env),
-				})
-				// The workspace rides in on the open itself — the backend answered when the pane was born, so
-				// reporting it asks nothing extra; hiding it would discard a fact already in hand. `?? null`
-				// on the JSON side only, matching `reportOpenedWorktree`: absent is the seam's meaning, null
-				// is its spelling at the machine-readable boundary.
-				output({ pane: t.id, workspace: t.workspace ?? null }, () =>
-					printFields({ pane: t.id, workspace: t.workspace }),
-				)
-			},
+					const a = adapter(deps)
+					const t = a.open(deps.exec, {
+						cwd: opts.cwd,
+						launch: opts.launch,
+						at: opts.at,
+						env: opts.env,
+						label: opts.label,
+						from: callerPane(a, deps.env),
+					})
+					// The workspace rides in on the open itself — the backend answered when the pane was born, so
+					// reporting it asks nothing extra; hiding it would discard a fact already in hand. `?? null`
+					// on the JSON side only, matching `reportOpenedWorktree`: absent is the seam's meaning, null
+					// is its spelling at the machine-readable boundary.
+					output({ pane: t.id, workspace: t.workspace ?? null }, () =>
+						printFields({ pane: t.id, workspace: t.workspace }),
+					)
+				},
+			),
 		)
 }
 
 /** The `send` group: drive a pane's input WITHOUT taking its turn. Neither subcommand presses an
  * Enter the caller did not write — supplying one is `submit`'s job. Bare `cyber-mux send` is
- * incomplete input, not a content request: commander answers it with help on stderr and exit 1
- * (see the AXI content-first note in `.agents/spec/axi/README.md`). */
+ * incomplete input, not a content request: it is answered with help on stdout and exit 2 (a usage
+ * error — a missing required parameter; see the AXI note in `.agents/spec/axi/README.md`). */
 function sendCommand(deps: Deps): Command {
 	const send = new Command('send').description('Drive a pane without taking its turn (text | keys)')
 	send.addCommand(
@@ -658,8 +742,10 @@ function sendCommand(deps: Deps): Command {
 			.addOption(FORMAT_OPTION)
 			.action(
 				guarded((pane: string, text: string) => {
-					const a = adapter(deps)
-					a.sendText(deps.exec, resolveTarget(deps, a, pane), text)
+					paneVerb(pane, () => {
+						const a = adapter(deps)
+						a.sendText(deps.exec, resolveTarget(deps, a, pane), text)
+					})
 				}),
 			),
 	)
@@ -674,8 +760,10 @@ function sendCommand(deps: Deps): Command {
 			.addOption(FORMAT_OPTION)
 			.action(
 				guarded((pane: string, keys: string[]) => {
-					const a = adapter(deps)
-					a.sendKeys(deps.exec, resolveTarget(deps, a, pane), keys)
+					paneVerb(pane, () => {
+						const a = adapter(deps)
+						a.sendKeys(deps.exec, resolveTarget(deps, a, pane), keys)
+					})
 				}),
 			),
 	)
@@ -690,8 +778,10 @@ function submitCommand(deps: Deps): Command {
 		.addOption(FORMAT_OPTION)
 		.action(
 			guarded((pane: string, text: string | undefined) => {
-				const a = adapter(deps)
-				a.submit(deps.exec, resolveTarget(deps, a, pane), text)
+				paneVerb(pane, () => {
+					const a = adapter(deps)
+					a.submit(deps.exec, resolveTarget(deps, a, pane), text)
+				})
 			}),
 		)
 }
@@ -704,10 +794,14 @@ function readCommand(deps: Deps): Command {
 		.addOption(FORMAT_OPTION)
 		.action(
 			guarded((pane: string, opts: { lines?: number }) => {
-				const a = adapter(deps)
-				const t = resolveTarget(deps, a, pane)
-				const out = a.read(deps.exec, t, opts.lines != null ? { lines: opts.lines } : undefined)
-				process.stdout.write(out.endsWith('\n') ? out : `${out}\n`)
+				paneVerb(pane, () => {
+					const a = adapter(deps)
+					const t = resolveTarget(deps, a, pane)
+					// A failed read captures nothing — there are no bytes for an error to land amid, so `paneVerb`
+					// throwing here means stdout is the structured error alone, with no partial pane output before it.
+					const out = a.read(deps.exec, t, opts.lines != null ? { lines: opts.lines } : undefined)
+					process.stdout.write(out.endsWith('\n') ? out : `${out}\n`)
+				})
 			}),
 		)
 }
@@ -719,15 +813,10 @@ function focusCommand(deps: Deps): Command {
 		.addOption(FORMAT_OPTION)
 		.action(
 			guarded((pane: string) => {
-				try {
+				paneVerb(pane, () => {
 					const a = adapter(deps)
 					a.focus(deps.exec, resolveTarget(deps, a, pane))
-				} catch (err) {
-					// An ambiguity is not a focus failure — it never reached the backend, and it owes the
-					// caller its candidates and exit 2 rather than this catch-all's free-text exit 1.
-					if (err instanceof AmbiguousPaneError) throw err
-					fail(err instanceof Error ? err.message : String(err))
-				}
+				})
 			}),
 		)
 }
@@ -739,8 +828,10 @@ function closeCommand(deps: Deps): Command {
 		.addOption(FORMAT_OPTION)
 		.action(
 			guarded((pane: string) => {
-				const a = adapter(deps)
-				a.teardown(deps.exec, resolveTarget(deps, a, pane))
+				paneVerb(pane, () => {
+					const a = adapter(deps)
+					a.teardown(deps.exec, resolveTarget(deps, a, pane))
+				})
 			}),
 		)
 }
@@ -749,21 +840,23 @@ function listCommand(deps: Deps): Command {
 	return new Command('list')
 		.description('Enumerate every live pane the current backend can see')
 		.addOption(FORMAT_OPTION)
-		.action(() => {
-			const panes = adapter(deps).listPanes(deps.exec)
-			output({ panes }, () =>
-				printTable(panes, [
-					{ label: 'pane', get: (p) => p.id },
-					// `label` takes the slot `mux` held. Every row of one listing reports the same mux — one
-					// adapter is selected per session, so the column is constant by construction and
-					// discriminates nothing. The label is what a caller now types INSTEAD of the id, so it is
-					// the fact this row exists to carry. `doctor` is where the backend is a live question.
-					{ label: 'label', get: (p) => p.label ?? '' },
-					{ label: 'harness', get: (p) => p.harness ?? '' },
-					{ label: 'cwd', get: (p) => p.cwd ?? '' },
-				]),
-			)
-		})
+		.action(
+			guarded(() => {
+				const panes = adapter(deps).listPanes(deps.exec)
+				output({ panes }, () =>
+					printTable(panes, [
+						{ label: 'pane', get: (p) => p.id },
+						// `label` takes the slot `mux` held. Every row of one listing reports the same mux — one
+						// adapter is selected per session, so the column is constant by construction and
+						// discriminates nothing. The label is what a caller now types INSTEAD of the id, so it is
+						// the fact this row exists to carry. `doctor` is where the backend is a live question.
+						{ label: 'label', get: (p) => p.label ?? '' },
+						{ label: 'harness', get: (p) => p.harness ?? '' },
+						{ label: 'cwd', get: (p) => p.cwd ?? '' },
+					]),
+				)
+			}),
+		)
 }
 
 function existsCommand(deps: Deps): Command {
@@ -882,7 +975,7 @@ function worktreeAddCommand(deps: Deps): Command {
 						}),
 					)
 				} catch (err) {
-					fail(err instanceof Error ? err.message : String(err))
+					reportWorktreeFailure(err)
 				}
 			},
 		)
@@ -917,7 +1010,7 @@ function worktreeOpenCommand(deps: Deps): Command {
 						}),
 					)
 				} catch (err) {
-					fail(err instanceof Error ? err.message : String(err))
+					reportWorktreeFailure(err)
 				}
 			},
 		)
@@ -940,7 +1033,7 @@ function worktreeListCommand(deps: Deps): Command {
 					]),
 				)
 			} catch (err) {
-				fail(err instanceof Error ? err.message : String(err))
+				reportWorktreeFailure(err)
 			}
 		})
 }
@@ -955,7 +1048,7 @@ function worktreeRemoveCommand(deps: Deps): Command {
 				const primaryRoot = resolvePrimaryRoot(deps.exec)
 				removeWorktree(deps.exec, optionalAdapter(deps), path, { primaryRoot, force: opts.force })
 			} catch (err) {
-				fail(err instanceof Error ? err.message : String(err))
+				reportWorktreeFailure(err)
 			}
 		})
 }
@@ -969,12 +1062,78 @@ function worktreeCommand(deps: Deps): Command {
 	return cmd
 }
 
-/** `exitOverride()` binds to one command only — it is NOT inherited by subcommands. With a flat verb
- * surface that was invisible, but `send` is a group: without this walk, `cyber-mux send` with no
- * subcommand would call `process.exit(1)` straight from the group and kill the caller's process
- * (in tests, the runner itself) instead of throwing a catchable `CommanderError`. */
+/**
+ * Translate a commander-level rejection into the SAME coded error surface every verb uses. commander's
+ * own failures — a flag the command does not define, a required argument the parser never received, two
+ * mutually-exclusive flags — are USAGE errors: the fix is a different invocation, not a retry, so they
+ * exit 2, and they belong on stdout under a stable code exactly as an operation failure does.
+ *
+ * The callback is attached per command, so `command` is the SUBCOMMAND actually invoked — which is what
+ * lets an unknown flag be rejected against that subcommand's own flags (`layout list` does not share
+ * `layout save`'s), and the offending flag be named beside them so the agent self-corrects in one turn
+ * rather than a second `--help` round trip.
+ */
+function handleCommanderError(command: Command, err: CommanderError): never {
+	// An explicit `--help`/`--version` is not an error: help is already on stdout, exit 0, and no flag
+	// validation ever rejects `--help` on any command.
+	if (err.code === 'commander.helpDisplayed' || err.code === 'commander.version') process.exit(err.exitCode)
+	// A bare group (`cyber-mux send` with no subcommand, or a bare `cyber-mux`) is incomplete input, not
+	// a content request: its help belongs on stdout — the stream the agent reads — and it exits 2, the
+	// status that separates bad input from a failed operation.
+	if (err.code === 'commander.help') {
+		process.stdout.write(command.helpInformation())
+		process.exit(2)
+	}
+	if (err.code === 'commander.unknownOption') reportError(unknownFlagError(command, err))
+	if (err.code === 'commander.missingArgument') reportError(missingArgumentError(command, err))
+	if (err.code === 'commander.conflictingOption' || err.code === 'commander.excessArguments') {
+		reportError(
+			new CliError('usage-error', usageMessage(err), 'pass only one of the conflicting flags, then re-run', 2),
+		)
+	}
+	// Anything else (an invalid --at choice, an unknown subcommand) keeps commander's own behavior:
+	// re-thrown to the top-level handler, which honors the exit code commander chose.
+	throw err
+}
+
+/** commander's raw message minus its own `error: ` prefix — its own CLI's text, safe to surface. */
+function usageMessage(err: CommanderError): string {
+	return (err.message ?? '').replace(/^error:\s*/, '')
+}
+
+/** An unknown flag, named beside the command's OWN valid flags, so the agent self-corrects in one turn. */
+function unknownFlagError(command: Command, err: CommanderError): CliError {
+	const flag = err.message.match(/'([^']+)'/)?.[1] ?? 'the flag'
+	const valid = command.options.map((o) => o.long ?? o.short).filter((f): f is string => Boolean(f))
+	return new CliError(
+		'unknown-flag',
+		`unknown flag ${flag} for ${command.name()}`,
+		valid.length > 0 ? `valid flags for ${command.name()}: ${valid.join(' ')}` : `${command.name()} takes no flags`,
+		2,
+	)
+}
+
+/** A required argument the parser never received — a usage error naming the missing argument. */
+function missingArgumentError(command: Command, err: CommanderError): CliError {
+	const arg = err.message.match(/'([^']+)'/)?.[1] ?? 'an argument'
+	return new CliError(
+		'missing-argument',
+		`missing required argument: ${arg}`,
+		`provide ${arg}: cyber-mux ${command.name()} <${arg}>`,
+		2,
+	)
+}
+
+/**
+ * Every command in the tree gets a translating `exitOverride` — NOT inherited by subcommands, so it is
+ * walked. Without it `cyber-mux send` with no subcommand would `process.exit` straight from the group
+ * and kill the caller's process (in tests, the runner itself); with the plain default it would throw a
+ * bare `CommanderError`. This routes commander's own rejections through the coded error surface, so a
+ * missing argument or unknown flag reaches the caller as an exit-2 structured error on stdout, exactly
+ * as an ambiguity or a `no-mux` does.
+ */
 function exitOverrideTree(command: Command): Command {
-	command.exitOverride()
+	command.exitOverride((err) => handleCommanderError(command, err))
 	for (const sub of command.commands) exitOverrideTree(sub)
 	return command
 }
@@ -1013,10 +1172,11 @@ export async function main(): Promise<void> {
 	try {
 		await buildProgram().parseAsync(process.argv)
 	} catch (err) {
-		// commander has already written its own text to stderr (the help for a bare group, the
-		// `error: missing required argument` line) before throwing, so re-printing its internal message
-		// would double it — and for help that message is the literal placeholder "(outputHelp)". Honor
-		// the exit code it chose and add nothing.
+		// A coded failure that reached here unguarded still owes the caller its structured error on stdout.
+		if (err instanceof CliError) reportError(err)
+		// A commander rejection `handleCommanderError` re-threw (an invalid --at choice, an unknown
+		// subcommand): commander already wrote its own text to stderr, so honor the exit code it chose and
+		// add nothing — re-printing would double it.
 		if (err instanceof CommanderError) process.exit(err.exitCode)
 		process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`)
 		process.exit(1)

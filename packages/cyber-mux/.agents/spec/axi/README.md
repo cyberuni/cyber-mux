@@ -15,9 +15,14 @@ inverse of what an agent wants. This node states the cross-cutting conventions *
 behavioral node ([`mux/`](../mux/README.md)) references this contract for its own commands'
 scenarios.
 
-> This is the **same** contract `cyberplace` (`.agents/specs/cyberplace/axi/`) and
-> `packages/universal-plugin` (its ADR-0003) adopted; `cyber-mux` shares the output shape so an
-> agent moving between bins sees one interface. One open question — see **#8**.
+> `cyberplace` (`.agents/specs/cyberplace/axi/`) and `packages/universal-plugin` (its ADR-0003)
+> adopt this same contract, so an agent moving between bins sees one interface. **One deliberate gap
+> today:** those nodes still put errors on **stderr**, where AXI says stdout — this node used to
+> state that inversion word for word and no longer does (#6). The fix is theirs to land and is
+> **recorded as a follow-up**, not ridden in from here; until it does, this bin conforms to AXI and
+> they do not. Where
+> this node and a sibling disagree, **AXI is the tiebreaker** — none of the three is the contract, all
+> three adopt it. One open question — see **#8**.
 
 ## Subject
 
@@ -57,82 +62,183 @@ scenarios.
    exit 0; `list` today already prints `(none)` for this case — never blank output an agent must
    guess at.
 6. **Structured errors, exit codes, no prompts, fail-loud (#6)** — mutations are idempotent; errors
-   are structured (a stable `code` + message, honoring `--format`) — `fail()` in `cli.ts` writes free
-   text to stderr and exits 1, still unstructured for every error but the one below; exit `0` =
-   success, `1` = failure (already true); commands **never** prompt interactively (already true —
-   `cyber-mux` has no interactive prompts); an **unknown flag fails loud** (commander's default —
-   exit 1, naming the flag).
+   are structured (a stable `code` + message + an actionable `help:`, honoring `--format`) and are
+   written to **stdout**, the stream AXI reserves for everything the agent consumes; exit `0` =
+   success (including no-ops), `1` = error, `2` = usage error — **AXI's set, restated in full**, with
+   **one recorded exception below** (`exists`); commands **never** prompt interactively (already true
+   — `cyber-mux` has no interactive prompts);
+   an **unknown flag fails loud** at `2`, naming the flag and listing the command's valid flags, so
+   the agent self-corrects in one turn rather than spending a round trip on `--help`.
 
-   **Amendment — a third code, `2` = *couldn't answer*.** The `0`/`1` set assumes every outcome is a
-   success or a failure, which a **predicate** breaks: asked whether the pane named `worker` is live
-   when three are, `exists` has no single pane to answer about — that is neither yes, no, nor an
-   ordinary failure. The established convention puts this in the status rather than the prose —
-   `grep` (`2`), POSIX `test` (`>1`, normative), `diff`, `expr`, `pgrep` — and the counter-case is
-   what settles it: `systemctl is-active` prints `inactive` for both a stopped unit and a unit that
-   does not exist, leaving only exit `3` vs `4` to distinguish them, so the word is lossy exactly
-   where it matters. So `2` = the locator did not resolve to one subject. It carries **one meaning
-   across every command**, never a per-command code — that is what lets an agent detect the condition
-   without parsing — **within `cyber-mux`**. Its first caller is [`mux/`](../mux/README.md)'s pane
-   addressing (`ambiguous-pane`), which will also be the **first structured error** on this surface —
-   a stable `code`, its candidate entries, on stderr, honoring `--format`. **Specified, not yet
-   built**: like the rest of this node, the code set is a contract the impl trails (see *Impl trails
-   the contract* below). #6's structured-error clause stays aspirational for every other error path.
+   **`2` is AXI's own third code, and this node had dropped it.** AXI states the set as `0` = success
+   (including no-ops), `1` = error, **`2` = usage error** — the status for an unrecognized flag or
+   argument, and for a missing required parameter. The `0`/`1` above is not a *narrower adoption* of
+   that set; it is an **incomplete restatement** of it, and the omission was never argued. So nothing
+   here is an amendment: `cyber-mux` adopts AXI's set as written.
 
-   **Scope of this amendment — `cyber-mux` only; nothing is asserted here about the other adopters.**
-   This node's banner records that `cyberplace` and `packages/universal-plugin` adopted *the same*
-   contract, so a third exit code introduced here is a **divergence** until they either adopt it or
-   decline it — and whether the code set belongs to the shared contract or to each bin is a question
-   for the contract, not for `cyber-mux`. A follow-up is filed. The amendment is taken now anyway
-   because the alternative is worse than divergence: `cyber-mux` had a real predicate with a real
-   third outcome and would otherwise have had to encode it in prose, which is the lossy shape
-   `systemctl` demonstrates. Same standing as #8's own amendment below, which diverged first and on
-   the same terms.
+   **An ambiguous locator is a usage error.** `2` separates *your invocation is wrong, fix it and
+   retry* from `1`'s *your invocation was fine, the operation failed*. `cyber-mux read worker` when
+   three panes are labeled `worker` is the first: the argument is underspecified, nothing was
+   attempted, and the fix is a different argument — the same shape as a missing required parameter,
+   which AXI already puts here. It also lands in AXI's error form exactly, `error:` naming what went
+   wrong plus an actionable `help:` — each candidate's id IS the retry
+   ([`mux/`](../mux/README.md)'s pane addressing, `ambiguous-pane`). A predicate framing (`grep`,
+   POSIX `test`, `diff`, `pgrep` all reserve a code for *couldn't answer*) reaches the same code by a
+   different road; where the two disagree, AXI wins here, because it is the contract this node
+   adopts.
+
+   **This node used to record two divergences from AXI as though they were the contract. The text
+   above no longer states them.** Each was a default or an omission restated without argument, and
+   each reaches every command through one `fail()` helper and its 22 call sites — which is why
+   correcting them is a single pass rather than three, and why neither could ride in on one error path:
+
+   - **An unknown flag exiting `1`, where AXI says `2`.** Commander's default. The contract above puts
+     it at `2` — the same status as the missing required parameter AXI names, and the same one a bare
+     command group leaves (see #8).
+   - **Errors on stderr, where AXI says stdout.** AXI is explicit that stdout carries "data, errors,
+     suggestions" precisely "so the agent can read and act on them", and that stderr is debug/progress
+     that "agents don't read" — so an agent-facing report on stderr is a report its own reader never
+     sees. Load-bearing, not cosmetic.
+
+     It was never a `cyber-mux` slip: `cyberplace`'s node states the inversion identically, word for
+     word, so it was the org's adoption that diverged rather than this bin. **This node no longer
+     claims it**, and the shared-contract note at the top holds on codes and structure but not yet on
+     streams — correcting a node this bin does not own is **recorded as a follow-up**, not ridden in
+     from here.
+
+   Both are **contract here and unbuilt**: see *Impl trails the contract* for what ships today.
+
+   **The one exception to the code set: `exists` spends `1` on `gone`.** `exists` is a predicate, and
+   `gone` is the answer to the question rather than an error — so its `1` is not the `1` this set
+   defines. That is the framing `grep`, POSIX `test` (normative) and `systemctl is-active` all take,
+   and [`mux/`](../mux/README.md) keeps it deliberately. It is a **genuine divergence from AXI**, named
+   here so the tiebreaker above ("where this node and a sibling disagree, AXI wins") does not silently
+   overrule a decision this project means to keep. It is **not** an amendment, and this node used to
+   call it one — wrongly twice over: the set was always `0`/`1`/`2`, so nothing was amended, and what
+   `exists` actually diverges on is the *meaning* of `1`, which no amendment ever covered. Whether to
+   keep it is open; the error-surface pass corrected the label, not the behavior.
+
 7. *(#7 ambient context — out of scope, see Scope of adoption above.)*
-8. **Content-first (#8)** — a **command group** invoked with no subcommand shows live data, not
-   help. `send` (`send text` / `send keys`, see [`mux/`](../mux/README.md)) **does not meet this**:
-   it drives a pane and has no view of its own to show — every view it could render already belongs
-   to a verb (`list`, `doctor`) — so bare `cyber-mux send` writes help to **stderr** and **exits 1**,
-   stdout clean (commander's default, no custom code; the shape #6 already blesses for an unknown
-   flag). It stays `1` under #6's amended `0`/`1`/`2` set: bare `send` is **incomplete input** — a
-   plain failure — not a locator that failed to resolve one subject, which is the whole of what `2`
-   means. The trailing claim this parenthetical used to carry ("and no third exit code") was about
-   the code **set** and no longer holds; what it was defending — that `send` invents no code of its
-   own — still does. Whether #8 should carve out a group like this is **open** and
-   belongs to the contract, not to `cyber-mux` — a follow-up is filed; nothing is asserted here about
-   the other adopters.
+8. **Content-first (#8)** — **`cyber-mux` invoked with no arguments** shows the most relevant live
+   content, not a usage manual. That is AXI's rule as written, and its scope is the **bare binary**:
+   "running your CLI with no arguments", its example being `$ tasks`. **`cyber-mux` has no such home
+   view today** — bare `cyber-mux` prints help. That is this node's one real #8 divergence, it is
+   unbuilt rather than argued away, and it is recorded in *Impl trails the contract* with the rest.
 
-   The trigger this principle used to name — "revisit if `nudge`/`worktree` land behind their own
-   group" — has **fired**: `worktree` (`add`/`open`/`list`/`remove`) is a group on this surface, and
-   unlike `send` it **is** data-bearing (`worktree list` is its live view), so #8 covers it as written
-   and needs no amendment. Its bare form ships help + exit 1 today, which is a divergence owned by the
-   worktree capability, not by this note and not closed here.
-9. **Next-step suggestions (#9)** — every command ends with a next-step line naming the natural
-   follow-up (`→ cyber-mux focus <pane>` after `open`; `→ cyber-mux read <pane>` after `submit`), so
-   an agent is handed the next move. Not yet implemented.
-10. **Consistent help (#10)** — every subcommand answers `--help` with a concise reference (synopsis,
-    flags, one example) — already true via commander's built-in `--help`, one example per command
-    still to add.
+   **What #8 does not say — and what this node used to claim it said.** This bullet previously opened
+   "a **command group** invoked with no subcommand shows live data", extending AXI's bare-binary rule
+   to every group on the surface. AXI says nothing about a group with no subcommand. The extension may
+   well be the right reading — a data-bearing group like `worktree` arguably owes its view for exactly
+   AXI's reason — but it is **this node's extension, not AXI's text**, and it was never argued as one.
+   That is the same defect that dropped `2` from #6's code set: a local paragraph restating the source
+   into something the source does not say, then being read by later work as the contract. Whether the
+   contract *should* extend #8 to groups is **open** and belongs to AXI, not to `cyber-mux`; nothing is
+   asserted here about the other adopters.
+
+   **Bare `send` is decided by #6, not by #8.** It writes help to **stdout** and **exits 2** because it
+   is **incomplete input** — a missing required parameter, which #6 already puts at `2`. No
+   content-first reasoning is needed or used: `send` drives a pane and has no view of its own (every
+   view it could render already belongs to `list` or `doctor`), but that only explains why no home view
+   is owed — it never made bare `send` an #8 case. It sat at `1` for the same reason an unknown flag
+   did: commander's default restated as the contract without argument. The suite had frozen that `1`,
+   so correcting it re-opened a frozen scenario and was cleared at the gate rather than patched. An
+   earlier reading here ("and no third exit code") was a claim about the code **set** and was simply
+   false — AXI always had three. What it defended — that `send` invents no code of its own — still
+   holds, and holds better now that `send` uses AXI's.
+
+   **Bare `worktree` is untouched, on scope alone.** `worktree` (`add`/`open`/`list`/`remove`) is a
+   group on this surface and, unlike `send`, is data-bearing (`worktree list` is its live view). Its
+   bare form ships help + exit 1 today and **keeps doing so**: the error-surface pass corrects the
+   `worktree` *subcommands*' failures like every other verb, and the bare group is outside what that
+   pass was scoped to. An earlier draft justified leaving it alone by arguing #8 wants it to print its
+   listing and exit `0`, so moving it to `2` would entrench the answer #8 rejects — that argument is
+   **withdrawn**, resting on the widening retracted above. The conclusion stands on scope; the reason
+   it was given for does not. The bare-group question stays owned by the worktree capability.
+9. **Contextual disclosure (#9)** — a command that leaves an obvious next move names it, as a
+   `help[N]:` block **on stdout inside the structured payload** (`cyber-mux focus <pane>` after
+   `open`; `cyber-mux read <pane>` after `submit`), so an agent discovers the surface by using it.
+   Dynamic values are **placeholders** (`<pane>`), never a guessed concrete id. On an error, the
+   suggestion names the command that **fixes** it — never "see `--help`".
+
+   **Not every command owes one.** AXI is explicit that a suggestion is **omitted when the output is
+   self-contained** — a detail view, a count, a confirmation answers the query, and a next step
+   appended to it is noise the agent pays for. So `list` and an empty result earn one; `exists`,
+   which answers exactly the question asked, does not.
+
+   **This node previously required the opposite, and on the wrong stream**, calling for a next-step
+   line from *every* command and routing it to **stderr**. Both halves were wrong: the "every"
+   contradicts AXI's omit rule, and the stream is the same inversion #6 carried — AXI lists
+   "suggestions" beside data and errors as what **stdout** is for, and renders them in the payload
+   rather than as prose beside it. Neither half was ever argued; #6's inversion was simply restated
+   here.
+
+   **#9 is not "unimplemented", as this node used to claim — it is partly built, on the wrong stream.**
+   Two suggestion paths ship today and both write to **stderr**: `open` names the flag that would have
+   grouped what it just opened (`src/cli.ts`), and `layout save` reveals that a workspace holds more
+   tabs than were captured. The second is AXI's *Reveal truncated lists* case verbatim, which AXI puts
+   on stdout inside the payload — so it is load-bearing scope information sitting on the stream AXI
+   defines as unread. Correcting them is **not** in this pass: both are pinned by
+   [`layout/`](../layout/README.md)'s frozen suite, whose re-open this CR did not clear. They are
+   **recorded as a follow-up** rather than quietly fixed or quietly ignored. Saying the principle was
+   unbuilt would have hidden two live counter-examples behind a word — the same move that let #6's
+   dropped code and #8's widening survive this long.
+10. **Consistent help (#10)** — two halves, and this node used to state only one.
+
+    - **Per-subcommand `--help`** — every subcommand answers `--help` with a concise, complete
+      reference: flags with defaults, required arguments, and 2–3 usage examples, scoped to the
+      subcommand asked about rather than the whole manual. Largely true via commander's built-in
+      `--help`; the examples are still to add.
+    - **The home view identifies the tool** — AXI also requires the no-argument view to carry the
+      current executable's absolute path with `$HOME` collapsed to `~`, and a one-sentence description
+      of what the tool is, before any live data. **This node had dropped that half entirely**, the same
+      way #6 had dropped `2` from the code set: an omission, never an argued narrowing. It is unbuilt —
+      `cyber-mux` has no home view at all (#8) — and both halves of that gap are one missing surface,
+      recorded in *Impl trails the contract*.
 
 ### Stream discipline (how the surface is realized)
 
-- **stdout** carries the machine result only — the TOON (or `--format json`) payload **including its
-  aggregate summary (#4)**. So `--format json | jq` and TOON parsing stay clean. `read`'s captured
-  pane output is the one exception: it is the pane's own byte stream, not a structured result, and
-  stays raw on stdout.
-- **stderr** carries the human affordances — the next-step line (#9), warnings, and structured errors
-  (#6). Redirecting or discarding stderr never corrupts the parsed result.
+- **stdout** carries **everything the agent consumes** — the TOON (or `--format json`) payload with
+  its aggregate summary (#4), the `help[N]:` suggestions (#9), and structured errors (#6). This is
+  AXI's own split, and it is not arbitrary: stderr is defined as the stream agents **don't read**, so
+  anything an agent must act on belongs here. `read`'s captured pane output is the one exception: it
+  is the pane's own byte stream, not a structured result, and stays raw on stdout.
+- **stderr** carries **diagnostics only** — warnings, progress, debug. Nothing on stderr is ever load-
+  bearing for the agent; discarding it entirely loses no part of the answer.
+
+**An error on stdout does not corrupt the result, and the exit code is why.** The worry this section
+used to encode — keep stdout clean so a redirect survives — assumed a result and an error could land
+on the same stream together. They cannot: a command either succeeds and writes its payload (exit `0`)
+or fails and writes its error (exit `1`/`2`). A caller branches on the status before it parses, so
+`--format json | jq` stays exactly as safe as it was. `read` is the sharpest case and holds for the
+same reason: its stdout is a raw passthrough, so an error mixing into captured bytes would be real
+corruption — but a failed `read` captures nothing, so the bytes and the error are never both there.
 
 - **Conformance** — verified through the consumer suite of the [`mux/`](../mux/README.md)
   behavioral node (asserts the contract concretely for its commands), never by this artifact itself.
   A reference artifact carries this `## Subject` in place of `## Use Cases` + a `.feature`.
-- **Impl trails the contract** — the shipped `cyber-mux` bin predates this adoption: it emits human
-  prose + `--format json`, unstructured errors, and no next-step lines. Only the AXI output surface
-  is unbuilt; the impl gate withholds certification until a follow-up mission re-implements each
-  command against its frozen suite. **The first path to break that trail is specified but unbuilt**:
-  the `ambiguous-pane` error of [`mux/`](../mux/README.md)'s pane addressing is contracted to be
-  structured — a stable `code`, its candidates, honoring `--format` — because that CR is the first
-  caller that actually needs the shape. It is a contract, not a report of what ships: nothing on this
-  surface emits a structured error today, and the impl gate certifies it against the frozen suite
-  like everything else here.
+- **Impl trails the contract** — the shipped `cyber-mux` bin predates this adoption and most of it
+  still emits human prose + `--format json`. Everything above is a **contract, not a report of what
+  ships**; the impl gate certifies each principle against its frozen suite when a mission builds it,
+  never on this artifact's say-so.
+
+  **What ships today, verified against source rather than asserted:**
+
+  - **One structured error** — the `ambiguous-pane` report of [`mux/`](../mux/README.md)'s pane
+    addressing (a stable `code`, its candidates, honoring `--format`), because that CR was the first
+    caller that needed the shape. It is real and built, and it reports on **stderr** — the divergence
+    #6 now contracts away. Every other failure is free text through one `fail()` helper.
+  - **Two #9 suggestions**, both on **stderr** (`open`'s grouping hint, `layout save`'s truncation
+    reveal) — see #9. The node called #9 unimplemented; it was wrong.
+  - **Raw backend text, leaked** — most `fail()` sites forward the multiplexer's own `err.message`
+    straight through, which #6 forbids ("never leak dependency names"). An agent handed a tmux
+    diagnostic cannot act on it through `cyber-mux`.
+
+  **What #6 contracts and no mission has built yet:** every error site moving to stdout under a
+  distinct stable code with an actionable `help:`, backend text translated rather than forwarded, and
+  usage errors leaving `2` — the unknown flag, the bare group, and the missing required arguments
+  alike. **What still trails beyond #6:** TOON as the default format (#1) and `--fields` (#2),
+  truncation with a size hint (#3), pre-computed aggregates (#4), the `help[N]:` suggestions moving to
+  stdout and gaining the omit rule (#9), and the home view (#8) with the tool identity #10 requires of
+  it.
 - **Boundary** — this bar owns the *shared* output shape. Each command's *domain* behavior (what
   `open` places, what `list` enumerates) lives in [`mux/`](../mux/README.md).
