@@ -1,0 +1,119 @@
+---
+todos:
+  - content: Grill seed intent — the ambiguity report shape, verb scope, id-vs-name precedence
+    status: completed
+  - content: Draft the mux spec prose + scenarios for name-or-id addressing
+    status: completed
+  - content: Amend axi #6's exit-code set to 0/1/2 and add the structured-error shape
+    status: completed
+  - content: Cold spec-judge rounds; converge or present the failing scenarios
+    status: in_progress
+  - content: Spec gate — freeze the touched suites, record the gate line
+    status: pending
+  - content: Deliver — put a label on LivePane across both backends, then resolution + the report
+    status: pending
+  - content: Rebase onto main, impl gate, land the PR
+    status: pending
+  - content: Drain the 2 recorded follow-ups into issues (needs permission)
+    status: pending
+---
+
+# Address a pane by name or id
+
+CR: [#31](https://github.com/cyberuni/cyber-mux/issues/31) — the pane verbs take a name or an id; a
+single match resolves, two or more fail and report the candidates.
+
+Target: `cyber-mux/mux` (`packages/cyber-mux`), suite
+`packages/cyber-mux/.agents/spec/mux/mux.feature`. The reference node
+`packages/cyber-mux/.agents/spec/axi/README.md` is in play iff the candidate report is decided to be
+a structured error.
+
+## What the survey found (before any grill)
+
+Two premises in the issue do not survive contact with the source:
+
+- **"Resolution needs no new backend capability" is false.** `LivePane` (`src/session.ts:97`) is
+  `{id, mux, harness?, cwd?}` — **no label**. herdr's `pane list` already returns one and the
+  adapter drops it (`src/session.herdr.ts:181`); tmux would need `#{pane_title}` added to the format
+  string (`src/session.tmux.ts:139`) plus the host-comparison rule already used for `describeRegion`
+  (`src/session.tmux.ts:182`). So the listing type grows a field on both backends.
+- **There is no channel to report candidates through.** `fail()` (`src/cli.ts:65`) writes free text
+  to stderr and exits 1 regardless of `--format`, and `read` / `submit` / `close` / `send *` carry
+  no `--format` option at all. `axi/README.md:51` already names structured errors (a stable `code`,
+  honoring `--format`) as unbuilt.
+
+Every pane verb funnels through one helper — `target()` (`src/cli.ts:79`), which wraps the raw
+string with zero validation. That is the seam the resolution hangs off.
+
+## The settled contract (grilled, requester-decided)
+
+| Decision | Outcome |
+|---|---|
+| Report shape | Structured error — a stable `code: ambiguous-pane` + a candidates array, on stderr, honoring `--format`; stdout clean. Wired through the resolution path only, not a full axi #6 sweep. |
+| Resolution layer | The CLI's `target()` helper + `layout save --from`. Adapters keep taking concrete ids; the seam is untouched. |
+| Id vs name | Id wins, then fall back to name. Resolved by **existence** via one `listPanes` read — never by syntax-sniffing the backend's id format, which would leak backend shapes into the CLI. |
+| Exit codes | `0` = one match, `1` = zero, `2` = ambiguous — on **every** pane verb, not just `exists`. |
+| Candidate fields | `id`, `label`, `cwd` — the three that discriminate; axi #2 caps a default row at 3–4. |
+
+**This CR amends [`axi/`](../../packages/cyber-mux/.agents/spec/axi/README.md) #6**, whose code set is
+`0 = success, 1 = failure`. Exit `2` = *couldn't answer* is added. Same shape the mux node already
+used to amend axi #8 for bare `send` — scoped and filed at the reference node, not invented locally.
+
+## Why the seam was refused
+
+The seam's `from` has **no human-name caller**. The walk always passes `from: { id: paneId }` — a
+pane it created three steps earlier (`layout-session.ts:297`); layout templates have no `from:` key
+at all, the walk derives it structurally (`layout.ts:325`). Every other `from` is `callerPane()`
+(`cli.ts:420, 434, 587, 632, 661`). The only human-authored one is `layout save --from`
+(`cli.ts:303`) — a CLI flag. Meanwhile `layout-session.ts:31` already names this CR's consumer: a
+dispatcher "needs NO new cyber-mux surface, since it addresses panes through
+`read`/`submit`/`exists`/`focus`/`list`."
+
+## Prior art (researched; folded into the spec's rationale)
+
+- **Ambiguity is a fuzzy-tier condition only, and the split tracks whether a total order exists.**
+  git refnames (a documented 6-step ladder), Docker (full ID → exact name → prefix), kubectl, brew
+  all **pick silently at exit 0** across tiers. Where matches are **peers** — git short SHAs, tmux
+  targets, brew cross-tap formulae — every tool **fails rather than guessing**. Our id-then-name
+  ladder and our name-vs-name refusal are both the conventional answer.
+- **The predicate third state belongs in the exit code**, not a stdout word: grep (`2`), POSIX
+  `test` (`>1`, normative), `diff`, `expr`, `pgrep`. `systemctl is-active` is the negative result —
+  it prints `inactive` for both "stopped" and "no such unit" and only exit 3 vs 4 tells them apart.
+- **Candidate-list best practice** (git short-SHA, brew cross-tap, tmux's own *command* resolver):
+  hard-fail non-zero, everything on stderr with stdout clean, each candidate line directly usable as
+  the retry input, a discriminator per candidate (listing `worker, worker` helps nobody), and state
+  the fix explicitly. kubectl's known wart is omitting the remedy.
+- **We beat tmux rather than depart from it.** tmux's target resolver collapses ambiguous and
+  not-found into one indistinguishable `can't find window: X` and has no "ambiguous" string at all —
+  but its *command* resolver ships the exact idiom: `ambiguous command: n, could be: new-session,
+  new-window, next-window`.
+- **Considered and refused: enforcing unique labels.** tmux and Docker both make names unique at
+  creation, which is *why* ambiguity is unrepresentable for them. Issue #31 closes that door
+  deliberately — a label is a human name, herdr labels every root tab `1`, so duplicates arrive by
+  default. Refusing them made capture lossy, which is what CR #14 removed.
+
+## NEXT
+
+**Spec gate PASSED** — self-asserted within the `auto-spec` leash, so it is ratifiable or
+kickable-back. Suite frozen additively (16 added / 0 modified / 0 removed / 90 unchanged, `addOnly`
+true) — no Clearance floor, no re-open. `check-spec-state` + `check-suite` green. Four cold judge
+rounds; the last returned all three lenses PASS, ALIGNED true, no blocker.
+
+Next is **deliver**, and the four facts it must not rediscover the hard way:
+
+1. `LivePane` (`src/session.ts`) grows a `label`. tmux's `listPanes` **must move to tab-separated
+   first** — it is space-separated and recovers `cwd` only by rejoining the tail, so a label added to
+   that format is unrecoverable. The region-describing route documents this exact trap.
+2. **Reuse** the title-differs-from-host rule rather than reimplementing it — it now needs two
+   sites (`describeRegion`'s `RegionPane.label` and the new `listPanes`/`LivePane` path). Share the
+   helper. Without it every untouched tmux pane reports the hostname and the ambiguity path fires on
+   labels nobody chose.
+3. herdr is the easy half: `pane list` is already JSON and already returns the label the adapter
+   drops on the floor.
+4. Resolution hangs off `target()`, plus `layout save --from`, which builds its target inline and
+   must be routed through the same helper.
+
+The judges' standing warning for this CR: **verify, do not claim.** Three separate rounds caught an
+unearned claim — a structural check run against a stale base, scenarios inert against the wrong impl
+they exist to catch, and a spec asserting in the past tense that something was built when no code
+existed. Prove each frozen scenario by mutating its subject, not by reading.

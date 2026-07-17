@@ -637,6 +637,159 @@ Feature: mux — the pane abstraction
     When it runs cyber-mux list
     Then every live pane is reported, whether or not it is running an agent/harness
 
+  # ── Addressing a pane — a name or an id, and the candidates when a name is ambiguous ──
+  # A label is a human name, not a key. Neither backend requires one unique, herdr labels every new
+  # workspace's root tab 1, and a label reaches a live pane because a person set it by hand — so
+  # duplicates arrive by default. Refusing them at authoring time was only ever a guess about what
+  # the author meant; at LOOKUP time the ambiguity is a fact, the candidates are known, and the
+  # caller is present to resolve it.
+
+  Scenario Outline: every pane verb addresses a pane by name as readily as by id
+    Given three live panes, labeled worker, sidebar and logs
+    When a caller runs <verb> naming worker rather than the pane's id
+    Then the verb acts on the pane labeled worker, exactly as if that pane's id had been passed
+    And neither of the other two panes is acted on
+
+    Examples:
+      | verb                         |
+      | cyber-mux read               |
+      | cyber-mux submit             |
+      | cyber-mux exists             |
+      | cyber-mux focus              |
+      | cyber-mux close              |
+      | cyber-mux send text          |
+      | cyber-mux send keys          |
+      | cyber-mux layout save --from |
+
+  Scenario Outline: an ambiguous name fails the same way on every pane verb
+    Given three live panes all labeled worker
+    When a caller runs <verb> naming worker
+    Then the candidates are reported on stderr under the code ambiguous-pane
+    And it exits 2, having acted on none of the three panes
+
+    Examples:
+      | verb                         |
+      | cyber-mux read               |
+      | cyber-mux submit             |
+      | cyber-mux exists             |
+      | cyber-mux focus              |
+      | cyber-mux close              |
+      | cyber-mux send text          |
+      | cyber-mux send keys          |
+      | cyber-mux layout save --from |
+
+  # An id outranks a name, so every caller that works today keeps working: an id can never be made
+  # to mean something else by a person renaming an unrelated pane. Ambiguity is a fuzzy-tier
+  # condition only — the same ladder git, Docker and tmux resolve their own targets by.
+  Scenario: an id addresses the pane whose id it is, even when another pane is labeled with that id
+    Given a live pane whose id is a string, and a different live pane labeled with that same string
+    When a caller names that string
+    Then the pane whose id it is, is the one addressed
+    And no ambiguity is reported, because the two matches are not peers
+
+  # The counter-case a syntax rule cannot survive: %9 is id-SHAPED, but no pane carries it as an id
+  # and one carries it as a label. A resolver that sniffs the shape calls this a missing pane and
+  # exits 1; a resolver that asks the live list finds the label. Docker sniffs (`sg-` → an id) and it
+  # is the cheaper rule — refused here because encoding a backend's id format in the CLI is the
+  # backend leak this seam exists to prevent, and a new backend would owe a new syntax rule.
+  Scenario: an id is recognized by matching a live pane, never by the shape of the string
+    Given a live pane labeled %9, and no live pane whose id is %9
+    When a caller names %9
+    Then it resolves to the pane labeled %9
+    And it is neither reported as a pane that does not exist, nor refused for looking like an id
+
+  Scenario: a name matching exactly one live pane resolves to it and the command proceeds
+    Given three live panes, exactly one of them labeled worker
+    When a caller names worker
+    Then it resolves to that pane, and the command proceeds against it
+    And neither of the other two panes is acted on
+
+  Scenario: a name matching no live pane is not found, rather than ambiguous
+    Given no live pane labeled worker, and no live pane whose id is worker
+    When a caller names worker
+    Then it fails as a pane that could not be resolved
+    And it exits 1
+
+  Scenario: a name matching two or more live panes fails rather than guessing which was meant
+    Given three live panes all labeled worker
+    When a caller names worker
+    Then the command fails, having acted on none of them
+    And the matching entries are reported, so the caller can choose between them
+
+  Scenario: the ambiguity report carries what tells the candidates apart, and what retries them
+    Given three live panes all labeled worker, each in a different working directory
+    When a caller names worker
+    Then each candidate is reported with its id, its label, and its working directory
+    And each candidate's id is directly usable as the retry that resolves the ambiguity
+
+  Scenario: the ambiguity report is a structured error on stderr, leaving stdout clean
+    Given two live panes labeled worker
+    When a caller names worker
+    Then the report is written to stderr under the stable code ambiguous-pane
+    And stdout is left clean
+    And it exits 2
+
+  Scenario: --format json emits the ambiguity as a structured error carrying its candidates
+    Given two live panes labeled worker
+    When a caller names worker with --format json
+    Then the error carries the code ambiguous-pane and the candidate entries as JSON
+    And it is written to stderr, so a redirected or discarded stdout never corrupts the result
+
+  # exists answers about a locator, and three panes named worker is not an answer to "is it live?" —
+  # so the outcome rides the exit code rather than a word. The word-only alternative is what
+  # systemctl is-active does, reporting `inactive` for both a stopped unit and a unit that does not
+  # exist: only its exit code tells them apart. An acknowledged amendment to axi #6's 0/1 code set,
+  # scoped and filed there.
+  Scenario Outline: exists distinguishes its three outcomes by exit code, not by prose
+    Given <world>
+    When a caller runs cyber-mux exists naming that locator
+    Then stdout carries <stdout>
+    And it exits <code>
+
+    Examples:
+      | world                                     | stdout  | code |
+      | exactly one live pane matches the locator | live    | 0    |
+      | no live pane matches the locator          | gone    | 1    |
+      | two or more live panes match the locator  | nothing | 2    |
+
+  Scenario: an ambiguous exists reports its candidates rather than answering the question
+    Given two live panes labeled worker
+    When a caller runs cyber-mux exists naming worker
+    Then the candidates are reported on stderr under the code ambiguous-pane
+    And it answers neither live nor gone, because there is no single pane the question is about
+
+  Scenario Outline: the live pane listing carries each pane's label, so a name resolves from it
+    Given a <backend> pane a person has labeled
+    When the live panes are listed
+    Then the listing carries that pane's label beside its id
+
+    Examples:
+      | backend |
+      | tmux    |
+      | herdr   |
+
+  # tmux has no unset title — it defaults pane_title to the hostname, so an untouched pane reports a
+  # name nobody chose. Exporting that would label EVERY pane in the session identically, and the
+  # hostname would then resolve to every one of them: ambiguity manufactured out of nothing.
+  Scenario: a tmux pane nobody named carries no label, so the hostname addresses no pane
+    Given a tmux pane whose title has never been set
+    When the live panes are listed
+    Then that pane reports no label
+    And the hostname resolves to no pane, rather than colliding with every pane in the session
+
+  # The contrast that shows the tmux rule is a workaround, not the shape of the thing: herdr has the
+  # honest primitive, so an unnamed pane needs no rule to be read as unnamed.
+  Scenario: a herdr pane nobody named carries no label, with no comparison needed to tell
+    Given a herdr pane that has never been renamed
+    When the live panes are listed
+    Then that pane reports no label, because herdr omits the name outright until one is set
+
+  Scenario: a label containing spaces resolves, and never corrupts what is listed beside it
+    Given a tmux pane labeled my worker, whose working directory path also contains a space
+    When the live panes are listed
+    Then the label and the working directory are each read whole
+    And a caller naming my worker resolves that pane
+
   # ── git worktree helpers — the checkout itself, plain git, no legion/unit-registry concepts ──
 
   Scenario: worktree add defaults the path to a sibling of the primary checkout
