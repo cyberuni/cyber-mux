@@ -372,8 +372,8 @@ Feature: mux — the pane abstraction
     Examples:
       | branch     | placement  |
       | my-feature | pane:right |
-      | pane:down  |
-      | tab        |
+      | my-feature | pane:down  |
+      | my-feature | tab        |
 
   Scenario: a backend that binds nothing falls back without reporting a lost grouping
     Given a caller running cyber-mux worktree add --branch <branch> --at pane:right with $TMUX set
