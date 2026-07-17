@@ -49,6 +49,26 @@ once opened:
   suppressing behavior on a mux that simply can't tell. This is a **read-only** probe: it moves no
   focus and opens nothing (unlike `focus`, which drives the attached client's view to a pane).
 
+- **`open` returns the workspace the new pane landed in, and reports it** — not just the pane's id,
+  so a caller holding several panes can group them by the space they occupy. The seam is the fact's
+  source; every surface reads it from there rather than asking again — `open` prints it beside the
+  pane, and the layout manifest ([`layout/`](../layout/README.md)) carries it for a whole pool.
+  Reporting it costs **nothing**: the backend already answered when the pane was opened, so a
+  surface that hid it would be discarding a fact it already held. A backend with no workspace tier
+  reports **absent** rather than a false "none" — the same absent-rather-than-false convention the
+  focus probe's `unknown` follows, and the reason tmux (where `workspace` and `tab` both collapse to
+  a Window) reports nothing here. On herdr the answer costs **no extra call**: every route already
+  emits the pane's own `workspace_id` in the output the pane id is read from — a created workspace
+  reports itself, a new tab reports the workspace it was created in, and a split reports the
+  workspace it landed in, which is the caller's. Established empirically against herdr 0.7.4.
+
+  This is **occupancy** — which workspace a pane *lives in* — and it is a different question from the
+  worktree **binding** below, though both concern the one workspace tier. A worktree opened at a
+  `pane:right` placement lives in the caller's workspace while being bound to none: the pane has a
+  workspace, the worktree is still ungrouped. The two are reported by separate outputs and neither
+  answers for the other — `open` never claims a grouping, and a binding is never inferred from where
+  a pane happens to sit.
+
 - **The checkout itself is always plain `git worktree`** — host-neutral, no legion/unit-registry
   concepts. `add` defaults the checkout path to a sibling of the primary checkout
   (`<parent>/<repo>.worktrees/<branch>`, ported from `cyberlegion`'s `resolveUnitWorktreePath`
@@ -215,6 +235,7 @@ Every scenario in [`mux.feature`](./mux.feature) maps to one of these behaviors:
 | **multiplexer detection is two-mode** | `$CYBER_MUX` fast-path + override; ancestry walk; hint fallback; `doctor` hint |
 | **mux mode** | reports the detected session backend; "none" (exit 0) when no adapter is selectable |
 | **pane focus reporting** | tri-state focused / not-focused / unknown per backend (tmux: pane+window active & session attached; herdr: pane record `focused`); a query that can't be answered → unknown so callers fail open |
+| **open returns the pane's workspace, and reports it** | the workspace the new pane landed in, per placement on herdr (a created workspace reports itself; a tab reports the workspace it was created in; a split reports the caller's); absent on a backend with no workspace tier; read from the output the pane id already comes from, so it costs no extra call; reported beside the pane by `open` itself and carried for a pool by the layout manifest; occupancy is never a worktree binding |
 | **git worktree helpers** | `worktree add` defaults the path to a sibling of the primary checkout on every backend; `--base` sets the start-point; `worktree remove` refuses the primary checkout, tolerates an already-gone worktree, and refuses uncommitted changes unless `--force` |
 | **worktree/workspace binding** | a bare `add` opens nothing and resolves no backend; `--launch` implies `--at workspace`; `--at workspace` groups where the backend binds and falls back where it does not; a pane/tab placement degrades (reports no workspace) rather than failing, and only where a grouping was on offer; `open` groups a checkout plain git made |
 | **naming what was opened** | `--label` names the tier `--at` opened, on every backend (herdr workspace/tab/pane label; tmux window name or pane title); taken at birth where the backend's CLI allows, set immediately after where it does not; omitted leaves the backend's own default |

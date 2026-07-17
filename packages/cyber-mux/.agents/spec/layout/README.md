@@ -100,7 +100,9 @@ a target directory supplied at apply time:
 
 - **The manifest is the whole handoff** — `--format json` reports every pane apply created as
   `(label, pane, dir, command)`, plus the `layout`, the injected `cwd`, and the `workspace`
-  (`null` on tmux, matching how `reportOpenedWorktree` already reports it). `label` is the manifest
+  (the workspace the region opened in, reported by `open`; `null` on a backend with no workspace
+  tier, which is why it is `null` on tmux). A consumer grouping panes by workspace needs something to
+  group on, so the field carries the real answer wherever the backend has one. `label` is the manifest
   key — which is why a duplicate label is a validation error rather than a warning. That manifest is
   the complete machine-readable answer to *"which panes exist and what are they for"*, and a
   dispatcher built on it needs **no new cyber-mux surface**: it addresses panes through `read`,
@@ -215,7 +217,7 @@ Every scenario in [`layout.feature`](./layout.feature) maps to one of these beha
 | **ratio and env degrade, never reject** | the sign convention in both directions (herdr passes `ratio` through, tmux emits `1 - ratio`); `env` native on both backends; a pane with `env` and no `command` is valid; a backend that cannot size a split warns once and takes its default |
 | **resolution precedes side effects; apply does not roll back** | a bad layout name leaves no worktree behind; a throw mid-walk reports what was built and exits 1 without killing anything |
 | **`--layout` is `--launch`'s sibling** | mutually exclusive with `--launch`; `--at` defaults to `workspace`; `--label` defaults to the template name; `worktree add --layout` reports the manifest alongside `root`/`branch` |
-| **the manifest is the handoff** | `--format json` reports `(label, pane, dir, command)` per created pane, plus `layout`/`cwd`/`workspace`; `workspace` is `null` on tmux |
+| **the manifest is the handoff** | `--format json` reports `(label, pane, dir, command)` per created pane, plus `layout`/`cwd`/`workspace`; `workspace` carries the workspace the region opened in, and is `null` on a backend with no workspace tier such as tmux |
 | **managing templates needs no multiplexer** | `list`/`show`/`validate` answer with no mux; `validate` exits 0/1 with one error per line |
 | **the geometry seam reports rects, not a tree** | every pane of the region is reported with its rectangle; no backend's native split-tree encoding is parsed to obtain the tree — not tmux's `#{window_layout}` string, not herdr's flat `splits[]` |
 | **a region is captured back into a template** | `save` captures the caller's own region, or `--from`'s; the ratio is the one the split was made with, not the one the pane sizes imply; an n-ary row lowers to the desugarer's right-comb; a 2x2 breaks columns-first to match `tiled`; re-applying a capture reproduces the region it came from |

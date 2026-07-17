@@ -334,6 +334,14 @@ Feature: layout — named, reusable pane layouts
     # the complete answer to "which panes exist and what are they for" — a dispatcher built on it
     # needs no new cyber-mux surface
 
+  Scenario: the manifest carries the workspace the region opened in
+    Given a caller running cyber-mux open --layout pool-4 --format json with $HERDR_ENV set and no $TMUX
+    When the command runs
+    Then the manifest's workspace field carries the workspace the region opened in
+    # The manifest is framed as the complete machine-readable answer to "which panes exist and what
+    # are they for" — a consumer grouping panes by workspace needs something to group on. open
+    # surfaces the workspace it landed in, so the manifest reports it rather than a flat null.
+
   Scenario: the manifest's workspace is null on tmux
     Given a caller running cyber-mux open --layout pool-4 --format json with $TMUX set
     When the command runs

@@ -2,10 +2,10 @@ import { resolve } from 'node:path'
 import type { Exec } from './exec.ts'
 import type {
 	LivePane,
+	OpenedPane,
 	RegionPane,
 	SessionAdapter,
 	SessionReadOptions,
-	SessionTarget,
 	WorktreeWorkspace,
 	WorktreeWorkspaceCapability,
 } from './session.ts'
@@ -39,19 +39,19 @@ export const herdrSessionAdapter: SessionAdapter = {
 		// matters because a layout's root pane is born by the region open rather than by a split, so
 		// scoping env to the split path would silently drop that pane's env.
 		const env = envFlags(opts.env)
-		let id: string
+		let opened: OpenedPane
 		if (at === 'workspace') {
 			// A genuinely separate workspace, not a pane inside the caller's current one — `--no-focus`
 			// so spawning doesn't steal the caller's attention/focus.
 			const out = exec('herdr', ['workspace', 'create', '--cwd', opts.cwd, ...label, ...env, '--no-focus'])
 			if (!out) throw new Error('herdr workspace create failed')
-			id = parseRootPaneId(out, 'herdr workspace create')
+			opened = parseRootPaneId(out, 'herdr workspace create')
 		} else if (at === 'tab') {
 			// A real tab in the current window, not a split pane — `--no-focus` so spawning doesn't
 			// steal the caller's attention/focus, matching workspace/worktree spawns.
 			const out = exec('herdr', ['tab', 'create', '--cwd', opts.cwd, ...label, ...env, '--no-focus'])
 			if (!out) throw new Error('herdr tab create failed')
-			id = parseRootPaneId(out, 'herdr tab create')
+			opened = parseRootPaneId(out, 'herdr tab create')
 		} else {
 			const direction = at === 'pane:down' ? 'down' : 'right'
 			// Name the pane whenever the caller knows it. herdr's `--current` is not "the pane that
@@ -79,14 +79,13 @@ export const herdrSessionAdapter: SessionAdapter = {
 				...env,
 			])
 			if (!out) throw new Error('herdr pane split failed')
-			id = parsePaneId(out)
-			if (opts.label) exec('herdr', ['pane', 'rename', id, opts.label])
+			opened = parsePaneId(out)
+			if (opts.label) exec('herdr', ['pane', 'rename', opened.id, opts.label])
 		}
-		const target: SessionTarget = { id }
 		// `submit`, not `sendText` — a launch command has to actually run, and `submit` is the only
 		// verb that supplies the Enter.
-		if (opts.launch) herdrSessionAdapter.submit(exec, target, opts.launch)
-		return target
+		if (opts.launch) herdrSessionAdapter.submit(exec, opened, opts.launch)
+		return opened
 	},
 
 	worktree: herdrWorktreeCapability(),
@@ -269,17 +268,8 @@ function envFlags(env: Record<string, string> | undefined): string[] {
  * The pane id herdr's other `pane` subcommands accept lives at `.result.pane.pane_id`. Extract it —
  * passing the whole blob downstream lands it in a filename and blows the path length limit.
  */
-function parsePaneId(out: string): string {
-	let paneId: unknown
-	try {
-		paneId = JSON.parse(out)?.result?.pane?.pane_id
-	} catch {
-		throw new Error(`herdr pane split returned unparseable output: ${out.slice(0, 200)}`)
-	}
-	if (typeof paneId !== 'string' || paneId === '') {
-		throw new Error(`herdr pane split output had no result.pane.pane_id: ${out.slice(0, 200)}`)
-	}
-	return paneId
+function parsePaneId(out: string): OpenedPane {
+	return parseOpenedPane(out, 'herdr pane split', 'pane')
 }
 
 /**
@@ -373,17 +363,37 @@ function herdrWorktreeCapability(): WorktreeWorkspaceCapability {
  * `.result.root_pane.pane_id` (a different path than `pane split`'s `.result.pane.pane_id`).
  * `label` names the command in error messages (e.g. "herdr workspace create").
  */
-function parseRootPaneId(out: string, label: string): string {
-	let paneId: unknown
+function parseRootPaneId(out: string, label: string): OpenedPane {
+	return parseOpenedPane(out, label, 'root_pane')
+}
+
+/**
+ * Every pane herdr emits carries its own `workspace_id` alongside its `pane_id`, on EVERY route —
+ * `workspace create` (which reports the workspace it just made), `tab create` (the workspace the tab
+ * was created in), and `pane split` (the workspace the split landed in, i.e. the caller's). Verified
+ * against herdr 0.7.4. That is why the workspace costs no extra call: it rides in on the same output
+ * the pane id is already read from, so probing for it separately would buy nothing and cost a round
+ * trip per open.
+ *
+ * The pane id is required — a route that cannot name its pane has failed. The workspace is NOT: it
+ * is read opportunistically and left absent when missing rather than throwing, so a herdr build that
+ * stops emitting it degrades to "cannot say" instead of breaking `open` outright. Absent is a
+ * meaning this seam already has (`OpenedPane.workspace`); a hard failure here would be inventing a
+ * new one for a field no caller is required to use.
+ */
+function parseOpenedPane(out: string, label: string, key: 'pane' | 'root_pane'): OpenedPane {
+	let pane: { pane_id?: unknown; workspace_id?: unknown } | undefined
 	try {
-		paneId = JSON.parse(out)?.result?.root_pane?.pane_id
+		pane = JSON.parse(out)?.result?.[key]
 	} catch {
 		throw new Error(`${label} returned unparseable output: ${out.slice(0, 200)}`)
 	}
+	const paneId = pane?.pane_id
 	if (typeof paneId !== 'string' || paneId === '') {
-		throw new Error(`${label} output had no result.root_pane.pane_id: ${out.slice(0, 200)}`)
+		throw new Error(`${label} output had no result.${key}.pane_id: ${out.slice(0, 200)}`)
 	}
-	return paneId
+	const workspace = pane?.workspace_id
+	return typeof workspace === 'string' && workspace !== '' ? { id: paneId, workspace } : { id: paneId }
 }
 
 /**

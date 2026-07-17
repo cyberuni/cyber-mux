@@ -76,6 +76,64 @@ Feature: mux — the pane abstraction
     When open runs
     Then the new tab is opened without moving input focus off the caller's session
 
+  # ── open reports the workspace the new pane landed in ──
+  # Not just a pane id: a caller holding several panes can group them by the space they occupy.
+  # Absent — never a false "none" — on a backend with no workspace tier, the same convention the
+  # focus probe's `unknown` follows.
+
+  # Two levels, deliberately separate: what `open` RETURNS (the seam, below) and what the CLI PRINTS
+  # (further down). The seam is the fact's source; every surface that reports it — the bare `open`
+  # report and the layout manifest (see layout/) — reads it from there rather than asking again.
+
+  Scenario Outline: open returns the workspace the new pane landed in
+    Given a caller running cyber-mux open --at <placement> with $HERDR_ENV set and no $TMUX
+    When open runs
+    Then the adapter's open returns the new pane carrying <workspace>
+
+    Examples:
+      | placement  | workspace                                                  |
+      | workspace  | the workspace it created                                   |
+      | tab        | the workspace the new tab was created in                   |
+      | pane:right | the workspace the split landed in — the caller's own       |
+
+  Scenario: a backend with no workspace tier returns no workspace at all
+    Given a caller running cyber-mux open with $TMUX set
+    When open runs
+    Then the adapter's open returns the new pane carrying no workspace
+    # Absent, not a false "none". tmux has no workspace tier — `workspace` and `tab` both collapse to
+    # a Window — so it has nothing to report, which is not the same as reporting nothing is there.
+
+  Scenario: the workspace costs no extra backend call
+    Given a caller running cyber-mux open with $HERDR_ENV set and no $TMUX
+    When open runs
+    Then the workspace is read from the same backend output the pane id is read from
+    # Every herdr route already emits the pane's own workspace_id. Probing for it separately would
+    # buy nothing and cost a round trip per open.
+
+  Scenario Outline: open reports the workspace alongside the pane it opened
+    Given a caller running cyber-mux open --format json with <env>
+    When open runs
+    Then stdout carries the pane and <workspace>
+    # Nothing is looked up to answer this: the backend already said so when the pane was opened, and
+    # the seam already carries it. Reporting it is what makes a caller able to group the panes it
+    # holds by the space they occupy — the point of knowing it at all — rather than that fact
+    # reaching only a `--layout` caller through the manifest.
+
+    Examples:
+      | env                         | workspace                                          |
+      | $HERDR_ENV set and no $TMUX | the workspace it landed in                         |
+      | $TMUX set                   | a null workspace — no workspace tier to report from |
+
+  Scenario: the workspace a pane landed in is not a worktree binding
+    Given a caller running cyber-mux worktree add --branch my-feature --at pane:right on a backend that binds
+    When add runs
+    Then the pane it opened landed in the caller's workspace
+    And the worktree is still reported as bound to no workspace
+    # One workspace tier, two questions. Occupancy — which workspace a pane LIVES IN — is what open
+    # answers. Binding — whether a worktree is GROUPED to a workspace — is the worktree report's, and
+    # it stays null here because a split creates no binding. Neither answers for the other: a pane
+    # sitting in a workspace is never evidence that its worktree was grouped there.
+
   Scenario: --at accepts only pane:right, pane:down, tab, and workspace
     Given a caller running cyber-mux open
     When it passes an --at value outside pane:right|pane:down|tab|workspace
@@ -372,8 +430,8 @@ Feature: mux — the pane abstraction
     Examples:
       | branch     | placement  |
       | my-feature | pane:right |
-      | pane:down  |
-      | tab        |
+      | my-feature | pane:down  |
+      | my-feature | tab        |
 
   Scenario: a backend that binds nothing falls back without reporting a lost grouping
     Given a caller running cyber-mux worktree add --branch <branch> --at pane:right with $TMUX set

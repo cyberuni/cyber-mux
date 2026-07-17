@@ -147,8 +147,11 @@ export interface OpenLayoutOptions {
  * pane to close, but the pane the walk splits INTO. That is why nothing is launched here — the
  * template owns what runs.
  *
- * `workspace` is `null` in the manifest because a plain `open` surfaces no workspace binding; only
- * the worktree capability reports one (`applyLayoutToRegion`'s caller passes it).
+ * The manifest's `workspace` is whatever the region's own `open` landed in — the workspace it
+ * created at the default `workspace` placement, or the one it landed inside at a `tab`/`pane:*`
+ * placement. `null` only when the backend has no workspace tier (tmux) and so had nothing to report.
+ * This is occupancy, not a worktree binding: `open` groups no repo, and a caller must not read a
+ * workspace here as evidence that it did.
  */
 export function openLayout(
 	exec: Exec,
@@ -176,7 +179,10 @@ export function openLayout(
 		adapter,
 		cwd: opts.cwd,
 		name: template.name,
-		workspace: null,
+		// The whole point of widening `open`'s return: before it carried a workspace, this was a
+		// hardcoded null and the manifest could never report one, even on a backend that had just
+		// opened a real workspace.
+		workspace: root.workspace ?? null,
 		rootDir,
 		// `open` sets env natively at every tier on both backends, so it never needs the prefix.
 		rootEnvHonored: true,

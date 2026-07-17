@@ -80,6 +80,28 @@ describe('spec:cyber-mux/mux', () => {
 			expect(ran(calls, 'herdr', 'worktree', 'create')).toBe(false)
 		})
 
+		// One workspace tier, two questions. OCCUPANCY — which workspace the pane LIVES IN — is what
+		// `open` answers, and a split lands in the caller's own workspace. BINDING — whether the worktree
+		// is GROUPED to a workspace — is what this report answers, and a split creates none. Neither
+		// answers for the other: a pane sitting in w3 is NOT evidence its worktree was grouped there, so
+		// the pane's workspace must never leak into the worktree's report.
+		it('the workspace a pane landed in is not a worktree binding', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, {
+				// The live envelope: herdr reports the split's own workspace_id — the caller's workspace.
+				'herdr pane split': '{"result":{"pane":{"pane_id":"w3:pB","tab_id":"w3:t1","workspace_id":"w3"}}}',
+			})
+			const opened = addAndOpenWorktree(exec, herdrSessionAdapter, { ...addOpts, at: 'pane:right' })
+
+			// The pane knows where it landed...
+			expect(opened.target).toEqual({ id: 'w3:pB', workspace: 'w3' })
+			// ...and the worktree is STILL bound to nothing. This is the assertion that would break if
+			// occupancy were ever mistaken for a binding.
+			expect(opened.workspace).toBeUndefined()
+			expect(opened.degraded).toBe(true)
+			expect(ran(calls, 'herdr', 'worktree', 'create')).toBe(false)
+		})
+
 		it.each([
 			'workspace',
 			'pane:right',
