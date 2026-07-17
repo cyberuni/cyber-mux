@@ -10,6 +10,7 @@ import {
 	parseLayout,
 	resolveTree,
 	type SplitNode,
+	type TabNode,
 	validateLayout,
 } from './layout.ts'
 
@@ -193,12 +194,26 @@ describe('spec:cyber-mux/layout', () => {
 			expect(errors[0]).toContain('duplicated')
 		})
 
+		// The Examples rows are the contract's own vectors. Two of them is ambiguous about which geometry
+		// wins; none of them describes no panes at all — either way nothing is applicable.
 		it.each([
-			['both root and panes', { root: { type: 'pane' }, panes: [{ label: 'gpu' }] }],
-			['neither root nor panes', {}],
-		])('refuses a template declaring %s', (_case, shape) => {
+			{ declares: 'both root and panes', root: { type: 'pane', label: 'gpu' }, panes: [{ label: 'cpu' }] },
+			{ declares: 'both root and tabs', root: { type: 'pane', label: 'gpu' }, tabs: [{ panes: [{ label: 'io' }] }] },
+			{ declares: 'both panes and tabs', panes: [{ label: 'cpu' }], tabs: [{ panes: [{ label: 'io' }] }] },
+			{ declares: 'none of root, panes or tabs' },
+		])('exactly one of root, panes and tabs', ({ declares: _declares, ...shape }) => {
 			const errors = validateLayout({ name: 'render-farm', ...shape }, 'render-farm')
-			expect(errors.some((e) => e.startsWith('root/panes:'))).toBe(true)
+			expect(errors.some((e) => e.startsWith('root/panes/tabs:'))).toBe(true)
+		})
+
+		it('accepts each of root, panes and tabs on its own', () => {
+			for (const shape of [
+				{ root: { type: 'pane', label: 'gpu' } },
+				{ panes: [{ label: 'cpu' }] },
+				{ tabs: [{ panes: [{ label: 'io' }] }] },
+			]) {
+				expect(validateLayout({ name: 'render-farm', ...shape }, 'render-farm')).toEqual([])
+			}
 		})
 
 		it('reports every error at once, one per line, each naming its own JSON path', () => {
@@ -242,6 +257,156 @@ describe('spec:cyber-mux/layout', () => {
 				'render-farm',
 			)
 			expect(errors).toEqual([expect.stringContaining('root.second.first.cwd')])
+		})
+	})
+
+	// A workspace is tabs of panes, not one pane tree. `root`/`panes` are the one-tab spelling; `tabs`
+	// is the two-level form, each tab a tree in the very same shape.
+	describe('tabs', () => {
+		it('a tab carries its own tree, in the same shape a single-tab template uses', () => {
+			const split: LayoutNode = {
+				type: 'split',
+				direction: 'right',
+				ratio: 0.6,
+				first: { type: 'pane', label: 'gpu', command: 'render' },
+				second: { type: 'pane', label: 'cpu' },
+			}
+			const solo: LayoutNode = { type: 'pane', label: 'io', command: 'iostat' }
+			const template: LayoutTemplate = {
+				name: 'render-farm',
+				tabs: [{ label: 'shots', root: split }, { root: solo }],
+			}
+			expect(validateLayout(template, 'render-farm')).toEqual([])
+
+			// "the same node shape a top-level root accepts", proven rather than asserted: each tab's tree,
+			// lifted verbatim to the top level, is a valid template and resolves to the identical tree.
+			for (const tab of template.tabs!) {
+				expect(validateLayout({ name: 'render-farm', root: tab.root }, 'render-farm')).toEqual([])
+				expect(resolveTree(tab)).toEqual(resolveTree({ name: 'render-farm', root: tab.root }))
+			}
+			expect(resolveTree(template.tabs![0]!)).toBe(split)
+			expect(resolveTree(template.tabs![1]!)).toBe(solo)
+		})
+
+		it('a tab may use the flat sugar, desugared exactly as a single-tab template is', () => {
+			// Sugar is a property of a pane pool, not of where the pool sits — one desugarer, one answer.
+			const tab: TabNode = { label: 'shots', panes: pool(3), arrange: 'even-horizontal' }
+			const single: LayoutTemplate = { name: 'render-farm', panes: pool(3), arrange: 'even-horizontal' }
+			expect(resolveTree(tab)).toEqual(resolveTree(single))
+			expect(resolveTree(tab)).toEqual(desugar(pool(3), 'even-horizontal'))
+			// The right-comb itself, so a desugarer that quietly stopped combing inside a tab is caught.
+			const outer = asSplit(resolveTree(tab))
+			expect(outer.direction).toBe('right')
+			expect(outer.ratio).toBeCloseTo(1 / 3)
+			expect(asSplit(outer.second).ratio).toBeCloseTo(1 / 2)
+			// A tab's arrange defaults to tiled exactly as the template's does.
+			expect(resolveTree({ panes: pool(4) })).toEqual(desugar(pool(4), 'tiled'))
+		})
+
+		it.each([
+			{ declares: 'both root and panes', root: { type: 'pane', label: 'gpu' }, panes: [{ label: 'cpu' }] },
+			{ declares: 'neither root nor panes', label: 'shots' },
+		])('a tab declares exactly one of root and panes, the same as the template itself', ({ declares: _d, ...tab }) => {
+			const errors = validateLayout({ name: 'render-farm', tabs: [{ panes: [{ label: 'io' }] }, tab] }, 'render-farm')
+			// The error points at the offending TAB rather than at the template.
+			expect(errors.some((e) => e.startsWith('tabs[1]:'))).toBe(true)
+		})
+
+		it('an empty tabs array is refused, because a workspace of no tabs is not a workspace', () => {
+			const errors = validateLayout({ name: 'render-farm', tabs: [] }, 'render-farm')
+			expect(errors.some((e) => e.startsWith('tabs:'))).toBe(true)
+			// And it is refused as an empty workspace, not by falling through to "declares none of the three".
+			expect(errors.some((e) => e.startsWith('root/panes/tabs:'))).toBe(false)
+		})
+
+		it("a pane label must be unique across every tab, because labels are the manifest's keys", () => {
+			// The manifest is one flat pane list for the whole apply, so its keys are global — a label is
+			// not scoped to the tab it sits in.
+			const errors = validateLayout(
+				{
+					name: 'render-farm',
+					tabs: [
+						{ label: 'shots', panes: [{ label: 'gpu' }] },
+						{ label: 'frames', root: { type: 'pane', label: 'gpu' } },
+					],
+				},
+				'render-farm',
+			)
+			expect(errors).toHaveLength(1)
+			expect(errors[0]).toContain('gpu')
+			expect(errors[0]).toContain('duplicated')
+		})
+
+		it('two tabs sharing a label are refused', () => {
+			const errors = validateLayout(
+				{
+					name: 'render-farm',
+					tabs: [
+						{ label: 'shots', panes: [{ label: 'gpu' }] },
+						{ label: 'shots', panes: [{ label: 'cpu' }] },
+					],
+				},
+				'render-farm',
+			)
+			expect(errors).toHaveLength(1)
+			expect(errors[0]).toContain('shots')
+			expect(errors[0]).toContain('duplicated')
+		})
+
+		it('a tab label is a separate namespace from a pane label, so a tab and a pane may share a name', () => {
+			expect(
+				validateLayout({ name: 'render-farm', tabs: [{ label: 'gpu', panes: [{ label: 'gpu' }] }] }, 'render-farm'),
+			).toEqual([])
+		})
+
+		it('a tab may leave its label to the backend', () => {
+			// Matching --label omitted everywhere else: the backend's own default stands.
+			expect(
+				validateLayout(
+					{ name: 'render-farm', tabs: [{ panes: [{ label: 'gpu' }] }, { panes: [{ label: 'cpu' }] }] },
+					'render-farm',
+				),
+			).toEqual([])
+		})
+
+		it('a tab cannot carry a cwd any more than a pane can', () => {
+			// The rule the whole capability exists to enforce does not weaken because a level was added.
+			const errors = validateLayout(
+				{ name: 'render-farm', tabs: [{ label: 'shots', cwd: '/home/someone/render', panes: [{ label: 'gpu' }] }] },
+				'render-farm',
+			)
+			expect(errors).toHaveLength(1)
+			expect(errors[0]).toContain('tabs[0].cwd')
+			expect(errors[0]).toContain('--cwd')
+			expect(errors[0]).toContain('dir')
+		})
+
+		it('every error across every tab is reported at once, each naming its own JSON path', () => {
+			// The report-everything rule holds through the added level: a cwd in one tab does not hide a
+			// bad ratio in another.
+			const errors = validateLayout(
+				{
+					name: 'render-farm',
+					tabs: [
+						{ label: 'shots', panes: [{ label: 'gpu', cwd: '/tmp/x' }] },
+						{
+							label: 'frames',
+							root: {
+								type: 'split',
+								direction: 'down',
+								ratio: 0,
+								first: { type: 'pane', label: 'cpu' },
+								second: { type: 'pane', label: 'io', dir: '/etc' },
+							},
+						},
+					],
+				},
+				'render-farm',
+			)
+			expect(errors).toHaveLength(3)
+			expect(errors.some((e) => e.includes('tabs[0].panes[0].cwd'))).toBe(true)
+			expect(errors.some((e) => e.includes('tabs[1].root.ratio'))).toBe(true)
+			expect(errors.some((e) => e.includes('tabs[1].root.second.dir'))).toBe(true)
 		})
 	})
 
