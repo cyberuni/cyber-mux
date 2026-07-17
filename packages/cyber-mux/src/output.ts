@@ -32,7 +32,12 @@ function getFormat(): string | undefined {
 	return undefined
 }
 
-function isJsonOutput(): boolean {
+/**
+ * Whether the caller asked for machine-readable output. Exported because `output()` is not the only
+ * writer that owes it: a structured ERROR goes to stderr rather than through `output()` (which writes
+ * stdout), and it has to honor `--format json` exactly as the success path does.
+ */
+export function isJsonOutput(): boolean {
 	return getFormat() === 'json'
 }
 
