@@ -13,7 +13,9 @@ todos:
   - content: Correct the mux node's prose, which this CR falsifies
     status: completed
   - content: Changeset, verify, commit, PR closing #11
-    status: pending
+    status: completed
+  - content: Test Exec.lastError — the clear-on-success guard, and the reason reaching the caller
+    status: completed
 ---
 
 # 11 — the layout walk's pane-count and depth ceiling
@@ -25,7 +27,8 @@ Target: `cyber-mux` (`packages/cyber-mux`).
 
 ## Final scope (cut by the user after the spec gate stalled)
 
-**The doc and the `lastError` change. No suite edit, no new tests.** `layout.feature` and
+**The doc and the `lastError` change. No suite edit.** (No new tests either, until the user reversed
+that and asked for the `lastError` tests — now included, and mutation-checked.) `layout.feature` and
 `layout/README.md` are reverted to HEAD and untouched — the node's spec and its frozen suite are not
 part of this CR. What ships:
 
