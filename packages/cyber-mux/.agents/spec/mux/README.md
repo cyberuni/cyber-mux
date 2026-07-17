@@ -370,15 +370,20 @@ here rather than silently contradicted.
     error** under the stable code `ambiguous-pane`, on **stderr** per [`axi/`](../axi/README.md)'s
     stream discipline, honoring `--format`; stdout stays clean. Zero matches is the existing
     not-found path, not an ambiguity.
-  - **The outcome rides the exit code: `0` one match, `1` zero, `2` ambiguous.** A predicate that
-    cannot answer says so in its status — `grep` (2), POSIX `test` (`>1`, normative), `diff`, `expr`,
-    `pgrep`. The counter-case is instructive: `systemctl is-active` prints `inactive` for both a
-    stopped unit and a unit that does not exist, leaving only exit 3 vs 4 to tell them apart. So
-    `exists` keeps answering `live`/`gone` on stdout and spends a **third code** on ambiguity rather
-    than a fourth word. That is an acknowledged **amendment** to [`axi/`](../axi/README.md)'s `0`/`1`
-    code set (#6), scoped and filed there — not an application of it. Exit `2` means ambiguous on
-    **every** pane verb, not only `exists`; one meaning per code is what lets an agent detect it
-    without parsing.
+  - **The outcome rides the exit code: `0` one match, `1` zero, `2` ambiguous — and `2` is
+    [`axi/`](../axi/README.md)'s own `usage error` (#6), not a code this node invented.** An ambiguous
+    locator is a usage error in the strict sense AXI means: the argument is underspecified, nothing
+    was attempted, and the fix is a different argument — the same family as the missing required
+    parameter AXI already puts at `2`. So this is an **application** of the contract, not an amendment
+    to it; the earlier reading — that `2` was a third code added for a predicate that *couldn't
+    answer* — mistook an incomplete restatement of AXI (this repo's node listed only `0`/`1`) for
+    AXI's actual set. It reaches the same code either way: `grep` (2), POSIX `test` (`>1`, normative),
+    `diff`, `expr` and `pgrep` all reserve one for couldn't-answer, and `systemctl is-active` is the
+    counter-case that kills the alternative — it prints `inactive` for both a stopped unit and a
+    missing one, leaving only exit 3 vs 4 to tell them apart. So `exists` keeps answering
+    `live`/`gone` on stdout and spends the code rather than a fourth word. Exit `2` means the same
+    thing on **every** pane verb; one meaning per code is what lets an agent detect it without
+    parsing.
 
   **Uniqueness was considered and refused.** tmux and Docker both enforce unique names at creation,
   which is precisely why ambiguity is unrepresentable for them and their lookups stay binary. That
@@ -438,7 +443,7 @@ Every scenario in [`mux.feature`](./mux.feature) maps to one of these behaviors:
 | **naming a space after its birth** | every backend renames every tier it can name at birth (tmux a window name or pane title; herdr a tab or pane rename); a new workspace's root tab is named this way because herdr offers no flag to name it at birth; a rename moves no focus and opens nothing |
 | **the workspace group — carrying a grouping a backend has no tier for** | the open contract carries an opaque group id, never parsed, split, or derived from the label; a backend with no workspace tier stores it natively (tmux: a window option it can filter on, surviving a rename); a backend with a real workspace tier ignores it, its tier being the group; no id is invented for a caller that did not ask; the id is not a workspace, so `open` still reports the workspace absent; grouping is also a **verb** over an already-open space, which `open`'s own option routes through; a backend whose display name is composed stores the space's **own name** beside the group, since one name field means composing destroys the original |
 | **text and keys are separate; only submit presses Enter for you** | `send text` types literal characters and presses no Enter (a key-named word is typed, not interpreted; no text → rejected); `send keys` presses named keys in order and types nothing — core keys normalized onto each backend, a non-core token forwarded verbatim to the backend's own semantics (no tokens at all → rejected); `send keys Enter` presses Enter and takes the turn, because the caller wrote it; bare `send` is incomplete input — help to stderr, exit 1, stdout clean (an acknowledged amendment to axi #8, not an application of it); `submit` always presses Enter — with text it types it literally then Enters, with none (or empty text) it bare-Enter flushes without retyping; `open --launch` submits |
-| **addressing a pane by name or id** | every pane-taking verb accepts either; an id outranks a name and is recognized by matching a live pane rather than by the string's shape; exactly one match resolves; zero is the existing not-found path (exit 1); two or more fail with the candidates (id, label, cwd — each id usable as the retry) as a structured `ambiguous-pane` error on stderr honoring `--format`, stdout clean, exit 2 on every verb; `exists` keeps `live`/`gone` on stdout and spends the third code rather than a fourth word; the listing reports only a label a person set, never tmux's hostname default |
+| **addressing a pane by name or id** | every pane-taking verb accepts either; an id outranks a name and is recognized by matching a live pane rather than by the string's shape; exactly one match resolves; zero is the existing not-found path (exit 1); two or more fail with the candidates (id, label, cwd — each id usable as the retry) as a structured `ambiguous-pane` error on stderr honoring `--format`, stdout clean, exit 2 on every verb — axi #6's own `usage error`, an underspecified argument, applied rather than amended; `exists` keeps `live`/`gone` on stdout and spends the code rather than a fourth word; the listing reports only a label a person set, never tmux's hostname default |
 | **multiplexer detection is two-mode** | `$CYBER_MUX` fast-path + override; ancestry walk; hint fallback; `doctor` hint |
 | **mux mode** | reports the detected session backend; "none" (exit 0) when no adapter is selectable |
 | **pane focus reporting** | tri-state focused / not-focused / unknown per backend (tmux: pane+window active & session attached; herdr: pane record `focused`); a query that can't be answered → unknown so callers fail open |

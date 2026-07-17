@@ -59,45 +59,56 @@ scenarios.
 6. **Structured errors, exit codes, no prompts, fail-loud (#6)** — mutations are idempotent; errors
    are structured (a stable `code` + message, honoring `--format`) — `fail()` in `cli.ts` writes free
    text to stderr and exits 1, still unstructured for every error but the one below; exit `0` =
-   success, `1` = failure (already true); commands **never** prompt interactively (already true —
+   success (including no-ops), `1` = error, `2` = usage error — **AXI's set, restated in full**, and
+   the first two are already true; commands **never** prompt interactively (already true —
    `cyber-mux` has no interactive prompts); an **unknown flag fails loud** (commander's default —
-   exit 1, naming the flag).
+   exit 1, naming the flag, which is the wrong code: AXI puts an unknown flag at `2`, see below).
 
-   **Amendment — a third code, `2` = *couldn't answer*.** The `0`/`1` set assumes every outcome is a
-   success or a failure, which a **predicate** breaks: asked whether the pane named `worker` is live
-   when three are, `exists` has no single pane to answer about — that is neither yes, no, nor an
-   ordinary failure. The established convention puts this in the status rather than the prose —
-   `grep` (`2`), POSIX `test` (`>1`, normative), `diff`, `expr`, `pgrep` — and the counter-case is
-   what settles it: `systemctl is-active` prints `inactive` for both a stopped unit and a unit that
-   does not exist, leaving only exit `3` vs `4` to distinguish them, so the word is lossy exactly
-   where it matters. So `2` = the locator did not resolve to one subject. It carries **one meaning
-   across every command**, never a per-command code — that is what lets an agent detect the condition
-   without parsing — **within `cyber-mux`**. Its first caller is [`mux/`](../mux/README.md)'s pane
-   addressing (`ambiguous-pane`), which will also be the **first structured error** on this surface —
-   a stable `code`, its candidate entries, on stderr, honoring `--format`. **Specified, not yet
-   built**: like the rest of this node, the code set is a contract the impl trails (see *Impl trails
-   the contract* below). #6's structured-error clause stays aspirational for every other error path.
+   **`2` is AXI's own third code, and this node had dropped it.** AXI states the set as `0` = success
+   (including no-ops), `1` = error, **`2` = usage error** — the status for an unrecognized flag or
+   argument, and for a missing required parameter. The `0`/`1` above is not a *narrower adoption* of
+   that set; it is an **incomplete restatement** of it, and the omission was never argued. So nothing
+   here is an amendment: `cyber-mux` adopts AXI's set as written.
 
-   **Scope of this amendment — `cyber-mux` only; nothing is asserted here about the other adopters.**
-   This node's banner records that `cyberplace` and `packages/universal-plugin` adopted *the same*
-   contract, so a third exit code introduced here is a **divergence** until they either adopt it or
-   decline it — and whether the code set belongs to the shared contract or to each bin is a question
-   for the contract, not for `cyber-mux`. A follow-up is filed. The amendment is taken now anyway
-   because the alternative is worse than divergence: `cyber-mux` had a real predicate with a real
-   third outcome and would otherwise have had to encode it in prose, which is the lossy shape
-   `systemctl` demonstrates. Same standing as #8's own amendment below, which diverged first and on
-   the same terms.
+   **An ambiguous locator is a usage error.** `2` separates *your invocation is wrong, fix it and
+   retry* from `1`'s *your invocation was fine, the operation failed*. `cyber-mux read worker` when
+   three panes are labeled `worker` is the first: the argument is underspecified, nothing was
+   attempted, and the fix is a different argument — the same shape as a missing required parameter,
+   which AXI already puts here. It also lands in AXI's error form exactly, `error:` naming what went
+   wrong plus an actionable `help:` — each candidate's id IS the retry
+   ([`mux/`](../mux/README.md)'s pane addressing, `ambiguous-pane`). A predicate framing (`grep`,
+   POSIX `test`, `diff`, `pgrep` all reserve a code for *couldn't answer*) reaches the same code by a
+   different road; where the two disagree, AXI wins here, because it is the contract this node
+   adopts.
+
+   **Two divergences from AXI remain, and neither is claimed as correct.** Both predate this node's
+   first structured error and both are **filed**, not settled here:
+
+   - **An unknown flag exits `1`, where AXI says `2`.** That is commander's default, restated above as
+     though it were the contract. Fixing it is a change to every command's failure surface, so it is
+     not ridden in on one error path. The same gap covers a bare command group (see #8).
+   - **Errors go to stderr, where AXI says stdout.** AXI is explicit that stdout carries "data,
+     errors, suggestions" precisely "so the agent can read and act on them", and that stderr is
+     debug/progress that "agents don't read". The *Stream discipline* section below inverts that. It
+     is not a `cyber-mux` slip — `cyberplace`'s node states it identically, word for word, so the
+     inversion is the org's adoption rather than this bin's. It is load-bearing, not cosmetic: an
+     agent-facing report on a stream AXI says agents ignore is a report its own reader never sees.
+
 7. *(#7 ambient context — out of scope, see Scope of adoption above.)*
 8. **Content-first (#8)** — a **command group** invoked with no subcommand shows live data, not
    help. `send` (`send text` / `send keys`, see [`mux/`](../mux/README.md)) **does not meet this**:
    it drives a pane and has no view of its own to show — every view it could render already belongs
    to a verb (`list`, `doctor`) — so bare `cyber-mux send` writes help to **stderr** and **exits 1**,
-   stdout clean (commander's default, no custom code; the shape #6 already blesses for an unknown
-   flag). It stays `1` under #6's amended `0`/`1`/`2` set: bare `send` is **incomplete input** — a
-   plain failure — not a locator that failed to resolve one subject, which is the whole of what `2`
-   means. The trailing claim this parenthetical used to carry ("and no third exit code") was about
-   the code **set** and no longer holds; what it was defending — that `send` invents no code of its
-   own — still does. Whether #8 should carve out a group like this is **open** and
+   stdout clean (commander's default, no custom code; the same shape #6 describes for an unknown
+   flag). **That `1` is the wrong code and is frozen wrong.** Bare `send` is **incomplete input**,
+   which is exactly what AXI's `2` = usage error is for — the same family as the missing required
+   parameter AXI names. It sits at `1` for the same reason an unknown flag does: commander's default
+   was restated as the contract without argument. The suite pins `exits 1`, so correcting it is a
+   frozen-scenario change and belongs to the repo-wide reconciliation filed at #6, not to a note here.
+   An earlier reading of this parenthetical ("and no third exit code") was a claim about the code
+   **set** and was simply false — AXI always had three. What it was defending — that `send` invents no
+   code of its own — still holds, and holds better once `send` uses AXI's. Whether #8 should carve out
+   a group like this is **open** and
    belongs to the contract, not to `cyber-mux` — a follow-up is filed; nothing is asserted here about
    the other adopters.
 
