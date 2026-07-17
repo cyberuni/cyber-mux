@@ -34,8 +34,9 @@ function getFormat(): string | undefined {
 
 /**
  * Whether the caller asked for machine-readable output. Exported because `output()` is not the only
- * writer that owes it: a structured ERROR goes to stderr rather than through `output()` (which writes
- * stdout), and it has to honor `--format json` exactly as the success path does.
+ * writer that owes it: a structured ERROR is rendered by `reportError` (`cli-error.ts`) rather than
+ * through `output()`, and it has to honor `--format json` exactly as the success path does. Both write
+ * stdout — AXI's stream for everything the agent consumes, errors included.
  */
 export function isJsonOutput(): boolean {
 	return getFormat() === 'json'

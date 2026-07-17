@@ -511,18 +511,21 @@ describe('spec:cyber-mux/mux', () => {
 		it('bare send is incomplete input, so it fails loud with help rather than acting', async () => {
 			const calls: string[][] = []
 			const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: fakeTmuxExec(calls) })
-			const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
-			const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
-			try {
-				await expect(run(program, ['send'])).rejects.toMatchObject({ exitCode: 1 })
-				const help = stderr.mock.calls.map((c) => String(c[0])).join('')
-				expect(help).toContain('text')
-				expect(help).toContain('keys')
-				expect(stdout).not.toHaveBeenCalled()
-			} finally {
-				stderr.mockRestore()
-				stdout.mockRestore()
-			}
+			vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+			const out: string[] = []
+			vi.spyOn(process.stdout, 'write').mockImplementation((line) => {
+				out.push(String(line))
+				return true
+			})
+			vi.spyOn(process, 'exit').mockImplementation((code) => {
+				throw new Error(`exit:${code}`)
+			})
+			// Help naming text and keys as its subcommands is written to stdout, and it exits 2 — the status
+			// that separates bad input from a failed operation.
+			await expect(run(program, ['send'])).rejects.toThrow('exit:2')
+			const help = out.join('')
+			expect(help).toContain('text')
+			expect(help).toContain('keys')
 			expect(calls).toEqual([])
 		})
 
@@ -584,7 +587,12 @@ describe('spec:cyber-mux/mux', () => {
 		it('submit with no pane is rejected', async () => {
 			const calls: string[][] = []
 			const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: fakeTmuxExec(calls) })
-			await expect(run(program, ['submit'])).rejects.toThrow(/pane/)
+			vi.spyOn(process, 'exit').mockImplementation((code) => {
+				throw new Error(`exit:${code}`)
+			})
+			// A missing required argument is a usage error (exit 2), naming the argument that is missing.
+			await expect(run(program, ['submit'])).rejects.toThrow('exit:2')
+			expect(logs.join('\n')).toContain('pane')
 			expect(calls).toEqual([])
 		})
 
@@ -741,11 +749,12 @@ describe('spec:cyber-mux/mux', () => {
 
 				it('a name that resolves nowhere exits 1 naming both directories it searched', async () => {
 					catchExit()
-					const stderr = captureStderr()
+					captureStderr()
 					const program = buildProgram({ env: XDG, exec: repoExec([]), store: fakeStore({}) })
 					await expect(run(program, ['layout', 'show', 'pool-9'])).rejects.toThrow('exit:1')
-					expect(stderr.join('')).toContain(REPO_DIR)
-					expect(stderr.join('')).toContain(USER_DIR)
+					// On stdout now — AXI reserves it for what the agent consumes, errors included.
+					expect(logs.join('\n')).toContain(REPO_DIR)
+					expect(logs.join('\n')).toContain(USER_DIR)
 				})
 
 				// Two roads to the same exit-1: the stem rule refuses most of these, while `-pool` never
@@ -763,28 +772,30 @@ describe('spec:cyber-mux/mux', () => {
 					const program = buildProgram({ env: XDG, exec: repoExec([]), store })
 					const failure = await run(program, ['layout', 'show', name]).catch((err: unknown) => err)
 					expect(failure).toBeInstanceOf(Error)
-					// `fail()` exits 1; commander's own rejection carries exitCode 1.
+					// A malformed name is a usage error now: the stem rule refuses most at exit 2
+					// (invalid-layout-name), while `-pool` is rejected by commander as an unknown option — also
+					// exit 2, the usage-error family. Both exit 2 having read nothing.
 					const code = (failure as { exitCode?: number }).exitCode ?? (failure as Error).message
-					expect([1, 'exit:1']).toContain(code)
+					expect([2, 'exit:2']).toContain(code)
 					expect(store.reads).toEqual([])
 				})
 
 				it('a name field that disagrees with the filename stem fails validation, naming both', async () => {
 					// The redundancy is the point: a copied file that kept its old name fails loudly.
 					catchExit()
-					const stderr = captureStderr()
+					captureStderr()
 					const store = fakeStore({ [repo('pool-4')]: { name: 'pool-3', panes: [{ label: 'w1' }] } })
 					const program = buildProgram({ env: XDG, exec: repoExec([]), store })
 					await expect(run(program, ['layout', 'validate', 'pool-4'])).rejects.toThrow('exit:1')
-					expect(stderr.join('')).toContain('pool-4')
-					expect(stderr.join('')).toContain('pool-3')
+					expect(logs.join('\n')).toContain('pool-4')
+					expect(logs.join('\n')).toContain('pool-3')
 				})
 			})
 
 			describe('validate', () => {
 				it('a template that sets cwd fails, naming the JSON path, --cwd and dir', async () => {
 					catchExit()
-					const stderr = captureStderr()
+					captureStderr()
 					const store = fakeStore({
 						[repo('bad-pool')]: {
 							name: 'bad-pool',
@@ -798,14 +809,15 @@ describe('spec:cyber-mux/mux', () => {
 					})
 					const program = buildProgram({ env: XDG, exec: repoExec([]), store })
 					await expect(run(program, ['layout', 'validate', 'bad-pool'])).rejects.toThrow('exit:1')
-					expect(stderr.join('')).toContain('root.first.cwd')
-					expect(stderr.join('')).toContain('--cwd')
-					expect(stderr.join('')).toContain('dir')
+					// On stdout now, the stream the agent reads.
+					expect(logs.join('\n')).toContain('root.first.cwd')
+					expect(logs.join('\n')).toContain('--cwd')
+					expect(logs.join('\n')).toContain('dir')
 				})
 
 				it('reports every error at once, one per line, each naming its own JSON path', async () => {
 					catchExit()
-					const stderr = captureStderr()
+					captureStderr()
 					const store = fakeStore({
 						[repo('bad-pool')]: {
 							name: 'bad-pool',
@@ -820,11 +832,16 @@ describe('spec:cyber-mux/mux', () => {
 					})
 					const program = buildProgram({ env: XDG, exec: repoExec([]), store })
 					await expect(run(program, ['layout', 'validate', 'bad-pool'])).rejects.toThrow('exit:1')
-					const lines = stderr.join('').trim().split('\n')
-					expect(lines).toHaveLength(3)
-					expect(lines.some((l) => l.includes('root.ratio'))).toBe(true)
-					expect(lines.some((l) => l.includes('root.first.cwd'))).toBe(true)
-					expect(lines.some((l) => l.includes('root.second.dir'))).toBe(true)
+					// Every error, one per line, each naming its own JSON path — the three path lines on stdout,
+					// beside the surface's own `error:`/`help:` framing.
+					const paths = logs
+						.join('\n')
+						.split('\n')
+						.filter((l) => l.includes('root.'))
+					expect(paths).toHaveLength(3)
+					expect(paths.some((l) => l.includes('root.ratio'))).toBe(true)
+					expect(paths.some((l) => l.includes('root.first.cwd'))).toBe(true)
+					expect(paths.some((l) => l.includes('root.second.dir'))).toBe(true)
 				})
 
 				it('exits 0 on a valid template, saying nothing at all', async () => {
@@ -877,13 +894,31 @@ describe('spec:cyber-mux/mux', () => {
 					await run(program, argv)
 					expect(calls.every((c) => c[0] === 'git')).toBe(true)
 				})
+
+				it("an unknown flag is rejected against the SUBCOMMAND's flags, not the group's", async () => {
+					// `--force` is a flag only `layout save` defines; on `layout list` it is unknown. Validating
+					// against the GROUP's union would accept it here and silently drop it.
+					catchExit()
+					const store = fakeStore({})
+					const program = buildProgram({ env: XDG, exec: repoExec([]), store })
+					await expect(run(program, ['layout', 'list', '--force'])).rejects.toThrow('exit:2')
+					const out = logs.join('\n')
+					// Names --force as unknown for layout list, and the valid flags it lists are list's own...
+					expect(out).toContain('--force')
+					expect(out).toContain('--format')
+					// ...never layout save's.
+					expect(out).not.toContain('--from')
+					expect(out).not.toContain('--workspace')
+				})
 			})
 
 			describe('--layout, the exact sibling of --launch', () => {
 				it('--layout and --launch are mutually exclusive', async () => {
+					catchExit()
 					const store = fakeStore({ [repo('pool-4')]: POOL_4 })
 					const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'tmux' }, exec: repoExec([]), store })
-					await expect(run(program, ['open', '--layout', 'pool-4', '--launch', 'claude'])).rejects.toThrow()
+					// Two flags that cannot both be given is malformed input — a usage error (exit 2).
+					await expect(run(program, ['open', '--layout', 'pool-4', '--launch', 'claude'])).rejects.toThrow('exit:2')
 				})
 
 				it('--at defaults to workspace when --layout is given', async () => {
@@ -942,7 +977,7 @@ describe('spec:cyber-mux/mux', () => {
 
 				it('worktree add --layout with an invalid template leaves no worktree behind', async () => {
 					catchExit()
-					const stderr = captureStderr()
+					captureStderr()
 					const calls: string[][] = []
 					const store = fakeStore({
 						[repo('bad-pool')]: { name: 'bad-pool', panes: [{ label: 'a', cwd: '/home/someone/proj' }] },
@@ -951,19 +986,20 @@ describe('spec:cyber-mux/mux', () => {
 					await expect(run(program, ['worktree', 'add', '--branch', 'feat-x', '--layout', 'bad-pool'])).rejects.toThrow(
 						'exit:1',
 					)
-					expect(stderr.join('')).toContain('panes[0].cwd')
+					expect(logs.join('\n')).toContain('panes[0].cwd')
 					expect(calls.some((c) => c.includes('worktree') && c.includes('add'))).toBe(false)
 				})
 
 				it('applying with no multiplexer fails through the existing adapter path', async () => {
 					catchExit()
-					const stderr = captureStderr()
+					captureStderr()
 					const store = fakeStore({ [repo('pool-4')]: POOL_4 })
 					// Neither $TMUX nor $HERDR_ENV — the template resolves and validates, then the backend does not.
 					const program = buildProgram({ env: XDG, exec: repoExec([]), store })
 					await expect(run(program, ['open', '--layout', 'pool-4'])).rejects.toThrow('exit:1')
-					expect(stderr.join('')).toContain('tmux')
-					expect(stderr.join('')).toContain('herdr')
+					// The no-mux error's help names both backends, on stdout.
+					expect(logs.join('\n')).toContain('tmux')
+					expect(logs.join('\n')).toContain('herdr')
 				})
 			})
 
@@ -1297,15 +1333,15 @@ describe('spec:cyber-mux/mux', () => {
 			it.each(VERBS)('an ambiguous name fails the same way on every pane verb', async ({ argv, store }) => {
 				const calls: string[][] = []
 				const exit = catchExit()
-				const stderr = captureStderr()
+				captureStderr()
 				const program = buildProgram({
 					env: store ? { ...TMUX, XDG_CONFIG_HOME: '/home/u/.config' } : TMUX,
 					exec: paneServer(calls, ALL_WORKER, { 'capture-pane': 'out', 'list-panes': '', 'rev-parse': '/repo/.git' }),
 					store: store ? saveStore() : undefined,
 				})
 				await expect(run(program, argv)).rejects.toThrow('exit:2')
-				// The candidates, under the stable code, on stderr.
-				expect(stderr.join('')).toContain('ambiguous-pane')
+				// The candidates, under the stable code, on stdout — where the agent reads.
+				expect(logs.join('\n')).toContain('ambiguous-pane')
 				expect(exit).toHaveBeenCalledWith(2)
 				// Having acted on none of the three: the only calls made were the resolution read itself.
 				expect(touched(calls)).toEqual([])
@@ -1365,22 +1401,22 @@ describe('spec:cyber-mux/mux', () => {
 			it('a name matching two or more live panes fails rather than guessing which was meant', async () => {
 				const calls: string[][] = []
 				catchExit()
-				const stderr = captureStderr()
+				captureStderr()
 				const program = buildProgram({ env: TMUX, exec: paneServer(calls, ALL_WORKER) })
 				await expect(run(program, ['close', 'worker'])).rejects.toThrow('exit:2')
 				// Acted on none of them — no kill-pane reached any of the three.
 				expect(touched(calls)).toEqual([])
-				// The matching entries are reported, so the caller can choose between them.
-				const err = stderr.join('')
+				// The matching entries are reported on stdout, so the caller can choose between them.
+				const err = logs.join('\n')
 				for (const id of ['%1', '%2', '%3']) expect(err).toContain(id)
 			})
 
 			it('the ambiguity report carries what tells the candidates apart, and what retries them', async () => {
 				catchExit()
-				const stderr = captureStderr()
+				captureStderr()
 				const program = buildProgram({ env: TMUX, exec: paneServer([], ALL_WORKER) })
 				await expect(run(program, ['close', 'worker'])).rejects.toThrow('exit:2')
-				const err = stderr.join('')
+				const err = logs.join('\n')
 				// Each candidate with its id, its label, and its working directory — the cwd being the only
 				// one of the three that actually tells three panes all labeled `worker` apart.
 				for (const c of ALL_WORKER) {
@@ -1396,10 +1432,9 @@ describe('spec:cyber-mux/mux', () => {
 				expect(drives(retryCalls)).toEqual([['kill-pane', '-t', '%2']])
 			})
 
-			it('the ambiguity report is a structured error on stderr, leaving stdout clean', async () => {
+			it('the ambiguity report is a structured error on stdout, where the agent reads', async () => {
 				const exit = catchExit()
 				const stderr = captureStderr()
-				const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
 				const program = buildProgram({
 					env: TMUX,
 					exec: paneServer(
@@ -1411,10 +1446,10 @@ describe('spec:cyber-mux/mux', () => {
 					),
 				})
 				await expect(run(program, ['close', 'worker'])).rejects.toThrow('exit:2')
-				expect(stderr.join('')).toContain('ambiguous-pane')
-				// stdout is left clean — nothing on either writer the CLI prints through.
-				expect(stdout).not.toHaveBeenCalled()
-				expect(logs).toEqual([])
+				// The report is on stdout, under the stable code, where the agent reads.
+				expect(logs.join('\n')).toContain('ambiguous-pane')
+				// And stderr is left empty, carrying no part of the answer.
+				expect(stderr.join('')).toBe('')
 				expect(exit).toHaveBeenCalledWith(2)
 			})
 
@@ -1431,14 +1466,15 @@ describe('spec:cyber-mux/mux', () => {
 				)
 				// Parsed, not string-matched: the contract is that the error IS JSON, carrying the code and
 				// the candidate entries as data a caller can branch on.
-				const parsed = JSON.parse(stderr.join(''))
+				const parsed = JSON.parse(logs.join('\n'))
 				expect(parsed.error.code).toBe('ambiguous-pane')
 				expect(parsed.error.candidates).toEqual([
 					{ id: '%1', label: 'worker', cwd: '/repo/a' },
 					{ id: '%2', label: 'worker', cwd: '/repo/b' },
 				])
-				// Written to stderr — so a redirected or discarded stdout never corrupts the result.
-				expect(logs).toEqual([])
+				// Written to stdout, where a caller branching on exit 2 never mistakes it for a result;
+				// stderr carries no part of it.
+				expect(stderr.join('')).toBe('')
 			})
 
 			// The outcome rides the exit code, because three panes named worker is not an answer to
@@ -1459,13 +1495,19 @@ describe('spec:cyber-mux/mux', () => {
 					await expect(running).rejects.toThrow(`exit:${code}`)
 					expect(exit).toHaveBeenCalledWith(code)
 				}
-				if (stdout === 'nothing') expect(logs).toEqual([])
-				else expect(logs).toEqual([stdout])
+				if (stdout === 'nothing') {
+					// Neither live nor gone — the ambiguous-pane error takes stdout instead.
+					expect(logs.join('\n')).toContain('ambiguous-pane')
+					expect(logs).not.toContain('live')
+					expect(logs).not.toContain('gone')
+				} else {
+					expect(logs).toEqual([stdout])
+				}
 			})
 
 			it('an ambiguous exists reports its candidates rather than answering the question', async () => {
 				catchExit()
-				const stderr = captureStderr()
+				captureStderr()
 				const program = buildProgram({
 					env: TMUX,
 					exec: paneServer(
@@ -1477,12 +1519,182 @@ describe('spec:cyber-mux/mux', () => {
 					),
 				})
 				await expect(run(program, ['exists', 'worker'])).rejects.toThrow('exit:2')
-				const err = stderr.join('')
+				const err = logs.join('\n')
 				expect(err).toContain('ambiguous-pane')
 				expect(err).toContain('%1')
 				expect(err).toContain('%2')
 				// It answers neither live nor gone — there is no single pane the question is about.
-				expect(logs).toEqual([])
+				expect(err).not.toContain('live')
+				expect(err).not.toContain('gone')
+			})
+
+			// ── The error surface — structured, coded, and on stdout ──
+
+			/** A tmux whose list-panes reports `panes`, but whose every other command THROWS a backend
+			 * diagnostic — the shape a bad target takes: resolution succeeds/empties, the verb's own call
+			 * fails with the multiplexer's own words. */
+			function throwingExec(panes: string, diagnostic: string): Exec {
+				return (_cmd, args) => {
+					if (args[0] === 'list-panes') return panes
+					throw new Error(diagnostic)
+				}
+			}
+
+			it.each([
+				{
+					world: 'no multiplexer this process is inside',
+					make: () => buildProgram({ env: {}, exec: noAncestry }),
+					argv: ['list'],
+					code: 'no-mux',
+					exit: 1,
+				},
+				{
+					world: 'a locator matching no live pane',
+					make: () => buildProgram({ env: TMUX, exec: throwingExec('', "can't find pane: %99") }),
+					argv: ['focus', '%99'],
+					code: 'pane-not-found',
+					exit: 1,
+				},
+				{
+					world: 'two live panes labeled worker',
+					make: () => buildProgram({ env: TMUX, exec: paneServer([], ALL_WORKER) }),
+					argv: ['read', 'worker'],
+					code: 'ambiguous-pane',
+					exit: 2,
+				},
+			])('a failure is a structured error on stdout, under the code for THAT failure', async ({
+				make,
+				argv,
+				code,
+				exit,
+			}) => {
+				const errExit = catchExit()
+				const stderr = captureStderr()
+				await expect(run(make(), argv)).rejects.toThrow(`exit:${exit}`)
+				const out = logs.join('\n')
+				// The report is on stdout, never stderr, under the stable code for THAT failure.
+				expect(out).toContain(code)
+				expect(stderr.join('')).toBe('')
+				expect(errExit).toHaveBeenCalledWith(exit)
+				// A help line naming the command that fixes it, never "see --help".
+				expect(out).toContain('help:')
+				expect(out).not.toContain('see --help')
+			})
+
+			it('two different failures never share one code', async () => {
+				catchExit()
+				captureStderr()
+				await withArgv(['read', 'worker', '--format', 'json'], () =>
+					expect(
+						run(buildProgram({ env: TMUX, exec: paneServer([], ALL_WORKER) }), ['read', 'worker', '--format', 'json']),
+					).rejects.toThrow('exit:2'),
+				)
+				const ambiguousCode = JSON.parse(logs.join('\n')).error.code
+				logs.length = 0
+				await withArgv(['list', '--format', 'json'], () =>
+					expect(run(buildProgram({ env: {}, exec: noAncestry }), ['list', '--format', 'json'])).rejects.toThrow(
+						'exit:1',
+					),
+				)
+				const noMuxCode = JSON.parse(logs.join('\n')).error.code
+				// The two codes discriminate — neither is a catch-all a third failure would also land under.
+				expect(ambiguousCode).toBe('ambiguous-pane')
+				expect(noMuxCode).toBe('no-mux')
+				expect(ambiguousCode).not.toBe(noMuxCode)
+			})
+
+			it.each([
+				['read'],
+				['focus'],
+				['send', 'text'],
+			])('a missing required argument is a usage error, not a failed operation', async (...verb) => {
+				const calls: string[][] = []
+				const errExit = catchExit()
+				await expect(run(buildProgram({ env: TMUX, exec: paneServer(calls, THREE) }), verb)).rejects.toThrow('exit:2')
+				// Exits 2 rather than 1, having called no backend, and names the argument that is missing.
+				expect(errExit).toHaveBeenCalledWith(2)
+				expect(logs.join('\n')).toContain('pane')
+				expect(drives(calls)).toEqual([])
+			})
+
+			it('an unknown flag is a usage error, and says what the valid flags are', async () => {
+				const calls: string[][] = []
+				const errExit = catchExit()
+				await expect(
+					run(buildProgram({ env: TMUX, exec: paneServer(calls, THREE) }), ['list', '--nope']),
+				).rejects.toThrow('exit:2')
+				expect(errExit).toHaveBeenCalledWith(2)
+				const out = logs.join('\n')
+				// Names the unrecognized flag, and lists that command's own valid flags so the agent
+				// self-corrects without a second call.
+				expect(out).toContain('--nope')
+				expect(out).toContain('--format')
+				// Called no backend and listed nothing.
+				expect(drives(calls)).toEqual([])
+			})
+
+			it('--help is never an unknown flag', async () => {
+				const errExit = catchExit()
+				captureStderr()
+				const out: string[] = []
+				vi.spyOn(process.stdout, 'write').mockImplementation((line) => {
+					out.push(String(line))
+					return true
+				})
+				// Help is written to stdout and it exits 0 — no flag validation rejects it.
+				await expect(run(buildProgram({ env: TMUX, exec: paneServer([], THREE) }), ['list', '--help'])).rejects.toThrow(
+					'exit:0',
+				)
+				expect(errExit).toHaveBeenCalledWith(0)
+				expect(`${out.join('')}${logs.join('\n')}`).not.toContain('unknown')
+			})
+
+			it('a structured error honors --format json', async () => {
+				catchExit()
+				const stderr = captureStderr()
+				await withArgv(['list', '--format', 'json'], () =>
+					expect(run(buildProgram({ env: {}, exec: noAncestry }), ['list', '--format', 'json'])).rejects.toThrow(
+						'exit:1',
+					),
+				)
+				// Emitted as JSON on stdout carrying the same stable code the readable form uses, no prose beside it.
+				const parsed = JSON.parse(logs.join('\n'))
+				expect(parsed.error.code).toBe('no-mux')
+				expect(stderr.join('')).toBe('')
+			})
+
+			it("a failed verb's stdout is its structured error alone, with no result before it", async () => {
+				catchExit()
+				captureStderr()
+				const out: string[] = []
+				vi.spyOn(process.stdout, 'write').mockImplementation((line) => {
+					out.push(String(line))
+					return true
+				})
+				// A read whose capture fails: the backend throws, so there are no bytes for an error to land amid.
+				await expect(
+					run(buildProgram({ env: TMUX, exec: throwingExec('', 'capture-pane: no such pane') }), ['read', '%1']),
+				).rejects.toThrow('exit:1')
+				// read writes the pane's raw bytes through process.stdout.write — none were written here.
+				expect(out).toEqual([])
+				// The structured error is the whole of stdout (on console.log), with no partial pane output before it.
+				expect(logs.join('\n')).toContain('pane-not-found')
+			})
+
+			it("an error never leaks the multiplexer's own output", async () => {
+				catchExit()
+				captureStderr()
+				const diagnostic = "can't find pane: %99 — tmux server error 3"
+				await expect(
+					run(buildProgram({ env: TMUX, exec: throwingExec('', diagnostic) }), ['focus', '%99']),
+				).rejects.toThrow('exit:1')
+				const out = logs.join('\n')
+				// Translated into this CLI's own code and help...
+				expect(out).toContain('pane-not-found')
+				expect(out).toContain('cyber-mux list')
+				// ...and the backend's raw text is not passed through as the message.
+				expect(out).not.toContain("can't find pane")
+				expect(out).not.toContain('tmux server error')
 			})
 		})
 
@@ -2101,12 +2313,12 @@ describe('spec:cyber-mux/layout', () => {
 			// overwriting one would throw that work away. Checked BEFORE the capture, so the refusal
 			// is free.
 			catchExit()
-			const stderr = captureStderr()
+			captureStderr()
 			const calls: string[][] = []
 			const store = fakeStore({ [repo('pool-3')]: POOL_4 })
 			const program = buildProgram({ env: SAVE_ENV, exec: saveExec(calls), store })
 			await expect(run(program, ['layout', 'save', 'pool-3'])).rejects.toThrow('exit:1')
-			expect(stderr.join('')).toContain('--force to overwrite')
+			expect(logs.join('\n')).toContain('--force to overwrite')
 			expect(store.writes).toEqual({})
 			expect(calls.some((c) => c[1] === 'list-panes')).toBe(false)
 		})
@@ -2122,12 +2334,13 @@ describe('spec:cyber-mux/layout', () => {
 			// A name is a lookup key that must also be a filename — `../../etc/passwd` must never get
 			// as far as being a path.
 			catchExit()
-			const stderr = captureStderr()
+			captureStderr()
 			const calls: string[][] = []
 			const store = fakeStore({})
 			const program = buildProgram({ env: SAVE_ENV, exec: saveExec(calls), store })
-			await expect(run(program, ['layout', 'save', '../escape'])).rejects.toThrow('exit:1')
-			expect(stderr.join('')).toContain('invalid layout name')
+			// A usage error now — the same malformed-name family show refuses at 2.
+			await expect(run(program, ['layout', 'save', '../escape'])).rejects.toThrow('exit:2')
+			expect(logs.join('\n')).toContain('invalid layout name')
 			expect(store.writes).toEqual({})
 			expect(calls).toEqual([])
 		})
@@ -2137,12 +2350,13 @@ describe('spec:cyber-mux/layout', () => {
 			// backend's own default would capture whichever region the USER happens to be looking at and
 			// save it under the name the caller asked for — a confident wrong answer, worse than none.
 			catchExit()
-			const stderr = captureStderr()
+			captureStderr()
 			const calls: string[][] = []
 			const store = fakeStore({})
 			const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'tmux' }, exec: saveExec(calls), store })
-			await expect(run(program, ['layout', 'save', 'pool-3'])).rejects.toThrow('exit:1')
-			expect(stderr.join('')).toContain('--from')
+			// A required parameter is missing, not an operation that failed — a usage error (exit 2).
+			await expect(run(program, ['layout', 'save', 'pool-3'])).rejects.toThrow('exit:2')
+			expect(logs.join('\n')).toContain('--from')
 			expect(store.writes).toEqual({})
 			// It never asked the backend for a region either — the refusal precedes the read.
 			expect(calls.some((c) => c[1] === 'list-panes')).toBe(false)
@@ -2217,7 +2431,7 @@ describe('spec:cyber-mux/layout', () => {
 			// screen adapter, which fails the layout floor on three other counts too). Restored in
 			// `finally`, since the adapter is a module singleton every other test shares.
 			catchExit()
-			const stderr = captureStderr()
+			captureStderr()
 			const store = fakeStore({})
 			const original = tmuxSessionAdapter.describeRegion
 			try {
@@ -2227,8 +2441,8 @@ describe('spec:cyber-mux/layout', () => {
 			} finally {
 				tmuxSessionAdapter.describeRegion = original
 			}
-			// Names the backend, so the reader knows WHICH mux cannot do this rather than that save broke.
-			expect(stderr.join('')).toContain('tmux')
+			// Names the backend on stdout, so the reader knows WHICH mux cannot do this rather than that save broke.
+			expect(logs.join('\n')).toContain('tmux')
 			// Refuses rather than degrading: there is no half-geometry to fall back to.
 			expect(store.writes).toEqual({})
 		})
@@ -2458,7 +2672,7 @@ describe('spec:cyber-mux/layout', () => {
 			// that never had it. Restored in `finally` — the adapter is a module singleton every other test
 			// shares.
 			catchExit()
-			const stderr = captureStderr()
+			captureStderr()
 			const store = fakeStore({})
 			const original = tmuxSessionAdapter.describeWorkspace
 			try {
@@ -2472,8 +2686,8 @@ describe('spec:cyber-mux/layout', () => {
 			} finally {
 				tmuxSessionAdapter.describeWorkspace = original
 			}
-			// Names the backend, so the reader learns WHICH mux cannot do this rather than that save broke.
-			expect(stderr.join('')).toContain('tmux')
+			// Names the backend on stdout, so the reader learns WHICH mux cannot do this rather than that save broke.
+			expect(logs.join('\n')).toContain('tmux')
 			// An absent optional member is a refusal, never a guess — so nothing lands on disk.
 			expect(store.writes).toEqual({})
 		})
