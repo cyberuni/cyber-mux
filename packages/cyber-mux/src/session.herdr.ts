@@ -1,4 +1,5 @@
 import { resolve } from 'node:path'
+import { envFallback } from './env-fallback.ts'
 import { type Exec, withReason } from './exec.ts'
 import type {
 	LivePane,
@@ -386,6 +387,24 @@ function envFlags(env: Record<string, string> | undefined): string[] {
 }
 
 /**
+ * Launch a command in a worktree's root pane, carrying env the worktree verb could not set at birth.
+ * The prefix-or-warn rule is the seam's (`env-fallback.ts`); this is the one route that invokes it,
+ * because it is the one route that loses env. With a command, env rides in as a prefix; with none and
+ * env asked for, it warns to stderr (stdout stays machine-readable) rather than dropping in silence.
+ */
+function carryLaunch(exec: Exec, target: OpenedPane, env: Record<string, string> | undefined, launch?: string): void {
+	const fallback = envFallback(env, launch)
+	if (fallback.kind === 'dropped') {
+		process.stderr.write(
+			`env (${fallback.variables.join(', ')}) could not be set on this worktree's workspace and ` +
+				'no command was given to carry it — herdr worktree create/open take no env parameter\n',
+		)
+		return
+	}
+	if (fallback.command !== undefined) herdrSessionAdapter.submit(exec, target, fallback.command)
+}
+
+/**
  * `herdr pane split` emits a JSON envelope, not a bare id:
  * `{"id":"cli:pane:split","result":{"pane":{"pane_id":"w3:pB", ...},"type":"pane_info"}}`.
  * The pane id herdr's other `pane` subcommands accept lives at `.result.pane.pane_id`. Extract it —
@@ -448,17 +467,17 @@ function herdrWorktreeCapability(): WorktreeWorkspaceCapability {
 			// Deliberately NO `--env`, unlike every other tier: `WorktreeCreateParams` is
 			// `[base, branch, cwd, focus, label, path, workspace_id]` — no `env` — and herdr 0.7.4
 			// rejects the flag outright (`unknown option: --env`), which `Exec` would turn into a null
-			// and this into a thrown "worktree create failed". `opts.env` is accepted and NOT emitted;
-			// honoring it is the caller's job via the command-prefix fallback, because this adapter must
-			// stay honest about what its backend actually takes.
+			// and this into a thrown "worktree create failed". `opts.env` is NOT emitted to herdr;
+			// `carryLaunch` compensates for it on the launch instead — this is the one route that loses
+			// env, so it is the one route that invokes the fallback.
 			args.push('--no-focus')
 			const out = exec('herdr', args)
 			if (!out) throw new Error(withReason(exec, 'herdr worktree create failed'))
 			const created = parseWorktreeWorkspace(out, 'herdr worktree create')
-			// `submit`, not `sendText` — a launch command has to actually run, and `submit` is the only
-			// verb that supplies the Enter. (It lowers to `pane run`, herdr's atomic text-plus-Enter
-			// primitive, so this is the same call it always made — now routed through the seam.)
-			if (opts.launch) herdrSessionAdapter.submit(exec, created.target, opts.launch)
+			// This route could not set env at birth, so it compensates on the launch. `submit`, not
+			// `sendText` — a launch command has to actually run, and `submit` is the only verb that
+			// supplies the Enter. (It lowers to `pane run`, herdr's atomic text-plus-Enter primitive.)
+			carryLaunch(exec, created.target, opts.env, opts.launch)
 			return created
 		},
 
@@ -471,8 +490,9 @@ function herdrWorktreeCapability(): WorktreeWorkspaceCapability {
 			const out = exec('herdr', args)
 			if (!out) throw new Error(withReason(exec, 'herdr worktree open failed'))
 			const opened = parseWorktreeWorkspace(out, 'herdr worktree open')
-			// `submit` for the same reason as `createInWorkspace` above.
-			if (opts.launch) herdrSessionAdapter.submit(exec, opened.target, opts.launch)
+			// Same env compensation as `createInWorkspace` — `worktree open` is exposed identically,
+			// taking no env param, so a caller passing env here would lose it just the same.
+			carryLaunch(exec, opened.target, opts.env, opts.launch)
 			return opened
 		},
 

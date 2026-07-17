@@ -76,6 +76,28 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls).toEqual([['rename-window', '-t', '@9', 'ledger']])
 		})
 
+		// tmux carries env natively via `-e` at every tier, so the launch command it submits must be the
+		// bare command — never `env KEY=VALUE claude` prefixed on top of the env it already set.
+		it.each<{ at: SessionPlacement; response: Record<string, string> }>([
+			{ at: 'pane:right', response: { 'split-window': '%9\t@1' } },
+			{ at: 'tab', response: { 'new-window': '%2\t@2' } },
+			{ at: 'workspace', response: { 'new-window': '%2\t@2' } },
+		])('a route that set env natively never prefixes it on top', ({ at, response }) => {
+			const calls: string[][] = []
+			tmuxSessionAdapter.open(fakeExec(calls, response), {
+				cwd: '/unit',
+				at,
+				env: { ROLE: 'worker' },
+				launch: 'claude',
+			})
+			const open = calls.find((c) => c[0] === 'split-window' || c[0] === 'new-window')!
+			expect(open).toContain('-e')
+			expect(open).toContain('ROLE=worker')
+			// The command is typed literally — never as an `env ...` prefix.
+			expect(calls.some((c) => c[0] === 'send-keys' && c.includes('-l') && c.includes('claude'))).toBe(true)
+			expect(calls.every((c) => c.every((a) => !a.startsWith('env ')))).toBe(true)
+		})
+
 		it('open() defaults to tab and honors pane:right / pane:down / tab placement', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'split-window': '%1\t@1', 'new-window': '%2\t@1' })

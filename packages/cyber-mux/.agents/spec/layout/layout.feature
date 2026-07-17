@@ -394,6 +394,12 @@ Feature: layout — named, reusable pane layouts
   # (`mux/mux.feature`, "Split options"). This node owns only what a TEMPLATE does with them: that
   # the desugared tree carries them, and that a backend which cannot size a split degrades rather
   # than rejecting an otherwise-valid pool.
+  #
+  # The two degrades are NOT symmetric, though the block's title pairs them. `ratio`'s policy is this
+  # node's outright — this node is its only caller. `env`'s prefix-or-warn rule is the seam's, stated
+  # once in `mux/mux.feature` because env has two callers (this node and `--env`) and a rule with two
+  # callers is not one caller's to invent. What this node owns for env is the SCOPING: that only the
+  # root pane can need it, and that the warning fires once rather than per pane.
 
   Scenario: a pane with env and no command is valid and yields a blank shell with the env set
     Given a pane node with env ROLE=worker and no command
@@ -410,6 +416,32 @@ Feature: layout — named, reusable pane layouts
     And exactly one warning is written to stderr
     And stdout stays machine-readable
     # a wrong-looking split is not worth failing an otherwise-correct pool over
+
+  Scenario: a root pane whose env the region open could not carry has it prefixed onto its command
+    Given a region opened by a route that could not carry the root pane's env
+    And a template whose panes each carry a command, the root's among them
+    When the template is applied
+    Then the root pane's command is prefixed with that env
+    And no other pane's command is prefixed
+    # The scoping this node owns — the prefix-or-warn RULE is the seam's (`mux/mux.feature`), because
+    # env has two callers and a rule with two callers is not one caller's to invent. What is this
+    # node's is WHERE it applies: only the ROOT pane can need it, since every other pane is born by a
+    # split and splits carry env natively on both backends, so prefixing another would double-apply
+    # what the split already set. The template needs more than one pane to say that at all.
+
+  Scenario: a root pane whose env could not be carried, with no command to prefix, warns once
+    Given a region opened by a route that could not carry the root pane's env
+    And a template of several panes across several tabs, whose root pane carries no command
+    When the template is applied
+    Then every pane the template names is still created
+    And exactly one warning naming that pane's variables is written to stderr
+    And stdout stays machine-readable
+    # The other half of the scoping: HOW OFTEN. Once, not once per pane — the root pane is the only
+    # one that could have lost env, so a second warning would be noise about panes that never had a
+    # problem. Stated over a multi-pane, multi-tab template because a single-pane one cannot tell
+    # "once" from "once per pane", exactly as the ratio degrade above needs plural splits to mean
+    # anything. An otherwise-correct pool is not worth failing over a variable one route could not
+    # carry.
 
   # ── Resolution precedes side effects; apply does not roll back ──
 

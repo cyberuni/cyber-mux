@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
+import { envFallback } from './env-fallback.ts'
 import type { Exec } from './exec.ts'
 import {
 	collectPanes,
@@ -150,30 +151,6 @@ function tabState(
 		// The root leaf rides the region's own pane; every other leaf is born by exactly one split.
 		paneOf: new Map([[rootLeaf, root.id]]),
 	}
-}
-
-/**
- * Single-quote a value for a shell command line. Everything is literal inside single quotes, so the
- * only escape needed is for a single quote itself: end the quoting, emit an escaped `'`, reopen.
- * Without this a value carrying a space or a quote would split into extra words, or unbalance the
- * line outright.
- */
-function shellQuote(value: string): string {
-	return `'${value.replace(/'/g, `'\\''`)}'`
-}
-
-/**
- * The env-prefix fallback (design §7.3 Gap C) — `env K=V command`, which works anywhere because it
- * is just a command line. It is a LAST resort, and its costs are why: the values land in `ps` output
- * and the pane's shell history, and it can only serve a pane that has a command to prefix.
- *
- * The design recorded this as having "no customer" while every backend's env looked native. herdr's
- * worktree route is its first real one.
- */
-function envPrefix(env: Record<string, string>): string {
-	return `env ${Object.entries(env)
-		.map(([key, value]) => `${key}=${shellQuote(value)}`)
-		.join(' ')} `
 }
 
 /** A pane's resolved cwd: the apply-time target, joined with the node's relative `dir`. */
@@ -675,22 +652,25 @@ function report(ctx: WalkContext, tabs: TabState[]): LayoutManifest {
  */
 function submitCommands(tabs: TabState[], ctx: WalkContext): void {
 	for (const tab of tabs) {
-		// The root pane's env, when the region open could not carry it natively. Only reachable on herdr's
-		// worktree route; every other route set it at birth and must NOT be prefixed on top of that.
-		const rootEnv = tab.rootLeaf.env
-		const needsEnvPrefix = !tab.rootEnvHonored && rootEnv !== undefined && Object.keys(rootEnv).length > 0
-		if (needsEnvPrefix && !tab.rootLeaf.command) {
+		// The root pane's env compensation, when the region open could not carry it natively — the ONE
+		// pane that can need it, since every other is born by a split, which carries env at birth on both
+		// backends. Reachable only on herdr's worktree route; every native route set env already and must
+		// NOT be prefixed on top of it. The prefix-or-warn RULE is the seam's (`env-fallback.ts`); what
+		// this node owns is the scoping — root pane only, and the warning once rather than per pane.
+		const rootFallback = tab.rootEnvHonored ? undefined : envFallback(tab.rootLeaf.env, tab.rootLeaf.command)
+		if (rootFallback?.kind === 'dropped') {
 			// Nothing to prefix — the fallback only works by riding on a command line. Degrade and warn,
 			// never silently drop; stderr, so stdout stays machine-readable.
 			process.stderr.write(
-				`the layout's root pane "${tab.rootLeaf.label ?? '(unlabeled)'}" has env (${Object.keys(rootEnv).join(', ')}) ` +
+				`the layout's root pane "${tab.rootLeaf.label ?? '(unlabeled)'}" has env (${rootFallback.variables.join(', ')}) ` +
 					'but no command to carry it — this backend cannot set env on the region it opens\n',
 			)
 		}
 
 		for (const pane of tab.ordered) {
-			if (!pane.command) continue
-			const command = needsEnvPrefix && pane === tab.rootLeaf ? `${envPrefix(rootEnv)}${pane.command}` : pane.command
+			// The root pane's command may have been rewritten to carry its env; every other pane runs verbatim.
+			const command = pane === tab.rootLeaf && rootFallback?.kind === 'carried' ? rootFallback.command : pane.command
+			if (!command) continue
 			ctx.adapter.submit(ctx.exec, { id: tab.paneOf.get(pane)! }, command)
 		}
 	}

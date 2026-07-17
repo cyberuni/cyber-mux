@@ -31,9 +31,11 @@ once opened:
   carries no worktree record even when its cwd is a checkout, so it is never grouped with a repo —
   that is the `worktree` verbs' job, below.
 - **A split can be told which pane, how big, and what environment** — three options on the seam's
-  own open contract shape a `pane:*` placement, and none of them is a CLI flag: a caller reaches them
-  through the adapter. The layout capability is one such caller. What a template *does* with them is
-  [`layout/`](../layout/README.md)'s business; what they *mean* is this node's.
+  own open contract shape a `pane:*` placement. `from` and `ratio` are reached only through the
+  adapter, never a CLI flag; `env` also has a `--env` flag (below), whose *surface* is its own
+  concern while what env *means* stays this bullet's. The layout capability is another such caller.
+  What a template *does* with these is [`layout/`](../layout/README.md)'s business; what they *mean*
+  is this node's.
   - **`from` names the pane to split, and passing it is the only way `pane:right` means the same
     thing on both backends.** Omitting it does not mean "the calling pane" — it means "whatever this
     backend defaults to", and the two defaults disagree while both tracking the pane the *user* is
@@ -58,8 +60,34 @@ once opened:
     pool's root pane is born by the region open and never by a split, so a seam that scoped env to
     `pane:*` would drop it silently exactly where a caller needs it. Valid with or without a launch —
     a pane with env and no command is a blank shell with that env set. The one exception is herdr's
-    **worktree** verbs, whose create/open take no env parameter and refuse the flag outright; env is
-    dropped there rather than failing the checkout.
+    **worktree** verbs, whose create/open take no env parameter and refuse the flag outright; the
+    checkout is never failed over it.
+  - **The one route that cannot carry env reports that fact to its caller** — the seam's answer, not
+    a message to a human. No env flag reaches herdr's worktree command, and the route that opened the
+    region is the only thing that knows env was lost (every other route carries it, and a caller
+    cannot see which route ran). So the fact is reported outward rather than inferred, for the same
+    reason the workspace grouping is. This report is what makes the compensation below *possible*: it
+    is always made on that route, whether or not the compensation then succeeds.
+  - **Compensation is a separate altitude, and it either prefixes or warns — never both.** Given that
+    report, a caller with a command to run hands env to the command as an `env KEY=VALUE` prefix, and
+    the variable lands. A caller with no command has nothing to ride, so the variable genuinely does
+    not land and a warning goes to stderr naming it. Only the route that lost env may prefix —
+    double-applying over a native set would push the values into `ps` output and shell history on
+    every route, which is the exact cost the prefix is a last resort to avoid. The prefix is a shell
+    command line, so values are quoted for one.
+  - **`--env KEY=VALUE`, repeatable, on every verb that opens a pane** (`open`, `worktree add`,
+    `worktree open`) — env is the one split option with a CLI flag, because a variable a caller
+    cannot set at birth is one they cannot set at all. Exactly one pane opens on each of those
+    routes, so "which pane" needs no rule: it is the one the verb opened — **except on herdr's
+    worktree bind route**, the one route that cannot carry env, where the flag degrades to a prefix
+    or a warning per the two bullets above. That exception is stated wherever the flag is, because a
+    CLI property silently false on one backend's one route is this project's recurring defect.
+    Refused alongside `--layout` for `--launch`'s reason — the template owns what is in the panes it
+    declares. It **implies a placement** for `--launch`'s reason too: asking for something in a pane
+    is asking for the pane, and without that a bare `worktree add --env` would open nothing and drop
+    the env with nothing to carry it. A missing `=` is malformed and rejected before anything opens;
+    a present `=` with nothing after it sets the variable empty, and a value's own `=` is kept by
+    splitting on the first one only.
 
   **Boundary — the seam does not validate `ratio`.** It renders whatever number it is given; the
   `0 < ratio < 1` bar belongs to the caller (layout's schema enforces it, and is where a degenerate
@@ -405,7 +433,7 @@ Every scenario in [`mux.feature`](./mux.feature) maps to one of these behaviors:
 |---|---|
 | **backend selected by environment** | tmux vs herdr selection; neither present errors |
 | **placement** | `--at` choices; tab honored per backend, never a split; `workspace` → each backend's own visible space (herdr `workspace create`, tmux window), never a detached tmux session; a workspace `open` makes is bound to no repo; omitted `--at` falls back to `tab` |
-| **split options — which pane, how big, what environment** | `from` targets a `pane:*` split on both backends (tmux `-t`, herdr positional) and is ignored by `tab`/`workspace`; omitted, each backend takes its own default, which tracks the user's focus rather than the caller's. `ratio` is the fraction kept by the ORIGINAL pane and converts in opposite directions (herdr passes it through, tmux inverts to `1 - ratio`); omitted, each backend splits evenly; never passed to a tab or workspace. Each backend declares whether it can size a split at all. `env` is native at the birth of every tier on both backends, one repeated flag per variable, with or without a launch — except herdr's worktree verbs, which take no env param and drop it |
+| **split options — which pane, how big, what environment** | `from` targets a `pane:*` split on both backends (tmux `-t`, herdr positional) and is ignored by `tab`/`workspace`; omitted, each backend takes its own default, which tracks the user's focus rather than the caller's. `ratio` is the fraction kept by the ORIGINAL pane and converts in opposite directions (herdr passes it through, tmux inverts to `1 - ratio`); omitted, each backend splits evenly; never passed to a tab or workspace. Each backend declares whether it can size a split at all. `env` is native at the birth of every tier on both backends, one repeated flag per variable, with or without a launch — except herdr's worktree verbs, which take no env param and refuse the flag; that route reports to its caller that it could not carry env (both directions of the report are pinned, so neither answer can be hardcoded), and the caller then compensates — prefixing `env K=V` onto the command where there is one, warning on stderr where there is none, and never prefixing over a native set |
 | **open returns the pane's tab, and reports it** | the tab the new pane landed in, per placement on both backends (herdr: a new tab reports itself, a created workspace its root tab, a split the caller's; tmux: the Window the pane landed in); reported by every backend and absent on none, because every multiplexer has the Tab level; read from the output the pane id already comes from, so it costs no extra call; it is what addresses a rename at the tab tier, which a pane id cannot do portably |
 | **naming a space after its birth** | every backend renames every tier it can name at birth (tmux a window name or pane title; herdr a tab or pane rename); a new workspace's root tab is named this way because herdr offers no flag to name it at birth; a rename moves no focus and opens nothing |
 | **the workspace group — carrying a grouping a backend has no tier for** | the open contract carries an opaque group id, never parsed, split, or derived from the label; a backend with no workspace tier stores it natively (tmux: a window option it can filter on, surviving a rename); a backend with a real workspace tier ignores it, its tier being the group; no id is invented for a caller that did not ask; the id is not a workspace, so `open` still reports the workspace absent; grouping is also a **verb** over an already-open space, which `open`'s own option routes through; a backend whose display name is composed stores the space's **own name** beside the group, since one name field means composing destroys the original |
@@ -416,7 +444,8 @@ Every scenario in [`mux.feature`](./mux.feature) maps to one of these behaviors:
 | **pane focus reporting** | tri-state focused / not-focused / unknown per backend (tmux: pane+window active & session attached; herdr: pane record `focused`); a query that can't be answered → unknown so callers fail open |
 | **open returns the pane's workspace, and reports it** | the workspace the new pane landed in, per placement on herdr (a created workspace reports itself; a tab reports the workspace it was created in; a split reports the caller's); absent on a backend with no workspace tier; read from the output the pane id already comes from, so it costs no extra call; reported beside the pane by `open` itself and carried for a pool by the layout manifest; occupancy is never a worktree binding |
 | **git worktree helpers** | `worktree add` defaults the path to a sibling of the primary checkout on every backend; `--base` sets the start-point; `worktree remove` refuses the primary checkout, tolerates an already-gone worktree, and refuses uncommitted changes unless `--force` |
-| **worktree/workspace binding** | a bare `add` opens nothing and resolves no backend; `--launch` implies `--at workspace`; `--at workspace` groups where the backend binds and falls back where it does not; a pane/tab placement degrades (reports no workspace) rather than failing, and only where a grouping was on offer; `open` groups a checkout plain git made |
+| **worktree/workspace binding** | a bare `add` — none of `--at`, `--launch` or `--env` — opens nothing and resolves no backend, which is what makes it the only route that works outside a multiplexer at all; `--launch` and `--env` each imply `--at workspace`, both being a request for something IN a pane; `--at workspace` groups where the backend binds and falls back where it does not; a pane/tab placement degrades (reports no workspace) rather than failing, and only where a grouping was on offer; `open` groups a checkout plain git made |
+| **`--env`, the CLI surface for the seam's env option** | repeatable `--env KEY=VALUE` on every verb that opens a pane (`open`, `worktree add`, `worktree open`) — the one split option with a flag, since a variable not set at birth cannot be set at all; it names the pane the verb opens, exactly one being opened on each route, **except** on herdr's worktree bind route, where it degrades to a prefix on `--launch` or a stderr warning with no command to ride — stated on BOTH worktree verbs, which are exposed identically; refused alongside `--layout`, which owns its own panes' env; implies a placement; a missing `=` is rejected before anything opens, a trailing `=` sets the variable empty, and a value's own `=` survives by splitting on the first only |
 | **naming what was opened** | `--label` names the tier `--at` opened, on every backend (herdr workspace/tab/pane label; tmux window name or pane title); taken at birth where the backend's CLI allows, set immediately after where it does not; omitted leaves the backend's own default |
 | **worktree facts vs binding** | `list` reads path/branch/linked/prunable from git on every backend and reports only the binding from the backend; `list`/`remove` answer with no multiplexer |
 | **worktree removal ordering** | never delegated to a backend — cyber-mux's gates plus git, the backend only releasing its binding; gates run before the release (a refused removal has no side effect); the release runs before git's removal (no workspace on a dead directory), including for a checkout already gone |

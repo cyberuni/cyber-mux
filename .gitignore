@@ -4,3 +4,6 @@ node_modules/
 dist
 .env
 .scenario-report.xml
+
+# SDD mission runtime statusline — written only while a mission is in flight, never committed
+.agents/sdd/statusline

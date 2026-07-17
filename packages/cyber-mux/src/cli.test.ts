@@ -1485,6 +1485,209 @@ describe('spec:cyber-mux/mux', () => {
 				expect(logs).toEqual([])
 			})
 		})
+
+		describe('--env, the CLI surface for the seam’s env option', () => {
+			/** git (rev-parse only), tmux (keyed by verb), herdr (keyed by first two args) on one fake. */
+			function envExec(calls: string[][], responses: Record<string, string | null> = {}): Exec {
+				return (cmd, args) => {
+					calls.push([cmd, ...args])
+					if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
+					if (cmd === 'tmux') return responses[args[0]!] ?? null
+					return responses[args.slice(0, 2).join(' ')] ?? null
+				}
+			}
+
+			/** herdr's worktree create/open envelope — carries the bound workspace and the worktree record. */
+			const herdrWorktreeOut = JSON.stringify({
+				result: {
+					root_pane: { pane_id: 'w9:p1', tab_id: 'w9:t1' },
+					workspace: { workspace_id: 'w9' },
+					worktree: { path: '/repo.worktrees/x', branch: 'my-feature' },
+				},
+			})
+
+			/** The tmux opens (new-window/split-window) a verb produced — where env rides as a native `-e`. */
+			function tmuxOpens(calls: string[][]) {
+				return calls.filter((c) => c[0] === 'tmux' && (c[1] === 'new-window' || c[1] === 'split-window'))
+			}
+
+			const TMUX_OPEN_RESPONSES = { 'new-window': '%20\t@1', 'split-window': '%9\t@1' }
+
+			// tmux carries env natively on every route: `open` sets it on the window, and the two worktree
+			// verbs have no herdr-style bind, so they fall back to `git worktree add` + a plain `open` that
+			// sets it just the same. The native `-e KEY=VALUE` is the proof.
+			it.each([
+				['open', ['open', '--at', 'workspace', '--env', 'ROLE=worker']],
+				['worktree add', ['worktree', 'add', '--branch', 'my-feature', '--env', 'ROLE=worker']],
+				['worktree open', ['worktree', 'open', '/repo.worktrees/x', '--env', 'ROLE=worker']],
+			])('--env sets the variable in the pane the verb opens, on every route that carries env', async (_verb, argv) => {
+				const calls: string[][] = []
+				const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: envExec(calls, TMUX_OPEN_RESPONSES) })
+				await run(program, argv)
+				const opens = tmuxOpens(calls)
+				expect(opens.length).toBeGreaterThan(0)
+				expect(opens.some((c) => c.includes('-e') && c.includes('ROLE=worker'))).toBe(true)
+			})
+
+			it.each([
+				['open', ['open', '--at', 'workspace', '--env', 'ROLE=worker', '--env', 'TIER=gpu']],
+				['worktree add', ['worktree', 'add', '--branch', 'my-feature', '--env', 'ROLE=worker', '--env', 'TIER=gpu']],
+				['worktree open', ['worktree', 'open', '/repo.worktrees/x', '--env', 'ROLE=worker', '--env', 'TIER=gpu']],
+			])('--env is repeatable, one variable per flag, on every verb that has it', async (_verb, argv) => {
+				const calls: string[][] = []
+				const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: envExec(calls, TMUX_OPEN_RESPONSES) })
+				await run(program, argv)
+				const opens = tmuxOpens(calls)
+				expect(opens.some((c) => c.includes('ROLE=worker'))).toBe(true)
+				expect(opens.some((c) => c.includes('TIER=gpu'))).toBe(true)
+			})
+
+			it.each([
+				['open', ['open', '--at', 'workspace', '--env', 'ROLE=']],
+				['worktree add', ['worktree', 'add', '--branch', 'my-feature', '--env', 'ROLE=']],
+				['worktree open', ['worktree', 'open', '/repo.worktrees/x', '--env', 'ROLE=']],
+			])('--env with an empty value sets the variable empty, rather than rejecting', async (_verb, argv) => {
+				const calls: string[][] = []
+				const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: envExec(calls, TMUX_OPEN_RESPONSES) })
+				await run(program, argv)
+				// `${k}=${v}` with an empty value is exactly `ROLE=` — set, not rejected, not dropped.
+				expect(tmuxOpens(calls).some((c) => c.includes('ROLE='))).toBe(true)
+			})
+
+			// The split point is OBSERVABLE only where key and value are emitted separately — the shell
+			// prefix on herdr's worktree bind route, which quotes the VALUE alone: `env URL='k=v'` (first
+			// split) vs `env URL=k='v'` (last split) differ, so the two worktree rows pin the split. `open`
+			// never takes that route: on the native `-e KEY=VALUE` / `--env KEY=VALUE` flag the adapter
+			// emits `${key}=${value}`, which reassembles to `URL=k=v` whatever the split, and the OS
+			// re-splits on the first `=` regardless — so the pane carries URL=k=v either way. That is not a
+			// coverage hole but a property: for `open` the split is behaviorally invariant, so its row
+			// verifies its actual oracle — the =-bearing value reaches the pane intact — which a resolver
+			// that dropped the value or truncated at the first `=` would fail.
+			it.each<{ verb: string; drive: () => Promise<string[][]>; check: (calls: string[][]) => void }>([
+				{
+					verb: 'open',
+					drive: async () => {
+						const calls: string[][] = []
+						const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: envExec(calls, TMUX_OPEN_RESPONSES) })
+						await run(program, ['open', '--at', 'workspace', '--env', 'URL=k=v'])
+						return calls
+					},
+					check: (calls) => expect(tmuxOpens(calls).some((c) => c.includes('-e') && c.includes('URL=k=v'))).toBe(true),
+				},
+				{
+					verb: 'worktree add',
+					drive: async () => {
+						const calls: string[][] = []
+						const program = buildProgram({
+							env: { CYBER_MUX: 'herdr' },
+							exec: envExec(calls, { 'worktree create': herdrWorktreeOut }),
+						})
+						await run(program, ['worktree', 'add', '--branch', 'my-feature', '--env', 'URL=k=v', '--launch', 'claude'])
+						return calls
+					},
+					check: (calls) =>
+						expect(calls.find((c) => c[0] === 'herdr' && c[1] === 'pane' && c[2] === 'run')?.[4]).toBe(
+							"env URL='k=v' claude",
+						),
+				},
+				{
+					verb: 'worktree open',
+					drive: async () => {
+						const calls: string[][] = []
+						const program = buildProgram({
+							env: { CYBER_MUX: 'herdr' },
+							exec: envExec(calls, { 'worktree open': herdrWorktreeOut }),
+						})
+						await run(program, ['worktree', 'open', '/repo.worktrees/x', '--env', 'URL=k=v', '--launch', 'claude'])
+						return calls
+					},
+					check: (calls) =>
+						expect(calls.find((c) => c[0] === 'herdr' && c[1] === 'pane' && c[2] === 'run')?.[4]).toBe(
+							"env URL='k=v' claude",
+						),
+				},
+			])('an env value containing = splits on the first = only', async ({ drive, check }) => {
+				check(await drive())
+			})
+
+			// herdr's worktree bind is the one route that cannot set env at birth, so `--env` with a command
+			// to ride on rides in as an `env KEY=VALUE` prefix on the `pane run` the launch lowers to.
+			it.each([
+				[
+					'worktree add',
+					['worktree', 'add', '--branch', 'my-feature', '--env', 'ROLE=worker', '--launch', 'claude'],
+					'worktree create',
+				],
+				[
+					'worktree open',
+					['worktree', 'open', '/repo.worktrees/x', '--env', 'ROLE=worker', '--launch', 'claude'],
+					'worktree open',
+				],
+			])('--env on the one route that cannot carry it rides in on --launch', async (_verb, argv, key) => {
+				const calls: string[][] = []
+				const program = buildProgram({ env: { CYBER_MUX: 'herdr' }, exec: envExec(calls, { [key]: herdrWorktreeOut }) })
+				await run(program, argv)
+				const paneRun = calls.find((c) => c[0] === 'herdr' && c[1] === 'pane' && c[2] === 'run')
+				expect(paneRun?.[4]).toBe("env ROLE='worker' claude")
+			})
+
+			it.each([
+				['worktree add', ['worktree', 'add', '--branch', 'my-feature', '--env', 'ROLE=worker'], 'worktree create'],
+				['worktree open', ['worktree', 'open', '/repo.worktrees/x', '--env', 'ROLE=worker'], 'worktree open'],
+			])('--env on the one route that cannot carry it, with no command to ride, warns', async (_verb, argv, key) => {
+				const stderr: string[] = []
+				vi.spyOn(process.stderr, 'write').mockImplementation((line) => {
+					stderr.push(String(line))
+					return true
+				})
+				const calls: string[][] = []
+				const program = buildProgram({ env: { CYBER_MUX: 'herdr' }, exec: envExec(calls, { [key]: herdrWorktreeOut }) })
+				await run(program, argv)
+				// The variable genuinely did not land, and the caller is told which one — not left to guess.
+				expect(stderr.join('')).toContain('ROLE')
+				expect(calls.some((c) => c[0] === 'herdr' && c[1] === 'pane' && c[2] === 'run')).toBe(false)
+			})
+
+			it.each([
+				['open', ['open', '--layout', 'pool-4', '--env', 'ROLE=worker']],
+				['worktree add', ['worktree', 'add', '--branch', 'my-feature', '--layout', 'pool-4', '--env', 'ROLE=worker']],
+			])("--env is refused alongside --layout, which owns its own panes' env", async (_verb, argv) => {
+				const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: noAncestry })
+				await expect(run(program, argv)).rejects.toThrow()
+			})
+
+			it.each([
+				['open', 'ROLE'],
+				['open', '=worker'],
+				['worktree add', 'ROLE'],
+				['worktree add', '=worker'],
+				['worktree open', 'ROLE'],
+				['worktree open', '=worker'],
+			])('--env without a KEY=VALUE pair is rejected before any side effect', async (verb, bad) => {
+				const argv =
+					verb === 'open'
+						? ['open', '--env', bad]
+						: verb === 'worktree add'
+							? ['worktree', 'add', '--branch', 'my-feature', '--env', bad]
+							: ['worktree', 'open', '/repo.worktrees/x', '--env', bad]
+				const calls: string[][] = []
+				const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: envExec(calls) })
+				await expect(run(program, argv)).rejects.toThrow()
+				// Rejected in the arg parser, before the action runs — so no checkout, no pane, no exec at all.
+				expect(calls).toEqual([])
+			})
+
+			it("worktree add --env defaults the placement to workspace, for --launch's reason", async () => {
+				const calls: string[][] = []
+				const program = buildProgram({
+					env: { CYBER_MUX: 'herdr' },
+					exec: envExec(calls, { 'worktree create': herdrWorktreeOut }),
+				})
+				await run(program, ['worktree', 'add', '--branch', 'my-feature', '--env', 'ROLE=worker'])
+				// A bind route ran — a workspace opened, not the bare-git path an add with no pane request takes.
+				expect(calls.some((c) => c[0] === 'herdr' && c[1] === 'worktree' && c[2] === 'create')).toBe(true)
+			})
+		})
 	})
 })
 

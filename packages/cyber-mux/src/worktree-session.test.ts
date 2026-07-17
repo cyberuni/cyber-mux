@@ -155,6 +155,66 @@ describe('spec:cyber-mux/mux', () => {
 		})
 	})
 
+	describe('the seam reports whether a route carried env, because only it knows', () => {
+		const env = { ROLE: 'worker' }
+		const base = { primaryRoot: '/repo', path: '/repo.worktrees/x', launch: 'claude' }
+
+		// One row per Examples row: env is native on every route EXCEPT herdr's worktree bind, whose
+		// `worktree create` takes no env param — so only that one route reports `envHonored: false`.
+		it.each<{
+			route: string
+			call: (exec: Exec) => { envHonored: boolean }
+			responses: Record<string, string>
+			envHonored: boolean
+		}>([
+			{
+				route: "herdr's worktree bind",
+				call: (exec) =>
+					addAndOpenWorktree(exec, herdrSessionAdapter, { ...base, branch: 'feat/x', env, at: 'workspace' }),
+				responses: { 'herdr worktree create': HERDR_WORKTREE_OUT },
+				envHonored: false,
+			},
+			{
+				// The same bind route reached through `worktree open` rather than `worktree add` — exposed
+				// identically (herdr's `worktree open` takes no env either), so it must report the drop too.
+				// Covered so the report is not wired on one worktree verb and silently forgotten on its sibling.
+				route: "herdr's worktree bind, via open",
+				call: (exec) => openExistingWorktree(exec, herdrSessionAdapter, { ...base, env, at: 'workspace' }),
+				responses: { 'herdr worktree open': HERDR_WORKTREE_OUT },
+				envHonored: false,
+			},
+			{
+				route: 'the plain git worktree fallback',
+				call: (exec) =>
+					addAndOpenWorktree(exec, tmuxSessionAdapter, { ...base, branch: 'feat/x', env, at: 'workspace' }),
+				responses: { 'tmux new-window': '%9\t@1' },
+				envHonored: true,
+			},
+			{
+				route: 'a direct open on herdr',
+				call: (exec) => openExistingWorktree(exec, herdrSessionAdapter, { ...base, env, at: 'pane:right' }),
+				responses: {
+					'herdr pane split': '{"result":{"pane":{"pane_id":"w3:pB","tab_id":"w3:t1"}}}',
+					'git -C /repo': GIT_PORCELAIN,
+				},
+				envHonored: true,
+			},
+			{
+				route: 'a direct open on tmux',
+				call: (exec) => openExistingWorktree(exec, tmuxSessionAdapter, { ...base, env }),
+				responses: { 'tmux new-window': '%9\t@1', 'git -C /repo': GIT_PORCELAIN },
+				envHonored: true,
+			},
+		])('whether a route carried env is reported by the route, because only it knows', ({
+			call,
+			responses,
+			envHonored,
+		}) => {
+			const opened = call(fakeExec([], responses))
+			expect(opened.envHonored).toBe(envHonored)
+		})
+	})
+
 	describe('openExistingWorktree — the add-now-group-later remedy', () => {
 		it('worktree open groups a worktree that plain git created earlier', () => {
 			const calls: string[][] = []

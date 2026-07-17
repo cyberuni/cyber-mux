@@ -128,6 +128,8 @@ export function openExistingWorktree(
 		primaryRoot: string
 		path: string
 		launch?: string
+		/** Environment set in the opened root pane; honored natively on the `open` route, compensated on the bind route. */
+		env?: Record<string, string>
 		at?: SessionPlacement
 		label?: string
 		/** Passed to `open` for a `pane:*` placement; see `SessionOpenOptions.from`. */
@@ -140,13 +142,23 @@ export function openExistingWorktree(
 			primaryRoot: opts.primaryRoot,
 			path: opts.path,
 			launch: opts.launch,
+			env: opts.env,
 			label: opts.label,
 		})
-		// Vacuous: this verb takes no env to honor or lose.
-		return { ...opened, degraded: false, envHonored: true }
+		// herdr's `worktree open` takes no env — the adapter compensates on the launch and reports the
+		// drop here, exactly as the create route does, so a caller cannot assume env landed.
+		return { ...opened, degraded: false, envHonored: !opts.env }
 	}
 	const root = normalizeWorktreePath(opts.path)
-	const target = adapter.open(exec, { cwd: root, launch: opts.launch, at, label: opts.label, from: opts.from })
+	const target = adapter.open(exec, {
+		cwd: root,
+		launch: opts.launch,
+		env: opts.env,
+		at,
+		label: opts.label,
+		from: opts.from,
+	})
+	// This route goes through `open`, where env is native at every tier on both backends.
 	// The branch is git's answer, not the backend's — same rule as `listWorktrees`.
 	const branch = listWorktreesFromGit(exec, opts.primaryRoot).find((entry) => entry.root === root)?.branch
 	return { worktree: { root, branch: branch ?? '' }, target, degraded: isDegraded(adapter, at), envHonored: true }
