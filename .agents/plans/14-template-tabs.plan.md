@@ -17,11 +17,15 @@ todos:
   - content: Spec gate — cold judge PASS/ALIGNED, status approved, freeze holds
     status: completed
   - content: Deliver — schema + desugarer for the tabs form
-    status: pending
-  - content: Deliver — the multi-tab walk and the manifest tab field
-    status: pending
+    status: completed
   - content: Deliver — the mux seam group id, tmux @cm_ws, herdr ignore
-    status: pending
+    status: completed
+  - content: Close spec gap — a rename member on the seam (additive, self-clears)
+    status: completed
+  - content: Close spec gap — OpenedPane carries the pane's tab (additive, self-clears)
+    status: completed
+  - content: Deliver — the multi-tab walk and the manifest tab field
+    status: in_progress
   - content: Deliver — the workspace geometry seam and save --workspace
     status: pending
   - content: Impl gate — cold judge, one verification per frozen scenario
@@ -180,40 +184,88 @@ Clearance **did** fire. Recorded as a `correction` (`explore-finding`) in the co
 line stands as written, because the ledger is append-only and correcting a wrong prediction in place
 would erase the fact that it was made.
 
+## Deliver — what build-to-learn found, and it is the story of this CR
+
+**The spec had two gaps of one shape, and only building surfaced them.** Both were caught by
+impl-producers that **stopped and reported rather than inventing**, which is the behavior worth
+keeping. Both fixes were **additive** to a frozen suite, so the freeze self-cleared and no floor
+fired — `layout` still carries exactly one removal, the pre-authorized Clearance.
+
+1. **No way to rename a space** (`correction` seq:2). `layout.feature` requires naming a space after
+   birth (herdr's root tab) and `mux/README` even states the cost as "one tab rename" — but
+   `SessionAdapter` had **no rename at all**. herdr's `pane rename` existed only *inside* `open`,
+   private to the `pane:*` branch. Fixed with a required `rename(exec, target, tier, name)`.
+2. **No way to name WHICH tab** (`correction` seq:3). `rename(…, 'tab', …)` needs a tab id;
+   `OpenedPane` reported only the pane. The trap: `herdr tab rename <pane-id>` fails
+   (`tab_not_found`) while `tmux rename-window -t <pane-id>` **succeeds** — so the naive fix is green
+   on tmux and silently broken on herdr, with every mocked test passing. Fixed by widening
+   `OpenedPane` with a **required** `tab`.
+
+**Root cause, common to both:** the layout behavior was specified without walking the seam's actual
+return shape and verb list. The spec gate could not catch it — a cold judge checks pairwise
+consistency and the miss test, and neither surfaces a *mechanism that no scenario names*.
+
+**Also caught: a false-green test** (`correction` seq:4). `a tabs template still defaults --at to
+workspace` was bound on tmux and **survived** mutating its own subject, because tmux collapses
+`workspace` and `tab` onto the same `new-window` — identical argv at either placement, so no
+assertion over it can discriminate. Rewritten on herdr. **General hazard: tmux is the wrong backend
+to bind any scenario that turns on the workspace/tab distinction.**
+
+### Landed
+
+| Unit | Bound | Commit |
+|---|---|---|
+| tabs schema + desugarer (`layout.ts`) | 9/9 | `389115e` |
+| seam group id, `@cm_ws` (`session*.ts`) | 5/5 | `5cd17f4` |
+| `rename` seam member | 3/3 | pending |
+| `OpenedPane.tab` | 2/2 | pending |
+
+Bridge: **layout 47/97, mux 80/87, 0 fail**; 486 tests green, `pnpm verify` 6/6.
+
+### Seam shape deliver settled on
+
+```ts
+export type SessionSpaceTier = 'pane' | 'tab'
+rename(exec: Exec, target: SessionTarget, tier: SessionSpaceTier, name: string): void
+
+export interface OpenedPane extends SessionTarget {
+	tab: string        // REQUIRED — every multiplexer has the Tab level
+	workspace?: string // optional — only SOME have a Workspace level
+}
+```
+
+`rename` is **required, not optional**: a caller finding it absent could not degrade, since a rename
+is the only way to name a root tab (`canSizeSplits` is the contrast — a ratio has a real degrade, so
+it is *declared*; a name has none). The tier signal stays `opened.workspace`, which already means
+"this backend has a workspace tier" — a declared `hasWorkspaceTier` flag was rejected because it does
+not stand alone (herdr's root tab needs the rename regardless).
+
 ## NEXT
 
-**Deliver — nothing is implemented yet.** No production code has changed; the whole CR to date is
-spec, suite, and the design-doc correction. Build to keep against the frozen suite, in the four
-chunks the todos name. The frozen `.feature` is the contract — every defect is fixed in **code**,
-never by editing a scenario to fit the implementation.
+Finish the walk (5 scenarios in flight), then **capture** — the last chunk, and the only one not yet
+started. The shape it has to hit:
 
-The shape deliver has to hit, all of it verified at intake and none of it yet built:
+- **A new optional workspace-wide geometry member beside `describeRegion?`** — optional, unlike
+  `rename`: a caller finding it absent **can** degrade (refuse `--workspace`, naming the backend and
+  writing nothing), which is exactly the existing shape for a backend that cannot report a region's
+  geometry.
+- **`save --workspace` opts in** (`src/layout-capture.ts`, `src/cli.ts`). The bare form is
+  **unchanged** — that is what keeps every region-scoped frozen `save` scenario literally true — and
+  notes on stderr what it left out.
+- **herdr** — `tab list --workspace <id>` → `pane list --workspace <id>` → `pane layout --pane <one
+  pane per tab>`. An unfocused tab in another workspace reports live geometry, so nothing needs
+  focusing first and there is no race. `herdr layout` is **not a CLI verb** in 0.7.4, so the native
+  per-tab export is unreachable.
+- **tmux** — the workspace is not a fact tmux holds, so the read is *"which windows carry this group
+  id"*: `list-windows -a -f '#{==:#{@cm_ws},<id>}'`, never the label. A window carrying **no** tag is
+  a workspace of one.
+- **`a tab's label is never parsed back to recover its workspace`** belongs to **capture**, not the
+  walk — its `When` is "the workspace's tabs are *enumerated*", which is the read path.
 
-- **Schema** (`src/layout.ts`) — `tabs: TabNode[]` as a third top-level form; `TabNode` reuses the
-  pane tier wholesale (`label?`, `root?`/`panes?`/`arrange?`). Exactly one of `root`|`panes`|`tabs`;
-  each tab exactly one of `root`|`panes`. Pane labels unique **across the whole template** (manifest
-  keys are global); tab labels a separate namespace, unique among themselves.
-- **Walk** (`src/layout-session.ts`) — `openLayout` currently opens **exactly one** region and treats
-  its root pane as the tree root; there is no loop over regions. Wrap it: first tab at `workspace`,
-  later tabs at `tab`, each tab's tree built against its own root pane, all geometry before any
-  submit.
-- **Manifest** — add `tab` to `LayoutPaneReport` (`null` from a single-tab template); the pane list
-  stays one flat list. `workspace` stays `null` on tmux.
-- **Seam** (`src/session.ts`) — an optional group id on `SessionOpenOptions`; tmux writes it as
-  `set-option -w @cm_ws <id>` and herdr ignores it. Plus an optional workspace-wide geometry member
-  beside `describeRegion?`. Both **new optional members**, so an adapter implementing neither still
-  satisfies the contract.
-- **tmux** — `workspace` and `tab` both collapse to `new-window -d`, so a tabs template yields N
-  windows there; `-n` names at birth. Read the group back with
-  `list-windows -a -f '#{==:#{@cm_ws},<id>}'`.
-- **herdr** — `tab create --label` names at birth, but a new workspace's **root tab** cannot be, so it
-  takes a `tab rename` after birth. Capture walks `tab list --workspace <id>` →
-  `pane list --workspace <id>` → `pane layout --pane <one pane per tab>`. `herdr layout` is **not a
-  CLI verb** in 0.7.4, so the native per-tab export is unreachable.
-- **Capture** (`src/layout-capture.ts`, `src/cli.ts`) — `save --workspace` opts in; the bare form is
-  unchanged and notes on stderr what it left out.
-
-There are ~140 layout-touching tests today; the bridge keys a test to a scenario by its leaf title
-matching the scenario name **verbatim**. A retitle makes a test *claim* its scenario, so each new
-binding gets proven by mutating the scenario's subject and watching that test fail — a false bind is
-worse than an unbound scenario, because unbound gets hand-judged and a false bind gets trusted.
+The bridge keys a test to a scenario by its leaf title matching the scenario name **byte-for-byte**.
+Three traps have already bitten this CR and will bite capture too: a Scenario Outline needs a
+**static** `it.each` title (per-row interpolation binds nothing); a **typographic apostrophe** is a
+silent failed bind; and **tmux cannot discriminate the workspace/tab tiers**, so any scenario turning
+on that distinction must bind on herdr. Above all: a retitle makes a test *claim* its scenario, so
+every binding is proven by mutating the subject and watching that test fail — a false bind is worse
+than an unbound scenario, because unbound gets hand-judged and a false bind gets trusted.
