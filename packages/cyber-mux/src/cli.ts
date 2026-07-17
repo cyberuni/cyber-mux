@@ -433,7 +433,11 @@ function openCommand(deps: Deps): Command {
 				label: opts.label,
 				from: callerPane(a, deps.env),
 			})
-			output({ pane: t.id }, () => printFields({ pane: t.id }))
+			// The workspace rides in on the open itself — the backend answered when the pane was born, so
+			// reporting it asks nothing extra; hiding it would discard a fact already in hand. `?? null`
+			// on the JSON side only, matching `reportOpenedWorktree`: absent is the seam's meaning, null
+			// is its spelling at the machine-readable boundary.
+			output({ pane: t.id, workspace: t.workspace ?? null }, () => printFields({ pane: t.id, workspace: t.workspace }))
 		})
 }
 

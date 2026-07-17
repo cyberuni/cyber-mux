@@ -81,9 +81,9 @@ Feature: mux — the pane abstraction
   # Absent — never a false "none" — on a backend with no workspace tier, the same convention the
   # focus probe's `unknown` follows.
 
-  # What `open` RETURNS, not what the CLI prints: the workspace reaches a consumer through the layout
-  # manifest (see layout/), which is what needed it. A bare `open --format json` still reports the
-  # pane alone — widening that surface is a separate question this CR does not settle.
+  # Two levels, deliberately separate: what `open` RETURNS (the seam, below) and what the CLI PRINTS
+  # (further down). The seam is the fact's source; every surface that reports it — the bare `open`
+  # report and the layout manifest (see layout/) — reads it from there rather than asking again.
 
   Scenario Outline: open returns the workspace the new pane landed in
     Given a caller running cyber-mux open --at <placement> with $HERDR_ENV set and no $TMUX
@@ -109,6 +109,20 @@ Feature: mux — the pane abstraction
     Then the workspace is read from the same backend output the pane id is read from
     # Every herdr route already emits the pane's own workspace_id. Probing for it separately would
     # buy nothing and cost a round trip per open.
+
+  Scenario Outline: open reports the workspace alongside the pane it opened
+    Given a caller running cyber-mux open --format json with <env>
+    When open runs
+    Then stdout carries the pane and <workspace>
+    # Nothing is looked up to answer this: the backend already said so when the pane was opened, and
+    # the seam already carries it. Reporting it is what makes a caller able to group the panes it
+    # holds by the space they occupy — the point of knowing it at all — rather than that fact
+    # reaching only a `--layout` caller through the manifest.
+
+    Examples:
+      | env                         | workspace                                          |
+      | $HERDR_ENV set and no $TMUX | the workspace it landed in                         |
+      | $TMUX set                   | a null workspace — no workspace tier to report from |
 
   Scenario: the workspace a pane landed in is not a worktree binding
     Given a caller running cyber-mux worktree add --branch my-feature --at pane:right on a backend that binds

@@ -29,6 +29,17 @@ function fakeHerdrExec(calls: string[][], responses: Record<string, string | nul
 	}
 }
 
+/** `output()` reads the real process.argv to pick a format, so a json test must supply one. */
+async function withArgv<T>(argv: string[], fn: () => Promise<T>): Promise<T> {
+	const original = process.argv
+	process.argv = ['node', 'cyber-mux', ...argv]
+	try {
+		return await fn()
+	} finally {
+		process.argv = original
+	}
+}
+
 describe('spec:cyber-mux/mux', () => {
 	describe('cli', () => {
 		let logs: string[]
@@ -67,6 +78,57 @@ describe('spec:cyber-mux/mux', () => {
 			const program = buildProgram({ env: { CYBER_MUX: 'none' }, exec: noAncestry })
 			await expect(run(program, ['mode'])).resolves.toBeDefined()
 			expect(logs).toEqual(['none'])
+		})
+
+		// Nothing is looked up to answer this: the backend said so when the pane was born and the seam
+		// carries it, so a report that omitted it would be discarding a fact already in hand. That is
+		// what makes a caller able to group the panes it holds by the space they occupy.
+		it('open reports the workspace alongside the pane it opened', async () => {
+			const calls: string[][] = []
+			// CYBER_MUX pins the fast-path, so no ancestry walk pollutes the call count below.
+			const program = buildProgram({
+				env: { CYBER_MUX: 'herdr', HERDR_ENV: '1' },
+				exec: fakeHerdrExec(calls, {
+					'workspace create': JSON.stringify({
+						result: { root_pane: { pane_id: 'w7:p1', tab_id: 'w7:t1', workspace_id: 'w7' } },
+					}),
+				}),
+			})
+			await withArgv(['open', '--at', 'workspace', '--format', 'json'], () =>
+				run(program, ['open', '--at', 'workspace', '--format', 'json']),
+			)
+			expect(JSON.parse(logs.join('\n'))).toEqual({ pane: 'w7:p1', workspace: 'w7' })
+			// The report is free: opening the pane is the ONLY backend call — the workspace rode in on it,
+			// with no `pane get`/`workspace list` follow-up to resolve it.
+			expect(calls).toHaveLength(1)
+			expect(calls[0]?.slice(0, 2)).toEqual(['workspace', 'create'])
+		})
+
+		// tmux has no workspace tier, so there is nothing to report. `null` is absent's spelling at the
+		// machine-readable boundary — the key is present so a consumer never has to guess whether the
+		// field was omitted or the backend said nothing.
+		it('open reports a null workspace on a backend with no workspace tier', async () => {
+			const program = buildProgram({
+				env: { TMUX: '/tmp/tmux-1000/default,1,0' },
+				exec: fakeTmuxExec([], { 'new-window': '%20' }),
+			})
+			await withArgv(['open', '--at', 'workspace', '--format', 'json'], () =>
+				run(program, ['open', '--at', 'workspace', '--format', 'json']),
+			)
+			expect(JSON.parse(logs.join('\n'))).toEqual({ pane: '%20', workspace: null })
+		})
+
+		// Text is human-facing, so an absent workspace prints nothing rather than a bare "null" line.
+		it('open’s text report omits the workspace line where the backend has none', async () => {
+			const program = buildProgram({
+				env: { TMUX: '/tmp/tmux-1000/default,1,0' },
+				exec: fakeTmuxExec([], { 'new-window': '%20' }),
+			})
+			await run(program, ['open', '--at', 'workspace'])
+			const out = logs.join('\n')
+			expect(out).toContain('%20')
+			expect(out).not.toContain('workspace')
+			expect(out).not.toContain('null')
 		})
 
 		it('--at accepts only pane:right, pane:down, tab, and workspace', async () => {
@@ -547,17 +609,6 @@ describe('spec:cyber-mux/mux', () => {
 					return true
 				})
 				return lines
-			}
-
-			/** `output()` reads the real process.argv to pick a format, so a json test must supply one. */
-			async function withArgv<T>(argv: string[], fn: () => Promise<T>): Promise<T> {
-				const original = process.argv
-				process.argv = ['node', 'cyber-mux', ...argv]
-				try {
-					return await fn()
-				} finally {
-					process.argv = original
-				}
 			}
 
 			describe('resolving a template by name', () => {
