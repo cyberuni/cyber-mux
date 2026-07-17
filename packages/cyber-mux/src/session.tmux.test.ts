@@ -146,6 +146,35 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls[0]).not.toContain('33%')
 		})
 
+		// Half is its own complement, so this is the one input the inversion cannot be seen through —
+		// 50% either way. It earns its place for the opposite reason to the case above: an even split is
+		// what anyone reaches for first by hand, so the value most likely to be used as a smoke test is
+		// the one that proves least. Pin it so it at least cannot silently stop being 50%.
+		it('an even split converts to half regardless of the inversion', () => {
+			const calls: string[][] = []
+			tmuxSessionAdapter.open(fakeExec(calls, { 'split-window': '%9\t@1' }), {
+				cwd: '/u',
+				at: 'pane:right',
+				from: { id: '%3' },
+				ratio: 0.5,
+			})
+			expect(calls[0]).toContain('50%')
+		})
+
+		// tmux takes `-l` as a whole percent, so the conversion rounds — and a ratio landing exactly on
+		// .5 is where a swap to floor/ceil or truncation would show. 0.125 inverts to 87.5%, which rounds
+		// half-up to 88%; truncating would say 87%.
+		it('a ratio on the rounding boundary rounds half up', () => {
+			const calls: string[][] = []
+			tmuxSessionAdapter.open(fakeExec(calls, { 'split-window': '%9\t@1' }), {
+				cwd: '/u',
+				at: 'pane:right',
+				from: { id: '%3' },
+				ratio: 0.125,
+			})
+			expect(calls[0]).toContain('88%')
+		})
+
 		it('ratio omitted leaves each backend its own even default', () => {
 			const calls: string[][] = []
 			tmuxSessionAdapter.open(fakeExec(calls, { 'split-window': '%9\t@1' }), { cwd: '/u', at: 'pane:right' })
@@ -155,12 +184,12 @@ describe('spec:cyber-mux/mux', () => {
 		// A window is not sized against a pane, so `-l` must never reach `new-window`. Every other ratio
 		// check uses a pane placement, so this is the only one covering the window tiers.
 		//
-		// tmux is defended twice here and it takes breaking BOTH to fail this: the `!window` guard
-		// empties `size`, AND the window branch never spreads `size` into its argv. Mutating the guard
-		// alone leaves this green — the guard is belt-and-braces, not the thing under test. The wrong
-		// subject it does catch is an author who wires `...size` into the window branch (verified by
-		// mutation: both rows then fail). herdr needs no equivalent check — its `size` is lexically
-		// scoped inside the pane-split branch and cannot reach a tab or workspace at all.
+		// What this catches is now narrow, and deliberately so: `size` is lexically scoped inside the
+		// pane-split branch (as herdr's always was), so the window branch cannot spread a value it
+		// cannot see — the ordinary way to break this does not compile. The wrong subject left is an
+		// author who hoists `size` back out to function scope AND spreads it into the window branch,
+		// which is exactly the compound move this rejects. It is a backstop against the structure being
+		// dismantled, not against a flag being passed.
 		it.each([
 			'tab',
 			'workspace',
