@@ -25,15 +25,17 @@ todos:
   - content: Close spec gap — OpenedPane carries the pane's tab (additive, self-clears)
     status: completed
   - content: Deliver — the multi-tab walk and the manifest tab field
-    status: in_progress
+    status: completed
   - content: Deliver — the workspace geometry seam and save --workspace
-    status: pending
-  - content: Impl gate — cold judge, one verification per frozen scenario
-    status: pending
-  - content: Rebase onto main, re-gate on the merged tree, land
-    status: pending
-  - content: Drain follow-ups into issues (needs permission)
-    status: pending
+    status: completed
+  - content: Remove the invented label-uniqueness rules (2nd Clearance)
+    status: completed
+  - content: Impl gate — cold judge, IMPLEMENTATION_PASS
+    status: completed
+  - content: Land as PR #30
+    status: completed
+  - content: Drain follow-ups — #31 filed; two others dissolved
+    status: completed
 ---
 
 # A layout template expresses tabs, not one pane tree
@@ -242,30 +244,45 @@ not stand alone (herdr's root tab needs the rename regardless).
 
 ## NEXT
 
-Finish the walk (5 scenarios in flight), then **capture** — the last chunk, and the only one not yet
-started. The shape it has to hit:
+**Landed as [PR #30](https://github.com/cyberuni/cyber-mux/pull/30)** — 11 commits, 510 tests,
+`pnpm verify` 6/6, both gates passed, `Closes #14`. Nothing outstanding.
 
-- **A new optional workspace-wide geometry member beside `describeRegion?`** — optional, unlike
-  `rename`: a caller finding it absent **can** degrade (refuse `--workspace`, naming the backend and
-  writing nothing), which is exactly the existing shape for a backend that cannot report a region's
-  geometry.
-- **`save --workspace` opts in** (`src/layout-capture.ts`, `src/cli.ts`). The bare form is
-  **unchanged** — that is what keeps every region-scoped frozen `save` scenario literally true — and
-  notes on stderr what it left out.
-- **herdr** — `tab list --workspace <id>` → `pane list --workspace <id>` → `pane layout --pane <one
-  pane per tab>`. An unfocused tab in another workspace reports live geometry, so nothing needs
-  focusing first and there is no race. `herdr layout` is **not a CLI verb** in 0.7.4, so the native
-  per-tab export is unreachable.
-- **tmux** — the workspace is not a fact tmux holds, so the read is *"which windows carry this group
-  id"*: `list-windows -a -f '#{==:#{@cm_ws},<id>}'`, never the label. A window carrying **no** tag is
-  a workspace of one.
-- **`a tab's label is never parsed back to recover its workspace`** belongs to **capture**, not the
-  walk — its `When` is "the workspace's tabs are *enumerated*", which is the read path.
+Final state: **layout 64/99 bound, mux 83/90, 0 fail.** Every new/changed scenario bound and
+passing; **zero unbound debt added** (the 35 + 7 unbound are the untouched pre-existing baseline).
+The bound count went *up* while the scenario count went *down* — `every validation error is reported
+at once` had a paraphrased test title and had been bound to nothing.
 
-The bridge keys a test to a scenario by its leaf title matching the scenario name **byte-for-byte**.
-Three traps have already bitten this CR and will bite capture too: a Scenario Outline needs a
-**static** `it.each` title (per-row interpolation binds nothing); a **typographic apostrophe** is a
-silent failed bind; and **tmux cannot discriminate the workspace/tab tiers**, so any scenario turning
-on that distinction must bind on herdr. Above all: a retitle makes a test *claim* its scenario, so
-every binding is proven by mutating the subject and watching that test fail — a false bind is worse
-than an unbound scenario, because unbound gets hand-judged and a false bind gets trusted.
+**Two Clearances, both pre-authorized by the requester:**
+
+1. The three-form outline rewrite (`exactly one of root and panes` refused a tabs-only template).
+2. **Label uniqueness removed** — the requester dismantled it. It was invented, and it made capture
+   lossy in the one direction that mattered: a label reaches a live pane because a *person* renamed
+   it, and `save` exists to capture that, so dropping a shared label discarded the fact it was there
+   to preserve. Neither backend requires uniqueness; herdr *manufactures* duplicates by labelling
+   every root tab `1`. Nothing keys on a name.
+
+**Follow-ups:** [#31](https://github.com/cyberuni/cyber-mux/issues/31) — address a pane by name or
+id, failing with the candidates when ambiguous (the requester's design; the successor to removing
+uniqueness). Two other recorded follow-ups **dissolved** rather than being filed, and are superseded
+in the ledger so a later drain does not re-file them.
+
+## The lesson worth carrying out of this CR
+
+Every real defect here was found by **building**, and none by reading. Four of the eight combat-log
+corrections are would-have-shipped bugs or conductor errors rather than routine iteration.
+
+- **A route-agnostic scenario needs route-agnostic verification.** Three bugs traced to one habit:
+  a behavior specified against the route being built, worded as a property of the template, bound on
+  one route, silently false on the other. All three were green in CI and wrong on a real backend.
+  The fix was structural, not three patches — the shared `walkTabs` engine means a route can no
+  longer forget.
+- **tmux cannot discriminate the workspace/tab tiers** (both emit `new-window`), so any scenario
+  turning on that distinction must bind on **herdr** or it goes false-green. One did.
+- **Do not report a self-imposed design limit as a fact about the world.** The conductor told the
+  requester that `worktree add --layout` could not group its windows, and proposed narrowing the spec
+  to match. The requester rejected the premise and was right: `@cm_ws` is an ordinary window option
+  settable on any window at any time. The blocker was a seam the conductor had written, not a
+  constraint anyone had found.
+- **Probe before defending a rule.** Both invented-uniqueness rules survived until someone asked
+  "does tmux actually reject it?" — a question answerable in one command, against a fact
+  (herdr's ten root tabs labelled `1`) this CR already had in hand.
