@@ -60,6 +60,30 @@ export interface SessionTarget {
 	id: string
 }
 
+/**
+ * A pane `open` just created: its handle, plus the workspace it landed in.
+ *
+ * `workspace` is OCCUPANCY — which workspace the new pane LIVES IN — and it is deliberately not the
+ * worktree binding. A worktree opened at a `pane:right` placement lives in the caller's workspace
+ * while being bound to none: the pane has a workspace, the worktree is still ungrouped. The two are
+ * reported by separate outputs and neither answers for the other, so a caller must never read this
+ * as evidence that a worktree was grouped — that fact is `WorktreeWorkspaceCapability`'s alone.
+ *
+ * Widened from a bare `SessionTarget` because `open` returning only a pane id left nothing
+ * downstream able to report a workspace: the layout manifest is framed as the complete
+ * machine-readable answer to "which panes exist and what are they for", and a consumer grouping
+ * panes by workspace had nothing to group on.
+ */
+export interface OpenedPane extends SessionTarget {
+	/**
+	 * The workspace the new pane landed in; `undefined` when the backend has no workspace tier —
+	 * ABSENT rather than a false "none", the same convention `isPaneFocused`'s `undefined` follows.
+	 * tmux, where `workspace` and `tab` both collapse to a Window, has nothing to report here, which
+	 * is not the same as reporting that nothing is there.
+	 */
+	workspace?: string
+}
+
 /** A pane the backend can currently see, as reported by `listPanes` (bulk enumeration). */
 export interface LivePane {
 	/** Backend-native pane id. */
@@ -193,8 +217,11 @@ export interface WorktreeWorkspaceCapability {
 export interface SessionAdapter {
 	/** Backend name, e.g. "tmux" or "herdr". */
 	readonly name: string
-	/** Create a new pane/window in `opts.cwd`, running `opts.launch` if given; returns its target handle. */
-	open(exec: Exec, opts: SessionOpenOptions): SessionTarget
+	/**
+	 * Create a new pane/window in `opts.cwd`, running `opts.launch` if given; returns its handle plus
+	 * the workspace it landed in (absent on a backend with no workspace tier — see `OpenedPane`).
+	 */
+	open(exec: Exec, opts: SessionOpenOptions): OpenedPane
 	/**
 	 * Whether this backend can size a split — i.e. whether it honors `SessionOpenOptions.ratio`. Both
 	 * real backends can (herdr `--ratio`, tmux `-l`), so both declare it. Absent/`false` means a

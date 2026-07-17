@@ -43,7 +43,11 @@ interface Recorded {
  * A backend recorded at the SEAM rather than at the argv — for the claims that are about what the
  * walk asks of a backend (no launch, a named `from`, a ratio) rather than how a backend spells it.
  */
-function fakeAdapter(opts: { canSizeSplits?: boolean; failOnOpen?: number } = {}) {
+/**
+ * `workspace` models a backend WITH a workspace tier: its `open` reports the workspace the pane
+ * landed in. Omit it for a backend that has none (tmux), which reports absent.
+ */
+function fakeAdapter(opts: { canSizeSplits?: boolean; failOnOpen?: number; workspace?: string } = {}) {
 	const calls: Recorded = { opens: [], submits: [], teardowns: [] }
 	let n = 0
 	const adapter: SessionAdapter = {
@@ -53,7 +57,7 @@ function fakeAdapter(opts: { canSizeSplits?: boolean; failOnOpen?: number } = {}
 			calls.opens.push(options)
 			n++
 			if (opts.failOnOpen === n) throw new Error('backend refused the split')
-			return { id: `p${n}` }
+			return opts.workspace ? { id: `p${n}`, workspace: opts.workspace } : { id: `p${n}` }
 		},
 		submit(_exec, target, text) {
 			calls.submits.push({ pane: target.id, text })
@@ -144,6 +148,24 @@ describe('spec:cyber-mux/layout', () => {
 			// The pane the region open returned IS the first leaf's pane, and it is never torn down.
 			expect(manifest.panes[0]).toMatchObject({ label: 'planner', pane: 'p1' })
 			expect(calls.teardowns).toEqual([])
+		})
+
+		// The bug this CR fixes: the manifest is framed as the complete machine-readable answer to
+		// "which panes exist and what are they for", but its workspace was a hardcoded null, so a
+		// consumer grouping panes by workspace had nothing to group on — even on a backend that had
+		// just opened a real workspace and said so.
+		it('the manifest carries the workspace the region opened in', () => {
+			const { adapter } = fakeAdapter({ workspace: 'w45' })
+			const manifest = openLayout(noExec, adapter, agentPool3, { cwd: '/target', dirExists: anyDir })
+			expect(manifest.workspace).toBe('w45')
+		})
+
+		// tmux has no workspace tier, so its `open` reports absent and the manifest has nothing to carry.
+		// `null` is the manifest's JSON-boundary spelling of that — the one place absent becomes null.
+		it('the manifest’s workspace is null on a backend with no workspace tier', () => {
+			const { adapter } = fakeAdapter()
+			const manifest = openLayout(noExec, adapter, agentPool3, { cwd: '/target', dirExists: anyDir })
+			expect(manifest.workspace).toBeNull()
 		})
 
 		it('builds every split before the first command is submitted', () => {

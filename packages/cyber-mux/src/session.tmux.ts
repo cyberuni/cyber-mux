@@ -1,4 +1,4 @@
-import type { LivePane, RegionPane, SessionAdapter, SessionReadOptions, SessionTarget } from './session.ts'
+import type { LivePane, OpenedPane, RegionPane, SessionAdapter, SessionReadOptions } from './session.ts'
 
 /** tmux backend — detected via `$TMUX`. */
 export const tmuxSessionAdapter: SessionAdapter = {
@@ -45,7 +45,11 @@ export const tmuxSessionAdapter: SessionAdapter = {
 		if (window && opts.label) args.splice(1, 0, '-n', opts.label)
 		const pane = exec('tmux', args)
 		if (!pane) throw new Error(`tmux ${args[0]} failed`)
-		const target: SessionTarget = { id: pane }
+		// No `workspace`: tmux has no workspace tier — `workspace` and `tab` both collapse to a Window —
+		// so it has nothing to report, which is not the same as reporting that nothing is there. Absent
+		// is the seam's own convention for a fact a backend cannot answer (`OpenedPane.workspace`,
+		// `isPaneFocused`'s `undefined`); reporting a null here would assert a "none" tmux never said.
+		const target: OpenedPane = { id: pane }
 		if (!window && opts.label) exec('tmux', ['select-pane', '-t', pane, '-T', opts.label])
 		// `submit`, not `sendText` — a launch command has to actually run, and `submit` is the only
 		// verb that supplies the Enter.

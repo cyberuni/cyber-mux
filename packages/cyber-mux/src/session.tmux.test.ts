@@ -185,6 +185,23 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls[0]).toEqual(['new-window', '-d', '-c', '/u', '-P', '-F', '#{pane_id}'])
 		})
 
+		// tmux has no workspace tier — `workspace` and `tab` both collapse to a Window — so it has
+		// nothing to report here, which is NOT the same as reporting that nothing is there. The field is
+		// absent, never a false "none": `toEqual` pins the exact shape, so a stray `workspace: null`
+		// would fail this.
+		it.each([
+			'workspace',
+			'tab',
+			'pane:right',
+			'pane:down',
+		] as const)('a backend with no workspace tier reports no workspace at all (--at %s)', (at) => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'new-window': '%20', 'split-window': '%20' })
+			const target = tmuxSessionAdapter.open(exec, { cwd: '/unit', at })
+			expect(target).toEqual({ id: '%20' })
+			expect('workspace' in target).toBe(false)
+		})
+
 		it('tmux --at workspace opens a visible window in the current session, never a detached session', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'new-window': '%20' })
