@@ -20,6 +20,12 @@ importers:
       '@commitlint/config-conventional':
         specifier: ^21.0.1
         version: 21.2.0
+      '@cucumber/gherkin':
+        specifier: ^41.0.0
+        version: 41.0.0
+      '@cucumber/messages':
+        specifier: ^34.1.0
+        version: 34.1.0
       '@repobuddy/biome':
         specifier: ^2.3.1
         version: 2.3.1(@biomejs/biome@2.5.3)
@@ -401,6 +407,15 @@ packages:
   '@ctrl/tinycolor@4.2.0':
     resolution: {integrity: sha512-kzyuwOAQnXJNLS9PSyrk0CWk35nWJW/zl/6KvnTBMFK65gm7U1/Z5BqjxeapjZCIhQcM/DsrEmcbRwDyXyXK4A==}
     engines: {node: '>=14'}
+
+  '@cucumber/gherkin@41.0.0':
+    resolution: {integrity: sha512-pKGx1EzNjtWbpw74kEevKDMj71dF3ZSaFJpLYuWVvRZKe+Cwoq5iEkuMaELIg1jxIu8jH/A2HPMpMR8UBvdG0w==}
+
+  '@cucumber/messages@33.0.4':
+    resolution: {integrity: sha512-i6P1a0bnmhecOHfvIW0rhMxv/gMKfBKwDMxmD9/Uo1HSqpQ17ocHms1JwWW6uTMLAopqqWlcz7l6Pax+qUOTzg==}
+
+  '@cucumber/messages@34.1.0':
+    resolution: {integrity: sha512-L8bSi+A+HDeP/WvlrqPFKUG7uqq8G+BnbUGE7CSCrFsaaXhtvUyR61hvfKRBDzd0puVhQGYgjURehPIF1IXO6Q==}
 
   '@emmetio/abbreviation@2.3.3':
     resolution: {integrity: sha512-mgv58UrU3rh4YgbE/TzgLQwJ3pFsHHhCLqY20aJq+9comytTXUDNGG/SMtSeMJdkpxgXSXunBGLD8Boka3JyVA==}
@@ -4244,6 +4259,14 @@ snapshots:
   '@conventional-changelog/template@1.2.1': {}
 
   '@ctrl/tinycolor@4.2.0': {}
+
+  '@cucumber/gherkin@41.0.0':
+    dependencies:
+      '@cucumber/messages': 33.0.4
+
+  '@cucumber/messages@33.0.4': {}
+
+  '@cucumber/messages@34.1.0': {}
 
   '@emmetio/abbreviation@2.3.3':
     dependencies:

@@ -6,6 +6,18 @@
 	},
 	"overrides": [
 		{
+			"includes": ["scripts/**"],
+			"linter": {
+				"rules": {
+					"suspicious": {
+						"noConsole": {
+							"level": "off"
+						}
+					}
+				}
+			}
+		},
+		{
 			"includes": ["packages/cyber-mux/src/**/*.ts", "packages/cyber-mux/src/**/*.mts"],
 			"linter": {
 				"rules": {
