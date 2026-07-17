@@ -2,26 +2,26 @@
 cr: 10-split-options-contract
 project: cyber-mux
 source: https://github.com/cyberuni/cyber-mux/issues/10
-status: in-progress
+status: done
 todos:
   - content: Repair the unparseable Examples table in mux.feature — blocking prerequisite
-    status: pending
+    status: completed
   - content: Author mux/ split-options section — README use cases + 11 scenarios in mux.feature
-    status: pending
+    status: completed
   - content: Move the seam-convention scenarios out of layout.feature; repoint layout/README
-    status: pending
+    status: completed
   - content: Spec gate — check-suite, cold spec-judge, freeze, self-assert within leash
-    status: pending
+    status: completed
   - content: Bind the new scenarios — rename adapter test leaf titles to scenario names
-    status: pending
+    status: completed
   - content: Add the one missing test — ratio suppressed for tab/workspace on tmux
-    status: pending
+    status: completed
   - content: Fix the stale env tier-scope comment in session.ts
-    status: pending
+    status: completed
   - content: Impl gate — cold impl-judge over the frozen scenarios
-    status: pending
+    status: completed
   - content: Handoff — PR closing #10, follow-ups; no changeset (nothing user-facing)
-    status: pending
+    status: completed
 ---
 
 # CR 10 — the pane layer's split-options contract
@@ -61,5 +61,11 @@ Source: issue #10. Design: [`10-split-options-contract.design.md`](./10-split-op
 
 ## NEXT
 
-Repair the `Examples:` table in `mux.feature` (the blocking prerequisite), then author the
-split-options section — README use cases first, then the 11 scenarios.
+Both gates passed and self-asserted; the branch is ready to push and open as a PR closing #10.
+Nothing is in flight. Remaining, and neither blocks the CR:
+
+1. **Drain the follow-ups** — five are recorded in the ledger shard and none matches an existing
+   issue (deduped against the forge, open and closed). Filing is permission-gated and was not
+   granted in-session, so they are recorded and NOT filed. Re-derive what is outstanding by the
+   same dedupe before filing; the records carry no filed-state.
+2. **Retire this plan** once the PR merges and the CR is doctrine-distilled.
