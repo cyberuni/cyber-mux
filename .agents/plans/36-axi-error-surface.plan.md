@@ -18,8 +18,8 @@ todos:
     status: completed
   - content: "Impl gate PASSED: cold impl-judge re-derived every frozen scenario, drove the real binary"
     status: completed
-  - content: "Handoff: rebase onto origin/main (--env conflict), changesets, update PR #37, drain followups"
-    status: in_progress
+  - content: "Handoff: rebased onto --env tip, re-gated green, PR #37 retitled (Closes #36), followup #40 filed"
+    status: completed
 ---
 
 # CR 36 — the CLI's error surface follows AXI
@@ -69,9 +69,11 @@ same commands, same stream decision.
 
 ## NEXT
 
-Handoff in progress. Both gates cleared (spec ratified by unional, impl self-asserted within
-auto-spec leash). Remaining: rebase onto origin/main tip c9ca5ed (its `--env on every verb`
-commits touch cli.ts, so expect a conflict — resolve as deliver code work against the frozen
-suite, never a .feature edit), re-run the impl gate on the merged tree, update PR #37 in place
-(retitle from the prose-only correction to the full error-surface change; `Closes #36`), and
-drain the six recorded follow-ups (ledger seq 2-6) to issues, deduping first.
+Mission handed off. PR #37 (retitled, `Closes #36`) is up for review at
+https://github.com/cyberuni/cyber-mux/pull/37 — awaiting merge. Both gates cleared (spec ratified
+by unional, impl self-asserted + merged-tree re-gate green, 587 tests). Blocking follow-up filed as
+#40. Four backlog follow-ups (ledger seq 2-5: cyberplace streams, exists exit-1, content-first→group,
+no-home-view) stay in the ledger, unfiled by the requester's call — re-derivable by a later drain.
+
+Keep this plan until #37 merges and the mission is doctrine-distilled. A corpus-wide formation pass
+is due (sdd:manage → formation-loop) but is on-demand, not gated on this mission.
