@@ -65,6 +65,11 @@ describe('spec:cyber-mux/mux', () => {
 			// commander writes its own error text to stderr even with exitOverride() — silence it here so
 			// the deliberate --at rejection test doesn't spam the runner's real stderr.
 			vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+			// `read` writes the pane's captured bytes straight to stdout rather than through console.log —
+			// axi's one raw-stream exception, so the spy above never catches it. Any test that drives
+			// `read` would otherwise leak its fixture's fake output into the runner's own stdout. A test
+			// asserting ON stdout still spies it locally; this only stops the spill.
+			vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
 		})
 
 		afterEach(() => {
