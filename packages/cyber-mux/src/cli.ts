@@ -593,6 +593,9 @@ function worktreeAddCommand(deps: Deps): Command {
 									root: opened.target,
 									cwd: opened.worktree.root,
 									workspace: opened.workspace ?? null,
+									// The same label the workspace was just opened under — a tabs template carries
+									// it into each later tab's name where the backend has no workspace tier.
+									label: opts.label ?? template.name,
 									// The route that opened the region is the only thing that knows whether it
 									// could carry the root pane's env; the walk falls back to a prefix when not.
 									rootEnvHonored: opened.envHonored,

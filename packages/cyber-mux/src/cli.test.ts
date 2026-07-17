@@ -110,7 +110,7 @@ describe('spec:cyber-mux/mux', () => {
 		it('open reports a null workspace on a backend with no workspace tier', async () => {
 			const program = buildProgram({
 				env: { TMUX: '/tmp/tmux-1000/default,1,0' },
-				exec: fakeTmuxExec([], { 'new-window': '%20' }),
+				exec: fakeTmuxExec([], { 'new-window': '%20\t@1' }),
 			})
 			await withArgv(['open', '--at', 'workspace', '--format', 'json'], () =>
 				run(program, ['open', '--at', 'workspace', '--format', 'json']),
@@ -122,7 +122,7 @@ describe('spec:cyber-mux/mux', () => {
 		it('open’s text report omits the workspace line where the backend has none', async () => {
 			const program = buildProgram({
 				env: { TMUX: '/tmp/tmux-1000/default,1,0' },
-				exec: fakeTmuxExec([], { 'new-window': '%20' }),
+				exec: fakeTmuxExec([], { 'new-window': '%20\t@1' }),
 			})
 			await run(program, ['open', '--at', 'workspace'])
 			const out = logs.join('\n')
@@ -138,7 +138,7 @@ describe('spec:cyber-mux/mux', () => {
 
 		it('--at chooses where the new pane opens', async () => {
 			const calls: string[][] = []
-			const exec = fakeTmuxExec(calls, { 'split-window': '%5' })
+			const exec = fakeTmuxExec(calls, { 'split-window': '%5\t@1' })
 			const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec })
 			await run(program, ['open', '--launch', 'claude', '--at', 'pane:down'])
 			expect(calls[0]?.[0]).toBe('split-window')
@@ -155,16 +155,29 @@ describe('spec:cyber-mux/mux', () => {
 			const tmuxCalls: string[][] = []
 			const tmuxProgram = buildProgram({
 				env: { CYBER_MUX: 'tmux', CYBER_MUX_PANE: '%3' },
-				exec: fakeTmuxExec(tmuxCalls, { 'split-window': '%9' }),
+				exec: fakeTmuxExec(tmuxCalls, { 'split-window': '%9\t@1' }),
 			})
 			await run(tmuxProgram, ['open', '--at', 'pane:right'])
-			expect(tmuxCalls[0]).toEqual(['split-window', '-h', '-t', '%3', '-c', process.cwd(), '-P', '-F', '#{pane_id}'])
+			expect(tmuxCalls[0]).toEqual([
+				'split-window',
+				'-h',
+				'-t',
+				'%3',
+				'-c',
+				process.cwd(),
+				'-P',
+				'-F',
+				'#{pane_id}\t#{window_id}',
+			])
 
 			const herdrCalls: string[][] = []
 			const herdrProgram = buildProgram({
 				env: { CYBER_MUX: 'herdr', CYBER_MUX_PANE: 'w3:pA' },
 				exec: fakeHerdrExec(herdrCalls, {
-					'pane split': JSON.stringify({ id: 'cli:pane:split', result: { pane: { pane_id: 'w3:pB' } } }),
+					'pane split': JSON.stringify({
+						id: 'cli:pane:split',
+						result: { pane: { pane_id: 'w3:pB', tab_id: 'w3:t1' } },
+					}),
 				}),
 			})
 			await run(herdrProgram, ['open', '--at', 'pane:right'])
@@ -179,7 +192,7 @@ describe('spec:cyber-mux/mux', () => {
 			const calls: string[][] = []
 			const program = buildProgram({
 				env: { CYBER_MUX: 'tmux' },
-				exec: fakeTmuxExec(calls, { 'split-window': '%9' }),
+				exec: fakeTmuxExec(calls, { 'split-window': '%9\t@1' }),
 			})
 			await run(program, ['open', '--at', 'pane:right'])
 			expect(calls[0]).not.toContain('-t')
@@ -187,7 +200,7 @@ describe('spec:cyber-mux/mux', () => {
 
 		it("--at workspace opens the pane's own VISIBLE space on each backend", async () => {
 			const tmuxCalls: string[][] = []
-			const tmuxExec = fakeTmuxExec(tmuxCalls, { 'new-window': '%20' })
+			const tmuxExec = fakeTmuxExec(tmuxCalls, { 'new-window': '%20\t@1' })
 			const tmuxProgram = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: tmuxExec })
 			await run(tmuxProgram, ['open', '--launch', 'claude', '--at', 'workspace'])
 			expect(tmuxCalls[0]?.[0]).toBe('new-window') // a visible window, never new-session
@@ -195,7 +208,7 @@ describe('spec:cyber-mux/mux', () => {
 			const herdrCalls: string[][] = []
 			const createOut = JSON.stringify({
 				id: 'cli:workspace:create',
-				result: { root_pane: { pane_id: 'w7:p1' }, workspace: { workspace_id: 'w7' } },
+				result: { root_pane: { pane_id: 'w7:p1', tab_id: 'w7:t1' }, workspace: { workspace_id: 'w7' } },
 			})
 			const herdrExec = fakeHerdrExec(herdrCalls, { 'workspace create': createOut })
 			const herdrProgram = buildProgram({ env: { CYBER_MUX: 'herdr' }, exec: herdrExec })
@@ -205,7 +218,7 @@ describe('spec:cyber-mux/mux', () => {
 
 		it('--at tab opens a new tab in the current window, never a split pane', async () => {
 			const tmuxCalls: string[][] = []
-			const tmuxExec = fakeTmuxExec(tmuxCalls, { 'new-window': '%2' })
+			const tmuxExec = fakeTmuxExec(tmuxCalls, { 'new-window': '%2\t@1' })
 			const tmuxProgram = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: tmuxExec })
 			await run(tmuxProgram, ['open', '--launch', 'claude', '--at', 'tab'])
 			expect(tmuxCalls[0]?.[0]).toBe('new-window')
@@ -213,7 +226,7 @@ describe('spec:cyber-mux/mux', () => {
 
 			const herdrCalls: string[][] = []
 			const tabOut = JSON.stringify({
-				result: { root_pane: { pane_id: 'w3:pT' }, tab: { tab_id: 'w3:t2' }, type: 'tab_created' },
+				result: { root_pane: { pane_id: 'w3:pT', tab_id: 'w3:t1' }, tab: { tab_id: 'w3:t2' }, type: 'tab_created' },
 			})
 			const herdrExec = fakeHerdrExec(herdrCalls, { 'tab create': tabOut })
 			const herdrProgram = buildProgram({ env: { CYBER_MUX: 'herdr' }, exec: herdrExec })
@@ -224,10 +237,10 @@ describe('spec:cyber-mux/mux', () => {
 
 		it('the tab placement opens in the background without stealing focus', async () => {
 			const calls: string[][] = []
-			const exec = fakeTmuxExec(calls, { 'new-window': '%2' })
+			const exec = fakeTmuxExec(calls, { 'new-window': '%2\t@1' })
 			const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec })
 			await run(program, ['open', '--launch', 'claude', '--at', 'tab'])
-			expect(calls[0]).toEqual(['new-window', '-d', '-c', process.cwd(), '-P', '-F', '#{pane_id}'])
+			expect(calls[0]).toEqual(['new-window', '-d', '-c', process.cwd(), '-P', '-F', '#{pane_id}\t#{window_id}'])
 		})
 
 		it('list enumerates every live pane, including one running no agent/harness', async () => {
@@ -248,7 +261,7 @@ describe('spec:cyber-mux/mux', () => {
 
 		it('open with no --launch creates a blank pane', async () => {
 			const calls: string[][] = []
-			const exec = fakeTmuxExec(calls, { 'new-window': '%2' })
+			const exec = fakeTmuxExec(calls, { 'new-window': '%2\t@1' })
 			const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec })
 			await run(program, ['open'])
 			expect(calls).toHaveLength(1)
@@ -332,7 +345,7 @@ describe('spec:cyber-mux/mux', () => {
 
 			const worktreeOut = JSON.stringify({
 				result: {
-					root_pane: { pane_id: 'w9:p1' },
+					root_pane: { pane_id: 'w9:p1', tab_id: 'w9:t1' },
 					workspace: { workspace_id: 'w9' },
 					worktree: { path: '/repo.worktrees/my-feature', branch: 'my-feature' },
 				},
@@ -363,7 +376,7 @@ describe('spec:cyber-mux/mux', () => {
 					return true
 				})
 				const calls: string[][] = []
-				const exec = fakeRepoExec(calls, { 'pane split': '{"result":{"pane":{"pane_id":"w3:pB"}}}' })
+				const exec = fakeRepoExec(calls, { 'pane split': '{"result":{"pane":{"pane_id":"w3:pB","tab_id":"w3:t1"}}}' })
 				const program = buildProgram({ env: { CYBER_MUX: 'herdr' }, exec })
 				await run(program, ['worktree', 'add', '--branch', 'my-feature', '--at', 'pane:right'])
 				// It succeeded — a worktree in a split pane is a complete outcome...
@@ -416,7 +429,7 @@ describe('spec:cyber-mux/mux', () => {
 
 		it('open --launch submits the command, so it actually runs', async () => {
 			const calls: string[][] = []
-			const exec = fakeTmuxExec(calls, { 'new-window': '%2' })
+			const exec = fakeTmuxExec(calls, { 'new-window': '%2\t@1' })
 			const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec })
 			await run(program, ['open', '--launch', 'claude'])
 			// Typed literally, then Enter — not left staged unsent.
@@ -611,10 +624,15 @@ describe('spec:cyber-mux/mux', () => {
 					calls.push([cmd, ...args])
 					if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
 					if (cmd === 'tmux') {
-						return args[0] === 'new-window' || args[0] === 'split-window' ? `%${n++}` : ''
+						if (args[0] !== 'new-window' && args[0] !== 'split-window') return ''
+						const id = n++
+						// A grouping open asks for the new window's id beside the pane's, tab-separated, so it
+						// can tag that window — answer the format tmux was actually asked for.
+						return args.includes('#{pane_id}\t#{window_id}') ? `%${id}\t@${id}` : `%${id}`
 					}
 					const key = args.slice(0, 2).join(' ')
-					if (key === 'pane split') return JSON.stringify({ result: { pane: { pane_id: `w9:p${n++}` } } })
+					if (key === 'pane split')
+						return JSON.stringify({ result: { pane: { pane_id: `w9:p${n++}`, tab_id: 'w9:t1' } } })
 					return responses[key] ?? ''
 				}
 			}
@@ -923,8 +941,10 @@ describe('spec:cyber-mux/mux', () => {
 					const exec: Exec = (cmd, args) => {
 						calls.push([cmd, ...args])
 						if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
-						if (args[0] === 'new-window') return '%0'
-						if (args[0] === 'split-window') return ++splits === 3 ? null : `%${splits}`
+						// Every open reports the window alongside the pane — the window IS the pane's tab, which
+						// `OpenedPane.tab` always carries. A split lands in the caller's own window, hence @0.
+						if (args[0] === 'new-window') return '%0\t@0'
+						if (args[0] === 'split-window') return ++splits === 3 ? null : `%${splits}\t@0`
 						return ''
 					}
 					const store = fakeStore({
@@ -960,11 +980,12 @@ describe('spec:cyber-mux/mux', () => {
 					expect(manifest.layout).toBe('agent-pool-3')
 					expect(manifest.cwd).toBe('/w/feat-x')
 					expect(manifest).toHaveProperty('workspace')
-					// One entry per pane, each carrying its label, pane id, dir and command.
+					// One entry per pane, each carrying its label, pane id, dir and command — plus the tab it
+					// landed in, `null` here because a single-tab template names no tabs at all.
 					expect(manifest.panes).toEqual([
-						{ label: 'planner', pane: '%0', dir: '/w/feat-x', command: 'claude' },
-						{ label: 'worker-a', pane: '%1', dir: '/w/feat-x', command: 'claude' },
-						{ label: 'worker-b', pane: '%2', dir: '/w/feat-x', command: 'claude' },
+						{ label: 'planner', pane: '%0', dir: '/w/feat-x', command: 'claude', tab: null },
+						{ label: 'worker-a', pane: '%1', dir: '/w/feat-x', command: 'claude', tab: null },
+						{ label: 'worker-b', pane: '%2', dir: '/w/feat-x', command: 'claude', tab: null },
 					])
 				})
 
@@ -982,7 +1003,7 @@ describe('spec:cyber-mux/mux', () => {
 			describe('worktree add --layout', () => {
 				const worktreeOut = JSON.stringify({
 					result: {
-						root_pane: { pane_id: 'w9:root' },
+						root_pane: { pane_id: 'w9:root', tab_id: 'w9:t1' },
 						workspace: { workspace_id: 'w9' },
 						worktree: { path: '/repo.worktrees/feat-x', branch: 'feat-x' },
 					},
@@ -1091,6 +1112,7 @@ describe('spec:cyber-mux/mux', () => {
 						pane: 'w9:root',
 						dir: '/repo.worktrees/feat-x',
 						command: null,
+						tab: null,
 					})
 					// Degraded loudly, on stderr, so stdout stays machine-readable.
 					expect(stderr.join('')).toContain('dispatcher')
@@ -1123,6 +1145,24 @@ describe('spec:cyber-mux/layout', () => {
 	const XDG = { XDG_CONFIG_HOME: '/home/u/.config' }
 
 	const POOL_4 = { name: 'pool-4', arrange: 'tiled', panes: [{ label: 'w1' }, { label: 'w2' }] }
+
+	/** The two-level form: a workspace of tabs, each carrying its own tree. */
+	const POOL_TABS = {
+		name: 'pool',
+		tabs: [
+			{ label: 'editor', panes: [{ label: 'edit' }] },
+			{ label: 'logs', panes: [{ label: 'tail' }] },
+		],
+	}
+
+	/** The same, with a SPLIT in the first tab — so "built into the region" is observable in the argv. */
+	const POOL_TABS_SPLIT = {
+		name: 'pool',
+		tabs: [
+			{ label: 'editor', arrange: 'even-horizontal', panes: [{ label: 'edit' }, { label: 'test' }] },
+			{ label: 'logs', panes: [{ label: 'tail' }] },
+		],
+	}
 
 	/** A `LayoutStore` over an in-memory file map — no templates on disk, ever. */
 	function fakeStore(
@@ -1191,6 +1231,102 @@ describe('spec:cyber-mux/layout', () => {
 
 	afterEach(() => {
 		vi.restoreAllMocks()
+	})
+
+	describe('the walk, across tabs', () => {
+		/**
+		 * herdr, and herdr DELIBERATELY rather than tmux: the placement is the whole claim here, and tmux
+		 * collapses `workspace` and `tab` onto the same Window — so `new-window` is what tmux emits at
+		 * EITHER placement and could never tell the two apart. herdr has a real workspace tier and spells
+		 * the tiers as different verbs (`workspace create` vs `tab create`), which is what makes the
+		 * default observable at all.
+		 */
+		function tabsExec(calls: string[][], responses: Record<string, string> = {}): Exec {
+			let n = 0
+			let tab = 0
+			return (cmd, args) => {
+				calls.push([cmd, ...args])
+				if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
+				const key = args.slice(0, 2).join(' ')
+				if (responses[key]) return responses[key]
+				if (key === 'workspace create' || key === 'tab create') {
+					tab++
+					return JSON.stringify({
+						result: { root_pane: { pane_id: `w1:p${n++}`, tab_id: `w1:t${tab}`, workspace_id: 'w1' } },
+					})
+				}
+				// A split reports the tab it landed IN, never a new one.
+				if (key === 'pane split') {
+					return JSON.stringify({
+						result: { pane: { pane_id: `w1:p${n++}`, tab_id: `w1:t${tab}`, workspace_id: 'w1' } },
+					})
+				}
+				return ''
+			}
+		}
+
+		it('a tabs template still defaults --at to workspace', async () => {
+			// A fresh space is empty by construction, and a workspace is what a set of tabs needs to live
+			// in — so the default does not change because the template grew a level.
+			const calls: string[][] = []
+			const store = fakeStore({ [repo('pool')]: POOL_TABS })
+			const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'herdr' }, exec: tabsExec(calls), store })
+			await run(program, ['open', '--layout', 'pool'])
+			const opens = calls.filter((c) => c[0] === 'herdr' && c[2] === 'create')
+			// The FIRST tab lands at the workspace placement — a real `workspace create`, not a tab in
+			// whatever workspace the caller happened to be sitting in.
+			expect(opens[0]?.slice(1, 3)).toEqual(['workspace', 'create'])
+			// ...and the second tab lands inside it.
+			expect(opens[1]?.slice(1, 3)).toEqual(['tab', 'create'])
+			// Nothing is ever split: a tab is not a split of another tab's pane.
+			expect(calls.some((c) => c[1] === 'pane' && c[2] === 'split')).toBe(false)
+		})
+
+		it("worktree add --layout builds a tabs template into the worktree's own workspace", async () => {
+			// This route already forces the workspace placement, so the tabs have a workspace to live in and
+			// need no second one. It differs from `open --layout` in exactly one way: the region already
+			// exists, so the first tab builds INTO it rather than opening it.
+			const calls: string[][] = []
+			const store = fakeStore({ [repo('pool')]: POOL_TABS_SPLIT })
+			const worktreeOut = JSON.stringify({
+				result: {
+					root_pane: { pane_id: 'w9:root', tab_id: 'w9:t1', workspace_id: 'w9' },
+					workspace: { workspace_id: 'w9' },
+					worktree: { path: '/repo.worktrees/feat-x', branch: 'feat-x' },
+				},
+			})
+			const program = buildProgram({
+				env: { ...XDG, CYBER_MUX: 'herdr' },
+				exec: tabsExec(calls, { 'worktree create': worktreeOut }),
+				store,
+			})
+			await withArgv(['worktree', 'add', '--format', 'json'], () =>
+				run(program, ['worktree', 'add', '--branch', 'feat-x', '--layout', 'pool', '--format', 'json']),
+			)
+
+			// The worktree's own workspace is the ONLY workspace: no second one is opened for the tabs.
+			expect(calls.find((c) => c[1] === 'worktree' && c[2] === 'create')).toBeDefined()
+			expect(calls.filter((c) => c[1] === 'workspace' && c[2] === 'create')).toEqual([])
+			// The first tab is built INTO that region: its split targets the workspace's own root pane.
+			const splits = calls.filter((c) => c[1] === 'pane' && c[2] === 'split')
+			expect(splits).toHaveLength(1)
+			expect(splits[0]).toContain('w9:root')
+			// Every later tab opens as a tab in it — one `tab create` for the one later tab.
+			const tabs = calls.filter((c) => c[1] === 'tab' && c[2] === 'create')
+			expect(tabs).toHaveLength(1)
+			expect(tabs[0]).toEqual(expect.arrayContaining(['--label', 'logs']))
+
+			// And the manifest is the whole workspace: both tabs' panes, one flat list, against the
+			// worktree root.
+			const out = JSON.parse(logs.join('\n'))
+			expect(out.root).toBe('/repo.worktrees/feat-x')
+			expect(out.workspace).toBe('w9')
+			expect(out.panes.map((p: { label: string; tab: number }) => [p.label, p.tab])).toEqual([
+				['edit', 0],
+				['test', 0],
+				['tail', 1],
+			])
+		})
 	})
 
 	describe('layout save', () => {

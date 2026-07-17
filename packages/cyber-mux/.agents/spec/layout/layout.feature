@@ -317,6 +317,15 @@ Feature: layout — named, reusable pane layouts
     # unchanged from every spawn path: a caller who wants to land somewhere calls focus with a pane id
     # from the manifest
 
+  Scenario: worktree add --layout builds a tabs template into the worktree's own workspace
+    Given a caller running cyber-mux worktree add --layout with a tabs template
+    When the command runs
+    Then the first tab is built into the workspace the worktree opened
+    And every later tab opens as a tab in it
+    # worktree add --layout already forces the workspace placement, so a set of tabs has a workspace
+    # to live in and needs no second one. The route differs from open --layout in one way only: the
+    # region already exists, so the first tab builds into it rather than opening it.
+
   Scenario: a throw part-way through a tabs walk reports the tabs already built and kills nothing
     Given a tabs template of 3 tabs whose second tab fails to open
     When the walk runs
