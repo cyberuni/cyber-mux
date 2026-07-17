@@ -302,13 +302,16 @@ describe('spec:cyber-mux/mux', () => {
 				await expect(run(program, ['worktree', 'remove', '/repo'])).rejects.toThrow()
 			})
 
-			it('worktree add opens nothing and needs no multiplexer when given no placement', async () => {
+			it('a bare worktree add opens nothing, so there is nothing to group', async () => {
 				const calls: string[][] = []
 				// env: {} — no backend at all. A bare add must still work; it is a git operation.
 				const program = buildProgram({ env: {}, exec: fakeGitExec(calls) })
 				await run(program, ['worktree', 'add', '--branch', 'my-feature'])
 				expect(calls.every((c) => c.includes('worktree') || c[0] === 'rev-parse')).toBe(true)
+				// Reports NEITHER a pane nor a workspace — with nothing opened there is nothing to group,
+				// so a workspace line would be claiming a binding that was never made.
 				expect(logs.join('\n')).not.toContain('pane')
+				expect(logs.join('\n')).not.toContain('workspace')
 			})
 
 			it('worktree add passes --base as the branch start-point', async () => {
@@ -344,7 +347,7 @@ describe('spec:cyber-mux/mux', () => {
 				expect(logs.join('\n')).toContain('w9')
 			})
 
-			it('worktree add --launch implies the workspace placement — the only one that can bind', async () => {
+			it('worktree add --launch defaults the placement to workspace', async () => {
 				const calls: string[][] = []
 				const exec = fakeRepoExec(calls, { 'worktree create': worktreeOut })
 				const program = buildProgram({ env: { CYBER_MUX: 'herdr' }, exec })
@@ -443,14 +446,14 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls).toEqual([['send-keys', '-t', '%3', 'Enter']])
 		})
 
-		it('send keys with no key tokens is rejected before anything is sent', async () => {
+		it('send keys with no key tokens is rejected', async () => {
 			const calls: string[][] = []
 			const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: fakeTmuxExec(calls) })
 			await expect(run(program, ['send', 'keys', '%3'])).rejects.toThrow()
 			expect(calls).toEqual([])
 		})
 
-		it('send text with no text argument is rejected before anything is sent', async () => {
+		it('send text with no text argument is rejected', async () => {
 			const calls: string[][] = []
 			const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: fakeTmuxExec(calls) })
 			await expect(run(program, ['send', 'text', '%3'])).rejects.toThrow()
@@ -475,14 +478,36 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls).toEqual([])
 		})
 
-		it('submit with text types the text and presses Enter, taking the pane’s turn', async () => {
+		// Both Examples rows fold under one static title — the outline is a single key, and a
+		// tmux-only body would claim the herdr row it never runs.
+		it.each([
+			{
+				backend: 'tmux',
+				pane: '%3',
+				makeExec: fakeTmuxExec,
+				// tmux has no atomic primitive: type literally, then press Enter.
+				expected: [
+					['send-keys', '-t', '%3', '-l', 'echo hi'],
+					['send-keys', '-t', '%3', 'Enter'],
+				],
+			},
+			{
+				backend: 'herdr',
+				pane: 'w1:p1',
+				makeExec: fakeHerdrExec,
+				// `pane run` IS herdr's atomic text-plus-Enter primitive.
+				expected: [['pane', 'run', 'w1:p1', 'echo hi']],
+			},
+		])("submit with text types the text and presses Enter, taking the pane's turn", async ({
+			backend,
+			pane,
+			makeExec,
+			expected,
+		}) => {
 			const calls: string[][] = []
-			const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: fakeTmuxExec(calls) })
-			await run(program, ['submit', '%3', 'echo hi'])
-			expect(calls).toEqual([
-				['send-keys', '-t', '%3', '-l', 'echo hi'],
-				['send-keys', '-t', '%3', 'Enter'],
-			])
+			const program = buildProgram({ env: { CYBER_MUX: backend }, exec: makeExec(calls) })
+			await run(program, ['submit', pane, 'echo hi'])
+			expect(calls).toEqual(expected)
 		})
 
 		it('submit types its text literally, never interpreting it as a key', async () => {
@@ -508,7 +533,7 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls).toEqual([['send-keys', '-t', '%3', 'Enter']])
 		})
 
-		it('submit with no pane is rejected, naming pane as the missing argument', async () => {
+		it('submit with no pane is rejected', async () => {
 			const calls: string[][] = []
 			const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: fakeTmuxExec(calls) })
 			await expect(run(program, ['submit'])).rejects.toThrow(/pane/)

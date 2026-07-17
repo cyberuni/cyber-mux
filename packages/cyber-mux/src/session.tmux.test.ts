@@ -221,7 +221,7 @@ describe('spec:cyber-mux/mux', () => {
 			'tab',
 			'pane:right',
 			'pane:down',
-		] as const)('a backend with no workspace tier reports no workspace at all (--at %s)', (at) => {
+		] as const)('a backend with no workspace tier returns no workspace at all', (at) => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'new-window': '%20', 'split-window': '%20' })
 			const target = tmuxSessionAdapter.open(exec, { cwd: '/unit', at })
@@ -294,19 +294,23 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls).toEqual([['send-keys', '-t', '%3', 'Escape', 'Up', 'C-c']])
 		})
 
-		it('sendKeys() renames Backspace to tmux BSpace — the core vocabulary’s only rename', () => {
+		it("Backspace is the core's one renamed key, and tmux gets tmux's name for it", () => {
 			// tmux has no 'Backspace' key name and would type the word; BSpace is its name for the key.
 			const calls: string[][] = []
 			const exec = fakeExec(calls)
 			tmuxSessionAdapter.sendKeys(exec, { id: '%3' }, ['Backspace'])
-			expect(calls[0]).toEqual(['send-keys', '-t', '%3', 'BSpace'])
+			// The WHOLE call list, not just the first: the scenario's "never delivered as literal
+			// characters" is a claim about every call, and a stray `send-keys -l Backspace` after
+			// this one would satisfy an assertion that only looked at calls[0].
+			expect(calls).toEqual([['send-keys', '-t', '%3', 'BSpace']])
 		})
 
-		it('sendKeys() forwards a non-core token verbatim rather than rejecting it', () => {
+		it('a non-core key that the backend does know is pressed', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls)
 			tmuxSessionAdapter.sendKeys(exec, { id: '%3' }, ['Home', 'M-x'])
-			expect(calls[0]).toEqual(['send-keys', '-t', '%3', 'Home', 'M-x'])
+			// No -l anywhere: tmux PRESSES Home rather than typing the word.
+			expect(calls).toEqual([['send-keys', '-t', '%3', 'Home', 'M-x']])
 		})
 
 		it('sendKeys() Enter presses Enter, because the caller asked for it', () => {
