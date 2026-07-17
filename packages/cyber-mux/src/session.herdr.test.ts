@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { Exec } from './exec.ts'
 import { herdrSessionAdapter } from './session.herdr.ts'
 import type { SessionPlacement, SessionSpaceTier } from './session.ts'
@@ -469,6 +469,10 @@ describe('spec:cyber-mux/mux', () => {
 		// caller honors env with the command prefix instead.
 		it("herdr's worktree verbs cannot set env at birth, and drop it rather than failing", () => {
 			const calls: string[][] = []
+			// env with no launch now takes the compensation's warn path — silence its stderr; this test
+			// asserts only that no `--env` reaches herdr's command, which the sibling scenarios cover for
+			// the warning itself.
+			vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
 			const exec = fakeExec(calls, { 'worktree create': worktreeOut() })
 			worktree().createInWorkspace(exec, {
 				primaryRoot: '/repo',
@@ -493,6 +497,7 @@ describe('spec:cyber-mux/mux', () => {
 
 		it("herdr's worktree verbs cannot set env at birth, and drop it rather than failing", () => {
 			const calls: string[][] = []
+			vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
 			const exec = fakeExec(calls, { 'worktree open': worktreeOut() })
 			worktree().openInWorkspace(exec, { primaryRoot: '/repo', path: '/p', env: { ROLE: 'planner' } })
 			expect(calls[0]).toEqual(['worktree', 'open', '--cwd', '/repo', '--path', '/p', '--no-focus'])
@@ -1155,6 +1160,75 @@ describe('spec:cyber-mux/mux', () => {
 		it('describeWorkspace() throws when the workspace reports no tabs', () => {
 			const exec = fakeExec([], { 'pane get': WS_PANE_GET, 'tab list': JSON.stringify({ result: { tabs: [] } }) })
 			expect(() => describeWorkspace(exec, { id: 'w3V:p1' })).toThrow(/reported no tabs/)
+		})
+
+		// herdr's worktree create/open take no env at birth, so the capability compensates on the launch:
+		// `carryLaunch` runs `envFallback`, and a `carried` command lands as an `env KEY=VALUE` prefix.
+		it('env a route could not carry rides in on the command instead', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'worktree create': worktreeOut() })
+			worktree().createInWorkspace(exec, {
+				primaryRoot: '/repo',
+				branch: 'b',
+				path: '/p',
+				env: { ROLE: 'worker' },
+				launch: 'claude',
+			})
+			const paneRun = calls.find((c) => c[0] === 'pane' && c[1] === 'run')
+			expect(paneRun).toEqual(['pane', 'run', 'w9:p1', "env ROLE='worker' claude"])
+		})
+
+		it('env a route could not carry, with no command to ride, warns rather than vanishing', () => {
+			const spy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+			try {
+				const calls: string[][] = []
+				const exec = fakeExec(calls, { 'worktree create': worktreeOut() })
+				worktree().createInWorkspace(exec, { primaryRoot: '/repo', branch: 'b', path: '/p', env: { ROLE: 'worker' } })
+				// Named on stderr — a caller that asked for env and did not get it is told, not left guessing.
+				expect(spy).toHaveBeenCalled()
+				expect(String(spy.mock.calls[0]![0])).toContain('ROLE')
+				// Nothing rides, because there was no command to ride on — no `pane run` at all.
+				expect(calls.some((c) => c[0] === 'pane' && c[1] === 'run')).toBe(false)
+			} finally {
+				spy.mockRestore()
+			}
+		})
+
+		it('an env value carrying a space or a quote survives the prefix intact', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'worktree create': worktreeOut() })
+			worktree().createInWorkspace(exec, {
+				primaryRoot: '/repo',
+				branch: 'b',
+				path: '/p',
+				env: { GREETING: "hi there's" },
+				launch: 'claude',
+			})
+			const paneRun = calls.find((c) => c[0] === 'pane' && c[1] === 'run')!
+			// Single-quoted for the shell — the space stays inside one word and the quote does not unbalance it.
+			expect(paneRun[3]).toContain("GREETING='hi there'\\''s'")
+		})
+
+		// The other half of the env rule, on the tier that DOES carry it natively: `open` sets `--env`
+		// on the opening call, so the launch command it runs must never be prefixed on top of that.
+		it.each<{ at: SessionPlacement; responses: Record<string, string>; pane: string }>([
+			{ at: 'pane:right', responses: { 'pane split': PANE_IN_SPLIT('w3:pB', 'w3') }, pane: 'w3:pB' },
+			{ at: 'tab', responses: { 'tab create': PANE_IN_TAB('w3:pT', 'w3') }, pane: 'w3:pT' },
+			{ at: 'workspace', responses: { 'workspace create': PANE_IN_WORKSPACE('w7:p1', 'w7') }, pane: 'w7:p1' },
+		])('a route that set env natively never prefixes it on top', ({ at, responses, pane }) => {
+			const calls: string[][] = []
+			herdrSessionAdapter.open(fakeExec(calls, responses), {
+				cwd: '/unit',
+				at,
+				env: { ROLE: 'worker' },
+				launch: 'claude',
+			})
+			// Env is native — the flag is on the opening call...
+			expect(calls[0]).toContain('--env')
+			expect(calls[0]).toContain('ROLE=worker')
+			// ...so the launched command runs verbatim, never `env ROLE=... claude`.
+			const paneRun = calls.find((c) => c[0] === 'pane' && c[1] === 'run')!
+			expect(paneRun).toEqual(['pane', 'run', pane, 'claude'])
 		})
 	})
 })

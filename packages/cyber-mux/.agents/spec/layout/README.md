@@ -256,7 +256,14 @@ a target directory supplied at apply time:
 - **Ratio and env degrade; they never reject** — the schema is backend-agnostic, so a template's
   validity cannot depend on which multiplexer happens to be running. A backend that cannot size a
   split degrades to its own 50/50 default with one stderr warning; a wrong-looking split is not worth
-  failing an otherwise-correct pool over. The degrade **policy** is this node's; what `ratio` and
+  failing an otherwise-correct pool over. `env` degrades too, but **not** on this node's own terms:
+  the prefix-or-warn rule itself belongs to the pane abstraction, because `env` has two callers (this
+  node and the `--env` flag) and a rule with two callers cannot be one caller's to invent. What this
+  node owns is the **scoping** — that only the **root** pane can need it, since every other pane is
+  born by a split and splits carry env natively on both backends, and that the warning fires **once**
+  rather than per pane. So: `ratio`'s degrade policy is this node's outright (this node is its only
+  caller); `env`'s policy is the seam's, and this node decides only where and how often it applies.
+  What `ratio` and
   `env` *mean* at the seam is not. Template `ratio` is the fraction kept by `first` (the **original**
   pane) and template `env` is per-pane — how each backend renders those, the opposite sign
   conventions they convert in, and the tier env reaches, belong to the pane abstraction and are
@@ -322,7 +329,7 @@ Every scenario in [`layout.feature`](./layout.feature) maps to one of these beha
 | **the tree, and no `cwd` in it** | `split`/`pane` nodes, explicit `type`, `right`/`down`; a template setting `cwd` fails validation naming `--cwd` and `dir`; `dir` is relative-only, absolute and `..` refused; `ratio` of 0 or 1 refused; a duplicate `label` is legal, because a label is a name rather than a key; `root` xor `panes`; every error at once with a JSON path |
 | **flat-N sugar is desugared by cyber-mux** | `panes` + `arrange` expands to a canonical tree, a pure function of `n` and `arrange`; `n = 1` yields one pane and no split; the same tree on every backend, never tmux's `select-layout`; `show --desugar` prints what apply builds |
 | **the walk** | region opened blank; geometry depth-first; each split targets the pane it names via `from`, never the current one; commands submitted last in template order; `dir` joined onto the apply-time cwd; a missing `dir` fails naming the pane and the resolved path |
-| **ratio and env degrade, never reject** | a pane with `env` and no `command` is valid; a backend that cannot size a split warns once and takes its default. The seam conventions themselves — the opposite sign directions and env's native tier — are the pane abstraction's, specified in [`mux/`](../mux/README.md) |
+| **ratio and env degrade, never reject** | a pane with `env` and no `command` is valid; a backend that cannot size a split warns once and takes its default; where the route that opened the region could not carry the **root** pane's env, that pane's command is prefixed with it and no other pane's is, and with no command to prefix exactly one stderr warning names the variables. The seam conventions themselves — the opposite sign directions, env's native tier, and the prefix-or-warn rule this node scopes but does not decide — are the pane abstraction's, specified in [`mux/`](../mux/README.md) |
 | **resolution precedes side effects; apply does not roll back** | a bad layout name leaves no worktree behind; a throw mid-walk reports what was built and exits 1 without killing anything |
 | **`--layout` is `--launch`'s sibling** | mutually exclusive with `--launch`; `--at` defaults to `workspace`; `--label` defaults to the template name; `worktree add --layout` reports the manifest alongside `root`/`branch` |
 | **the manifest is the handoff** | `--format json` reports `(label, pane, dir, command)` per created pane, plus `layout`/`cwd`/`workspace`; `workspace` carries the workspace the region opened in, and is `null` on a backend with no workspace tier such as tmux; every pane also carries the `tab` it landed in (`null` from a single-tab template), while the pane list stays one flat list; `workspace` stays `null` on tmux even when tabs are grouped, the group tag being cyber-mux's own bookkeeping rather than a tier |

@@ -1069,6 +1069,50 @@ describe('spec:cyber-mux/layout', () => {
 				})
 				expect(stderr).not.toHaveBeenCalled()
 			})
+
+			it('a root pane whose env the region open could not carry has it prefixed onto its command', () => {
+				const { adapter, calls } = fakeAdapter()
+				applyLayoutToRegion(noExec, adapter, farm, {
+					root: { id: 'w9:root', tab: 'w9:t1' },
+					cwd: '/repo.worktrees/feat-x',
+					workspace: 'w9',
+					rootEnvHonored: false,
+					dirExists: anyDir,
+				})
+				// The root pane's command carries its env as a prefix — the only route that lost env at birth.
+				expect(calls.submits[0]).toEqual({ pane: 'w9:root', text: "env TIER='gpu' render" })
+				// No OTHER pane's command is prefixed: the split-born pane got its env natively.
+				expect(calls.submits.slice(1).every((s) => !s.text?.startsWith('env '))).toBe(true)
+				expect(calls.submits[1]).toEqual({ pane: 'p1', text: 'encode' })
+			})
+
+			it('a root pane whose env could not be carried, with no command to prefix, warns once', () => {
+				// Several panes across several tabs, whose root pane has env but no command to ride it in on.
+				const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+				const { adapter, calls } = fakeAdapter({ workspace: 'w9' })
+				const template: LayoutTemplate = {
+					name: 'render-farm',
+					tabs: [
+						{ label: 'gpu', panes: [{ label: 'dispatcher', env: { TIER: 'gpu' } }, { label: 'encoder' }] },
+						{ label: 'cpu', panes: [{ label: 'muxer' }, { label: 'sink' }] },
+					],
+				}
+				applyLayoutToRegion(noExec, adapter, template, {
+					root: { id: 'w9:root', tab: 'w9:t1' },
+					cwd: '/target',
+					workspace: 'w9',
+					rootEnvHonored: false,
+					label: 'render-farm',
+					dirExists: anyDir,
+				})
+				// Nothing to prefix, so nothing is submitted for the root pane...
+				expect(calls.submits).toEqual([])
+				// ...and the loss is reported ONCE — not once per pane — naming the pane and its variable.
+				expect(stderr).toHaveBeenCalledTimes(1)
+				const warning = String(stderr.mock.calls[0]![0])
+				expect(warning).toContain('dispatcher')
+				expect(warning).toContain('TIER')
+			})
 		})
 
 		it('reports a null workspace on a backend that binds none', () => {

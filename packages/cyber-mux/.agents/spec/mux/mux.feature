@@ -140,10 +140,11 @@ Feature: mux — the pane abstraction
     Then the command is rejected before any pane opens
 
   # ── Split options — what a split can be told: which pane, how big, what environment ──
-  # The seam's own contract, stated at the seam. A caller reaches these through the adapter, not
-  # through a CLI flag, so these scenarios address open() directly rather than a `cyber-mux open`
-  # command line. The layout capability is one such caller; what a template DOES with these is
-  # layout's business, what they MEAN is this node's.
+  # The seam's own contract, stated at the seam: these scenarios address open() directly rather than
+  # a `cyber-mux open` command line, because the seam is what they pin. `from` and `ratio` have no
+  # CLI flag at all; `env` has one, specified as its own surface in the `--env` block below rather
+  # than here — what the flag DOES is that block's business, what env MEANS is this one's. The layout
+  # capability is another such caller; what a template DOES with these is layout's business.
 
   Scenario Outline: from names the pane a pane:* split targets
     Given a caller opening at pane:right through the <adapter> adapter, with from naming a pane
@@ -265,6 +266,235 @@ Feature: mux — the pane abstraction
     # The one tier where env is NOT native: herdr's worktree create/open take no env parameter and
     # refuse the flag outright. Dropping it keeps the worktree route working; a caller that needs env
     # there carries it some other way.
+
+  # The "some other way" above, made concrete. The scenario above stays exactly true — the prefix
+  # rides in on the command the pane RUNS, never on herdr's worktree command — so what follows is the
+  # compensation, not a reversal of the drop.
+  #
+  # These state the rule ONCE, and both callers inherit it rather than restating it: `--env` pins what
+  # a user observes per verb (the `--env` block below) and `layout/` pins what a TEMPLATE does with it
+  # (root pane only, warned once — its "Ratio and env" block). Neither is a duplicate of this
+  # and neither may contradict it. Unlike `ratio`, whose degrade policy is layout's alone because
+  # layout is its only caller, env has two callers — so the rule lives here, where env's MEANING
+  # already does, and a caller cannot quietly invent its own.
+
+  Scenario Outline: whether a route carried env is reported by the route, because only it knows
+    Given a caller opening a region with env via <route>
+    When it runs
+    Then the opened region reports env as <carried>
+
+    Examples:
+      | route                            | carried     |
+      | herdr's worktree bind            | not carried |
+      | the plain git worktree fallback  | carried     |
+      | a direct open on herdr           | carried     |
+      | a direct open on tmux            | carried     |
+
+    # The report is the SEAM's answer to its caller, not a message to a human — it is what makes the
+    # compensation below possible, and a caller cannot see which route ran to work it out. Reported
+    # rather than inferred, for the same reason the workspace grouping is. A route reporting "not
+    # carried" unconditionally is as wrong as one reporting "carried" unconditionally, which is why
+    # both directions are pinned here.
+
+  Scenario: env a route could not carry rides in on the command instead
+    Given a region opened with env the route could not carry, and a command to run in it
+    When the command is run
+    Then the command is prefixed with env KEY=VALUE
+    And the variable is set for the command that runs
+    # A last resort, and its cost is why: the values land in ps output and the pane's shell history.
+    # It is still strictly better than the silent drop it replaces.
+
+  Scenario: env a route could not carry, with no command to ride, warns rather than vanishing
+    Given a region opened with env the route could not carry, and no command to run in it
+    When it runs
+    Then a warning names the variables that did not reach the region
+    And the warning goes to stderr, leaving stdout machine-readable
+    # The prefix only works by riding a command line. With no command there is nothing to ride, and
+    # the honest outcome is to say so — a caller that asked for env and silently did not get it is
+    # the quiet failure this whole block exists to prevent.
+
+  Scenario Outline: a route that set env natively never prefixes it on top
+    Given a region opened at <at> with env the <adapter> adapter carried natively, and a command
+    When the command is run
+    Then the command is run unprefixed
+
+    Examples:
+      | at         | adapter |
+      | pane:right | tmux    |
+      | tab        | tmux    |
+      | workspace  | tmux    |
+      | pane:right | herdr   |
+      | tab        | herdr   |
+      | workspace  | herdr   |
+
+    # Every tier the positive rule above covers, covered again negatively — a subject that
+    # double-prefixes at exactly one tier is otherwise caught by nothing.
+    # Double-applying would be harmless in VALUE and wrong in truth: the values would land in ps
+    # output and shell history on every route, which is exactly the cost the prefix is a last resort
+    # to avoid paying. Only the route that lost env may compensate for it.
+
+  Scenario: an env value carrying a space or a quote survives the prefix intact
+    Given a region opened with env the route could not carry, whose value contains a space and a quote
+    When the command is run
+    Then the value reaches the command as one literal word
+    # The prefix is a shell command line, so the value is quoted for one. Unquoted, a value with a
+    # space splits into extra words and a value with a quote unbalances the line outright.
+
+  # ── --env, the CLI surface for the seam's env option ──
+  # env is the one split option with a CLI flag — `from` and `ratio` have none. It is on every verb
+  # that OPENS a pane, because a variable a caller cannot set at birth is one they cannot set at all:
+  # nothing else in the CLI reaches the pane before its shell starts. What the flag does to a pane
+  # already open is not this block's business; there is no such verb.
+
+  Scenario Outline: --env sets the variable in the pane the verb opens, on every route that carries env
+    Given a caller running <verb> with --env ROLE=worker, on a route that carries env natively
+    When it runs
+    Then the pane the verb opens carries ROLE=worker
+
+    Examples:
+      | verb          |
+      | open          |
+      | worktree add  |
+      | worktree open |
+
+    # Exactly one pane is opened on each of these routes, so "which pane" needs no rule: it is the
+    # one the verb opened. A template's per-pane env is layout's business, and --layout is refused
+    # alongside --env for that reason.
+    #
+    # "On a route that carries env natively" is the load-bearing qualifier, NOT throat-clearing:
+    # every route carries env EXCEPT herdr's worktree bind, and on that one this Then is false. The
+    # two scenarios below own that exception — read them as this Outline's carve-out, not as
+    # unrelated siblings. An unqualified claim here would be a property of the CLI that is silently
+    # false on one backend's one route, which is this project's recurring defect rather than a
+    # hypothetical one.
+
+  Scenario Outline: --env on the one route that cannot carry it rides in on --launch
+    Given a caller running <verb> --env ROLE=worker --launch a command, at workspace on herdr
+    When it runs
+    Then the pane the verb opens runs the command with ROLE=worker set
+
+    Examples:
+      | verb          |
+      | worktree add  |
+      | worktree open |
+
+    # The bind route lost env at birth, so it is handed to the command instead. The variable lands;
+    # the route it took to get there is the seam's business, not the caller's.
+    #
+    # BOTH worktree verbs, because both are exposed identically: herdr's worktree create and worktree
+    # open each take no env parameter and each refuse the flag. Covering only one is how a compensation
+    # gets wired on the verb that has a scenario and forgotten on the verb that does not.
+
+  Scenario Outline: --env on the one route that cannot carry it, with no command to ride, warns
+    Given a caller running <verb> --env ROLE=worker with no --launch, at workspace on herdr
+    When it runs
+    Then the pane the verb opens does not carry ROLE
+    And a warning names ROLE as not having reached it
+
+    Examples:
+      | verb          |
+      | worktree add  |
+      | worktree open |
+
+    # The honest half of the exception. herdr's worktree verbs take no env parameter and there is no
+    # command to prefix, so the variable genuinely does not land — and the caller is TOLD, rather
+    # than left to discover it. The alternative is refusing --env on herdr's worktree route, which
+    # would make identical flags succeed on tmux and fail on herdr — the backend leak the seam
+    # exists to prevent.
+
+  Scenario Outline: --env is repeatable, one variable per flag, on every verb that has it
+    Given a caller running <verb> with --env ROLE=worker and --env TIER=gpu, on a route that carries env
+    When it runs
+    Then the pane the verb opens carries both variables
+
+    Examples:
+      | verb          |
+      | open          |
+      | worktree add  |
+      | worktree open |
+
+    # Repeatability is per-REGISTRATION mechanics, not parsing: a verb that registers the flag without
+    # its collector keeps only the last value and silently discards the rest. So it is pinned on every
+    # verb rather than one — a flag wired repeatably where a scenario watches and non-repeatably where
+    # none does is this project's recurring defect wearing its plainest disguise.
+
+  Scenario Outline: --env is refused alongside --layout, which owns its own panes' env
+    Given a caller running <verb> with both --layout and --env
+    When it runs
+    Then the command is rejected before any pane opens
+    And the reason names the two flags as the conflict
+
+    Examples:
+      | verb         |
+      | open         |
+      | worktree add |
+
+    # The exact shape of --launch's conflict with --layout, for the exact reason: the template owns
+    # what is IN the panes it declares. A caller wanting both edits the template.
+    #
+    # Both verbs that HAVE --layout, not just one — `worktree open` carries no --layout at all, so
+    # the pair is unreachable there and pinning it would specify what no route can reach.
+
+  Scenario Outline: --env without a KEY=VALUE pair is rejected before any side effect
+    Given a caller running <verb> with --env <bad>
+    When it runs
+    Then the command is rejected before <side effect>
+    And the reason names the expected KEY=VALUE form
+
+    Examples:
+      | verb          | bad     | side effect             |
+      | open          | ROLE    | any pane opens          |
+      | open          | =worker | any pane opens          |
+      | worktree add  | ROLE    | the checkout is created |
+      | worktree add  | =worker | the checkout is created |
+      | worktree open | ROLE    | any workspace opens     |
+      | worktree open | =worker | any workspace opens     |
+
+    # Rejected BEFORE the side effect, like every other malformed input — and the side effect DIFFERS
+    # by verb, which is why each is named rather than generalized to "opens". A worktree half-created
+    # by a typo in an env flag is the outcome resolution-precedes-side-effects exists to prevent, and
+    # only `worktree add` can produce it: pinning this on `open` alone would test the one verb that
+    # carries no checkout to leave behind. The sibling pair at layout.feature's resolution block
+    # splits the same guarantee per verb for the same reason.
+    #
+    # A missing `=` and an empty KEY are both malformed; a missing `=` cannot be read as a key with
+    # no value, because the shell hands over one word either way and only the `=` distinguishes them.
+
+  Scenario Outline: --env with an empty value sets the variable empty, rather than rejecting
+    Given a caller running <verb> with --env ROLE=, on a route that carries env
+    When it runs
+    Then the pane the verb opens carries ROLE set to an empty value
+
+    Examples:
+      | verb          |
+      | open          |
+      | worktree add  |
+      | worktree open |
+
+    # A real thing to want — it is how a caller empties a variable for a program that tests presence
+    # rather than content. Only a MISSING `=` is malformed; a present one with nothing after it is an
+    # answer.
+
+  Scenario Outline: an env value containing = splits on the first = only
+    Given a caller running <verb> with --env URL=k=v, on a route that carries env
+    When it runs
+    Then the pane the verb opens carries URL set to k=v
+
+    Examples:
+      | verb          |
+      | open          |
+      | worktree add  |
+      | worktree open |
+
+    # The value is arbitrary and routinely contains `=` (a URL query, a base64 pad). The key cannot,
+    # so the first `=` is the only unambiguous boundary.
+    #
+    # Pinned per verb, like every other --env rule here. An earlier draft pinned these on `open` alone
+    # and leaned on a scenario asserting the flag was "defined once and shared" to carry them to the
+    # other verbs — but that asserted the SHAPE OF THE CODE, which no black-box subject can fail, so
+    # it verified nothing and left these two rules unpinned on two verbs. Sharing the definition is
+    # the obvious way to satisfy these rows and remains the right implementation; it is simply not
+    # something a suite can assert. The suite pins behavior per verb; the code may share as it likes.
 
   # ── The workspace group: carrying a grouping a backend has no tier for ──
   # A caller opening several tabs as one workspace needs them recognizable as a group afterwards. On a
@@ -828,17 +1058,30 @@ Feature: mux — the pane abstraction
   # backend contributes here: every other worktree fact is git's, on every backend.
 
   Scenario: a bare worktree add opens nothing, so there is nothing to group
-    Given a caller running cyber-mux worktree add --branch <branch> with neither --at nor --launch
+    Given a caller running cyber-mux worktree add --branch <branch> with none of --at, --launch or --env
     When add runs outside any multiplexer
     Then it creates the checkout with plain git and opens no pane, tab, or workspace
     And it reports no pane and no workspace
     And it resolves no backend — with nothing opened, a multiplexer has no part in the answer
+    # "Bare" is the absence of every flag that asks for something openable — --env joined that list
+    # when it gained the power to ask. The rule is unchanged: an add that asks for nothing openable
+    # opens nothing, and it is the ONLY route that works outside a multiplexer at all, since every
+    # other one resolves a backend and fails without one.
 
   Scenario: worktree add --launch defaults the placement to workspace
     Given a caller running cyber-mux worktree add --branch <branch> --launch <command> with no --at
     When add runs
     Then the worktree opens in a workspace — a launch wants its own space, not a pane crowding the caller's
     And workspace is the only placement a backend can bind a worktree to
+
+  Scenario: worktree add --env defaults the placement to workspace, for --launch's reason
+    Given a caller running cyber-mux worktree add --branch <branch> --env ROLE=worker with no --at and no --launch
+    When add runs
+    Then the worktree opens in a workspace carrying ROLE=worker
+    # Beside --launch's rule rather than in the --env block, because it IS --launch's rule: asking for
+    # something IN a pane is asking for the pane, and a reader comparing the two flags finds both here.
+    # Without it, `worktree add --env` would stay the pure git operation above, open nothing, and drop
+    # the env with nothing to carry it — reintroducing the silent drop this capability exists to remove.
 
   Scenario Outline: worktree add --at workspace groups the worktree where the backend binds
     Given a caller running cyber-mux worktree add --branch <branch> --at workspace with <env>

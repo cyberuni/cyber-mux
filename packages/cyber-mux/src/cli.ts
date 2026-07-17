@@ -1,7 +1,7 @@
 import { join } from 'node:path'
 import { Command, CommanderError, Option } from 'commander'
 import { callerPane, selectSessionAdapter } from './backend.ts'
-import { AT_OPTION, FORMAT_OPTION, LABEL_OPTION } from './cli-options.ts'
+import { AT_OPTION, ENV_OPTION, FORMAT_OPTION, LABEL_OPTION } from './cli-options.ts'
 import { type Exec, realExec } from './exec.ts'
 import {
 	collectPanes,
@@ -251,7 +251,13 @@ function reportOpenedWorktree(opened: OpenedWorktree): void {
  * the pair rather than picking a winner.
  */
 function layoutOption(): Option {
-	return new Option('--layout <name>', 'Named layout template to build in the opened space').conflicts('launch')
+	// Conflicts with both `--launch` (one command line for the space) and `--env` (the template owns
+	// its own panes' env) — each answers "what is in the space you are opening", and a template names
+	// all of it.
+	return new Option('--layout <name>', 'Named layout template to build in the opened space').conflicts([
+		'launch',
+		'env',
+	])
 }
 
 /**
@@ -586,43 +592,56 @@ function openCommand(deps: Deps): Command {
 		.addOption(layoutOption())
 		.option('--cwd <path>', 'Working directory for the new pane', process.cwd())
 		.addOption(AT_OPTION)
+		.addOption(ENV_OPTION)
 		.addOption(LABEL_OPTION)
 		.addOption(FORMAT_OPTION)
-		.action((opts: { launch?: string; layout?: string; cwd: string; at?: SessionPlacement; label?: string }) => {
-			if (opts.layout) {
-				// Resolve and validate BEFORE touching a backend, so an unresolvable name opens nothing.
-				const { template } = resolveTemplate(deps, { name: opts.layout })
-				const a = adapter(deps)
-				try {
-					reportManifest(
-						openLayout(deps.exec, a, template, {
-							cwd: opts.cwd,
-							// A fresh space is empty by construction, which is why the pool defaults there.
-							at: opts.at ?? 'workspace',
-							label: opts.label ?? template.name,
-							dirExists: deps.store.dirExists,
-							from: callerPane(a, deps.env),
-						}),
-					)
-				} catch (err) {
-					reportApplyFailure(err)
+		.action(
+			(opts: {
+				launch?: string
+				layout?: string
+				cwd: string
+				at?: SessionPlacement
+				env?: Record<string, string>
+				label?: string
+			}) => {
+				if (opts.layout) {
+					// Resolve and validate BEFORE touching a backend, so an unresolvable name opens nothing.
+					const { template } = resolveTemplate(deps, { name: opts.layout })
+					const a = adapter(deps)
+					try {
+						reportManifest(
+							openLayout(deps.exec, a, template, {
+								cwd: opts.cwd,
+								// A fresh space is empty by construction, which is why the pool defaults there.
+								at: opts.at ?? 'workspace',
+								label: opts.label ?? template.name,
+								dirExists: deps.store.dirExists,
+								from: callerPane(a, deps.env),
+							}),
+						)
+					} catch (err) {
+						reportApplyFailure(err)
+					}
+					return
 				}
-				return
-			}
-			const a = adapter(deps)
-			const t = a.open(deps.exec, {
-				cwd: opts.cwd,
-				launch: opts.launch,
-				at: opts.at,
-				label: opts.label,
-				from: callerPane(a, deps.env),
-			})
-			// The workspace rides in on the open itself — the backend answered when the pane was born, so
-			// reporting it asks nothing extra; hiding it would discard a fact already in hand. `?? null`
-			// on the JSON side only, matching `reportOpenedWorktree`: absent is the seam's meaning, null
-			// is its spelling at the machine-readable boundary.
-			output({ pane: t.id, workspace: t.workspace ?? null }, () => printFields({ pane: t.id, workspace: t.workspace }))
-		})
+				const a = adapter(deps)
+				const t = a.open(deps.exec, {
+					cwd: opts.cwd,
+					launch: opts.launch,
+					at: opts.at,
+					env: opts.env,
+					label: opts.label,
+					from: callerPane(a, deps.env),
+				})
+				// The workspace rides in on the open itself — the backend answered when the pane was born, so
+				// reporting it asks nothing extra; hiding it would discard a fact already in hand. `?? null`
+				// on the JSON side only, matching `reportOpenedWorktree`: absent is the seam's meaning, null
+				// is its spelling at the machine-readable boundary.
+				output({ pane: t.id, workspace: t.workspace ?? null }, () =>
+					printFields({ pane: t.id, workspace: t.workspace }),
+				)
+			},
+		)
 }
 
 /** The `send` group: drive a pane's input WITHOUT taking its turn. Neither subcommand presses an
@@ -774,6 +793,7 @@ function worktreeAddCommand(deps: Deps): Command {
 		.option('--launch <command>', 'Command to run in the opened pane; implies --at workspace')
 		.addOption(layoutOption())
 		.addOption(AT_OPTION)
+		.addOption(ENV_OPTION)
 		.addOption(LABEL_OPTION)
 		.addOption(FORMAT_OPTION)
 		.action(
@@ -784,6 +804,7 @@ function worktreeAddCommand(deps: Deps): Command {
 				launch?: string
 				layout?: string
 				at?: SessionPlacement
+				env?: Record<string, string>
 				label?: string
 			}) => {
 				try {
@@ -831,18 +852,20 @@ function worktreeAddCommand(deps: Deps): Command {
 						return
 					}
 					const path = opts.path ?? resolveWorktreePath(primaryRoot, opts.branch)
-					// With no placement asked for, this IS a git operation: it creates a checkout, opens
-					// nothing, and needs no multiplexer to be inside of. There is nothing to group because
-					// nothing was opened — `worktree open` is how that checkout gets grouped later.
-					if (!opts.at && !opts.launch) {
+					// With no placement asked for AND nothing to put IN a pane, this IS a git operation: it
+					// creates a checkout, opens nothing, and needs no multiplexer to be inside of. There is
+					// nothing to group because nothing was opened — `worktree open` groups it later. `--env`
+					// joins `--launch` in this guard: asking for something in a pane is asking for the pane,
+					// so it can no longer be a bare add.
+					if (!opts.at && !opts.launch && !opts.env) {
 						const wt = gitWorktreeAdapter.add(deps.exec, { primaryRoot, path, branch: opts.branch, base: opts.base })
 						output({ root: wt.root, branch: wt.branch, pane: null, workspace: null }, () =>
 							printFields({ root: wt.root, branch: wt.branch }),
 						)
 						return
 					}
-					// A launch with no placement wants its own space, not a pane crowding the caller's — and
-					// `workspace` is the only placement a backend can bind a worktree to.
+					// A launch or an env with no placement wants its own space, not a pane crowding the
+					// caller's — and `workspace` is the only placement a backend can bind a worktree to.
 					const at = opts.at ?? 'workspace'
 					const a = adapter(deps)
 					reportOpenedWorktree(
@@ -852,6 +875,7 @@ function worktreeAddCommand(deps: Deps): Command {
 							path,
 							base: opts.base,
 							launch: opts.launch,
+							env: opts.env,
 							at,
 							label: opts.label,
 							from: callerPane(a, deps.env),
@@ -870,26 +894,33 @@ function worktreeOpenCommand(deps: Deps): Command {
 		.argument('<path>', 'Worktree path to open')
 		.option('--launch <command>', 'Command to run in the opened pane')
 		.addOption(AT_OPTION)
+		.addOption(ENV_OPTION)
 		.addOption(LABEL_OPTION)
 		.addOption(FORMAT_OPTION)
-		.action((path: string, opts: { launch?: string; at?: SessionPlacement; label?: string }) => {
-			try {
-				const primaryRoot = resolvePrimaryRoot(deps.exec)
-				const a = adapter(deps)
-				reportOpenedWorktree(
-					openExistingWorktree(deps.exec, a, {
-						primaryRoot,
-						path,
-						launch: opts.launch,
-						at: opts.at,
-						label: opts.label,
-						from: callerPane(a, deps.env),
-					}),
-				)
-			} catch (err) {
-				fail(err instanceof Error ? err.message : String(err))
-			}
-		})
+		.action(
+			(
+				path: string,
+				opts: { launch?: string; at?: SessionPlacement; env?: Record<string, string>; label?: string },
+			) => {
+				try {
+					const primaryRoot = resolvePrimaryRoot(deps.exec)
+					const a = adapter(deps)
+					reportOpenedWorktree(
+						openExistingWorktree(deps.exec, a, {
+							primaryRoot,
+							path,
+							launch: opts.launch,
+							env: opts.env,
+							at: opts.at,
+							label: opts.label,
+							from: callerPane(a, deps.env),
+						}),
+					)
+				} catch (err) {
+					fail(err instanceof Error ? err.message : String(err))
+				}
+			},
+		)
 }
 
 function worktreeListCommand(deps: Deps): Command {
