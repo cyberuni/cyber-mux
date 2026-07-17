@@ -40,10 +40,19 @@ export interface SessionOpenOptions {
 	 */
 	ratio?: number
 	/**
-	 * Environment variables set in the new pane at birth. Native on both real backends (herdr
-	 * `--env KEY=VALUE`, tmux `-e KEY=VALUE`, each repeatable); only meaningful for a `pane:*`
-	 * placement. Valid with or without `launch` — a pane with env and no command is a blank shell
-	 * with that env set.
+	 * Environment variables set at the birth of whatever tier `at` opens — NOT just a split. Native
+	 * on both real backends, which take a repeatable flag on every space-creating command (herdr
+	 * `--env KEY=VALUE` on `workspace create`/`tab create`/`pane split`, tmux `-e KEY=VALUE` on
+	 * `new-window`/`split-window`), one per variable.
+	 *
+	 * That breadth is load-bearing, not incidental: a pane pool's root pane is born by the region
+	 * open and never by a split, so scoping env to `pane:*` would drop it silently exactly where a
+	 * caller needs it. Valid with or without `launch` — a pane with env and no command is a blank
+	 * shell with that env set.
+	 *
+	 * The one exception is herdr's WORKTREE route: `worktree create`/`worktree open` take no env
+	 * param (0.7.4 answers `--env` with `unknown option`), so env is dropped there rather than
+	 * failing the checkout — see `WorktreeWorkspaceCapability`.
 	 */
 	env?: Record<string, string>
 	/**

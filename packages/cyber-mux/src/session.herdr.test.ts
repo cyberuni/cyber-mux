@@ -153,7 +153,7 @@ describe('spec:cyber-mux/mux', () => {
 		// resolves to the UI-FOCUSED pane when that is unset (verified against herdr 0.7.4), so an
 		// unidentified caller splits whatever the user is looking at. Naming the pane is the fix, and
 		// the emitted argv is the only place the difference is visible.
-		it('open({at:pane:*, from}) splits the NAMED pane positionally instead of --current', () => {
+		it('from names the pane a pane:* split targets', () => {
 			const calls: string[][] = []
 			const splitOut = JSON.stringify({
 				id: 'cli:pane:split',
@@ -169,7 +169,7 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls.every((c) => !c.includes('--current'))).toBe(true)
 		})
 
-		it('open({at:pane:*}) with no `from` falls back to --current', () => {
+		it("from omitted leaves each backend its own default, which tracks the USER's focus", () => {
 			const calls: string[][] = []
 			const splitOut = JSON.stringify({
 				id: 'cli:pane:split',
@@ -184,7 +184,7 @@ describe('spec:cyber-mux/mux', () => {
 		// `ratio` is the fraction kept by the ORIGINAL pane, and herdr's `--ratio` sizes exactly that —
 		// so it passes through UNCONVERTED, where tmux's `-l` sizes the new pane and inverts. Measured
 		// against 0.7.4 rather than documented, which is why the literal flag is asserted, not trusted.
-		it('open({ratio}) passes the ratio through unconverted, because herdr sizes the ORIGINAL pane', () => {
+		it('the ratio sign convention converts in opposite directions per backend', () => {
 			const calls: string[][] = []
 			const splitOut = JSON.stringify({ result: { pane: { pane_id: 'w3:pB' } } })
 			const exec = fakeExec(calls, { 'pane split': splitOut })
@@ -194,14 +194,14 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls[0]).not.toContain('0.667')
 		})
 
-		it('open() with no ratio emits no --ratio, leaving herdr its own even default', () => {
+		it('ratio omitted leaves each backend its own even default', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'pane split': JSON.stringify({ result: { pane: { pane_id: 'w3:pB' } } }) })
 			herdrSessionAdapter.open(exec, { cwd: '/u', at: 'pane:right' })
 			expect(calls[0]).not.toContain('--ratio')
 		})
 
-		it('open({env}) sets each variable natively at the pane’s birth via a repeatable --env', () => {
+		it('each env variable gets its own flag, in the order given', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'pane split': JSON.stringify({ result: { pane: { pane_id: 'w3:pB' } } }) })
 			herdrSessionAdapter.open(exec, { cwd: '/u', at: 'pane:right', env: { ROLE: 'worker', TIER: 'gpu' } })
@@ -220,16 +220,20 @@ describe('spec:cyber-mux/mux', () => {
 			])
 		})
 
-		it('open({env}) with no launch yields a blank shell with the env set, running nothing', () => {
+		it('env with no launch opens a blank shell carrying the env', () => {
 			// Native env means no command to prefix is needed, so a warm pane with no command is coherent.
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'pane split': JSON.stringify({ result: { pane: { pane_id: 'w3:pB' } } }) })
 			herdrSessionAdapter.open(exec, { cwd: '/u', at: 'pane:right', env: { ROLE: 'worker' } })
 			expect(calls[0]).toContain('ROLE=worker')
-			expect(calls.some((c) => c[1] === 'run')).toBe(false)
+			// The scenario says NOTHING is typed, sent, or run — so rule out all three of herdr's input
+			// verbs, not just `run`. herdr spreads typing across `run`/`send-text`/`send-keys` where tmux
+			// funnels everything through `send-keys`, so checking one verb leaves the others invisible: a
+			// stray bare-Enter submit is exactly the regression that would slip through.
+			expect(calls.some((c) => c[0] === 'pane' && ['run', 'send-text', 'send-keys'].includes(c[1] ?? ''))).toBe(false)
 		})
 
-		it('declares that it can size a split, so a ratio is never degraded away on herdr', () => {
+		it('a backend declares whether it can size a split', () => {
 			expect(herdrSessionAdapter.canSizeSplits).toBe(true)
 		})
 
@@ -237,7 +241,28 @@ describe('spec:cyber-mux/mux', () => {
 		// socket schema (protocol 16), and the CLI takes the same repeatable `--env` there as `pane
 		// split` does — verified against 0.7.4. Env is therefore native at EVERY tier, which a layout's
 		// root pane depends on: it is born by the region open, never by a split.
-		it('open({at:workspace, env}) sets env natively on the workspace via --env', () => {
+		// The pane tier of the same scenario. It overlaps the repeatable-flag test above by design:
+		// that one owns the per-variable/order contract, this one owns "pane is a tier env reaches",
+		// so the tier scenario's key covers every row it names rather than leaving pane to a
+		// neighbouring key. Many-to-one binding is intended here.
+		it('env is set natively at the birth of whatever tier is opened', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'pane split': JSON.stringify({ result: { pane: { pane_id: 'w3:pB' } } }) })
+			herdrSessionAdapter.open(exec, { cwd: '/unit', at: 'pane:right', env: { ROLE: 'planner' } })
+			expect(calls[0]).toEqual([
+				'pane',
+				'split',
+				'--current',
+				'--direction',
+				'right',
+				'--cwd',
+				'/unit',
+				'--env',
+				'ROLE=planner',
+			])
+		})
+
+		it('env is set natively at the birth of whatever tier is opened', () => {
 			const calls: string[][] = []
 			const createOut = JSON.stringify({ result: { root_pane: { pane_id: 'w7:p1' } } })
 			const exec = fakeExec(calls, { 'workspace create': createOut })
@@ -255,7 +280,7 @@ describe('spec:cyber-mux/mux', () => {
 			])
 		})
 
-		it('open({at:tab, env}) sets env natively on the tab via --env', () => {
+		it('env is set natively at the birth of whatever tier is opened', () => {
 			const calls: string[][] = []
 			const tabOut = JSON.stringify({ result: { root_pane: { pane_id: 'w3:pT' } } })
 			const exec = fakeExec(calls, { 'tab create': tabOut })
@@ -269,7 +294,7 @@ describe('spec:cyber-mux/mux', () => {
 		// create failed". So passing env here must emit NOTHING, or the primary flow (a worktree pool
 		// whose root pane sets ROLE) breaks outright. The adapter stays honest about its backend; the
 		// caller honors env with the command prefix instead.
-		it('createInWorkspace({env}) emits NO --env — worktree create has no such param', () => {
+		it("herdr's worktree verbs cannot set env at birth, and drop it rather than failing", () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'worktree create': worktreeOut() })
 			worktree().createInWorkspace(exec, {
@@ -293,7 +318,7 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls[0]).not.toContain('ROLE=planner')
 		})
 
-		it('openInWorkspace({env}) emits NO --env either — worktree open has no such param', () => {
+		it("herdr's worktree verbs cannot set env at birth, and drop it rather than failing", () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'worktree open': worktreeOut() })
 			worktree().openInWorkspace(exec, { primaryRoot: '/repo', path: '/p', env: { ROLE: 'planner' } })
@@ -301,7 +326,7 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls[0]).not.toContain('--env')
 		})
 
-		it('open({from}) is ignored by tab/workspace, which split nothing', () => {
+		it('from is ignored by tab and workspace, which split nothing', () => {
 			const calls: string[][] = []
 			const created = JSON.stringify({
 				id: 'cli:workspace:create',

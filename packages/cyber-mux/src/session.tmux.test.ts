@@ -53,7 +53,7 @@ describe('spec:cyber-mux/mux', () => {
 		// `split-window` run inside %1 (with $TMUX_PANE=%1) split the active %0 instead. These assert
 		// the flag because that is the entire fix: the wrong-pane split is silent, so only the emitted
 		// argv distinguishes a correct call from a broken one.
-		it('open({at:pane:*, from}) splits the NAMED pane via -t rather than tmux’s active pane', () => {
+		it('from names the pane a pane:* split targets', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'split-window': '%9' })
 			tmuxSessionAdapter.open(exec, { cwd: '/u', at: 'pane:right', from: { id: '%3' } })
@@ -64,7 +64,7 @@ describe('spec:cyber-mux/mux', () => {
 			])
 		})
 
-		it('open({from}) is ignored by tab/workspace, which split nothing', () => {
+		it('from is ignored by tab and workspace, which split nothing', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'new-window': '%2' })
 			tmuxSessionAdapter.open(exec, { cwd: '/u', at: 'tab', from: { id: '%3' } })
@@ -80,7 +80,7 @@ describe('spec:cyber-mux/mux', () => {
 		// `ratio` is the fraction kept by the ORIGINAL pane; tmux's `-l` sizes the NEW one, so this
 		// adapter INVERTS where herdr's passes the same number straight through. Asserting the literal
 		// flag is the cheapest guard against the inversion being applied twice, or to the wrong backend.
-		it('open({ratio}) inverts to -l, because tmux sizes the NEW pane', () => {
+		it('the ratio sign convention converts in opposite directions per backend', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'split-window': '%9' })
 			tmuxSessionAdapter.open(exec, { cwd: '/u', at: 'pane:right', from: { id: '%3' }, ratio: 0.333 })
@@ -89,13 +89,36 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls[0]).not.toContain('33%')
 		})
 
-		it('open() with no ratio emits no -l, leaving tmux its own even default', () => {
+		it('ratio omitted leaves each backend its own even default', () => {
 			const calls: string[][] = []
 			tmuxSessionAdapter.open(fakeExec(calls, { 'split-window': '%9' }), { cwd: '/u', at: 'pane:right' })
 			expect(calls[0]).not.toContain('-l')
 		})
 
-		it('open({env}) sets each variable natively at the pane’s birth via a repeatable -e', () => {
+		// A window is not sized against a pane, so `-l` must never reach `new-window`. Every other ratio
+		// check uses a pane placement, so this is the only one covering the window tiers.
+		//
+		// tmux is defended twice here and it takes breaking BOTH to fail this: the `!window` guard
+		// empties `size`, AND the window branch never spreads `size` into its argv. Mutating the guard
+		// alone leaves this green — the guard is belt-and-braces, not the thing under test. The wrong
+		// subject it does catch is an author who wires `...size` into the window branch (verified by
+		// mutation: both rows then fail). herdr needs no equivalent check — its `size` is lexically
+		// scoped inside the pane-split branch and cannot reach a tab or workspace at all.
+		it.each([
+			'tab',
+			'workspace',
+		] as const)('ratio is a split concept — a tab or workspace is never sized against a pane', (at) => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'new-window': '%9' })
+			tmuxSessionAdapter.open(exec, { cwd: '/unit', at, ratio: 0.3 })
+			expect(calls[0][0]).toBe('new-window')
+			expect(calls[0]).not.toContain('-l')
+			// neither the number as given nor its inversion — the two ways a leak would look.
+			expect(calls[0]).not.toContain('30%')
+			expect(calls[0]).not.toContain('70%')
+		})
+
+		it('each env variable gets its own flag, in the order given', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'split-window': '%9' })
 			tmuxSessionAdapter.open(exec, { cwd: '/u', at: 'pane:right', env: { ROLE: 'worker', TIER: 'gpu' } })
@@ -114,7 +137,7 @@ describe('spec:cyber-mux/mux', () => {
 			])
 		})
 
-		it('open({env}) with no launch yields a blank shell with the env set, sending nothing', () => {
+		it('env with no launch opens a blank shell carrying the env', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'split-window': '%9' })
 			tmuxSessionAdapter.open(exec, { cwd: '/u', at: 'pane:right', env: { ROLE: 'worker' } })
@@ -122,30 +145,32 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls.some((c) => c[0] === 'send-keys')).toBe(false)
 		})
 
-		it('declares that it can size a split, so a ratio is never degraded away on tmux', () => {
+		it('a backend declares whether it can size a split', () => {
 			expect(tmuxSessionAdapter.canSizeSplits).toBe(true)
 		})
 
 		// `new-window` takes `-e` too (tmux(1): `new-window [-abdkPS] [-c start-directory] [-e
 		// environment] ...`), so env is native at EVERY tier. That matters because a layout's root pane
 		// is born by the window open, never by a split — scoping env to the split path would drop it.
-		it.each(['workspace', 'tab'] as const)('open({at:%s, env}) sets env natively on the window via -e', (at) => {
+		// The title is static rather than interpolated so every tier folds into the one scenario key.
+		it.each([
+			[
+				'pane:right' as const,
+				['split-window', '-h', '-e', 'ROLE=planner', '-e', 'TIER=cpu', '-c', '/unit', '-P', '-F', '#{pane_id}'],
+			],
+			[
+				'tab' as const,
+				['new-window', '-d', '-e', 'ROLE=planner', '-e', 'TIER=cpu', '-c', '/unit', '-P', '-F', '#{pane_id}'],
+			],
+			[
+				'workspace' as const,
+				['new-window', '-d', '-e', 'ROLE=planner', '-e', 'TIER=cpu', '-c', '/unit', '-P', '-F', '#{pane_id}'],
+			],
+		])('env is set natively at the birth of whatever tier is opened', (at, expected) => {
 			const calls: string[][] = []
-			const exec = fakeExec(calls, { 'new-window': '%9' })
+			const exec = fakeExec(calls, { 'new-window': '%9', 'split-window': '%9' })
 			tmuxSessionAdapter.open(exec, { cwd: '/unit', at, env: { ROLE: 'planner', TIER: 'cpu' } })
-			expect(calls[0]).toEqual([
-				'new-window',
-				'-d',
-				'-e',
-				'ROLE=planner',
-				'-e',
-				'TIER=cpu',
-				'-c',
-				'/unit',
-				'-P',
-				'-F',
-				'#{pane_id}',
-			])
+			expect(calls[0]).toEqual(expected)
 		})
 
 		it('open({at:workspace, env, label}) names the window and sets its env together', () => {
@@ -167,7 +192,9 @@ describe('spec:cyber-mux/mux', () => {
 			])
 		})
 
-		it('open({at:pane:*}) with no `from` falls back to tmux’s own default, emitting no -t', () => {
+		// Title carries a straight apostrophe to match the scenario name VERBATIM — the bridge keys on
+		// the leaf title exactly, so a typographic ’ here would silently bind to nothing.
+		it("from omitted leaves each backend its own default, which tracks the USER's focus", () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'split-window': '%9' })
 			tmuxSessionAdapter.open(exec, { cwd: '/u', at: 'pane:right' })
