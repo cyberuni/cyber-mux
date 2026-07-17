@@ -7,14 +7,14 @@ todos:
   - content: Amend axi #6's exit-code set to 0/1/2 and add the structured-error shape
     status: completed
   - content: Cold spec-judge rounds; converge or present the failing scenarios
-    status: in_progress
+    status: completed
   - content: Spec gate — freeze the touched suites, record the gate line
-    status: pending
+    status: completed
   - content: Deliver — put a label on LivePane across both backends, then resolution + the report
-    status: pending
+    status: completed
   - content: Rebase onto main, impl gate, land the PR
-    status: pending
-  - content: Drain the 2 recorded follow-ups into issues (needs permission)
+    status: in_progress
+  - content: Drain the 3 recorded follow-ups into issues (needs permission)
     status: pending
 ---
 
@@ -92,28 +92,42 @@ dispatcher "needs NO new cyber-mux surface, since it addresses panes through
   deliberately — a label is a human name, herdr labels every root tab `1`, so duplicates arrive by
   default. Refusing them made capture lossy, which is what CR #14 removed.
 
+## Result
+
+**Both gates passed.** Spec gate ratified in-session by the requester; impl gate self-asserted on a
+cold judge's 16/16. Suite additive throughout — 16 added / 0 modified / 0 removed / 90 unchanged,
+`addOnly` true, re-checked on the merged tree after the rebase. `pnpm verify` green, 545 tests.
+
+## What the loop actually caught
+
+Five judge rounds, and the recurring defect was never a wrong design — it was an **unearned claim**:
+
+- The first `addOnly: true` was computed against a **stale remote ref**. Right answer, by luck; the
+  freeze self-clear rested on it. The branch was 13 commits behind, including the CR whose rationale
+  this one builds on.
+- Two scenarios were **inert**: both fixed a world of one live pane, so a resolver ignoring the name
+  entirely passed all nine rows.
+- The spec claimed in the **past tense** that the structured error was "built", on a spec-only round
+  with no code. No test can catch that — the artifact is prose.
+- The same false-built tense then **recurred in the ledger**, because the fix had been applied to the
+  two instances named rather than swept for.
+- The impl-producer's own mutation harness reported a **false kill**: vitest ate the `-t` filter as a
+  flag, zero tests ran, and the nonzero exit read as a pass. Self-caught by a count check — and the
+  reason the impl-judge re-ran all mutations by hand rather than reading the table.
+
+Two judge claims were **refused** after checking the corpus: that `correction.cause` must hold a
+closed enum (the corpus writes prose there and carries the vocabulary in `correction-kind`), and that
+a missing `seq` on ledger lines is a corpus-wide gap (9 of 11 shards carry it — it is the norm).
+
+## Scope cut at the impl gate
+
+The delivery added a label column to `list`. Removed: it is not in the frozen contract and takes that
+row to five fields against axi #2's three-to-four ceiling — a bar this same CR amends elsewhere.
+Filed rather than shipped.
+
 ## NEXT
 
-**Spec gate PASSED** — self-asserted within the `auto-spec` leash, so it is ratifiable or
-kickable-back. Suite frozen additively (16 added / 0 modified / 0 removed / 90 unchanged, `addOnly`
-true) — no Clearance floor, no re-open. `check-spec-state` + `check-suite` green. Four cold judge
-rounds; the last returned all three lenses PASS, ALIGNED true, no blocker.
-
-Next is **deliver**, and the four facts it must not rediscover the hard way:
-
-1. `LivePane` (`src/session.ts`) grows a `label`. tmux's `listPanes` **must move to tab-separated
-   first** — it is space-separated and recovers `cwd` only by rejoining the tail, so a label added to
-   that format is unrecoverable. The region-describing route documents this exact trap.
-2. **Reuse** the title-differs-from-host rule rather than reimplementing it — it now needs two
-   sites (`describeRegion`'s `RegionPane.label` and the new `listPanes`/`LivePane` path). Share the
-   helper. Without it every untouched tmux pane reports the hostname and the ambiguity path fires on
-   labels nobody chose.
-3. herdr is the easy half: `pane list` is already JSON and already returns the label the adapter
-   drops on the floor.
-4. Resolution hangs off `target()`, plus `layout save --from`, which builds its target inline and
-   must be routed through the same helper.
-
-The judges' standing warning for this CR: **verify, do not claim.** Three separate rounds caught an
-unearned claim — a structural check run against a stale base, scenarios inert against the wrong impl
-they exist to catch, and a spec asserting in the past tense that something was built when no code
-existed. Prove each frozen scenario by mutating its subject, not by reading.
+Land the PR. Then drain the 3 follow-ups in the ledger shard into issues — the cross-adopter
+divergence of axi #6's third exit code, `fail()` staying free text on every other path, and `list`
+not surfacing the label it now carries. Needs the requester's permission; the ledger records stand
+either way, and a later drain re-derives what is outstanding by the same dedupe.
