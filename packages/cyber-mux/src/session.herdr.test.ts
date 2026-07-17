@@ -290,6 +290,25 @@ describe('spec:cyber-mux/mux', () => {
 			expect(herdrSessionAdapter.canSizeSplits).toBe(true)
 		})
 
+		// herdr's workspace IS the group: every pane and tab record already carries its `workspace_id`,
+		// so a second grouping would duplicate a fact herdr never reads — and herdr would have to be
+		// taught to read it. Asserting the argv is byte-identical to the ungrouped call is the check
+		// that catches a flag invented for it (`--group`, `--label`, a `--env` smuggle), including one
+		// herdr 0.7.4 would answer with `unknown option` and turn a working open into a failure.
+		it('a backend with a real workspace tier ignores the group id', () => {
+			const grouped: string[][] = []
+			const ungrouped: string[][] = []
+			const out = PANE_IN_TAB('w3:pT', 'w3')
+			const opts = { cwd: '/quarry', at: 'tab' as const, label: 'oak - ridge - mill' }
+			herdrSessionAdapter.open(fakeExec(grouped, { 'tab create': out }), { ...opts, workspaceGroup: 'shift - a' })
+			herdrSessionAdapter.open(fakeExec(ungrouped, { 'tab create': out }), opts)
+			expect(grouped).toEqual(ungrouped)
+			// Named explicitly too: `toEqual` above would also pass if BOTH calls leaked the id, which is
+			// exactly the mistake this scenario forbids.
+			expect(grouped.flat().join(' ')).not.toContain('shift - a')
+			expect(grouped[0]).toEqual(['tab', 'create', '--cwd', '/quarry', '--label', 'oak - ridge - mill', '--no-focus'])
+		})
+
 		// `WorkspaceCreateParams` and `TabCreateParams` both carry a native `env` Record in herdr's
 		// socket schema (protocol 16), and the CLI takes the same repeatable `--env` there as `pane
 		// split` does — verified against 0.7.4. Env is therefore native at EVERY tier, which a layout's

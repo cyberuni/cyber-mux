@@ -1,6 +1,17 @@
 import { withReason } from './exec.ts'
 import type { LivePane, OpenedPane, RegionPane, SessionAdapter, SessionReadOptions } from './session.ts'
 
+/**
+ * The tmux window user option `SessionOpenOptions.workspaceGroup` is stored in. A user option (the
+ * `@` prefix) is tmux's own mechanism for a value it stores but never interprets, so tmux carries
+ * the tag without cyber-mux teaching it anything: it survives a window rename, and `list-windows`
+ * both reads it back (`#{@cm_ws}`) and filters on it server-side (`-f '#{==:#{@cm_ws},<id>}'`).
+ *
+ * Named here rather than spelled at each use so the write side and every read side cannot drift.
+ * Server-lifetime, like every window: it dies with the tmux server, along with the windows it tags.
+ */
+export const TMUX_WORKSPACE_GROUP_OPTION = '@cm_ws'
+
 /** tmux backend — detected via `$TMUX`. */
 export const tmuxSessionAdapter: SessionAdapter = {
 	name: 'tmux',
@@ -32,25 +43,42 @@ export const tmuxSessionAdapter: SessionAdapter = {
 		// a layout's root pane is the region's own pane, born by the window open rather than by any
 		// split, so scoping this to the split path would silently drop that pane's env.
 		const env = opts.env ? Object.entries(opts.env).flatMap(([k, v]) => ['-e', `${k}=${v}`]) : []
+		// A group id tags the WINDOW this open created, so it needs that window's id — asked for in the
+		// same `-P -F` the pane id already rides out on rather than as a second query. Only when the
+		// caller actually asked to group: a caller that did not gets byte-identical argv to before, and
+		// a split creates no window of its own to tag (tagging the caller's would group a space the
+		// caller never opened).
+		const group = window && opts.workspaceGroup != null
+		const format = group ? '#{pane_id}\t#{window_id}' : '#{pane_id}'
 		const args = window
 			? // `-d` keeps focus on the caller (opens the window in the background) — without it tmux
 				// switches the attached client to the new window, stealing the caller's focus. The
 				// returned pane id and subsequent `send-keys -t` still target the new pane.
-				['new-window', '-d', ...env, '-c', opts.cwd, '-P', '-F', '#{pane_id}']
+				['new-window', '-d', ...env, '-c', opts.cwd, '-P', '-F', format]
 			: at === 'pane:down'
-				? ['split-window', '-v', ...from, ...size, ...env, '-c', opts.cwd, '-P', '-F', '#{pane_id}']
-				: ['split-window', '-h', ...from, ...size, ...env, '-c', opts.cwd, '-P', '-F', '#{pane_id}']
+				? ['split-window', '-v', ...from, ...size, ...env, '-c', opts.cwd, '-P', '-F', format]
+				: ['split-window', '-h', ...from, ...size, ...env, '-c', opts.cwd, '-P', '-F', format]
 		// A window takes its name at birth — `-n` also turns tmux's `automatic-rename` off for it, so
 		// the name survives whatever the pane goes on to run. A pane has no such flag; its title is
 		// set after the split.
 		if (window && opts.label) args.splice(1, 0, '-n', opts.label)
-		const pane = exec('tmux', args)
-		if (!pane) throw new Error(withReason(exec, `tmux ${args[0]} failed`))
+		const out = exec('tmux', args)
+		if (!out) throw new Error(withReason(exec, `tmux ${args[0]} failed`))
+		const [pane, windowId] = group ? splitOpenReport(out, args[0]!) : [out, undefined]
 		// No `workspace`: tmux has no workspace tier — `workspace` and `tab` both collapse to a Window —
 		// so it has nothing to report, which is not the same as reporting that nothing is there. Absent
 		// is the seam's own convention for a fact a backend cannot answer (`OpenedPane.workspace`,
 		// `isPaneFocused`'s `undefined`); reporting a null here would assert a "none" tmux never said.
 		const target: OpenedPane = { id: pane }
+		// The group id, stored in tmux's own native mechanism for exactly this: a window user option.
+		// It survives a window rename (unlike a name-encoded grouping), and tmux can filter on it
+		// server-side (`list-windows -f '#{==:#{@cm_ws},<id>}'`). Necessarily a SECOND call — tmux has
+		// no `new-window` flag to set an option at birth — and it runs before any `--launch` submit, so
+		// the window is grouped before anything starts running in it. Set verbatim: opaque means the
+		// adapter never parses, splits, or derives the value, and never reads it off the label.
+		if (group && windowId) {
+			exec('tmux', ['set-option', '-w', '-t', windowId, TMUX_WORKSPACE_GROUP_OPTION, opts.workspaceGroup!])
+		}
 		if (!window && opts.label) exec('tmux', ['select-pane', '-t', pane, '-T', opts.label])
 		// `submit`, not `sendText` — a launch command has to actually run, and `submit` is the only
 		// verb that supplies the Enter.
@@ -185,6 +213,17 @@ export const tmuxSessionAdapter: SessionAdapter = {
 		if (panes.length === 0) throw new Error(`tmux reported no panes in the region around pane ${target.id}`)
 		return panes
 	},
+}
+
+/**
+ * The `-P -F '#{pane_id}\t#{window_id}'` report a grouping open asks for, split back into its two
+ * ids. Tab-separated because neither id can contain a tab; a report that does not carry both throws
+ * rather than opening a window the caller asked to group and silently leaving it ungrouped.
+ */
+function splitOpenReport(out: string, command: string): [string, string] {
+	const [pane, windowId] = out.split('\t')
+	if (!pane || !windowId) throw new Error(`tmux ${command} did not report the new window's id to group it by`)
+	return [pane, windowId]
 }
 
 /**

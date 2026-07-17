@@ -39,6 +39,12 @@ export const herdrSessionAdapter: SessionAdapter = {
 		// matters because a layout's root pane is born by the region open rather than by a split, so
 		// scoping env to the split path would silently drop that pane's env.
 		const env = envFlags(opts.env)
+		// `opts.workspaceGroup` is deliberately unread here, and that IS this adapter's answer to it:
+		// herdr's workspace is a real tier and every pane and tab record already carries its
+		// `workspace_id`, so the tier already IS the group. No grouping flag reaches herdr — a second
+		// grouping would duplicate a fact the backend never reads, and herdr would have to be taught to
+		// read it. The seam's group id exists for a backend with no workspace tier to group in (tmux);
+		// an adapter ignoring a new optional member still satisfies the contract.
 		let opened: OpenedPane
 		if (at === 'workspace') {
 			// A genuinely separate workspace, not a pane inside the caller's current one — `--no-focus`

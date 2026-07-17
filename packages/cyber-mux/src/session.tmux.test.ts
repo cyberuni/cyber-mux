@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Exec } from './exec.ts'
-import { tmuxSessionAdapter } from './session.tmux.ts'
+import { TMUX_WORKSPACE_GROUP_OPTION, tmuxSessionAdapter } from './session.tmux.ts'
 
 function fakeExec(calls: string[][], responses: Record<string, string | null> = {}): Exec {
 	return (_cmd, args) => {
@@ -147,6 +147,90 @@ describe('spec:cyber-mux/mux', () => {
 
 		it('a backend declares whether it can size a split', () => {
 			expect(tmuxSessionAdapter.canSizeSplits).toBe(true)
+		})
+
+		// ── the workspace group ──
+		// The label here is deliberately one the group id could be mis-read OUT of: `oak - ridge - mill`
+		// splits into group `oak` with tab `ridge - mill` exactly as well as group `oak - ridge` with tab
+		// `mill`. So an adapter that derived the grouping from the label would emit one of those, and an
+		// assertion on the exact value catches it. The group id itself carries the same separator, so
+		// "forwarded verbatim" is distinguishable from "split on ' - ' and took a piece".
+		it('the open contract carries an opaque workspace group id', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'new-window': '%4\t@8' })
+			tmuxSessionAdapter.open(exec, {
+				cwd: '/quarry',
+				at: 'tab',
+				label: 'oak - ridge - mill',
+				workspaceGroup: 'shift - a',
+			})
+			const set = calls.find((c) => c[0] === 'set-option')
+			// Verbatim, separator and all — never a piece of it, and never anything the label could have
+			// produced: the id reaches the backend as the opaque value the caller handed over.
+			expect(set?.at(-1)).toBe('shift - a')
+			expect(set).not.toContain('oak - ridge - mill')
+			expect(set).not.toContain('oak')
+			expect(set).not.toContain('shift')
+		})
+
+		// tmux has no Workspace tier, so the grouping has nowhere structural to live. A window USER
+		// option (`@`-prefixed) is tmux's own mechanism for a value it stores but never interprets: it
+		// survives `rename-window` (unlike a name-encoded grouping) and `list-windows` can filter on it
+		// server-side via `#{@cm_ws}`. Asserting the whole argv is what pins "natively": a stash in
+		// cyber-mux's own memory would satisfy any weaker check while leaving tmux unable to filter.
+		it('a backend with no workspace tier stores the group id natively', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'new-window': '%4\t@8' })
+			tmuxSessionAdapter.open(exec, { cwd: '/quarry', at: 'tab', workspaceGroup: 'shift-a' })
+			// `-w` scopes the option to the WINDOW, targeted by the window id the open itself reported —
+			// so the tag lands on the window this call created and no other.
+			expect(calls).toContainEqual(['set-option', '-w', '-t', '@8', TMUX_WORKSPACE_GROUP_OPTION, 'shift-a'])
+			// The window id has to be asked for at birth, in the report the pane id already rides out on —
+			// not bought with a second round trip.
+			expect(calls[0]).toEqual(['new-window', '-d', '-c', '/quarry', '-P', '-F', '#{pane_id}\t#{window_id}'])
+			// A user option, which is what makes it tmux's to filter on rather than an inert string.
+			expect(TMUX_WORKSPACE_GROUP_OPTION.startsWith('@')).toBe(true)
+			// The tag is written BEFORE anything the caller launches starts running in the window.
+			const setAt = calls.findIndex((c) => c[0] === 'set-option')
+			expect(setAt).toBe(1)
+		})
+
+		it('a group id is never invented for a caller that did not ask for one', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'new-window': '%4' })
+			tmuxSessionAdapter.open(exec, { cwd: '/quarry', at: 'tab', label: 'oak - ridge - mill' })
+			// Not "no id derived from the label" — no window option AT ALL. A window nobody grouped stays
+			// ungrouped, and reads back as a workspace of one.
+			expect(calls.some((c) => c[0] === 'set-option')).toBe(false)
+			expect(calls.flat()).not.toContain(TMUX_WORKSPACE_GROUP_OPTION)
+			// And nothing is even asked for: the ungrouped open emits the argv it always did.
+			expect(calls[0]).toEqual([
+				'new-window',
+				'-n',
+				'oak - ridge - mill',
+				'-d',
+				'-c',
+				'/quarry',
+				'-P',
+				'-F',
+				'#{pane_id}',
+			])
+		})
+
+		// The regression this exists to stop: a tag cyber-mux wrote is its own bookkeeping, not a tier
+		// tmux gained, so surfacing it as `workspace` would be a confident lie about the backend's
+		// shape. Absent rather than false — the same convention `isPaneFocused`'s `unknown` follows.
+		it('the group id is not a workspace, and open never reports it as one', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'new-window': '%4\t@8' })
+			const opened = tmuxSessionAdapter.open(exec, { cwd: '/quarry', at: 'tab', workspaceGroup: 'shift-a' })
+			// The tag WAS written — this is the grouped case, not a vacuous pass.
+			expect(calls.some((c) => c[0] === 'set-option')).toBe(true)
+			// Absent, and not merely `!== 'shift-a'`: no `workspace` key at all, so no consumer reading
+			// the pane can find one to report.
+			expect(opened).toEqual({ id: '%4' })
+			expect('workspace' in opened).toBe(false)
+			expect(opened.workspace).toBeUndefined()
 		})
 
 		// `new-window` takes `-e` too (tmux(1): `new-window [-abdkPS] [-c start-directory] [-e

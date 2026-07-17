@@ -62,6 +62,30 @@ export interface SessionOpenOptions {
 	 * own default.
 	 */
 	label?: string
+	/**
+	 * An OPAQUE id grouping the spaces one caller opens, for a backend with no workspace tier to group
+	 * them in. A caller opening several tabs as one workspace needs them recognizable as a group
+	 * afterwards; where a real Workspace tier exists the tier IS the group, so this is ignored (herdr
+	 * already stamps every pane and tab record with its `workspace_id` — a second grouping would
+	 * duplicate a fact the backend never reads). Where there is none, the adapter stores it in the
+	 * backend's own native mechanism (tmux: a window option it can filter on server-side, surviving a
+	 * window rename).
+	 *
+	 * Opaque means opaque: an adapter stores and forwards the value and never parses, splits, or
+	 * derives it. It is deliberately NOT the `label`, and that separation is the whole point — a label
+	 * is chosen by a human and may contain anything, so recovering a grouping by parsing one is
+	 * unsound (`acme - beta - main` reads as group `acme` with tab `beta - main` exactly as well as
+	 * group `acme - beta` with tab `main`). The label is what a human reads; this is what a machine
+	 * reads.
+	 *
+	 * NEW OPTIONAL member: an adapter that ignores it still satisfies the contract. Omit it and
+	 * nothing is grouped — no adapter invents one, and a space nobody grouped stays ungrouped.
+	 *
+	 * A group id is NOT a workspace: `open` still reports `OpenedPane.workspace` absent on a backend
+	 * with no workspace tier, tag or no tag. A tag cyber-mux wrote is its own bookkeeping, not a tier
+	 * the backend gained.
+	 */
+	workspaceGroup?: string
 }
 
 /** Opaque handle to an open pane/window/session; backend-specific id lives in `id`. */
