@@ -164,9 +164,12 @@ workspace is likewise out: herdr labels a new workspace's root tab `1` with no f
     verbatim: it reaches backend-specific keys (`Home`, `M-x`) at the cost of portability, and its
     failure is the backend's own — herdr refuses an unknown key (`unsupported key <k>`), while
     **tmux has no refusal path** and types the token as characters. Neither reaches the caller today:
-    the `Exec` seam discards a backend's stderr and reports failure as `null`, so `send keys` exits 0
-    either way. That gap is the seam's, not this verb's — it predates the split and affects every
-    verb; a follow-up owns it. `Enter` is a key like any other: `send keys <pane>
+    the `Exec` seam reports failure as `null`, so `send keys` exits 0 either way. The seam now
+    *captures* a backend's stderr into an optional `lastError` (added for the layout walk, which
+    needed to say why a split was refused), so the reason is no longer thrown away — but `send keys`
+    does not read it, and a `null` still cannot be told from an empty stdout. So the gap **narrows
+    rather than closes**: it is still the seam's, not this verb's, it still predates the split, and a
+    follow-up still owns it. `Enter` is a key like any other: `send keys <pane>
     Enter` **does** press it and **does** take the pane's turn — because the caller asked for it, not
     because the verb implied it. `send keys` adds nothing.
   - **`submit <pane> [text]`** — **always** presses Enter. Given text it types it — **literally, on
