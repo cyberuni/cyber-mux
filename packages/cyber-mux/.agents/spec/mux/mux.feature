@@ -76,6 +76,50 @@ Feature: mux — the pane abstraction
     When open runs
     Then the new tab is opened without moving input focus off the caller's session
 
+  # ── open reports the workspace the new pane landed in ──
+  # Not just a pane id: a caller holding several panes can group them by the space they occupy.
+  # Absent — never a false "none" — on a backend with no workspace tier, the same convention the
+  # focus probe's `unknown` follows.
+
+  # What `open` RETURNS, not what the CLI prints: the workspace reaches a consumer through the layout
+  # manifest (see layout/), which is what needed it. A bare `open --format json` still reports the
+  # pane alone — widening that surface is a separate question this CR does not settle.
+
+  Scenario Outline: open returns the workspace the new pane landed in
+    Given a caller running cyber-mux open --at <placement> with $HERDR_ENV set and no $TMUX
+    When open runs
+    Then the adapter's open returns the new pane carrying <workspace>
+
+    Examples:
+      | placement  | workspace                                                  |
+      | workspace  | the workspace it created                                   |
+      | tab        | the workspace the new tab was created in                   |
+      | pane:right | the workspace the split landed in — the caller's own       |
+
+  Scenario: a backend with no workspace tier returns no workspace at all
+    Given a caller running cyber-mux open with $TMUX set
+    When open runs
+    Then the adapter's open returns the new pane carrying no workspace
+    # Absent, not a false "none". tmux has no workspace tier — `workspace` and `tab` both collapse to
+    # a Window — so it has nothing to report, which is not the same as reporting nothing is there.
+
+  Scenario: the workspace costs no extra backend call
+    Given a caller running cyber-mux open with $HERDR_ENV set and no $TMUX
+    When open runs
+    Then the workspace is read from the same backend output the pane id is read from
+    # Every herdr route already emits the pane's own workspace_id. Probing for it separately would
+    # buy nothing and cost a round trip per open.
+
+  Scenario: the workspace a pane landed in is not a worktree binding
+    Given a caller running cyber-mux worktree add --branch my-feature --at pane:right on a backend that binds
+    When add runs
+    Then the pane it opened landed in the caller's workspace
+    And the worktree is still reported as bound to no workspace
+    # One workspace tier, two questions. Occupancy — which workspace a pane LIVES IN — is what open
+    # answers. Binding — whether a worktree is GROUPED to a workspace — is the worktree report's, and
+    # it stays null here because a split creates no binding. Neither answers for the other: a pane
+    # sitting in a workspace is never evidence that its worktree was grouped there.
+
   Scenario: --at accepts only pane:right, pane:down, tab, and workspace
     Given a caller running cyber-mux open
     When it passes an --at value outside pane:right|pane:down|tab|workspace
