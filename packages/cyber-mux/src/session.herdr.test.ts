@@ -226,7 +226,11 @@ describe('spec:cyber-mux/mux', () => {
 			const exec = fakeExec(calls, { 'pane split': JSON.stringify({ result: { pane: { pane_id: 'w3:pB' } } }) })
 			herdrSessionAdapter.open(exec, { cwd: '/u', at: 'pane:right', env: { ROLE: 'worker' } })
 			expect(calls[0]).toContain('ROLE=worker')
-			expect(calls.some((c) => c[1] === 'run')).toBe(false)
+			// The scenario says NOTHING is typed, sent, or run — so rule out all three of herdr's input
+			// verbs, not just `run`. herdr spreads typing across `run`/`send-text`/`send-keys` where tmux
+			// funnels everything through `send-keys`, so checking one verb leaves the others invisible: a
+			// stray bare-Enter submit is exactly the regression that would slip through.
+			expect(calls.some((c) => c[0] === 'pane' && ['run', 'send-text', 'send-keys'].includes(c[1] ?? ''))).toBe(false)
 		})
 
 		it('a backend declares whether it can size a split', () => {

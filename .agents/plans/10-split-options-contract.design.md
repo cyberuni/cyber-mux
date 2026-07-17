@@ -117,6 +117,14 @@ pinned is the emitted **argv**, not the guard; tmux is defended twice over and i
 defenses to lose the row. That is why the scenario is tmux-only: herdr cannot fail it at all, since
 its `size` is lexically scoped inside the pane-split branch.
 
+**The same is true of the `!window &&` guard on `from`** — found by the cold impl-judge, which
+checked the sibling case this note had missed. The window branch never spreads `...from` either, so
+removing that guard alone also leaves the whole tmux suite green; the bound test for *"from is
+ignored by tab and workspace"* fails only once `from` is **also** wired into the window branch. Both
+tmux guards are the same shape of dead defense-in-depth, and both scenarios are loseable only by the
+compound wrong subject. Recorded rather than removed: the guards cost nothing and state the intent
+locally, and deleting them is a production change this spec-only CR has no business making.
+
 ## The 27 unbound
 
 Pre-existing, not this CR's to close beyond its own scenarios — recorded as a follow-up rather than
