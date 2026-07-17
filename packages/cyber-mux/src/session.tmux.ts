@@ -48,15 +48,6 @@ export const tmuxSessionAdapter: SessionAdapter = {
 		// beaming; a truly-detached session would be a separate explicit intent.
 		const at = opts.at ?? 'tab'
 		const window = at === 'workspace' || at === 'tab'
-		// `-t` whenever the caller names a pane. Without it tmux does NOT split the calling pane — it
-		// splits the session's ACTIVE pane, ignoring `$TMUX_PANE` outright (verified on tmux 3.6b: a
-		// `split-window` run inside pane %1, with `$TMUX_PANE` correctly reading %1, split the active
-		// %0 instead). The two coincide while a human types, which is why the default reads as
-		// harmless and is not; a program driving a pane it is not focused on gets the wrong one.
-		const from = !window && opts.from ? ['-t', opts.from.id] : []
-		// A window is not sized against a pane, so `-l` only reaches a split. Empty unless the caller
-		// asks, so every existing call site emits byte-identical argv.
-		const size = !window && opts.ratio != null ? ['-l', toTmuxSize(opts.ratio)] : []
 		// `-e` is on BOTH `split-window` and `new-window` (tmux(1): `new-window [-abdkPS] [-c
 		// start-directory] [-e environment] ...`), so env is native at EVERY tier — which it must be:
 		// a layout's root pane is the region's own pane, born by the window open rather than by any
@@ -76,14 +67,33 @@ export const tmuxSessionAdapter: SessionAdapter = {
 		// A tab and a real \t: the pane id and window id are both `%`/`@`-prefixed and contain no
 		// whitespace, so a tab separates them unambiguously.
 		const format = '#{pane_id}\t#{window_id}'
-		const args = window
-			? // `-d` keeps focus on the caller (opens the window in the background) — without it tmux
-				// switches the attached client to the new window, stealing the caller's focus. The
-				// returned pane id and subsequent `send-keys -t` still target the new pane.
-				['new-window', '-d', ...env, '-c', opts.cwd, '-P', '-F', format]
-			: at === 'pane:down'
-				? ['split-window', '-v', ...from, ...size, ...env, '-c', opts.cwd, '-P', '-F', format]
-				: ['split-window', '-h', ...from, ...size, ...env, '-c', opts.cwd, '-P', '-F', format]
+		// `from` and `size` are declared INSIDE the split branch, and that placement is the whole
+		// defense — not a guard. Both are pane concepts: `-t` targets the pane to split, `-l` sizes the
+		// split against it, and a window is neither placed nor sized relative to a pane. Scoping them
+		// here is what makes the leak unwritable: the window branch cannot spread a value that is not
+		// in its scope, so wiring one in is a compile error rather than a wrong flag. A `!window` guard
+		// at function scope would be strictly weaker — it leaves the value reachable and merely empties
+		// it, so the same mistake compiles and goes quiet. herdr scopes these identically; this is the
+		// one adapter that had not caught up.
+		let args: string[]
+		if (window) {
+			// `-d` keeps focus on the caller (opens the window in the background) — without it tmux
+			// switches the attached client to the new window, stealing the caller's focus. The returned
+			// pane id and subsequent `send-keys -t` still target the new pane.
+			args = ['new-window', '-d', ...env, '-c', opts.cwd, '-P', '-F', format]
+		} else {
+			// `-t` whenever the caller names a pane. Without it tmux does NOT split the calling pane — it
+			// splits the session's ACTIVE pane, ignoring `$TMUX_PANE` outright (verified on tmux 3.6b: a
+			// `split-window` run inside pane %1, with `$TMUX_PANE` correctly reading %1, split the active
+			// %0 instead). The two coincide while a human types, which is why the default reads as
+			// harmless and is not; a program driving a pane it is not focused on gets the wrong one.
+			const from = opts.from ? ['-t', opts.from.id] : []
+			// Empty unless the caller asks, so a split that names no ratio emits no `-l` and tmux applies
+			// its own even default.
+			const size = opts.ratio != null ? ['-l', toTmuxSize(opts.ratio)] : []
+			const direction = at === 'pane:down' ? '-v' : '-h'
+			args = ['split-window', direction, ...from, ...size, ...env, '-c', opts.cwd, '-P', '-F', format]
+		}
 		// A window takes its name at birth — `-n` also turns tmux's `automatic-rename` off for it, so
 		// the name survives whatever the pane goes on to run. A pane has no such flag; its title is
 		// set after the split.

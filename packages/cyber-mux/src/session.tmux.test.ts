@@ -184,12 +184,12 @@ describe('spec:cyber-mux/mux', () => {
 		// A window is not sized against a pane, so `-l` must never reach `new-window`. Every other ratio
 		// check uses a pane placement, so this is the only one covering the window tiers.
 		//
-		// tmux is defended twice here and it takes breaking BOTH to fail this: the `!window` guard
-		// empties `size`, AND the window branch never spreads `size` into its argv. Mutating the guard
-		// alone leaves this green — the guard is belt-and-braces, not the thing under test. The wrong
-		// subject it does catch is an author who wires `...size` into the window branch (verified by
-		// mutation: both rows then fail). herdr needs no equivalent check — its `size` is lexically
-		// scoped inside the pane-split branch and cannot reach a tab or workspace at all.
+		// What this catches is now narrow, and deliberately so: `size` is lexically scoped inside the
+		// pane-split branch (as herdr's always was), so the window branch cannot spread a value it
+		// cannot see — the ordinary way to break this does not compile. The wrong subject left is an
+		// author who hoists `size` back out to function scope AND spreads it into the window branch,
+		// which is exactly the compound move this rejects. It is a backstop against the structure being
+		// dismantled, not against a flag being passed.
 		it.each([
 			'tab',
 			'workspace',
