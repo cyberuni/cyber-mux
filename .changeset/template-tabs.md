@@ -1,0 +1,11 @@
+---
+"cyber-mux": minor
+---
+
+A layout template can describe a **workspace of tabs**, not just one pane tree. `tabs: [...]` is the two-level form — each tab carries its own pane tree in the very same shape `root`/`panes` already accept, sugar included. A template declares exactly one of `root`, `panes`, or `tabs`; the first two are the one-tab spelling and are unchanged. Pane labels stay unique across the whole template (the manifest is one flat list, so its keys are global); tab labels are a separate namespace. `open --layout` and `worktree add --layout` both build every tab, and the manifest reports the `tab` each pane landed in.
+
+`layout save --workspace` captures a whole workspace back — one tab per live tab, each with its own derived tree. A bare `layout save` is **unchanged**: it still captures only the caller's own region, and now notes on stderr when the workspace held more tabs than it took.
+
+On a backend with a real workspace tier (herdr) a workspace of N tabs maps directly. On one without (tmux, where `workspace` and `tab` both collapse to a Window) the grouping is carried two ways, because one carrier cannot serve both readers: a human reading the status bar gets it in the tab label (`<workspace> - <tab>`, never shortened), while capture reads an opaque window option. The label is **never parsed back** — `acme - beta - main` is ambiguous under every split rule, so parsing would silently mis-group a legal label.
+
+`SessionAdapter` gains `rename` (name a space after its birth — the one case `--label` cannot serve, since herdr labels a new workspace's root tab `1` with no flag) and `group` (group a space that is already open). `OpenedPane` now carries the `tab` the pane landed in, reported by every backend because every multiplexer has the Tab level, and required to address a rename at that tier: herdr refuses a pane id there while tmux resolves one, so a caller reaching for the pane id would be green on one backend and silently broken on the other.
