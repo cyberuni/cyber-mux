@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Exec } from './exec.ts'
 import { herdrSessionAdapter } from './session.herdr.ts'
+import type { SessionPlacement } from './session.ts'
 
 function fakeExec(calls: string[][], responses: Record<string, string | null> = {}): Exec {
 	return (_cmd, args) => {
@@ -62,21 +63,25 @@ describe('spec:cyber-mux/mux', () => {
 		// placement-specific tests below each cover a single row and assert argv besides; this one
 		// exists to carry the outline's own claim — that whatever tier is opened, `open` returns the
 		// workspace the pane landed in — across all three rows at once.
-		it.each([
+		it.each<{
+			at: SessionPlacement
+			response: Record<string, string | null>
+			expected: { id: string; workspace: string }
+		}>([
 			{
-				at: 'workspace' as const,
+				at: 'workspace',
 				response: { 'workspace create': PANE_IN_WORKSPACE('w7:p1', 'w7') },
 				// The workspace it created.
 				expected: { id: 'w7:p1', workspace: 'w7' },
 			},
 			{
-				at: 'tab' as const,
+				at: 'tab',
 				response: { 'tab create': PANE_IN_TAB('w3:pT', 'w3') },
 				// The workspace the new tab was created in.
 				expected: { id: 'w3:pT', workspace: 'w3' },
 			},
 			{
-				at: 'pane:right' as const,
+				at: 'pane:right',
 				response: { 'pane split': PANE_IN_SPLIT('w3:pB', 'w3') },
 				// The workspace the split landed in — the caller's own.
 				expected: { id: 'w3:pB', workspace: 'w3' },
