@@ -206,12 +206,20 @@ export const herdrSessionAdapter: SessionAdapter = {
 		}
 		if (!Array.isArray(panes)) return []
 		return panes
-			.filter((p): p is { pane_id: string; agent?: string; cwd?: string } => typeof p?.pane_id === 'string')
+			.filter(
+				(p): p is { pane_id: string; agent?: string; cwd?: string; label?: string } => typeof p?.pane_id === 'string',
+			)
 			.map((p) => ({
 				id: p.pane_id,
 				mux: 'herdr' as const,
 				harness: p.agent || undefined,
 				cwd: p.cwd,
+				// Verbatim, and no comparison rule to tell an unnamed pane apart: herdr has no default
+				// label — the key is absent from `pane list` until `pane rename` — so an omitted key IS
+				// "nobody named it". `|| undefined` only collapses an empty-string label to absent, the
+				// same normalization `harness` above takes. tmux needs a title-vs-host heuristic here
+				// precisely because it lacks this primitive.
+				label: p.label || undefined,
 			}))
 	},
 

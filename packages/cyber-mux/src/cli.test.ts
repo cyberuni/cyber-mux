@@ -32,6 +32,16 @@ function fakeHerdrExec(calls: string[][], responses: Record<string, string | nul
 	}
 }
 
+/**
+ * Every call EXCEPT the pane-resolution read. Addressing a pane by name costs one `listPanes` query
+ * before the verb drives anything (tmux `list-panes -a`, herdr `pane list`), and that read is not part
+ * of what a verb DRIVES — these assertions are about the primitives sent to the pane, so the lookup
+ * that found the pane is filtered out rather than baked into every expectation.
+ */
+function drives(calls: string[][]): string[][] {
+	return calls.filter((c) => !(c[0] === 'list-panes' && c[1] === '-a') && !(c[0] === 'pane' && c[1] === 'list'))
+}
+
 /** `output()` reads the real process.argv to pick a format, so a json test must supply one. */
 async function withArgv<T>(argv: string[], fn: () => Promise<T>): Promise<T> {
 	const original = process.argv
@@ -55,6 +65,11 @@ describe('spec:cyber-mux/mux', () => {
 			// commander writes its own error text to stderr even with exitOverride() — silence it here so
 			// the deliberate --at rejection test doesn't spam the runner's real stderr.
 			vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+			// `read` writes the pane's captured bytes straight to stdout rather than through console.log —
+			// axi's one raw-stream exception, so the spy above never catches it. Any test that drives
+			// `read` would otherwise leak its fixture's fake output into the runner's own stdout. A test
+			// asserting ON stdout still spies it locally; this only stops the spill.
+			vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
 		})
 
 		afterEach(() => {
@@ -262,6 +277,23 @@ describe('spec:cyber-mux/mux', () => {
 			expect(logs.some((l) => l.includes('w3:p2'))).toBe(true)
 		})
 
+		// Not bound to a scenario — no frozen scenario specifies which columns `list` prints; the field
+		// budget is axi #2's, a reference bar with no suite. This pins the swap anyway, because the
+		// column set is user-facing and nothing else fails when it changes.
+		it('list spends its field budget on the label a caller types, not the mux every row shares', async () => {
+			const listOut = JSON.stringify({
+				result: { panes: [{ pane_id: 'w3:p1', label: 'worker', agent: 'claude', cwd: '/repo/a' }] },
+			})
+			const exec = fakeHerdrExec([], { 'pane list': listOut })
+			const program = buildProgram({ env: { CYBER_MUX: 'herdr' }, exec })
+			await run(program, ['list'])
+			const out = logs.join('\n')
+			expect(out).toContain('worker')
+			// One adapter is selected per session, so every row reports the same mux: a column that
+			// discriminates nothing, spending a slot the label earns.
+			expect(out).not.toContain('herdr')
+		})
+
 		it('open with no --launch creates a blank pane', async () => {
 			const calls: string[][] = []
 			const exec = fakeTmuxExec(calls, { 'new-window': '%2\t@1' })
@@ -445,21 +477,21 @@ describe('spec:cyber-mux/mux', () => {
 			const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: fakeTmuxExec(calls) })
 			await run(program, ['send', 'text', '%3', 'Up'])
 			// The key-named word is typed, not interpreted; no Enter is appended.
-			expect(calls).toEqual([['send-keys', '-t', '%3', '-l', 'Up']])
+			expect(drives(calls)).toEqual([['send-keys', '-t', '%3', '-l', 'Up']])
 		})
 
 		it('send keys presses core-vocabulary keys and types nothing', async () => {
 			const calls: string[][] = []
 			const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: fakeTmuxExec(calls) })
 			await run(program, ['send', 'keys', '%3', 'Escape', 'Up', 'C-c'])
-			expect(calls).toEqual([['send-keys', '-t', '%3', 'Escape', 'Up', 'C-c']])
+			expect(drives(calls)).toEqual([['send-keys', '-t', '%3', 'Escape', 'Up', 'C-c']])
 		})
 
 		it('send keys Enter presses Enter and takes the turn, because the caller asked for it', async () => {
 			const calls: string[][] = []
 			const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: fakeTmuxExec(calls) })
 			await run(program, ['send', 'keys', '%3', 'Enter'])
-			expect(calls).toEqual([['send-keys', '-t', '%3', 'Enter']])
+			expect(drives(calls)).toEqual([['send-keys', '-t', '%3', 'Enter']])
 		})
 
 		it('send keys with no key tokens is rejected', async () => {
@@ -523,7 +555,7 @@ describe('spec:cyber-mux/mux', () => {
 			const calls: string[][] = []
 			const program = buildProgram({ env: { CYBER_MUX: backend }, exec: makeExec(calls) })
 			await run(program, ['submit', pane, 'echo hi'])
-			expect(calls).toEqual(expected)
+			expect(drives(calls)).toEqual(expected)
 		})
 
 		it('submit types its text literally, never interpreting it as a key', async () => {
@@ -532,21 +564,21 @@ describe('spec:cyber-mux/mux', () => {
 			await run(program, ['submit', '%3', 'Up'])
 			// Never `send-keys -t %3 Up Enter`, which would recall and re-run the pane's last command.
 			expect(calls).not.toContainEqual(['send-keys', '-t', '%3', 'Up', 'Enter'])
-			expect(calls[0]).toEqual(['send-keys', '-t', '%3', '-l', 'Up'])
+			expect(drives(calls)[0]).toEqual(['send-keys', '-t', '%3', '-l', 'Up'])
 		})
 
 		it('submit with no text presses a bare Enter and retypes nothing', async () => {
 			const calls: string[][] = []
 			const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: fakeTmuxExec(calls) })
 			await run(program, ['submit', '%3'])
-			expect(calls).toEqual([['send-keys', '-t', '%3', 'Enter']])
+			expect(drives(calls)).toEqual([['send-keys', '-t', '%3', 'Enter']])
 		})
 
 		it('submit with empty text is the bare flush, not a second contract', async () => {
 			const calls: string[][] = []
 			const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: fakeTmuxExec(calls) })
 			await run(program, ['submit', '%3', ''])
-			expect(calls).toEqual([['send-keys', '-t', '%3', 'Enter']])
+			expect(drives(calls)).toEqual([['send-keys', '-t', '%3', 'Enter']])
 		})
 
 		it('submit with no pane is rejected', async () => {
@@ -1131,12 +1163,327 @@ describe('spec:cyber-mux/mux', () => {
 			await run(buildProgram({ env, exec: fakeHerdrExec(calls) }), ['send', 'keys', 'w1:p1', 'Up'])
 			await run(buildProgram({ env, exec: fakeHerdrExec(calls) }), ['submit', 'w1:p1', 'echo hi'])
 			await run(buildProgram({ env, exec: fakeHerdrExec(calls) }), ['submit', 'w1:p1'])
-			expect(calls).toEqual([
+			expect(drives(calls)).toEqual([
 				['pane', 'send-text', 'w1:p1', 'hello'],
 				['pane', 'send-keys', 'w1:p1', 'Up'],
 				['pane', 'run', 'w1:p1', 'echo hi'],
 				['pane', 'send-keys', 'w1:p1', 'Enter'],
 			])
+		})
+
+		describe('addressing a pane by name', () => {
+			/** The hostname tmux hands an unnamed pane's title — the value the label rule must reject. */
+			const HOST = 'zeta'
+
+			interface FakePane {
+				id: string
+				label?: string
+				cwd?: string
+			}
+
+			/**
+			 * A tmux server holding `panes`, answering each `-F` format it is actually asked for. Keyed on
+			 * the format rather than the verb because `list-panes -a` serves three different readers here
+			 * (resolution, `paneExists`, `focus`), and handing each the same string would make the fake
+			 * lie to two of them.
+			 *
+			 * A pane with no `label` gets its title set to the HOST — that is tmux's real behavior for a
+			 * pane nobody named, not a stand-in for absence.
+			 */
+			function paneServer(calls: string[][], panes: FakePane[], responses: Record<string, string | null> = {}): Exec {
+				return (_cmd, args) => {
+					calls.push(args)
+					if (args[0] === 'list-panes' && args[1] === '-a') {
+						const fmt = args[args.indexOf('-F') + 1]
+						if (fmt === '#{pane_id}') return panes.map((p) => p.id).join('\n')
+						if (fmt === '#{pane_id} #{session_name} #{window_id}') return panes.map((p) => `${p.id} main @1`).join('\n')
+						return panes.map((p) => [p.id, 'zsh', p.cwd ?? '/repo', p.label ?? HOST, HOST].join('\t')).join('\n')
+					}
+					// `list-panes -t <id>` is the REGION read `layout save` runs after resolution — one pane,
+					// with the geometry a capture needs. Keyed on `-t` so it never answers the `-a` readers.
+					if (args[0] === 'list-panes' && args[1] === '-t') {
+						const of = panes.find((p) => p.id === args[2])
+						return of ? [of.id, '0', '0', '80', '24', of.cwd ?? '/repo', of.label ?? HOST, HOST].join('\t') : null
+					}
+					return responses[args[0]!] ?? null
+				}
+			}
+
+			const TMUX = { CYBER_MUX: 'tmux' }
+			/** Three panes, one of them the intended target — the other two are the ones nothing may touch. */
+			const THREE: FakePane[] = [
+				{ id: '%1', label: 'worker', cwd: '/repo/a' },
+				{ id: '%2', label: 'sidebar', cwd: '/repo/b' },
+				{ id: '%3', label: 'logs', cwd: '/repo/c' },
+			]
+
+			/** Which pane ids a run actually touched — the args of every call except the resolution read. */
+			function touched(calls: string[][]): string[] {
+				const ids = THREE.map((p) => p.id)
+				return drives(calls)
+					.flat()
+					.filter((a) => ids.includes(a))
+			}
+
+			function catchExit() {
+				return vi.spyOn(process, 'exit').mockImplementation((code) => {
+					throw new Error(`exit:${code}`)
+				})
+			}
+
+			function captureStderr(): string[] {
+				const lines: string[] = []
+				vi.spyOn(process.stderr, 'write').mockImplementation((line) => {
+					lines.push(String(line))
+					return true
+				})
+				return lines
+			}
+
+			/** A store with no templates — enough for `layout save`, which only ever writes. */
+			function saveStore(): LayoutStore & { writes: Record<string, string> } {
+				const writes: Record<string, string> = {}
+				return {
+					read: () => null,
+					list: () => [],
+					write: (path, body) => {
+						writes[path] = body
+					},
+					dirExists: () => true,
+					writes,
+				}
+			}
+
+			/**
+			 * Every verb the outline names, each with the argv that drives it. `layout save --from` carries
+			 * its own env/store because it is the one verb here that also touches the filesystem — and it is
+			 * in this table precisely because it built its target inline and bypassed resolution entirely.
+			 */
+			const VERBS: { verb: string; argv: string[]; store?: boolean }[] = [
+				{ verb: 'cyber-mux read', argv: ['read', 'worker'] },
+				{ verb: 'cyber-mux submit', argv: ['submit', 'worker'] },
+				{ verb: 'cyber-mux exists', argv: ['exists', 'worker'] },
+				{ verb: 'cyber-mux focus', argv: ['focus', 'worker'] },
+				{ verb: 'cyber-mux close', argv: ['close', 'worker'] },
+				{ verb: 'cyber-mux send text', argv: ['send', 'text', 'worker', 'hi'] },
+				{ verb: 'cyber-mux send keys', argv: ['send', 'keys', 'worker', 'Up'] },
+				{ verb: 'cyber-mux layout save --from', argv: ['layout', 'save', 'pool-3', '--from', 'worker'], store: true },
+			]
+
+			// Both the Examples rows and the outline's two Thens: the verb reaches the pane labeled worker
+			// exactly as if %1 had been passed, and the two panes it did not name are never touched.
+			it.each(VERBS)('every pane verb addresses a pane by name as readily as by id', async ({ argv, store }) => {
+				const calls: string[][] = []
+				const program = buildProgram({
+					env: store ? { ...TMUX, XDG_CONFIG_HOME: '/home/u/.config' } : TMUX,
+					exec: paneServer(calls, THREE, { 'capture-pane': 'out', 'list-panes': '', 'rev-parse': '/repo/.git' }),
+					store: store ? saveStore() : undefined,
+				})
+				await run(program, argv)
+				// The verb reached worker's pane — by its id, which is the only thing an adapter ever sees.
+				expect(touched(calls)).toContain('%1')
+				// And neither of the other two panes was acted on.
+				expect(touched(calls)).not.toContain('%2')
+				expect(touched(calls)).not.toContain('%3')
+			})
+
+			/** The same three panes, all sharing one label — the ambiguity every verb must refuse. */
+			const ALL_WORKER: FakePane[] = [
+				{ id: '%1', label: 'worker', cwd: '/repo/a' },
+				{ id: '%2', label: 'worker', cwd: '/repo/b' },
+				{ id: '%3', label: 'worker', cwd: '/repo/c' },
+			]
+
+			it.each(VERBS)('an ambiguous name fails the same way on every pane verb', async ({ argv, store }) => {
+				const calls: string[][] = []
+				const exit = catchExit()
+				const stderr = captureStderr()
+				const program = buildProgram({
+					env: store ? { ...TMUX, XDG_CONFIG_HOME: '/home/u/.config' } : TMUX,
+					exec: paneServer(calls, ALL_WORKER, { 'capture-pane': 'out', 'list-panes': '', 'rev-parse': '/repo/.git' }),
+					store: store ? saveStore() : undefined,
+				})
+				await expect(run(program, argv)).rejects.toThrow('exit:2')
+				// The candidates, under the stable code, on stderr.
+				expect(stderr.join('')).toContain('ambiguous-pane')
+				expect(exit).toHaveBeenCalledWith(2)
+				// Having acted on none of the three: the only calls made were the resolution read itself.
+				expect(touched(calls)).toEqual([])
+			})
+
+			// An id and a label are not peers, so this is not a 2-candidate ambiguity — the id wins outright.
+			it('an id addresses the pane whose id it is, even when another pane is labeled with that id', async () => {
+				const calls: string[][] = []
+				const program = buildProgram({
+					env: TMUX,
+					exec: paneServer(calls, [
+						{ id: '%1', cwd: '/repo/a' },
+						{ id: '%2', label: '%1', cwd: '/repo/b' },
+					]),
+				})
+				await run(program, ['close', '%1'])
+				// The pane whose id it is — never the impostor that merely wears the string as a name.
+				expect(drives(calls)).toEqual([['kill-pane', '-t', '%1']])
+			})
+
+			// The counter-case a syntax rule cannot survive: %9 is id-SHAPED, but no pane carries it as an id.
+			it('an id is recognized by matching a live pane, never by the shape of the string', async () => {
+				const calls: string[][] = []
+				const program = buildProgram({
+					env: TMUX,
+					exec: paneServer(calls, [{ id: '%1', label: '%9', cwd: '/repo/a' }]),
+				})
+				await run(program, ['close', '%9'])
+				// Resolved to the pane LABELED %9 — not refused for looking like an id, and not reported
+				// missing by a resolver that sniffed the shape and never asked the live list.
+				expect(drives(calls)).toEqual([['kill-pane', '-t', '%1']])
+			})
+
+			it('a name matching exactly one live pane resolves to it and the command proceeds', async () => {
+				const calls: string[][] = []
+				const program = buildProgram({ env: TMUX, exec: paneServer(calls, THREE) })
+				await run(program, ['close', 'worker'])
+				expect(drives(calls)).toEqual([['kill-pane', '-t', '%1']])
+				expect(touched(calls)).not.toContain('%2')
+				expect(touched(calls)).not.toContain('%3')
+			})
+
+			// Not-found and ambiguous are different outcomes with different codes — 1, not 2.
+			it('a name matching no live pane is not found, rather than ambiguous', async () => {
+				const calls: string[][] = []
+				const exit = catchExit()
+				const stderr = captureStderr()
+				const program = buildProgram({
+					env: TMUX,
+					exec: paneServer(calls, [{ id: '%2', label: 'sidebar' }]),
+				})
+				await expect(run(program, ['exists', 'worker'])).rejects.toThrow('exit:1')
+				expect(exit).toHaveBeenCalledWith(1)
+				expect(stderr.join('')).not.toContain('ambiguous-pane')
+			})
+
+			it('a name matching two or more live panes fails rather than guessing which was meant', async () => {
+				const calls: string[][] = []
+				catchExit()
+				const stderr = captureStderr()
+				const program = buildProgram({ env: TMUX, exec: paneServer(calls, ALL_WORKER) })
+				await expect(run(program, ['close', 'worker'])).rejects.toThrow('exit:2')
+				// Acted on none of them — no kill-pane reached any of the three.
+				expect(touched(calls)).toEqual([])
+				// The matching entries are reported, so the caller can choose between them.
+				const err = stderr.join('')
+				for (const id of ['%1', '%2', '%3']) expect(err).toContain(id)
+			})
+
+			it('the ambiguity report carries what tells the candidates apart, and what retries them', async () => {
+				catchExit()
+				const stderr = captureStderr()
+				const program = buildProgram({ env: TMUX, exec: paneServer([], ALL_WORKER) })
+				await expect(run(program, ['close', 'worker'])).rejects.toThrow('exit:2')
+				const err = stderr.join('')
+				// Each candidate with its id, its label, and its working directory — the cwd being the only
+				// one of the three that actually tells three panes all labeled `worker` apart.
+				for (const c of ALL_WORKER) {
+					expect(err).toContain(c.id)
+					expect(err).toContain(c.cwd!)
+				}
+				expect(err).toContain('worker')
+				// And each id is directly usable as the retry: feeding one back resolves, because an id
+				// outranks every name. Proven by running it, not by asserting the string looks like an id.
+				const retryCalls: string[][] = []
+				const retry = buildProgram({ env: TMUX, exec: paneServer(retryCalls, ALL_WORKER) })
+				await run(retry, ['close', '%2'])
+				expect(drives(retryCalls)).toEqual([['kill-pane', '-t', '%2']])
+			})
+
+			it('the ambiguity report is a structured error on stderr, leaving stdout clean', async () => {
+				const exit = catchExit()
+				const stderr = captureStderr()
+				const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+				const program = buildProgram({
+					env: TMUX,
+					exec: paneServer(
+						[],
+						[
+							{ id: '%1', label: 'worker', cwd: '/repo/a' },
+							{ id: '%2', label: 'worker', cwd: '/repo/b' },
+						],
+					),
+				})
+				await expect(run(program, ['close', 'worker'])).rejects.toThrow('exit:2')
+				expect(stderr.join('')).toContain('ambiguous-pane')
+				// stdout is left clean — nothing on either writer the CLI prints through.
+				expect(stdout).not.toHaveBeenCalled()
+				expect(logs).toEqual([])
+				expect(exit).toHaveBeenCalledWith(2)
+			})
+
+			it('--format json emits the ambiguity as a structured error carrying its candidates', async () => {
+				catchExit()
+				const stderr = captureStderr()
+				const panes: FakePane[] = [
+					{ id: '%1', label: 'worker', cwd: '/repo/a' },
+					{ id: '%2', label: 'worker', cwd: '/repo/b' },
+				]
+				const program = buildProgram({ env: TMUX, exec: paneServer([], panes) })
+				await withArgv(['close', 'worker', '--format', 'json'], () =>
+					expect(run(program, ['close', 'worker', '--format', 'json'])).rejects.toThrow('exit:2'),
+				)
+				// Parsed, not string-matched: the contract is that the error IS JSON, carrying the code and
+				// the candidate entries as data a caller can branch on.
+				const parsed = JSON.parse(stderr.join(''))
+				expect(parsed.error.code).toBe('ambiguous-pane')
+				expect(parsed.error.candidates).toEqual([
+					{ id: '%1', label: 'worker', cwd: '/repo/a' },
+					{ id: '%2', label: 'worker', cwd: '/repo/b' },
+				])
+				// Written to stderr — so a redirected or discarded stdout never corrupts the result.
+				expect(logs).toEqual([])
+			})
+
+			// The outcome rides the exit code, because three panes named worker is not an answer to
+			// "is it live?" — and `gone` and ambiguous are not the same thing.
+			it.each([
+				{ world: 'exactly one live pane matches the locator', panes: THREE, stdout: 'live', code: 0 },
+				{ world: 'no live pane matches the locator', panes: [{ id: '%2', label: 'sidebar' }], stdout: 'gone', code: 1 },
+				{ world: 'two or more live panes match the locator', panes: ALL_WORKER, stdout: 'nothing', code: 2 },
+			])('exists distinguishes its three outcomes by exit code, not by prose', async ({ panes, stdout, code }) => {
+				const exit = catchExit()
+				captureStderr()
+				const program = buildProgram({ env: TMUX, exec: paneServer([], panes) })
+				const running = run(program, ['exists', 'worker'])
+				if (code === 0) {
+					await running
+					expect(exit).not.toHaveBeenCalled()
+				} else {
+					await expect(running).rejects.toThrow(`exit:${code}`)
+					expect(exit).toHaveBeenCalledWith(code)
+				}
+				if (stdout === 'nothing') expect(logs).toEqual([])
+				else expect(logs).toEqual([stdout])
+			})
+
+			it('an ambiguous exists reports its candidates rather than answering the question', async () => {
+				catchExit()
+				const stderr = captureStderr()
+				const program = buildProgram({
+					env: TMUX,
+					exec: paneServer(
+						[],
+						[
+							{ id: '%1', label: 'worker', cwd: '/repo/a' },
+							{ id: '%2', label: 'worker', cwd: '/repo/b' },
+						],
+					),
+				})
+				await expect(run(program, ['exists', 'worker'])).rejects.toThrow('exit:2')
+				const err = stderr.join('')
+				expect(err).toContain('ambiguous-pane')
+				expect(err).toContain('%1')
+				expect(err).toContain('%2')
+				// It answers neither live nor gone — there is no single pane the question is about.
+				expect(logs).toEqual([])
+			})
 		})
 	})
 })
@@ -1513,7 +1860,9 @@ describe('spec:cyber-mux/layout', () => {
 			const calls: string[][] = []
 			const program = buildProgram({ env: SAVE_ENV, exec: saveExec(calls), store: fakeStore({}) })
 			await run(program, ['layout', 'save', 'pool-3', '--from', '%7'])
-			expect(calls.find((c) => c[1] === 'list-panes')?.[3]).toBe('%7')
+			// The REGION read (`list-panes -t <pane>`), not the `-a` server-wide lookup that resolves the
+			// locator first — the region around %7 is what the capture is asserted to be about.
+			expect(calls.find((c) => c[1] === 'list-panes' && c[2] === '-t')?.[3]).toBe('%7')
 		})
 
 		it('a captured template records in its own description that it is geometry only', async () => {

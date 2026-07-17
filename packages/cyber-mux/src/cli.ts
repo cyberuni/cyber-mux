@@ -28,8 +28,8 @@ import {
 	resolveLayout,
 } from './layout-store.ts'
 import { currentPane, probeMultiplexer } from './mux-probe.ts'
-import { output, printFields, printTable } from './output.ts'
-import type { SessionAdapter, SessionPlacement, SessionTarget } from './session.ts'
+import { isJsonOutput, output, printFields, printTable } from './output.ts'
+import type { LivePane, SessionAdapter, SessionPlacement, SessionTarget } from './session.ts'
 import { gitWorktreeAdapter, resolvePrimaryRoot, resolveWorktreePath } from './worktree.ts'
 import {
 	addAndOpenWorktree,
@@ -76,8 +76,132 @@ function adapter(deps: Deps) {
 	}
 }
 
-function target(pane: string): SessionTarget {
-	return { id: pane }
+/**
+ * The exit code an ambiguous locator leaves. Not 1: `fail()`'s 1 already means "this did not work",
+ * which a caller cannot tell from "the pane is gone" — and for `exists` those are genuinely different
+ * answers (1 IS its `gone`). A code of its own is what lets a script branch on ambiguity and retry
+ * with a candidate's id, rather than parsing stderr prose to find out what happened.
+ */
+const AMBIGUOUS_EXIT = 2
+
+/** The stable code the ambiguity error carries, in both formats — what a caller matches on. */
+const AMBIGUOUS_CODE = 'ambiguous-pane'
+
+/** One candidate of an ambiguous locator: what tells it apart, and what retries it. */
+interface PaneCandidate {
+	id: string
+	label: string | null
+	cwd: string | null
+}
+
+/**
+ * An ambiguous locator, THROWN rather than reported where it is found.
+ *
+ * Reporting in place would mean `process.exit(2)` from inside `resolveTarget` — and `layout save` calls
+ * that from inside a catch-all that turns anything thrown into a generic exit-1 failure. In production
+ * `process.exit` never returns so the catch never runs, which means the verb would work by relying on
+ * exactly the control flow the code around it appears to deny. A typed error is what makes the
+ * ambiguity path visible to the catch-alls it passes through, so each one can rethrow it deliberately
+ * instead of swallowing it by accident.
+ */
+class AmbiguousPaneError extends Error {
+	constructor(
+		readonly locator: string,
+		readonly candidates: PaneCandidate[],
+	) {
+		super(`${AMBIGUOUS_CODE}: ${locator}`)
+		this.name = 'AmbiguousPaneError'
+	}
+}
+
+/**
+ * Resolve a locator — a pane id or a human label — to the one pane it names.
+ *
+ * **Id first, then name.** An id can never be made to mean something else by a person renaming an
+ * unrelated pane, so every caller that passes ids today keeps working no matter what anyone labels.
+ * That also makes ambiguity a fuzzy-tier condition only: an id hit and a label hit are not peers, so
+ * they are not candidates to choose between — the same ladder git, Docker and tmux resolve targets by.
+ *
+ * **An id is recognized by EXISTENCE, never by syntax.** The question asked is "does a live pane carry
+ * this id?", not "does this string look like an id?". Docker sniffs shape (`sg-` → an id) and it is
+ * the cheaper rule, refused here: encoding a backend's id format in the CLI is exactly the backend
+ * leak this seam exists to prevent, and every new backend would owe a new syntax rule. It is also
+ * wrong on a real case — `%9` is id-SHAPED, but if no pane carries it as an id and one carries it as a
+ * label, a sniffer reports a missing pane while the live list finds the label.
+ *
+ * One `listPanes` read answers both halves, so name support costs the id path a single query and no
+ * behavior. The SEAM is untouched: adapters keep receiving concrete ids, and never learn that a name
+ * was ever involved.
+ *
+ * A locator matching NOTHING resolves to itself, deliberately — it is handed to the backend as an id
+ * and takes the verb's existing not-found path (exit 1). Failing here instead would make every verb's
+ * "no such pane" message this function's to write.
+ */
+function resolveTarget(deps: Deps, a: SessionAdapter, locator: string): SessionTarget {
+	let panes: LivePane[]
+	try {
+		panes = a.listPanes(deps.exec)
+	} catch {
+		// A listing that cannot be read must not deny an id that would have worked — the id path never
+		// needed this query. Degrade to the pre-resolution behavior rather than failing the verb.
+		return { id: locator }
+	}
+	if (panes.some((p) => p.id === locator)) return { id: locator }
+	const named = panes.filter((p) => p.label === locator)
+	if (named.length === 1) return { id: named[0]!.id }
+	// Guessing (first match, most recent, the focused one) would act on a pane the caller never named,
+	// which is worse than making them look. The caller is present and is the only one who can say.
+	if (named.length > 1) {
+		throw new AmbiguousPaneError(
+			locator,
+			named.map((p) => ({ id: p.id, label: p.label ?? null, cwd: p.cwd ?? null })),
+		)
+	}
+	return { id: locator }
+}
+
+/**
+ * Report the candidates and exit 2.
+ *
+ * **stderr, and stdout stays clean.** The report is an error, and a caller with a redirected or
+ * discarded stdout must still get it — while a caller parsing stdout must never find an error mixed
+ * into the data it expected. `exists` leans on this hardest: its stdout contract is `live`/`gone`, and
+ * ambiguity is neither, so it writes nothing there at all.
+ *
+ * Each candidate carries its id, its label and its cwd: the id is the RETRY — paste it back and the
+ * ambiguity is gone, since an id outranks every name — and the cwd is what actually tells three panes
+ * all labeled `worker` apart.
+ */
+function reportAmbiguous(err: AmbiguousPaneError): never {
+	const { locator, candidates } = err
+	if (isJsonOutput()) {
+		process.stderr.write(`${JSON.stringify({ error: { code: AMBIGUOUS_CODE, locator, candidates } }, null, 2)}\n`)
+	} else {
+		process.stderr.write(`${AMBIGUOUS_CODE}: "${locator}" names ${candidates.length} live panes — retry with an id\n`)
+		for (const c of candidates) {
+			process.stderr.write(`  ${c.id}  ${c.label ?? ''}  ${c.cwd ?? ''}\n`)
+		}
+	}
+	process.exit(AMBIGUOUS_EXIT)
+}
+
+/**
+ * Wrap a verb's action so an ambiguous locator reports its candidates and exits 2 — the one place that
+ * turns `AmbiguousPaneError` into output, for every verb that can raise one.
+ *
+ * Here rather than inside `resolveTarget` so the report is the OUTERMOST thing a verb does: by the time
+ * it runs, every inner catch-all has already had its chance to rethrow, and nothing can convert an
+ * exit-2 ambiguity into an exit-1 generic failure behind its back.
+ */
+function guarded<A extends unknown[]>(action: (...args: A) => void): (...args: A) => void {
+	return (...args: A) => {
+		try {
+			action(...args)
+		} catch (err) {
+			if (err instanceof AmbiguousPaneError) reportAmbiguous(err)
+			throw err
+		}
+	}
 }
 
 /**
@@ -286,58 +410,68 @@ function layoutSaveCommand(deps: Deps): Command {
 				'the template is worth applying.',
 		)
 		.action(
-			(
-				name: string,
-				opts: { from?: string; workspace?: boolean; description?: string; to: 'repo' | 'user'; force?: boolean },
-			) => {
-				// Before the multiplexer is touched: a name is a lookup key that must also be a filename, so an
-				// unusable one should not cost a region read to find out.
-				if (!isValidLayoutName(name)) {
-					fail(`invalid layout name "${name}" — a name must match [a-z0-9][a-z0-9-]* and be a plain filename stem`)
-				}
-				try {
-					const path = join(layoutDirs(deps.exec, deps.env)[opts.to], `${name}.json`)
-					// Checked BEFORE the capture, so a refusal costs nothing — and refused by default, because a
-					// template is hand-edited after it is saved (the commands are added by hand) and silently
-					// overwriting one would throw that work away.
-					if (!opts.force && deps.store.read(path) !== null) {
-						fail(`layout "${name}" already exists at ${path} — pass --force to overwrite it`)
+			guarded(
+				(
+					name: string,
+					opts: { from?: string; workspace?: boolean; description?: string; to: 'repo' | 'user'; force?: boolean },
+				) => {
+					// Before the multiplexer is touched: a name is a lookup key that must also be a filename, so an
+					// unusable one should not cost a region read to find out.
+					if (!isValidLayoutName(name)) {
+						fail(`invalid layout name "${name}" — a name must match [a-z0-9][a-z0-9-]* and be a plain filename stem`)
 					}
-					const adapter = selectSessionAdapter(deps.env, deps.exec)
-					// Both geometry reads are optional capabilities, exactly as the worktree binding is — and
-					// each mode asks only for the one it needs, so a backend is never refused for lacking a
-					// member this run would not have called. A backend that cannot answer cannot be captured
-					// and there is nothing to degrade to, so this refuses NAMING the backend rather than
-					// guessing a tree.
-					const describeRegion = adapter.describeRegion
-					if (!opts.workspace && !describeRegion) {
-						fail(`${adapter.name} cannot report a region's geometry — layout save needs a backend that can`)
+					try {
+						const path = join(layoutDirs(deps.exec, deps.env)[opts.to], `${name}.json`)
+						// Checked BEFORE the capture, so a refusal costs nothing — and refused by default, because a
+						// template is hand-edited after it is saved (the commands are added by hand) and silently
+						// overwriting one would throw that work away.
+						if (!opts.force && deps.store.read(path) !== null) {
+							fail(`layout "${name}" already exists at ${path} — pass --force to overwrite it`)
+						}
+						const adapter = selectSessionAdapter(deps.env, deps.exec)
+						// Both geometry reads are optional capabilities, exactly as the worktree binding is — and
+						// each mode asks only for the one it needs, so a backend is never refused for lacking a
+						// member this run would not have called. A backend that cannot answer cannot be captured
+						// and there is nothing to degrade to, so this refuses NAMING the backend rather than
+						// guessing a tree.
+						const describeRegion = adapter.describeRegion
+						if (!opts.workspace && !describeRegion) {
+							fail(`${adapter.name} cannot report a region's geometry — layout save needs a backend that can`)
+						}
+						const describeWorkspace = adapter.describeWorkspace
+						if (opts.workspace && !describeWorkspace) {
+							fail(
+								`${adapter.name} cannot enumerate a workspace's tabs — layout save --workspace needs a backend that can`,
+							)
+						}
+						// `--from` names a pane explicitly; otherwise capture around the pane THIS process sits in,
+						// which is what makes a bare `layout save pool-4` mean "the screen I am looking at".
+						//
+						// Through the same resolver every flat verb uses, rather than the `{ id: opts.from }` this
+						// built inline: `--from` is a pane locator like any other, and a name that works on `read`
+						// and silently means nothing here is the drift a second spelling guarantees. The caller's
+						// OWN pane needs no resolution — `callerPane` already answers with a concrete id.
+						const target = opts.from ? resolveTarget(deps, adapter, opts.from) : callerPane(adapter, deps.env)
+						if (!target) {
+							fail('layout save needs a pane to capture the region around — pass --from <pane>, or run it inside one')
+						}
+						const captureOpts = { name, description: opts.description ?? CAPTURED_DESCRIPTION }
+						const { template, warnings } = opts.workspace
+							? captureWorkspaceLayout(describeWorkspace!(deps.exec, target), captureOpts)
+							: captureLayout(describeRegion!(deps.exec, target), captureOpts)
+						deps.store.write(path, `${JSON.stringify(template, null, 2)}\n`)
+						// stderr, so stdout stays the path alone — `cyber-mux layout save x` composes into `$(...)`.
+						for (const warning of warnings) process.stderr.write(`${warning}\n`)
+						if (!opts.workspace) noteTabsLeftOut(deps, adapter, target)
+						console.log(path)
+					} catch (err) {
+						// The ambiguity owes the caller its candidates and exit 2. This catch-all would flatten it
+						// into a free-text exit 1 — the exact swallow `AmbiguousPaneError` exists to make visible.
+						if (err instanceof AmbiguousPaneError) throw err
+						fail(err instanceof Error ? err.message : String(err))
 					}
-					const describeWorkspace = adapter.describeWorkspace
-					if (opts.workspace && !describeWorkspace) {
-						fail(
-							`${adapter.name} cannot enumerate a workspace's tabs — layout save --workspace needs a backend that can`,
-						)
-					}
-					// `--from` names a pane explicitly; otherwise capture around the pane THIS process sits in,
-					// which is what makes a bare `layout save pool-4` mean "the screen I am looking at".
-					const target = opts.from ? { id: opts.from } : callerPane(adapter, deps.env)
-					if (!target) {
-						fail('layout save needs a pane to capture the region around — pass --from <pane>, or run it inside one')
-					}
-					const captureOpts = { name, description: opts.description ?? CAPTURED_DESCRIPTION }
-					const { template, warnings } = opts.workspace
-						? captureWorkspaceLayout(describeWorkspace!(deps.exec, target), captureOpts)
-						: captureLayout(describeRegion!(deps.exec, target), captureOpts)
-					deps.store.write(path, `${JSON.stringify(template, null, 2)}\n`)
-					// stderr, so stdout stays the path alone — `cyber-mux layout save x` composes into `$(...)`.
-					for (const warning of warnings) process.stderr.write(`${warning}\n`)
-					if (!opts.workspace) noteTabsLeftOut(deps, adapter, target)
-					console.log(path)
-				} catch (err) {
-					fail(err instanceof Error ? err.message : String(err))
-				}
-			},
+				},
+			),
 		)
 }
 
@@ -502,9 +636,13 @@ function sendCommand(deps: Deps): Command {
 			.description('Type literal text into a pane, pressing no Enter (a key-named word is typed, not pressed)')
 			.argument('<pane>', 'Target pane id')
 			.argument('<text>', 'Literal text to type')
-			.action((pane: string, text: string) => {
-				adapter(deps).sendText(deps.exec, target(pane), text)
-			}),
+			.addOption(FORMAT_OPTION)
+			.action(
+				guarded((pane: string, text: string) => {
+					const a = adapter(deps)
+					a.sendText(deps.exec, resolveTarget(deps, a, pane), text)
+				}),
+			),
 	)
 	send.addCommand(
 		new Command('keys')
@@ -514,9 +652,13 @@ function sendCommand(deps: Deps): Command {
 				'<keys...>',
 				'Key names, in order — core vocabulary is portable, anything else is passed to the backend as-is',
 			)
-			.action((pane: string, keys: string[]) => {
-				adapter(deps).sendKeys(deps.exec, target(pane), keys)
-			}),
+			.addOption(FORMAT_OPTION)
+			.action(
+				guarded((pane: string, keys: string[]) => {
+					const a = adapter(deps)
+					a.sendKeys(deps.exec, resolveTarget(deps, a, pane), keys)
+				}),
+			),
 	)
 	return send
 }
@@ -526,9 +668,13 @@ function submitCommand(deps: Deps): Command {
 		.description("Take a pane's turn: type the text if given, then always press Enter (no text = bare-Enter flush)")
 		.argument('<pane>', 'Target pane id')
 		.argument('[text]', 'Text to type before Enter; omit to flush an already-staged buffer without retyping it')
-		.action((pane: string, text: string | undefined) => {
-			adapter(deps).submit(deps.exec, target(pane), text)
-		})
+		.addOption(FORMAT_OPTION)
+		.action(
+			guarded((pane: string, text: string | undefined) => {
+				const a = adapter(deps)
+				a.submit(deps.exec, resolveTarget(deps, a, pane), text)
+			}),
+		)
 }
 
 function readCommand(deps: Deps): Command {
@@ -536,32 +682,48 @@ function readCommand(deps: Deps): Command {
 		.description("Capture a pane's output")
 		.argument('<pane>', 'Target pane id')
 		.option('--lines <n>', 'Trailing lines to capture', (v) => Number.parseInt(v, 10))
-		.action((pane: string, opts: { lines?: number }) => {
-			const out = adapter(deps).read(deps.exec, target(pane), opts.lines != null ? { lines: opts.lines } : undefined)
-			process.stdout.write(out.endsWith('\n') ? out : `${out}\n`)
-		})
+		.addOption(FORMAT_OPTION)
+		.action(
+			guarded((pane: string, opts: { lines?: number }) => {
+				const a = adapter(deps)
+				const t = resolveTarget(deps, a, pane)
+				const out = a.read(deps.exec, t, opts.lines != null ? { lines: opts.lines } : undefined)
+				process.stdout.write(out.endsWith('\n') ? out : `${out}\n`)
+			}),
+		)
 }
 
 function focusCommand(deps: Deps): Command {
 	return new Command('focus')
 		.description('Beam the attached client to a pane')
 		.argument('<pane>', 'Target pane id')
-		.action((pane: string) => {
-			try {
-				adapter(deps).focus(deps.exec, target(pane))
-			} catch (err) {
-				fail(err instanceof Error ? err.message : String(err))
-			}
-		})
+		.addOption(FORMAT_OPTION)
+		.action(
+			guarded((pane: string) => {
+				try {
+					const a = adapter(deps)
+					a.focus(deps.exec, resolveTarget(deps, a, pane))
+				} catch (err) {
+					// An ambiguity is not a focus failure — it never reached the backend, and it owes the
+					// caller its candidates and exit 2 rather than this catch-all's free-text exit 1.
+					if (err instanceof AmbiguousPaneError) throw err
+					fail(err instanceof Error ? err.message : String(err))
+				}
+			}),
+		)
 }
 
 function closeCommand(deps: Deps): Command {
 	return new Command('close')
 		.description('Close a pane')
 		.argument('<pane>', 'Target pane id')
-		.action((pane: string) => {
-			adapter(deps).teardown(deps.exec, target(pane))
-		})
+		.addOption(FORMAT_OPTION)
+		.action(
+			guarded((pane: string) => {
+				const a = adapter(deps)
+				a.teardown(deps.exec, resolveTarget(deps, a, pane))
+			}),
+		)
 }
 
 function listCommand(deps: Deps): Command {
@@ -573,7 +735,11 @@ function listCommand(deps: Deps): Command {
 			output({ panes }, () =>
 				printTable(panes, [
 					{ label: 'pane', get: (p) => p.id },
-					{ label: 'mux', get: (p) => p.mux },
+					// `label` takes the slot `mux` held. Every row of one listing reports the same mux — one
+					// adapter is selected per session, so the column is constant by construction and
+					// discriminates nothing. The label is what a caller now types INSTEAD of the id, so it is
+					// the fact this row exists to carry. `doctor` is where the backend is a live question.
+					{ label: 'label', get: (p) => p.label ?? '' },
 					{ label: 'harness', get: (p) => p.harness ?? '' },
 					{ label: 'cwd', get: (p) => p.cwd ?? '' },
 				]),
@@ -586,11 +752,17 @@ function existsCommand(deps: Deps): Command {
 		.description('Probe whether a single pane is still live (exit 0 = live, 1 = gone)')
 		.argument('<pane>', 'Target pane id')
 		.addOption(FORMAT_OPTION)
-		.action((pane: string) => {
-			const live = adapter(deps).paneExists(deps.exec, target(pane))
-			output({ pane, live }, () => console.log(live ? 'live' : 'gone'))
-			if (!live) process.exit(1)
-		})
+		.action(
+			guarded((pane: string) => {
+				const a = adapter(deps)
+				// Resolution runs BEFORE any output: an ambiguous locator throws out of here, so `live`/`gone`
+				// is never printed for a question that has no single pane to be about.
+				const t = resolveTarget(deps, a, pane)
+				const live = a.paneExists(deps.exec, t)
+				output({ pane, live }, () => console.log(live ? 'live' : 'gone'))
+				if (!live) process.exit(1)
+			}),
+		)
 }
 
 function worktreeAddCommand(deps: Deps): Command {

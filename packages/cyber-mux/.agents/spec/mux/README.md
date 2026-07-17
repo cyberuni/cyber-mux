@@ -316,6 +316,57 @@ here rather than silently contradicted.
   decided the way it was — and what it costs — is logged in
   [`design/decisions/`](../design/decisions/README.md), not restated here.
 
+- **A pane is addressed by a name or an id, and an ambiguous name fails with its candidates** —
+  every verb that takes a pane (`read`, `submit`, `exists`, `focus`, `close`, `send text`,
+  `send keys`, and `layout save --from`) accepts either. A layout template names its panes and the
+  apply manifest reports `(label, pane)` per pane, so a caller wanting "the `worker` pane" would
+  otherwise do the lookup itself — which is the surface [`layout/`](../layout/README.md)'s manifest
+  already promises it will not need.
+
+  - **An id outranks a name, and the ladder is what keeps this additive.** A string is taken as an
+    id when a live pane carries it, and only otherwise resolved as a name — so a caller that works
+    today can never be made to mean something else by a person renaming an unrelated pane. A label
+    is a human name, so nothing stops one from *being* `%3`; the pane whose id that is still wins.
+    Ambiguity is a **fuzzy-tier condition only** — the same shape git resolves a refname by (a
+    documented six-step ladder), Docker a container by (full id → exact name → prefix), and tmux its
+    own targets by (id → exact → prefix → glob). Two matches at *different* tiers are not peers and
+    need no report.
+  - **An id is recognized by matching a live pane, never by the shape of the string.** Docker sniffs
+    (`sg-` → treat as an id), and it is the cheaper rule; it is refused here because encoding a
+    backend's id format in the resolution is exactly the backend leak this seam exists to prevent —
+    a new backend would owe a new syntax rule. Resolution reads the live pane list, which answers
+    ids and labels in one read.
+  - **Two or more matches fail and report the entries** — id, label, and working directory: the three
+    that discriminate (a report listing `worker, worker` helps nobody), and within axi #2's 3–4-field
+    default row. Each candidate's id is directly usable as the retry. The report is a **structured
+    error** under the stable code `ambiguous-pane`, on **stderr** per [`axi/`](../axi/README.md)'s
+    stream discipline, honoring `--format`; stdout stays clean. Zero matches is the existing
+    not-found path, not an ambiguity.
+  - **The outcome rides the exit code: `0` one match, `1` zero, `2` ambiguous.** A predicate that
+    cannot answer says so in its status — `grep` (2), POSIX `test` (`>1`, normative), `diff`, `expr`,
+    `pgrep`. The counter-case is instructive: `systemctl is-active` prints `inactive` for both a
+    stopped unit and a unit that does not exist, leaving only exit 3 vs 4 to tell them apart. So
+    `exists` keeps answering `live`/`gone` on stdout and spends a **third code** on ambiguity rather
+    than a fourth word. That is an acknowledged **amendment** to [`axi/`](../axi/README.md)'s `0`/`1`
+    code set (#6), scoped and filed there — not an application of it. Exit `2` means ambiguous on
+    **every** pane verb, not only `exists`; one meaning per code is what lets an agent detect it
+    without parsing.
+
+  **Uniqueness was considered and refused.** tmux and Docker both enforce unique names at creation,
+  which is precisely why ambiguity is unrepresentable for them and their lookups stay binary. That
+  door is deliberately closed here: a label reaches a live pane because a person set it, herdr labels
+  every new workspace's root tab `1`, and nothing keys on a name — so refusing a duplicate made the
+  capture verb *drop* labels a user had chosen. Removing that rule relocated the ambiguity rather
+  than deleting it; this is where it lands, and lookup is where the candidates are known and the
+  caller is present.
+
+  **Boundary — the label the listing reports is the one a person set, never a backend's default.**
+  tmux has no unset title: it defaults `pane_title` to the hostname, so an untouched pane reports a
+  name nobody chose. Reporting that would label every pane in a session identically and make the
+  hostname resolve to all of them — ambiguity manufactured out of nothing. A title differing from the
+  host is the author's and is reported; the listing already applies this rule for a region
+  (`describeRegion`). herdr has the honest primitive and simply omits the key until `pane rename`.
+
 **Non-goals** — the `nudge` (send-and-verify-turn-taken) and `worktree` (git-worktree) helpers
 (`nudge.ts`, `worktree.ts`) — provisional standalone concerns per the `cli.ts` verb-surface note,
 not yet exposed as CLI verbs and not yet specced; the unit registry, mail, and doorbell that
@@ -359,6 +410,7 @@ Every scenario in [`mux.feature`](./mux.feature) maps to one of these behaviors:
 | **naming a space after its birth** | every backend renames every tier it can name at birth (tmux a window name or pane title; herdr a tab or pane rename); a new workspace's root tab is named this way because herdr offers no flag to name it at birth; a rename moves no focus and opens nothing |
 | **the workspace group — carrying a grouping a backend has no tier for** | the open contract carries an opaque group id, never parsed, split, or derived from the label; a backend with no workspace tier stores it natively (tmux: a window option it can filter on, surviving a rename); a backend with a real workspace tier ignores it, its tier being the group; no id is invented for a caller that did not ask; the id is not a workspace, so `open` still reports the workspace absent; grouping is also a **verb** over an already-open space, which `open`'s own option routes through; a backend whose display name is composed stores the space's **own name** beside the group, since one name field means composing destroys the original |
 | **text and keys are separate; only submit presses Enter for you** | `send text` types literal characters and presses no Enter (a key-named word is typed, not interpreted; no text → rejected); `send keys` presses named keys in order and types nothing — core keys normalized onto each backend, a non-core token forwarded verbatim to the backend's own semantics (no tokens at all → rejected); `send keys Enter` presses Enter and takes the turn, because the caller wrote it; bare `send` is incomplete input — help to stderr, exit 1, stdout clean (an acknowledged amendment to axi #8, not an application of it); `submit` always presses Enter — with text it types it literally then Enters, with none (or empty text) it bare-Enter flushes without retyping; `open --launch` submits |
+| **addressing a pane by name or id** | every pane-taking verb accepts either; an id outranks a name and is recognized by matching a live pane rather than by the string's shape; exactly one match resolves; zero is the existing not-found path (exit 1); two or more fail with the candidates (id, label, cwd — each id usable as the retry) as a structured `ambiguous-pane` error on stderr honoring `--format`, stdout clean, exit 2 on every verb; `exists` keeps `live`/`gone` on stdout and spends the third code rather than a fourth word; the listing reports only a label a person set, never tmux's hostname default |
 | **multiplexer detection is two-mode** | `$CYBER_MUX` fast-path + override; ancestry walk; hint fallback; `doctor` hint |
 | **mux mode** | reports the detected session backend; "none" (exit 0) when no adapter is selectable |
 | **pane focus reporting** | tri-state focused / not-focused / unknown per backend (tmux: pane+window active & session attached; herdr: pane record `focused`); a query that can't be answered → unknown so callers fail open |

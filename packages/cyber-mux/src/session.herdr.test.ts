@@ -955,6 +955,25 @@ describe('spec:cyber-mux/mux', () => {
 			expect(herdrSessionAdapter.listPanes(() => 'not json')).toEqual([])
 		})
 
+		// The herdr row of the outline; the tmux row lives in session.tmux.test.ts.
+		it("the live pane listing carries each pane's label, so a name resolves from it", () => {
+			// A person renamed this pane — herdr reports the name it was given, as its own field.
+			const listOut = JSON.stringify({ result: { panes: [{ pane_id: 'w3:p1', cwd: '/repo/a', label: 'worker' }] } })
+			expect(herdrSessionAdapter.listPanes(fakeExec([], { 'pane list': listOut }))).toEqual([
+				{ id: 'w3:p1', mux: 'herdr', harness: undefined, cwd: '/repo/a', label: 'worker' },
+			])
+		})
+
+		// The contrast that shows the tmux rule is a workaround, not the shape of the thing: herdr has
+		// the honest primitive, so an unnamed pane needs no comparison to be read as unnamed.
+		it('a herdr pane nobody named carries no label, with no comparison needed to tell', () => {
+			// herdr OMITS the key outright until a pane is renamed — not an empty string, not a default
+			// standing in for absence. Nothing here is compared against anything to reach `undefined`.
+			const listOut = JSON.stringify({ result: { panes: [{ pane_id: 'w3:p2', cwd: '/repo/b' }] } })
+			const panes = herdrSessionAdapter.listPanes(fakeExec([], { 'pane list': listOut }))
+			expect(panes[0]?.label).toBeUndefined()
+		})
+
 		// Real capture from herdr 0.7.4 (`herdr pane layout --pane w3V:p1`): a workspace at x=36,y=1
 		// sized 201x45, split right at ratio 0.6 then down at 0.7 — three panes.
 		const LAYOUT_OUT = JSON.stringify({
