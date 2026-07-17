@@ -1,3 +1,4 @@
+import { withReason } from './exec.ts'
 import type { LivePane, OpenedPane, RegionPane, SessionAdapter, SessionReadOptions } from './session.ts'
 
 /** tmux backend — detected via `$TMUX`. */
@@ -44,7 +45,7 @@ export const tmuxSessionAdapter: SessionAdapter = {
 		// set after the split.
 		if (window && opts.label) args.splice(1, 0, '-n', opts.label)
 		const pane = exec('tmux', args)
-		if (!pane) throw new Error(`tmux ${args[0]} failed`)
+		if (!pane) throw new Error(withReason(exec, `tmux ${args[0]} failed`))
 		// No `workspace`: tmux has no workspace tier — `workspace` and `tab` both collapse to a Window —
 		// so it has nothing to report, which is not the same as reporting that nothing is there. Absent
 		// is the seam's own convention for a fact a backend cannot answer (`OpenedPane.workspace`,
@@ -164,7 +165,7 @@ export const tmuxSessionAdapter: SessionAdapter = {
 			'-F',
 			'#{pane_id}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}\t#{pane_current_path}\t#{pane_title}\t#{host}',
 		])
-		if (!out) throw new Error(`tmux could not describe the region around pane ${target.id}`)
+		if (!out) throw new Error(withReason(exec, `tmux could not describe the region around pane ${target.id}`))
 		const panes: RegionPane[] = []
 		for (const line of out.split('\n').filter(Boolean)) {
 			const [id, left, top, width, height, cwd, title, host] = line.split('\t')
@@ -224,6 +225,9 @@ function toTmuxKey(key: string): string {
  */
 function parsePaneLocation(out: string | null, id: string): { sessionName: string; windowId: string } {
 	const line = (out ?? '').split('\n').find((l) => l.split(' ')[0] === id)
+	// No `withReason` here, deliberately: this is a pure parser, not a command runner. Its failure is
+	// "no line matched", not "a command failed", so the runner's most recent reason belongs to some
+	// other command entirely and attributing it here would be a confident lie.
 	if (!line) throw new Error(`peer's pane ${id} could not be resolved to beam to`)
 	const [, sessionName, windowId] = line.split(' ')
 	return { sessionName: sessionName!, windowId: windowId! }

@@ -1,5 +1,5 @@
 import { resolve } from 'node:path'
-import type { Exec } from './exec.ts'
+import { type Exec, withReason } from './exec.ts'
 import type {
 	LivePane,
 	OpenedPane,
@@ -44,13 +44,13 @@ export const herdrSessionAdapter: SessionAdapter = {
 			// A genuinely separate workspace, not a pane inside the caller's current one — `--no-focus`
 			// so spawning doesn't steal the caller's attention/focus.
 			const out = exec('herdr', ['workspace', 'create', '--cwd', opts.cwd, ...label, ...env, '--no-focus'])
-			if (!out) throw new Error('herdr workspace create failed')
+			if (!out) throw new Error(withReason(exec, 'herdr workspace create failed'))
 			opened = parseRootPaneId(out, 'herdr workspace create')
 		} else if (at === 'tab') {
 			// A real tab in the current window, not a split pane — `--no-focus` so spawning doesn't
 			// steal the caller's attention/focus, matching workspace/worktree spawns.
 			const out = exec('herdr', ['tab', 'create', '--cwd', opts.cwd, ...label, ...env, '--no-focus'])
-			if (!out) throw new Error('herdr tab create failed')
+			if (!out) throw new Error(withReason(exec, 'herdr tab create failed'))
 			opened = parseRootPaneId(out, 'herdr tab create')
 		} else {
 			const direction = at === 'pane:down' ? 'down' : 'right'
@@ -78,7 +78,7 @@ export const herdrSessionAdapter: SessionAdapter = {
 				...size,
 				...env,
 			])
-			if (!out) throw new Error('herdr pane split failed')
+			if (!out) throw new Error(withReason(exec, 'herdr pane split failed'))
 			opened = parsePaneId(out)
 			if (opts.label) exec('herdr', ['pane', 'rename', opened.id, opts.label])
 		}
@@ -197,7 +197,7 @@ export const herdrSessionAdapter: SessionAdapter = {
 		// never documents and could respell without warning. The rects say the same thing in a fact
 		// herdr does promise, so the derivation runs off those; see `describeRegion` in `session.ts`.
 		const out = exec('herdr', ['pane', 'layout', '--pane', target.id])
-		if (!out) throw new Error(`herdr could not describe the region around pane ${target.id}`)
+		if (!out) throw new Error(withReason(exec, `herdr could not describe the region around pane ${target.id}`))
 		let reported: unknown
 		try {
 			reported = JSON.parse(out)?.result?.layout?.panes
@@ -323,7 +323,7 @@ function herdrWorktreeCapability(): WorktreeWorkspaceCapability {
 			// stay honest about what its backend actually takes.
 			args.push('--no-focus')
 			const out = exec('herdr', args)
-			if (!out) throw new Error('herdr worktree create failed')
+			if (!out) throw new Error(withReason(exec, 'herdr worktree create failed'))
 			const created = parseWorktreeWorkspace(out, 'herdr worktree create')
 			// `submit`, not `sendText` — a launch command has to actually run, and `submit` is the only
 			// verb that supplies the Enter. (It lowers to `pane run`, herdr's atomic text-plus-Enter
@@ -339,7 +339,7 @@ function herdrWorktreeCapability(): WorktreeWorkspaceCapability {
 			// `[branch, cwd, focus, label, path, workspace_id]`. See `createInWorkspace`.
 			args.push('--no-focus')
 			const out = exec('herdr', args)
-			if (!out) throw new Error('herdr worktree open failed')
+			if (!out) throw new Error(withReason(exec, 'herdr worktree open failed'))
 			const opened = parseWorktreeWorkspace(out, 'herdr worktree open')
 			// `submit` for the same reason as `createInWorkspace` above.
 			if (opts.launch) herdrSessionAdapter.submit(exec, opened.target, opts.launch)

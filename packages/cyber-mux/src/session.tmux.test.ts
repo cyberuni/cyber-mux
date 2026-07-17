@@ -254,6 +254,21 @@ describe('spec:cyber-mux/mux', () => {
 		it('open() throws when tmux reports no pane', () => {
 			const exec: Exec = () => null
 			expect(() => tmuxSessionAdapter.open(exec, { cwd: '/unit', launch: 'claude' })).toThrow(/new-window/)
+			// A runner that cannot say why yields the bare failure — no dangling em-dash, no guess.
+			expect(() => tmuxSessionAdapter.open(exec, { cwd: '/unit', launch: 'claude' })).toThrow(
+				/^tmux new-window failed$/,
+			)
+		})
+
+		it('open() carries the backend’s own reason for refusing a split', () => {
+			// The real case this exists for: a pool too large for the region. tmux says "no space for new
+			// pane" on stderr and, before `lastError`, the seam dropped it — leaving the caller a bare
+			// "tmux split-window failed" to act on.
+			const exec: Exec = () => null
+			exec.lastError = 'no space for new pane'
+			expect(() => tmuxSessionAdapter.open(exec, { cwd: '/unit', at: 'pane:down', from: { id: '%4' } })).toThrow(
+				/^tmux split-window failed — no space for new pane$/,
+			)
 		})
 
 		it('sendText() types literal text and presses no Enter', () => {

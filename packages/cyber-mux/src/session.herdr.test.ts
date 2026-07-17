@@ -345,6 +345,17 @@ describe('spec:cyber-mux/mux', () => {
 			)
 		})
 
+		it('open() carries the backend’s own reason for refusing a split, and stays bare without one', () => {
+			const exec = fakeExec([])
+			expect(() => herdrSessionAdapter.open(exec, { cwd: '/unit', at: 'pane:down', from: { id: 'w1:p2' } })).toThrow(
+				/^herdr pane split failed$/,
+			)
+			exec.lastError = 'pane too small to split'
+			expect(() => herdrSessionAdapter.open(exec, { cwd: '/unit', at: 'pane:down', from: { id: 'w1:p2' } })).toThrow(
+				/^herdr pane split failed — pane too small to split$/,
+			)
+		})
+
 		it('worktree.createInWorkspace() creates the worktree and opens its bound workspace in one call', () => {
 			const calls: string[][] = []
 			const createOut = JSON.stringify({
