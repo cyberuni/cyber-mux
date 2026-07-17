@@ -736,9 +736,10 @@ function listCommand(deps: Deps): Command {
 				printTable(panes, [
 					{ label: 'pane', get: (p) => p.id },
 					{ label: 'mux', get: (p) => p.mux },
-					// Beside the id, because the label is what a caller now types INSTEAD of that id — a name
-					// the listing knows but never shows would leave them guessing what is addressable.
-					{ label: 'label', get: (p) => p.label ?? '' },
+					// No label column, though `listPanes` now carries one and a label is what a caller types
+					// instead of an id. This row is already at axi #2's 3–4 field ceiling, and which four
+					// earn the slots — or whether the label belongs behind `--full` — is a question for that
+					// contract rather than a rider on this change. A follow-up is filed.
 					{ label: 'harness', get: (p) => p.harness ?? '' },
 					{ label: 'cwd', get: (p) => p.cwd ?? '' },
 				]),
