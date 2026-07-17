@@ -1,21 +1,21 @@
 ---
 todos:
   - content: Draft mux + layout scenarios and README use cases for open's workspace report
-    status: in_progress
+    status: completed
   - content: Spec gate — judge suite/spec, freeze if approved
-    status: pending
+    status: completed
   - content: Widen SessionAdapter.open to return the workspace the pane landed in
-    status: pending
+    status: completed
   - content: herdr parses workspace_id on all three routes; tmux reports absent
-    status: pending
+    status: completed
   - content: openLayout passes the workspace through instead of hardcoding null
-    status: pending
+    status: completed
   - content: Update tests (tmux/herdr unit + integration, layout-session, cli)
-    status: pending
+    status: completed
   - content: Impl gate — verify every frozen scenario against live tmux + herdr, pnpm verify
-    status: pending
+    status: completed
   - content: Changeset + commit + handoff
-    status: pending
+    status: completed
 ---
 
 # open reports the workspace a pane landed in
@@ -67,6 +67,5 @@ outputs. So no rename, no second manifest field.
 
 ## NEXT
 
-Draft the additive scenarios: `mux.feature` (open reports the workspace per backend/placement) and
-`layout.feature` (the manifest carries it on a workspace-tier backend). Purely additive — nothing
-narrowed, so the `@frozen` suites self-clear with no re-open. Then the spec gate.
+Landed as PR #15; both gates self-asserted within leash, awaiting ratification. Nothing left to do
+here — on merge this plan is retired by the doctrine loop.
