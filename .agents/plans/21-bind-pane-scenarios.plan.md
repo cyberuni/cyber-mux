@@ -11,7 +11,9 @@ todos:
   - content: Re-run the bridge; record what stays unbound and why
     status: completed
   - content: Commit and open the PR
-    status: in_progress
+    status: completed
+  - content: Drain the 4 recorded follow-ups into issues (needs permission)
+    status: pending
 ---
 
 # Bind the pane node's unbound scenarios
@@ -65,4 +67,10 @@ would have been the exact lie this CR set out to avoid.
 
 ## NEXT
 
-Commit and open the PR.
+Landed as [PR #25](https://github.com/cyberuni/cyber-mux/pull/25), rebased onto `main` after it
+advanced 7 commits mid-PR and re-verified on the merged tree (70/77, 0 fail, 444 tests).
+
+Remaining: drain the 4 follow-ups in the ledger shard into issues. Deduped against the open set —
+none is a duplicate; #17 is adjacent to the near-miss-diagnostic one but covers an unparseable
+suite, not a title mismatch. Awaiting the requester's permission to file; the ledger records stand
+either way, and a later drain re-derives what is outstanding by the same dedupe.
