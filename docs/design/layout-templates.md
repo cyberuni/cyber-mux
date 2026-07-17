@@ -224,9 +224,11 @@ Desugaring rules (deterministic, so `layout show --desugar` prints exactly what 
 
 - `even-horizontal`: a right-comb — split right at `1/n`, `1/(n-1)`, … so all `n` panes end equal.
 - `even-vertical`: the same comb, `down`.
-- `tiled`: split into `ceil(n/2)` columns and the rest as rows, balanced — for `n=4`, one `right` at
-  `0.5` then a `down` at `0.5` in each half. Exact algorithm is the implementation's to pin, but it
-  must be a pure function of `n` alone, documented, and covered by a table test for `n = 1..8`.
+- `tiled`: `ceil(sqrt(n))` columns laid left-to-right, each column an even stack — a right-comb of
+  down-combs, so **both axes are the same even comb** as the two rows above. For `n=4`, one `right`
+  at `0.5` then a `down` at `0.5` in each half. It must be a pure function of `n` alone, documented,
+  and covered by a table test for `n = 1..8`. The implementation in `layout.ts` is the authority;
+  this line is a summary, and read it there before reasoning from it.
 
 `n = 1` is legal and produces a single pane with no split.
 
@@ -747,12 +749,11 @@ eventually, whether each is busy. It never decides who gets the work.**
 
 ## 12. Open questions
 
-Flagged rather than guessed. **Q1–Q3 and Q5–Q7 are closed** — against herdr 0.7.4 (`herdr api
-schema`, protocol 16, plus live probes), tmux 3.6b, and the GNU screen manual. Their findings are
-folded into §6.4, §7.1, §7.3 and §9.4, and recorded here so the answers are not re-litigated. **Q4 is
-the only one left, and it is a test rather than a question.**
+Flagged rather than guessed. **All are now closed** — against herdr 0.7.4 (`herdr api schema`,
+protocol 16, plus live probes), tmux 3.6b, and the GNU screen manual. Their findings are folded into
+§6.4, §7.1, §7.3 and §9.4, and recorded here so the answers are not re-litigated.
 
-Two of the closures moved the design, and it is worth being precise about which:
+Three of the closures moved the design, and it is worth being precise about which:
 
 - **Q1–Q3, Q5 changed nothing** — each went the way §7.1 predicted, which is the evidence that the
   portable-walk bet is sound. (Q3 removed a schema *rule*, but that rule existed only to serve a
@@ -760,6 +761,9 @@ Two of the closures moved the design, and it is worth being precise about which:
 - **Q6 and Q7 changed the design**, in opposite directions: Q6's premise was simply wrong, and export
   gained a v1 verb; Q7 found the floor under §7.1's contract, and layouts became an optional
   capability. Both were worth asking precisely because neither answer was the expected one.
+- **Q4 was filed as a test and turned out to be a question** — the one closure whose framing did not
+  survive being measured. It expected a walk ceiling past 4 panes; it found no walk ceiling, two
+  disagreeing backend ceilings, and a portability dent in §5's central claim.
 
 **Q1 — Can `herdr pane split` target a pane by id? — CLOSED: yes.** (§7.3 Gap A.) The CLI takes it
 positionally, and the socket API exposes `PaneSplitParams.target_pane_id`. Gap A — the one blocking
@@ -775,10 +779,68 @@ env natively, so the command-prefix fallback has no customer, and the "env witho
 validation error" rule it justified is **removed from the schema**. This is the one closure that
 changed a rule rather than confirming one.
 
-**Q4 — Pane-count / depth ceiling for a large pool.** The research flagged herdr `layout.apply`'s
-limits as untested; irrelevant here, since this design does not use it. The live question is the
-walk's own ceiling — an 8-pane pool is 7 sequential splits, and no backend's minimum pane size is
-known. The integration test in §10 should push past 4 and find where it breaks.
+**Q4 — Pane-count / depth ceiling for a large pool. — CLOSED: there is no walk ceiling. There are two
+backend ceilings, and they disagree.** This question expected to find where the walk breaks past 4
+panes. Nothing breaks near 4, and the framing was wrong twice over: **the ceiling is not a pane
+count** (it varies with region size and with `arrange`) and **depth is a non-issue** (a balanced tree
+five levels deep — 32 leaves — builds fine in a 200x50 region, where `tiled` fits 506 panes, so the
+depth rather than the count is what that probe exercised).
+
+Measured against tmux 3.6b on a throwaway `-L` server with the region pinned via `-x`/`-y`, by binary
+search with linear verification around each boundary. The ceiling is the largest `n` that builds:
+
+| region | `tiled` | `even-horizontal` | `even-vertical` |
+|---|---|---|---|
+| 80x24 | 156 | 32 | 12 |
+| 120x40 | 380 | 45 | 19 |
+| 200x50 | 506 | 70 | 22 |
+| 400x100 | >700 (search cap, not a ceiling) | 128 | 39 |
+
+**The conclusion, and the whole of it: no rule cyber-mux could rely on predicts the ceiling.** That
+is enough to settle the only question the design has to answer — cyber-mux never pre-flights the
+region, and a pool that will not fit is refused by the backend rather than by us. Beyond that, the
+numbers are not interpreted here **on purpose**: they invite a story, and every story tried against
+them so far has been wrong. `tiled` beats the combs because it cuts both axes, which retroactively
+justifies §5's decision to own the desugaring rather than defer to `select-layout`; anything more
+than that about *why* these numbers are what they are is unestablished, and this design needs none of
+it.
+
+Read the desugarer from `layout.ts`, never from prose, if you extend this. §5.3's summary is a
+summary.
+
+**herdr 0.7.4 enforces no floor at all**: 110 successive down-splits of a 45-row region all succeed,
+yielding 111 panes each claiming `viewport_rows: 2` in a space that cannot hold them. So the same
+16-pane `even-vertical` template in an 80x24 region **exits 1 half-built on tmux** (whose ceiling
+there is 12) **and exits 0 undisplayable on herdr** — a real dent in §5's *one template means one
+geometry everywhere*, recorded rather than papered over. herdr's missing floor is herdr's to fix;
+modeling a floor here would mean hardcoding each backend's undocumented minimum pane size — the same
+bet §6.4 refused for tmux's `window_layout` string and herdr's `splits[]` id convention.
+
+Two findings the question did not anticipate. **§10's failure contract holds against a real backend**
+— at 80x24 `even-vertical` n=16, tmux's refusal produced `LayoutApplyError` with a partial manifest
+of 12 panes matching the live panes exactly, nothing killed, exit 1. It had only ever been proven
+against a mocked `Exec` with a synthetic *"third split fails"*. And **the failure was correct but
+blind**: tmux says `no space for new pane` on stderr, which `realExec` discarded (`stdio[2]='ignore'`,
+any failure → `null`), leaving the caller with a bare `tmux split-window failed`. That is what the
+`Exec` seam's optional `lastError` now carries.
+
+**No ceiling number is ever asserted, on either backend.** One reason, applying everywhere: these
+numbers are **tmux 3.6b's and herdr 0.7.4's to change**, so they are rationale for a design decision
+and never contract. Pinning one in a suite would make a backend's patch release a cyber-mux test
+failure, which is exactly backwards — the whole point of §12's finding is that the ceiling is *not*
+cyber-mux's to own.
+
+herdr adds a second, independent reason it could not be asserted even if the first did not apply:
+one shared server, and `workspace create` takes **no size flag**, so a herdr ceiling measures the
+runner's terminal rather than the walk. tmux *can* be pinned (`-x`/`-y` on a detached `-L` server)
+and is deterministic — which is what made the measurement above possible, and is **not** a licence to
+assert its numbers.
+
+So this question closes with **no new scenario and no new test**. The failure path it exercised was
+already specified (§10, *"a throw mid-walk reports what was built and kills nothing"*) and is now
+known to hold against a real backend; the ceiling itself is the backend's and is deliberately
+unasserted. What the question actually changed is one line of `Exec` and the error text on the way
+out.
 
 **Q5 — Workspace-scoped pane enumeration. — CLOSED: it exists. The recommendation is to not use it.**
 `herdr pane list --workspace <id>` is real (`PaneListParams.workspace_id`), and it would make
