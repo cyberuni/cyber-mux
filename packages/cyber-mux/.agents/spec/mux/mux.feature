@@ -266,6 +266,144 @@ Feature: mux — the pane abstraction
     # refuse the flag outright. Dropping it keeps the worktree route working; a caller that needs env
     # there carries it some other way.
 
+  # ── The workspace group: carrying a grouping a backend has no tier for ──
+  # A caller opening several tabs as one workspace needs them recognizable as a group afterwards. On a
+  # backend with a real workspace tier that is free — the tier IS the group. On one without, the seam
+  # carries an opaque group id the backend can store and be filtered by.
+
+  Scenario: the open contract carries an opaque workspace group id
+    Given a caller opening a tab with a workspace group id
+    When open runs
+    Then the id reaches the backend as an opaque value
+    And it is never parsed, split, or derived from the label
+    # the group id and the label are separate on purpose: a label is chosen by a human and may contain
+    # anything, so recovering a grouping by parsing one is unsound
+
+  Scenario: a backend with no workspace tier stores the group id natively
+    Given a caller opening a tab through the tmux adapter, with a workspace group id
+    When open runs
+    Then the window carries the id as a window option the backend can filter on
+    # tmux has no Workspace level, so the grouping has nowhere structural to live; a window option is
+    # tmux's own mechanism for exactly this and survives a window rename
+
+  Scenario: a backend with a real workspace tier ignores the group id
+    Given a caller opening a tab through the herdr adapter, with a workspace group id
+    When open runs
+    Then no grouping flag reaches herdr
+    # herdr's workspace IS the group and every pane and tab record already carries its workspace_id —
+    # a second grouping would be a duplicate the backend never reads
+
+  Scenario: a group id is never invented for a caller that did not ask for one
+    Given a caller opening a tab through the tmux adapter, with no workspace group id
+    When open runs
+    Then no window option is set
+    # a window nobody grouped stays ungrouped, and reads back as a workspace of one
+
+  Scenario: a space already open is grouped by the same verb open uses
+    Given a caller grouping a tab that is already open through the tmux adapter
+    When the grouping runs
+    Then the backend stores the id on that space
+    And it is the same command open itself issues to group a space it just created
+    # open cannot be the only way in. A caller that did not open the space -- the worktree route opens
+    # its region before the walk ever runs -- still has to group it, and it holds the space's own id
+    # the moment the open returns. tmux has no birth flag for a window option anyway, so grouping is
+    # ALREADY a second call after the window exists; routing open through this verb adds none.
+
+  Scenario: a backend whose display name is composed stores the space's own name beside the group
+    Given a caller grouping a tab through the tmux adapter, naming the tab editor
+    When the grouping runs
+    Then the backend stores editor as the space's own name
+    And the space's own name is stored separately from its display name
+    # tmux has ONE name field per space, so a caller that composes a display name out of the tab's name
+    # DESTROYS the original -- and recovering it means splitting on a separator already proven
+    # ambiguous. The same rule the group id follows, one tier down: the display name is a human's to
+    # read, and an opaque option carries what a machine reads back.
+
+  Scenario: a backend with a real workspace tier stores neither
+    Given a caller grouping a tab through the herdr adapter
+    When the grouping runs
+    Then no grouping flag and no name flag reach herdr
+    # its tier IS the group and its tab label IS the tab's own name, never composed -- so both are
+    # facts the backend already holds
+
+  Scenario: the group id is not a workspace, and open never reports it as one
+    Given a caller opening a tab through the tmux adapter, with a workspace group id
+    When open reports the pane
+    Then the reported workspace is absent
+    # absent rather than false, the same convention the focus probe's unknown follows: tmux has no
+    # workspace tier, and a tag cyber-mux wrote is its own bookkeeping rather than a tier the backend
+    # gained. Reporting it as a workspace would be a confident lie.
+
+  # ── open reports the tab the pane landed in ──
+  # The same move, and the same argument, as the workspace above: the backend already answered when
+  # the pane was opened, so a surface that hid it would discard a fact it already held.
+
+  Scenario Outline: open reports the tab the new pane landed in
+    Given a caller opening at <at> through the <adapter> adapter
+    When open runs
+    Then the reported tab is the tab the pane landed in
+    And it is read from the output the pane id already comes from
+
+    Examples:
+      | at         | adapter |
+      | tab        | herdr   |
+      | workspace  | herdr   |
+      | pane:right | herdr   |
+      | tab        | tmux    |
+      | workspace  | tmux    |
+      | pane:right | tmux    |
+
+    # Every multiplexer has the Tab level — unlike the Workspace level, which only some have — so
+    # every backend answers this and none reports it absent. herdr's create envelope carries the
+    # pane's own tab id beside its pane id on every route: a new tab reports itself, a created
+    # workspace reports its root tab, and a split reports the tab it landed in, which is the caller's.
+    # tmux's Tab is its Window, so the answer is the window the pane landed in, read from the same
+    # -F the pane id already rides out on. Either way the backend already answered when the pane was
+    # opened, so it costs no extra call — the argument the workspace field is already reported on.
+
+  Scenario: the reported tab is what names a new workspace's root tab
+    Given a caller creating a workspace through the herdr adapter
+    When the workspace's root tab is renamed using the tab open reported
+    Then the rename addresses the tab rather than the pane
+    # a rename addressed by a pane id is refused outright by herdr (tab_not_found) while tmux resolves
+    # it and succeeds — so a caller reaching for the pane id would be green on one backend and
+    # silently broken on the other. The reported tab is what makes the rename portable.
+
+  # ── Naming a space after its birth ──
+  # --label names a space AT birth wherever the backend's CLI allows. One tier cannot be: a new
+  # workspace's root tab. So the seam also names a space that already exists.
+
+  Scenario Outline: a space is named after birth on every backend
+    Given a caller renaming an already-open <tier> through the <adapter> adapter
+    When the rename runs
+    Then the backend receives its own rename command for that tier
+
+    Examples:
+      | tier      | adapter |
+      | tab       | tmux    |
+      | tab       | herdr   |
+      | pane      | tmux    |
+      | pane      | herdr   |
+
+    # Every backend can name every tier — the same breadth --label relies on at birth. tmux names a
+    # window and a pane title; herdr renames a tab and a pane. This is the naming route for the one
+    # case birth cannot serve, not a second way to do what --label already does.
+
+  Scenario: renaming is the only way to name a new workspace's root tab
+    Given a caller creating a workspace through the herdr adapter
+    When the workspace's root tab is given a name
+    Then the name is set by a rename after the workspace exists
+    # herdr labels a new workspace's root tab 1 and offers no flag to change it at birth. This is the
+    # whole of the constraint the tab-naming non-goal generalized from — it binds the ROOT tab alone,
+    # and every later tab takes --label at birth like any other space.
+
+  Scenario: a rename moves no focus and opens nothing
+    Given a caller renaming a tab the caller is not focused on
+    When the rename runs
+    Then the caller's focus is where it was
+    And no space is created
+    # a write as read-only in its side effects as isPaneFocused is: naming a space is not visiting it
+
   Scenario Outline: a backend declares whether it can size a split
     Given a caller asking the <adapter> adapter whether it can size a split
     When it reads the declaration

@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
+import type { Exec } from './exec.ts'
 import { collectPanes, type LayoutNode, resolveTree, type SplitNode, validateLayout } from './layout.ts'
-import { captureLayout } from './layout-capture.ts'
+import { captureLayout, captureWorkspaceLayout } from './layout-capture.ts'
 import { herdrSessionAdapter } from './session.herdr.ts'
-import { tmuxSessionAdapter } from './session.tmux.ts'
-import type { PaneRect, RegionPane } from './session.ts'
+import { TMUX_TAB_NAME_OPTION, TMUX_WORKSPACE_GROUP_OPTION, tmuxSessionAdapter } from './session.tmux.ts'
+import type { PaneRect, RegionPane, WorkspaceTab } from './session.ts'
 
 /**
  * Rects are written the way a multiplexer reports them — `x, y, width, height` in cells — so a fixture
@@ -296,11 +297,9 @@ describe('spec:cyber-mux/layout', () => {
 			// anyone chose. A title equal to the host is that default; one that differs is a real label
 			// (cyber-mux's own `select-pane -T` among them).
 			//
-			// EXACTLY ONE pane carries the host default here, and that is load-bearing rather than
-			// incidental. With two, a broken host filter labels both `zeta` — which makes them DUPLICATES,
-			// so `duplicatedLabels` drops them and the capture looks correct for entirely the wrong
-			// reason. One host-titled pane leaves the duplicate path out of it, so this fails if and only
-			// if the host filter itself breaks.
+			// EXACTLY ONE pane carries the host default here, so a broken host filter shows up as that
+			// pane's label rather than being absorbed anywhere: the assertion below pins `undefined` in
+			// first position, and the hostname is checked against the whole written template besides.
 			const panes = tmuxSessionAdapter.describeRegion!(
 				() =>
 					[
@@ -318,30 +317,10 @@ describe('spec:cyber-mux/layout', () => {
 			expect(JSON.stringify(template)).not.toContain('zeta')
 		})
 
-		it('captureLayout drops a shared label from every pane carrying it, and reports it', () => {
-			// A live region has no uniqueness rule; a template's labels are manifest KEYS and must be
-			// unique. Keeping the duplicate would write a template that fails validateLayout — which the
-			// scenario below forbids outright.
-			const { template, warnings } = captureLayout(
-				[
-					pane('%0', 0, 0, 99, 50, { cwd: '/repo', label: 'worker' }),
-					pane('%1', 100, 0, 100, 50, { cwd: '/repo', label: 'worker' }),
-				],
-				{ name: 'captured' },
-			)
-			for (const node of collectPanes(resolveTree(template))) {
-				expect(node.label).toBeUndefined()
-			}
-			expect(warnings).toHaveLength(1)
-			expect(warnings[0]).toContain('worker')
-			// The whole point of dropping it: the result still validates.
-			expect(validateLayout(template, 'captured')).toEqual([])
-		})
-
 		it('a captured template passes validate', () => {
 			// The round trip that matters: a capture has to be loadable. Run the REAL validator over it —
-			// asserting the name and description came back would pass for a template carrying a cwd, a
-			// duplicate label or a degenerate ratio, which is exactly what this has to rule out.
+			// asserting the name and description came back would pass for a template carrying a cwd or a
+			// degenerate ratio, which is exactly what this has to rule out.
 			const { template } = captureLayout(
 				[
 					pane('%0', 0, 0, 119, 34, { cwd: '/repo', label: 'top' }),
@@ -354,6 +333,73 @@ describe('spec:cyber-mux/layout', () => {
 			// The stem rule too: a name that disagrees with its filename fails validation, so a capture
 			// saved as <name>.json has to carry that same name.
 			expect(validateLayout(template, 'a-different-stem')).not.toEqual([])
+		})
+	})
+
+	describe('captureWorkspaceLayout', () => {
+		it('re-applying a captured workspace reproduces the tabs it was captured from', () => {
+			// The round-trip property the whole derivation exists to hold, now at the TAB level as well as
+			// the pane level. Two tabs, each of two panes built by splitting — herdr-shaped rects (no
+			// divider), so the rebuild is exact rather than approximate.
+			const region: PaneRect = { x: 0, y: 0, width: 200, height: 50 }
+			const tabs: WorkspaceTab[] = [
+				{
+					id: 'w1:t1',
+					label: 'editor',
+					panes: [pane('w1:p1', 0, 0, 140, 50, { cwd: '/repo' }), pane('w1:p2', 140, 0, 60, 50, { cwd: '/repo' })],
+				},
+				{
+					id: 'w1:t2',
+					label: 'logs',
+					panes: [pane('w1:p3', 0, 0, 200, 20, { cwd: '/repo' }), pane('w1:p4', 0, 20, 200, 30, { cwd: '/repo' })],
+				},
+			]
+			const { template } = captureWorkspaceLayout(tabs, { name: 'captured' })
+			// The rebuilt workspace has the SAME TABS — the same count, in the same order, each still
+			// carrying the name its live tab did.
+			expect(template.tabs?.map((tab) => tab.label)).toEqual(['editor', 'logs'])
+			// And it is loadable: a capture its own validator rejects would never get as far as applying.
+			expect(validateLayout(template, 'captured')).toEqual([])
+			// Every pane matches the size of its counterpart in the original, tab by tab. Laid back out
+			// through the same arithmetic a backend sizes a split with.
+			for (const [index, tab] of (template.tabs ?? []).entries()) {
+				expect(applyToRects(resolveTree(tab), region)).toEqual(tabs[index]!.panes.map((p) => p.rect))
+			}
+		})
+
+		it("a tab's label is never parsed back to recover its workspace", () => {
+			// A workspace labeled "acme - beta" whose tab is labeled main — so tmux's window is DISPLAYED
+			// as "acme - beta - main", the composition the walk wrote, and the walk stored `main` beside
+			// the tag as the tab's own name. The display name is ambiguous under every split rule: it
+			// reads as workspace "acme" with tab "beta - main" exactly as well as workspace "acme - beta"
+			// with tab "main". Parsing it merely picks which legal label to mis-group — which is why
+			// neither the workspace nor the tab's name is ever recovered from it.
+			const calls: string[][] = []
+			const exec: Exec = (_cmd, args) => {
+				calls.push(args)
+				if (args[0] === 'display-message') return '@4\tws-7\tmain\tacme - beta - main'
+				if (args[0] === 'list-windows') return '@4\tmain\tacme - beta - main'
+				if (args[0] === 'list-panes') return '%0\t0\t0\t200\t50\t/repo\tzeta\tzeta'
+				return null
+			}
+			const tabs = tmuxSessionAdapter.describeWorkspace!(exec, { id: '%0' })
+			// The workspace is identified by its GROUPING TAG — the opaque id, filtered server-side.
+			expect(calls.find((c) => c[0] === 'list-windows')).toEqual([
+				'list-windows',
+				'-a',
+				'-F',
+				`#{window_id}\t#{${TMUX_TAB_NAME_OPTION}}\t#{window_name}`,
+				'-f',
+				`#{==:#{${TMUX_WORKSPACE_GROUP_OPTION}},ws-7}`,
+			])
+			// Nothing the label says reaches any query. A read that matched windows by a name prefix would
+			// have `acme` in its argv — and would over-collect besides, since `list-windows -a` spans
+			// SESSIONS, so a same-named window of another session would join this workspace.
+			expect(calls.flat().some((arg) => arg.includes('acme'))).toBe(false)
+			// The tab's own name comes from the option the walk stored it in — NOT from splitting the
+			// display name, and not from taking it verbatim either. Both roads are refused: one is the
+			// unsound parse, the other re-prefixes on every round trip.
+			expect(tabs.map((tab) => tab.label)).toEqual(['main'])
 		})
 	})
 

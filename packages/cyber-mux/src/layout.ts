@@ -14,7 +14,11 @@ import { isAbsolute, normalize } from 'node:path'
 /** A leaf: one pane, and what it starts as. Nothing about the target directory is in here. */
 export interface PaneNode {
 	type: 'pane'
-	/** Names the pane, and keys it in the apply manifest — hence unique within a template. */
+	/**
+	 * Names the pane. A NAME, never a key: the manifest's unique handle is the pane id, and nothing
+	 * keys on this, so two panes may share one. A pool of workers all named `worker` is a legitimate
+	 * thing to mean, and neither backend requires otherwise.
+	 */
 	label?: string
 	/** Submitted after the geometry is built; omit for a blank shell. */
 	command?: string
@@ -51,15 +55,42 @@ const ARRANGES: readonly string[] = ['tiled', 'even-horizontal', 'even-vertical'
 /** A pane in the flat (`panes` + `arrange`) sugar — a `PaneNode` with the discriminant implied. */
 export type FlatPane = Omit<PaneNode, 'type'>
 
-export interface LayoutTemplate {
-	name: string
-	description?: string
+/**
+ * ONE tab's worth of structure, in either spelling — the explicit tree or the flat sugar. This is the
+ * shape a top-level template has always had, named so a tab can reuse it WHOLESALE rather than
+ * introducing a second vocabulary: a tab is a tree plus a name. `resolveTree` takes this, so the tab
+ * tier and the template tier resolve through the very same desugarer and cannot drift apart.
+ */
+export interface LayoutTree {
 	/** The split tree. Exactly one of `root` / `panes`. */
 	root?: LayoutNode
 	/** The flat sugar's pane pool. Exactly one of `root` / `panes`. */
 	panes?: FlatPane[]
 	/** How `panes` is arranged; defaults to `tiled`. Ignored (and invalid) alongside `root`. */
 	arrange?: Arrange
+}
+
+/**
+ * One tab of a workspace: a `LayoutTree` plus a name. `cwd` is no more permitted here than on a pane —
+ * the rule the whole capability exists to enforce does not weaken because a level was added.
+ */
+export interface TabNode extends LayoutTree {
+	/**
+	 * Names the tab. A name rather than a key, exactly as a pane's label is: a tab is addressed by its
+	 * own id at the seam and the manifest reports a pane's tab by INDEX, so two tabs may share a label.
+	 * Omit to leave the tab's name to the backend's own default.
+	 */
+	label?: string
+}
+
+export interface LayoutTemplate extends LayoutTree {
+	name: string
+	description?: string
+	/**
+	 * The two-level form: a workspace of N tabs, each its own tree. Exactly one of `root` / `panes` /
+	 * `tabs` — `root` and `panes` are the one-tab spelling.
+	 */
+	tabs?: TabNode[]
 }
 
 /**
@@ -105,47 +136,101 @@ export function validateLayout(template: unknown, stem?: string): string[] {
 
 	if (t.description !== undefined && typeof t.description !== 'string') errors.push('description: must be a string')
 
-	// Exactly one of root/panes. Both is ambiguous about which geometry wins; neither describes no
-	// panes at all. Either way there is nothing to apply, so both are errors rather than a default.
+	// Exactly one of root/panes/tabs. Two of them is ambiguous about which geometry wins; none of them
+	// describes no panes at all. Either way there is nothing to apply, so both are errors rather than a
+	// default. `root` and `panes` are the one-tab spelling of what `tabs` says for N.
 	const hasRoot = t.root !== undefined
 	const hasPanes = t.panes !== undefined
-	if (hasRoot && hasPanes)
-		errors.push('root/panes: exactly one of "root" or "panes" may be set — this template sets both')
-	else if (!hasRoot && !hasPanes)
-		errors.push('root/panes: exactly one of "root" or "panes" must be set — this template sets neither')
-
-	if (t.arrange !== undefined && (typeof t.arrange !== 'string' || !ARRANGES.includes(t.arrange))) {
-		errors.push(`arrange: must be one of ${ARRANGES.join(', ')}`)
+	const hasTabs = t.tabs !== undefined
+	const declared = [hasRoot && 'root', hasPanes && 'panes', hasTabs && 'tabs'].filter((d): d is string => Boolean(d))
+	if (declared.length > 1) {
+		errors.push(
+			`root/panes/tabs: exactly one of "root", "panes" or "tabs" may be set — this template sets ${declared.map((d) => `"${d}"`).join(' and ')}`,
+		)
+	} else if (declared.length === 0) {
+		errors.push('root/panes/tabs: exactly one of "root", "panes" or "tabs" must be set — this template sets none')
 	}
 
-	const labels: string[] = []
-	if (hasRoot) validateNode(t.root, 'root', errors, labels)
-	if (hasPanes) {
-		if (!Array.isArray(t.panes)) errors.push('panes: must be an array of pane objects')
-		else if (t.panes.length === 0) errors.push('panes: must name at least one pane')
+	// No label — pane's or tab's — is checked against any other. A label is a NAME, not a key: the
+	// manifest's unique handle is the pane id and it reports a pane's tab by index, so nothing here has
+	// a collision to have. Neither backend requires uniqueness either, and herdr labels every new
+	// workspace's root tab `1`, so a rule refusing duplicates would refuse what a backend manufactures
+	// by default. Ambiguity belongs to whoever LOOKS a pane up, where the candidates are known.
+	validateTree(t, '', errors)
+
+	if (hasTabs) {
+		if (!Array.isArray(t.tabs)) errors.push('tabs: must be an array of tab objects')
+		// A workspace of no tabs is not a workspace — there is nothing to open.
+		else if (t.tabs.length === 0) errors.push('tabs: must name at least one tab — a workspace of no tabs is not one')
 		else {
-			t.panes.forEach((pane, i) => {
-				validatePaneFields(pane, `panes[${i}]`, errors, labels)
+			t.tabs.forEach((tab, i) => {
+				validateTab(tab, `tabs[${i}]`, errors)
 			})
 		}
-	}
-
-	// A duplicate label is an error rather than a warning because `label` is the manifest's KEY — two
-	// panes named `worker` make the manifest ambiguous about which pane a caller just addressed.
-	const seen = new Set<string>()
-	const duplicated = new Set<string>()
-	for (const label of labels) {
-		if (seen.has(label)) duplicated.add(label)
-		seen.add(label)
-	}
-	for (const label of duplicated) {
-		errors.push(`label "${label}": duplicated — a label is the manifest's key, so it must be unique`)
 	}
 
 	return errors
 }
 
-function validateNode(node: unknown, path: string, errors: string[], labels: string[]): void {
+/**
+ * One tab: the same `root`/`panes` tree a top-level template declares, plus its own label. Every rule
+ * the template tier holds holds here for the identical reason — hence the shared `validateTree`
+ * rather than a parallel set of checks that could drift.
+ */
+function validateTab(tab: unknown, path: string, errors: string[]): void {
+	if (typeof tab !== 'object' || tab === null || Array.isArray(tab)) {
+		errors.push(`${path}: must be an object`)
+		return
+	}
+	const n = tab as Record<string, unknown>
+
+	// The rule the whole capability exists to enforce does not weaken because a level was added.
+	if (n.cwd !== undefined) {
+		errors.push(
+			`${path}.cwd: a template must never set cwd — pass --cwd at apply time, or use "dir" for a subdirectory under it`,
+		)
+	}
+
+	if (n.label !== undefined && (typeof n.label !== 'string' || n.label === '')) {
+		errors.push(`${path}.label: must be a non-empty string`)
+	}
+
+	// Exactly one of root/panes, the same as the template itself, and for the same reasons.
+	const hasRoot = n.root !== undefined
+	const hasPanes = n.panes !== undefined
+	if (hasRoot && hasPanes) errors.push(`${path}: exactly one of "root" or "panes" may be set — this tab sets both`)
+	else if (!hasRoot && !hasPanes)
+		errors.push(`${path}: exactly one of "root" or "panes" must be set — this tab sets neither`)
+
+	validateTree(n, path, errors)
+}
+
+/**
+ * The `root` / `panes` / `arrange` triple, wherever it sits. `path` is `''` at the template tier and
+ * `tabs[i]` inside a tab, so an error points at a place in the file either way. Whether exactly one of
+ * the two spellings is present is the CALLER's check — the template tier weighs `tabs` in that choice
+ * and a tab does not.
+ */
+function validateTree(t: Record<string, unknown>, path: string, errors: string[]): void {
+	const at = (key: string) => (path === '' ? key : `${path}.${key}`)
+
+	if (t.arrange !== undefined && (typeof t.arrange !== 'string' || !ARRANGES.includes(t.arrange))) {
+		errors.push(`${at('arrange')}: must be one of ${ARRANGES.join(', ')}`)
+	}
+
+	if (t.root !== undefined) validateNode(t.root, at('root'), errors)
+	if (t.panes !== undefined) {
+		if (!Array.isArray(t.panes)) errors.push(`${at('panes')}: must be an array of pane objects`)
+		else if (t.panes.length === 0) errors.push(`${at('panes')}: must name at least one pane`)
+		else {
+			t.panes.forEach((pane, i) => {
+				validatePaneFields(pane, `${at('panes')}[${i}]`, errors)
+			})
+		}
+	}
+}
+
+function validateNode(node: unknown, path: string, errors: string[]): void {
 	if (typeof node !== 'object' || node === null || Array.isArray(node)) {
 		errors.push(`${path}: must be an object with a "type" of "pane" or "split"`)
 		return
@@ -154,7 +239,7 @@ function validateNode(node: unknown, path: string, errors: string[], labels: str
 	// `type` is an explicit discriminant rather than inferred from which keys are present: an inferred
 	// union produces terrible errors on a typo (a misspelled `frist` silently becomes a pane node).
 	if (n.type === 'pane') {
-		validatePaneFields(n, path, errors, labels)
+		validatePaneFields(n, path, errors)
 		return
 	}
 	if (n.type !== 'split') {
@@ -172,12 +257,12 @@ function validateNode(node: unknown, path: string, errors: string[], labels: str
 		}
 	}
 	if (n.first === undefined) errors.push(`${path}.first: required`)
-	else validateNode(n.first, `${path}.first`, errors, labels)
+	else validateNode(n.first, `${path}.first`, errors)
 	if (n.second === undefined) errors.push(`${path}.second: required`)
-	else validateNode(n.second, `${path}.second`, errors, labels)
+	else validateNode(n.second, `${path}.second`, errors)
 }
 
-function validatePaneFields(pane: unknown, path: string, errors: string[], labels: string[]): void {
+function validatePaneFields(pane: unknown, path: string, errors: string[]): void {
 	if (typeof pane !== 'object' || pane === null || Array.isArray(pane)) {
 		errors.push(`${path}: must be an object`)
 		return
@@ -193,9 +278,8 @@ function validatePaneFields(pane: unknown, path: string, errors: string[], label
 		)
 	}
 
-	if (p.label !== undefined) {
-		if (typeof p.label !== 'string' || p.label === '') errors.push(`${path}.label: must be a non-empty string`)
-		else labels.push(p.label)
+	if (p.label !== undefined && (typeof p.label !== 'string' || p.label === '')) {
+		errors.push(`${path}.label: must be a non-empty string`)
 	}
 	if (p.command !== undefined && typeof p.command !== 'string') errors.push(`${path}.command: must be a string`)
 
@@ -231,13 +315,18 @@ function dirEscapes(dir: string): boolean {
 }
 
 /**
- * The tree a template describes, whichever form it was written in — the ONE place `panes`/`arrange`
+ * The tree a `LayoutTree` describes, whichever form it was written in — the ONE place `panes`/`arrange`
  * becomes a tree, so `layout show --desugar` and the apply walk can never disagree about what a flat
  * template means.
+ *
+ * It takes either carrier of a `LayoutTree`, so a `TabNode` and a single-tab `LayoutTemplate` resolve
+ * through THIS function rather than through two that happen to agree today: the sugar is a property of
+ * a pane pool, not of where the pool sits, so a tab of 3 panes means what a top-level pool of 3 panes
+ * means. One desugarer, one answer.
  */
-export function resolveTree(template: LayoutTemplate): LayoutNode {
-	if (template.root) return template.root
-	return desugar(template.panes ?? [], template.arrange ?? 'tiled')
+export function resolveTree(tree: LayoutTemplate | TabNode): LayoutNode {
+	if (tree.root) return tree.root
+	return desugar(tree.panes ?? [], tree.arrange ?? 'tiled')
 }
 
 /**

@@ -37,6 +37,59 @@ a target directory supplied at apply time:
   from every worktree. A name is `[a-z0-9][a-z0-9-]*` and must equal the file's stem, so a name can
   never traverse out of the layouts directory.
 
+- **A workspace is tabs of panes, so a template says tabs** — `root` and `panes` each describe **one
+  tab's worth** of structure, which is where v1 stopped. `tabs: [...]` is the two-level form: a
+  workspace of N tabs, each carrying its own pane tree **in the very same shape** a top-level `root`
+  or `panes` accepts, sugar included. Adding the level costs the schema almost nothing precisely
+  because the tab tier reuses the pane tier wholesale rather than introducing a second vocabulary — a
+  tab is a tree plus a name. A template declares **exactly one** of `root`, `panes`, or `tabs`; the
+  first two are the one-tab spelling and stay exactly what they were.
+
+  **No label is required to be unique — not a pane's, not a tab's.** Nothing keys on a name: the
+  manifest's unique handle is the **pane id**, it reports a pane's tab by **index**, and a tab is
+  addressed by its own id at the seam. Nor does either backend ask for uniqueness — tmux titles three
+  panes `worker` without complaint, herdr's `pane rename` carries no such constraint, and herdr
+  labels **every** new workspace's root tab `1`, so a backend that manufactures duplicates by default
+  could never be one a uniqueness rule describes. A pool of three panes all named `worker` is a
+  legitimate thing to mean.
+
+- **The two levels have to survive on a backend that has only one, and the grouping is carried twice**
+  — every multiplexer has the Tab and Pane levels, but only some have a Workspace level above them
+  ([`mux/`](../mux/README.md)'s vocabulary table). On herdr the mapping is direct: a workspace with N
+  tabs. tmux has no Workspace tier — `workspace` and `tab` both collapse onto a Window — so a
+  template's tabs would land as an unlabeled pile of windows with nothing marking them as one pool.
+
+  Two different readers need the grouping, and **one carrier cannot serve both**. A **human** reading a
+  tmux status bar gets it in the tab label, `<workspace> - <tab>` — this node's own composition, and
+  the reason one template means the same thing on every backend rather than degrading to noise. A
+  **machine** — capture, below — gets it from the opaque group id the seam carries
+  ([`mux/`](../mux/README.md), "A caller can group the spaces it opens"). The label is **never parsed
+  back**: a workspace labeled `acme - beta` with a tab `main` produces `acme - beta - main`, which no
+  split rule can resolve, so parsing merely picks which legal label to silently mis-group. Reading the
+  id instead is what lets the label stay a human's to choose.
+
+  **The grouping does not depend on which verb opened the workspace.** `open --layout` opens the
+  region itself; `worktree add --layout` is handed one the worktree verbs already opened. Both group
+  every tab, the first one included — a template cannot mean two different things depending on the
+  route that reached it. Grouping only the tabs the walk itself opened would leave the workspace's own
+  first tab out, and **a group missing a tab is worse than no group**: capture would confidently
+  round-trip a 3-tab workspace as 2. This is why grouping is a verb over an already-open space rather
+  than only an option on `open` ([`mux/`](../mux/README.md)).
+
+  **A composed label destroys the tab's own name, so the walk stores it.** Where the display name is
+  composed, the backend's single name field no longer holds `editor` — it holds `pool - editor`. The
+  tab's own name is therefore stored beside the group id and read from there by capture, never split
+  back out. Taking the display name verbatim instead would re-prefix it on every round trip
+  (`pool - pool - editor`), and splitting it would be the unsound parse this whole design exists to
+  refuse. Both roads break the property capture is *for*.
+
+  The label is applied **only where the backend lacks the tier**. herdr's UI already groups by the real
+  workspace label, so a prefix there would be redundant noise — the concept maps onto what the backend
+  actually has, the same rule that makes a degrade claimable only where the backend could have done
+  the real thing. And the workspace label is **never shortened**: it is the label the caller already
+  chose (`--label`, defaulting to the template name), so the caller owns its length, and not shortening
+  is what makes a collision between two workspaces that shorten alike impossible rather than handled.
+
 - **The template is a binary split tree, and `cwd` is not in it** — `split` nodes carry
   `direction: right|down`, an optional `ratio`, and `first`/`second`; `pane` nodes carry an optional
   `label`, `command`, `env`, and `dir`. `type` is an explicit discriminant rather than inferred from
@@ -99,11 +152,26 @@ a target directory supplied at apply time:
   `open --layout` reports the manifest.
 
 - **The manifest is the whole handoff** — `--format json` reports every pane apply created as
-  `(label, pane, dir, command)`, plus the `layout`, the injected `cwd`, and the `workspace`
+  `(label, pane, dir, command, tab)`, plus the `layout`, the injected `cwd`, and the `workspace`
   (the workspace the region opened in, reported by `open`; `null` on a backend with no workspace
   tier, which is why it is `null` on tmux). A consumer grouping panes by workspace needs something to
-  group on, so the field carries the real answer wherever the backend has one. `label` is the manifest
-  key — which is why a duplicate label is a validation error rather than a warning. That manifest is
+  group on, so the field carries the real answer wherever the backend has one. `tab` is the same
+  argument one level down: a consumer grouping a tabs template's panes by tab needs something to group
+  on, and it is `null` from a single-tab template rather than an invented tab — absent rather than
+  false, since the template said nothing about tabs. The pane list itself stays **one flat list** of
+  every pane apply created; the tabs are a field on each pane, not a second nesting the consumer has to
+  walk.
+
+  **`pane` is the manifest's unique handle; `label` is a human name and may repeat.** An earlier design
+  made the label the key and refused a duplicate at validation. That rule was wrong in the one
+  direction that mattered: labels reach live panes because a *person* renamed them by hand, and `save`
+  exists to capture precisely that — so a uniqueness rule forced the capture to **drop** a shared label
+  from both panes, discarding the fact it was there to preserve and reporting "no label" where there
+  was one, against the absent-rather-than-false rule everything else here follows. Neither backend asks
+  for uniqueness either, and a pool of three panes all named `worker` is a legitimate thing to mean. So
+  ambiguity is **not** refused at authoring time, where refusing it is only a guess about intent; it
+  belongs to whoever **looks a pane up**, where the candidates are in hand and the caller can be handed
+  them to choose from. That manifest is
   the complete machine-readable answer to *"which panes exist and what are they for"*, and a
   dispatcher built on it needs **no new cyber-mux surface**: it addresses panes through `read`,
   `submit`, `exists`, `focus`, `list`, which all already exist.
@@ -158,6 +226,33 @@ a target directory supplied at apply time:
   and a 2x2's genuine ambiguity (a vertical or a horizontal cut first describe the same screen) is
   broken **columns-first**, to match what `tiled` emits rather than its transpose.
 
+- **A whole workspace is captured back, and `--workspace` is what asks for it** — `save`'s subject is
+  a **region** and stays one: a bare `save` in a 3-tab workspace still captures the caller's own
+  region into a single-tree template, because widening the default silently would rewrite what `save`
+  has always meant for every caller who already relies on it. `--workspace` opts in, and is the exact
+  inverse of the tabs walk — one captured tab per live tab, each with its own derived tree. The bare
+  form does not stay quiet about it: capturing one tab of three notes on stderr what it left out,
+  rather than letting a caller believe a 3-tab workspace round-trips from a 1-tab template.
+
+  The seam this needs is a **workspace-wide** read beside the region one, and both backends can
+  answer it — established empirically against herdr 0.7.4 and tmux 3.6b, the standing bar here. On
+  **herdr** it is direct and race-free: a workspace's tabs enumerate by id, every pane comes stamped
+  with its tab, and an **unfocused tab in another workspace reports live geometry**, so nothing has to
+  be focused first. (herdr's own native per-tab layout export takes a `tab_id` and would be the
+  obvious road — but `layout` is **not a CLI verb** in 0.7.4; it is socket-API-only, and this adapter
+  speaks the CLI by design, so the road is closed. `docs/design/layout-templates.md` asserts otherwise
+  and is corrected.) On **tmux** the workspace is not a fact the backend holds at all, so the read is
+  *"which windows carry this group id"* — the tag the walk wrote, never the label. A window carrying
+  no tag is a **workspace of one**: the honest answer for a window nobody grouped.
+
+  A backend that cannot enumerate a workspace's tabs **refuses** `--workspace` cleanly, naming itself
+  and writing nothing — the same shape as a backend that cannot report a region's geometry. An absent
+  optional seam member is a refusal, never a guess.
+
+  What the capture recovers is unchanged and so is its limit: geometry, labels and dirs, and **never a
+  command**, on any backend, for the reason that was structural before and is structural still. A
+  captured workspace is a **draft** and says so in its own `description`.
+
 - **Ratio and env degrade; they never reject** — the schema is backend-agnostic, so a template's
   validity cannot depend on which multiplexer happens to be running. A backend that cannot size a
   split degrades to its own 50/50 default with one stderr warning; a wrong-looking split is not worth
@@ -194,9 +289,21 @@ Also out, each for its own reason:
 - **`wait_for` / sequencing** — a template that waits on output is a workflow, and a workflow belongs
   to the caller.
 - **Focus** — apply never steals it, matching every existing spawn path. A caller who wants to land
-  somewhere calls `focus` with a pane id from the manifest.
-- **Named windows/tabs inside a layout** — v1 builds one region and splits inside it. An honest
-  deferral: the schema leaves room by keeping `root` a single node rather than a list.
+  somewhere calls `focus` with a pane id from the manifest. **This survived the tabs CR intact**,
+  which had every excuse to reopen it: a template naming the tab to focus is the obvious next field,
+  and it was declined rather than deferred. Apply's whole discipline is that it is side-effect-free
+  from the point of view of whoever is typing, and a multi-tab apply — which lands more spaces at once
+  — makes stealing focus worse, not more justified. The manifest already answers *"which pane"*, and
+  `focus` already takes it.
+
+**`Named windows/tabs inside a layout` was here, and this CR reversed it.** It was recorded as an
+honest deferral rather than a rejection, with the door left open in the schema itself — *"the schema
+leaves room by keeping `root` a single node rather than a list"* — and that is the door `tabs` walks
+through. Nothing about the deferral's reasoning expired; it was simply time. The v1 note is the one
+piece of it that needed correcting rather than keeping: it read the constraint as *layouts build one
+region*, when what the backends actually impose is narrower — see the tab-naming note in
+[`mux/`](../mux/README.md), whose premise turned out to bind only herdr's **root** tab rather than
+tabs in general.
 
 **Layouts are an optional capability**, exactly as `worktree?` already is — present on a backend
 that can split a *named* pane, absent on one that cannot. The floor is real rather than hypothetical:
@@ -212,18 +319,22 @@ Every scenario in [`layout.feature`](./layout.feature) maps to one of these beha
 | Behavior | What it covers |
 |---|---|
 | **a template is resolved by name, repo winning** | `--file` skips resolution; repo before user; shadowing reported; resolution through `resolvePrimaryRoot` so every worktree gets one answer; not-found lists the directories searched; a name that is not the stem, or would traverse, is refused |
-| **the tree, and no `cwd` in it** | `split`/`pane` nodes, explicit `type`, `right`/`down`; a template setting `cwd` fails validation naming `--cwd` and `dir`; `dir` is relative-only, absolute and `..` refused; `ratio` of 0 or 1 refused; duplicate `label` refused; `root` xor `panes`; every error at once with a JSON path |
+| **the tree, and no `cwd` in it** | `split`/`pane` nodes, explicit `type`, `right`/`down`; a template setting `cwd` fails validation naming `--cwd` and `dir`; `dir` is relative-only, absolute and `..` refused; `ratio` of 0 or 1 refused; a duplicate `label` is legal, because a label is a name rather than a key; `root` xor `panes`; every error at once with a JSON path |
 | **flat-N sugar is desugared by cyber-mux** | `panes` + `arrange` expands to a canonical tree, a pure function of `n` and `arrange`; `n = 1` yields one pane and no split; the same tree on every backend, never tmux's `select-layout`; `show --desugar` prints what apply builds |
 | **the walk** | region opened blank; geometry depth-first; each split targets the pane it names via `from`, never the current one; commands submitted last in template order; `dir` joined onto the apply-time cwd; a missing `dir` fails naming the pane and the resolved path |
 | **ratio and env degrade, never reject** | a pane with `env` and no `command` is valid; a backend that cannot size a split warns once and takes its default. The seam conventions themselves — the opposite sign directions and env's native tier — are the pane abstraction's, specified in [`mux/`](../mux/README.md) |
 | **resolution precedes side effects; apply does not roll back** | a bad layout name leaves no worktree behind; a throw mid-walk reports what was built and exits 1 without killing anything |
 | **`--layout` is `--launch`'s sibling** | mutually exclusive with `--launch`; `--at` defaults to `workspace`; `--label` defaults to the template name; `worktree add --layout` reports the manifest alongside `root`/`branch` |
-| **the manifest is the handoff** | `--format json` reports `(label, pane, dir, command)` per created pane, plus `layout`/`cwd`/`workspace`; `workspace` carries the workspace the region opened in, and is `null` on a backend with no workspace tier such as tmux |
+| **the manifest is the handoff** | `--format json` reports `(label, pane, dir, command)` per created pane, plus `layout`/`cwd`/`workspace`; `workspace` carries the workspace the region opened in, and is `null` on a backend with no workspace tier such as tmux; every pane also carries the `tab` it landed in (`null` from a single-tab template), while the pane list stays one flat list; `workspace` stays `null` on tmux even when tabs are grouped, the group tag being cyber-mux's own bookkeeping rather than a tier |
+| **a workspace is tabs of panes** | `tabs` is the two-level form, each tab a tree in the same shape `root`/`panes` accept, sugar included; exactly one of `root`, `panes`, `tabs`; a tab declares exactly one of `root`/`panes`; an empty `tabs` refused; no label needs to be unique — not a pane's, not a tab's — since nothing keys on a name (the manifest's handle is the pane id and it reports a pane's tab by index); a tab may leave its label to the backend; no `cwd` reaches a tab either |
+| **the walk, across tabs** | the first tab opens the workspace and every later tab opens in it, never as a split; each tab's tree is built against its own root pane; all geometry precedes any submit, commands in template order tab by tab; `--at` still defaults to `workspace`; `worktree add --layout` builds the first tab into the workspace the worktree already opened; focus is never stolen and no field asks for it; a throw part-way reports what was built and kills nothing |
+| **carrying the workspace where the backend has no tier** | a tab is labeled `<workspace> - <tab>` only where the backend lacks a workspace tier, unprefixed where it has one; the workspace label is never shortened, so shortening collisions cannot arise; the label is never parsed back — the group id is what identifies a workspace; the tab's own name is stored beside the group id, because a composed display name destroys it; every tab is grouped whichever verb opened the workspace, the first one included; herdr's root tab is renamed after birth, the one tab neither backend names at birth |
+| **capturing a whole workspace** | `--workspace` captures one tab per live tab, each with its own tree; a captured tab's label is the tab's own name rather than the composed display name, so a round trip never compounds the prefix; a bare `save` still captures only the caller's region and says on stderr what it left out; captured tabs keep their labels; re-applying reproduces the tabs and every pane size; still a draft carrying no command; an untagged region captures as a single-tab workspace; a backend that cannot enumerate a workspace refuses cleanly, writing nothing |
 | **managing templates needs no multiplexer** | `list`/`show`/`validate` answer with no mux; `validate` exits 0/1 with one error per line |
 | **the geometry seam reports rects, not a tree** | every pane of the region is reported with its rectangle; no backend's native split-tree encoding is parsed to obtain the tree — not tmux's `#{window_layout}` string, not herdr's flat `splits[]` |
 | **a region is captured back into a template** | `save` captures the caller's own region, or `--from`'s; the ratio is the one the split was made with, not the one the pane sizes imply; an n-ary row lowers to the desugarer's right-comb; a 2x2 breaks columns-first to match `tiled`; re-applying a capture reproduces the region it came from |
 | **the capture is a draft** | no pane node carries a `command`, on any backend; the written template says so in its own `description`; `--description` replaces that note |
 | **the capture subtracts the target back out** | a pane under the captured root becomes a relative `dir`; no `cwd` and no absolute path ever reaches the template; a pane outside the root loses its dir and warns; a capture passes `validate` |
-| **labels are the author's, or absent** | a label someone set is captured; a backend's default pane title is not (tmux titles every pane with the hostname); a label two panes share is dropped from both, with a warning, since a template's labels must be unique |
+| **labels are the author's, or absent** | a label someone set is captured; a backend's default pane title is not (tmux titles every pane with the hostname); a label two panes share is captured onto both, because a human chose it and no label needs to be unique |
 | **`save` writes a file** | the repo layouts directory by default, `--to user` for the user's; the path alone on stdout; an existing template is never overwritten without `--force`, and the refusal reads no region |
 | **`save`'s refusals** | an invalid name, no pane to capture around, a backend that cannot report geometry, and a region no sequence of splits could have produced — each exits 1 writing nothing |

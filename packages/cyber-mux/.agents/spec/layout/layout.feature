@@ -101,26 +101,85 @@ Feature: layout — named, reusable pane layouts
       | -0.5  |
       | 1.5   |
 
-  Scenario: a duplicate label is a validation error because labels are manifest keys
+  Scenario: two panes may share a label, because a label is a name rather than a key
     Given a template with two pane nodes both labeled worker
     When the template is validated
-    Then it exits 1 naming the duplicated label
+    Then it is valid
+    # neither backend requires a unique name — tmux titles three panes worker without complaint and
+    # herdr's pane rename takes no uniqueness constraint — and the manifest's unique handle is the
+    # pane id, never the label. A pool of workers all named worker is a legitimate thing to mean.
+    # Ambiguity belongs to whoever LOOKS a pane up, where the candidates are known and a caller can
+    # choose, rather than to the author, where refusing it is only a guess about intent.
 
-  Scenario Outline: exactly one of root and panes
+  Scenario Outline: exactly one of root, panes and tabs
     Given a template that declares <declares>
     When the template is validated
     Then it exits 1
+
+    Examples:
+      | declares                    |
+      | both root and panes         |
+      | both root and tabs          |
+      | both panes and tabs         |
+      | none of root, panes or tabs |
+
+  Scenario: every validation error is reported at once, not first-only
+    Given a template carrying a cwd field, an absolute dir, and a ratio of 0
+    When cyber-mux layout validate runs
+    Then all three errors are reported, one per line
+    And each names its own JSON path
+
+  # ── Tabs: a workspace is tabs of panes, not one pane tree ──
+  # root and panes each describe ONE tab's worth of structure. tabs is the two-level form: a
+  # workspace of N tabs, each carrying its own pane tree in the very same shape.
+
+  Scenario: a tab carries its own tree, in the same shape a single-tab template uses
+    Given a template declaring tabs, the first with a root split and the second with a single pane
+    When the template is validated
+    Then it is valid
+    And each tab's tree is the same node shape a top-level root accepts
+
+  Scenario: a tab may use the flat sugar, desugared exactly as a single-tab template is
+    Given a template whose tab declares panes of 3 and arrange even-horizontal
+    When the template is desugared
+    Then that tab's tree is the same right-comb the top-level flat form produces
+    # sugar is a property of a pane pool, not of where the pool sits — one desugarer, one answer
+
+  Scenario Outline: a tab declares exactly one of root and panes, the same as the template itself
+    Given a template with a tab that declares <declares>
+    When the template is validated
+    Then it exits 1
+    And the error names that tab's JSON path
 
     Examples:
       | declares               |
       | both root and panes    |
       | neither root nor panes |
 
-  Scenario: every validation error is reported at once, not first-only
-    Given a template carrying a cwd field, a duplicate label, and a ratio of 0
-    When cyber-mux layout validate runs
-    Then all three errors are reported, one per line
-    And each names its own JSON path
+  Scenario: an empty tabs array is refused, because a workspace of no tabs is not a workspace
+    Given a template declaring tabs as an empty array
+    When the template is validated
+    Then it exits 1
+
+  Scenario: two tabs may share a label, and so may panes in different tabs
+    Given a template declaring two tabs both labeled editor, each carrying a pane labeled worker
+    When the template is validated
+    Then it is valid
+    # nothing keys on either name. The manifest reports a pane's tab by INDEX, not by label, and a tab
+    # is addressed by its own id at the seam — herdr labels EVERY new workspace's root tab 1, so a
+    # backend that manufactures duplicates by default cannot be one a uniqueness rule describes.
+
+  Scenario: a tab may leave its label to the backend
+    Given a template declaring two tabs, neither carrying a label
+    When the template is validated
+    Then it is valid
+    # matching --label omitted everywhere else: the backend's own default stands
+
+  Scenario: a tab cannot carry a cwd any more than a pane can
+    Given a template whose tab carries a cwd field
+    When the template is validated
+    Then it exits 1 naming --cwd and dir
+    # the rule the whole capability exists to enforce does not weaken because a level was added
 
   # ── Flat-N sugar ──
   # cyber-mux owns the desugaring, so one template means one geometry on every backend.
@@ -217,6 +276,115 @@ Feature: layout — named, reusable pane layouts
     Then it exits 1
     And the error names watcher and the resolved path
     # a branch that predates a directory is a real case
+
+  # ── The walk, across tabs ──
+  # The single-tab walk is unchanged and is the inner loop. A tabs template wraps it: open the
+  # workspace, open each further tab in it, and build each tab's tree against its own root pane.
+
+  Scenario: the first tab opens the workspace and every later tab opens inside it
+    Given a tabs template of 3 tabs applied on a backend with a real workspace tier
+    When the walk runs
+    Then the first tab opens at the workspace placement
+    And the second and third each open at the tab placement
+    And no tab opens as a split of another tab's pane
+
+  Scenario: each tab's tree is built against that tab's own root pane
+    Given a tabs template whose second tab is a split of two panes
+    When the walk runs
+    Then the second tab's split names the second tab's root pane as the pane it splits
+    # the same rule the single-tab walk already holds: a split names its pane rather than trusting the
+    # backend's default, which tracks the user rather than the caller
+
+  Scenario: geometry is built across every tab before any command is submitted
+    Given a tabs template of 2 tabs, each carrying a pane with a command
+    When the walk runs
+    Then every tab and every split is opened before the first submit
+    And the commands are submitted in template order, tab by tab
+    # the single-tab reason scales: a split lands mid-render if it targets a pane already running an
+    # interactive agent, and a tab is opened blank for the same reason a region is
+
+  Scenario: a tabs template still defaults --at to workspace
+    Given a caller running cyber-mux open --layout with a tabs template and no --at
+    When the command runs
+    Then the workspace placement is the one used
+    # a fresh space is empty by construction, and a workspace is what a set of tabs needs to live in
+
+  Scenario: apply never steals focus, and a tabs template cannot ask it to
+    Given a tabs template of 3 tabs
+    When the walk runs
+    Then the caller's focus is where it was before the apply
+    And the template has no field naming a tab to focus
+    # unchanged from every spawn path: a caller who wants to land somewhere calls focus with a pane id
+    # from the manifest
+
+  Scenario: worktree add --layout builds a tabs template into the worktree's own workspace
+    Given a caller running cyber-mux worktree add --layout with a tabs template
+    When the command runs
+    Then the first tab is built into the workspace the worktree opened
+    And every later tab opens as a tab in it
+
+  Scenario: a tabs template groups the same way whichever verb opened the workspace
+    Given a caller running cyber-mux worktree add --layout with a tabs template on tmux
+    When the command runs
+    Then every tab carries the same workspace group, the first one included
+    And the workspace captures back with every tab it was built with
+    # the route that opened the region cannot change what the template means. Grouping only the tabs
+    # the walk itself opened would leave the workspace's own first tab out, and a group missing a tab
+    # is worse than no group: capture would confidently round-trip a 3-tab workspace as 2.
+    # worktree add --layout already forces the workspace placement, so a set of tabs has a workspace
+    # to live in and needs no second one. The route differs from open --layout in one way only: the
+    # region already exists, so the first tab builds into it rather than opening it.
+
+  Scenario: a throw part-way through a tabs walk reports the tabs already built and kills nothing
+    Given a tabs template of 3 tabs whose second tab fails to open
+    When the walk runs
+    Then the panes already built are reported in the manifest
+    And it exits 1 without killing anything
+    # apply does not roll back, and adding a level does not buy an atomicity the node never offered
+
+  # ── Carrying the workspace where the backend has no workspace tier ──
+  # A workspace of N tabs maps directly onto a backend that has a workspace tier. On one that does
+  # not, the grouping has to be carried some other way — and it is carried TWICE, for two different
+  # readers, because one carrier cannot serve both.
+
+  Scenario: on a backend with no workspace tier, a tab is labeled with its workspace and its own name
+    Given a tabs template named pool whose tab is labeled editor
+    When it is applied on tmux with the workspace labeled pool
+    Then the window is named "pool - editor"
+    # tmux collapses workspace and tab onto the same Window, so a template's tabs would otherwise be an
+    # unlabeled pile — the prefix is what keeps them recognizable as a group in the status bar
+
+  Scenario: on a backend with a real workspace tier, a tab carries its own label unprefixed
+    Given a tabs template named pool whose tab is labeled editor
+    When it is applied on herdr
+    Then the tab is labeled "editor"
+    And the workspace is labeled "pool"
+    # herdr's UI already groups by the real workspace label, so a prefix would be redundant noise —
+    # the concept maps onto what the backend actually has
+
+  Scenario: the workspace label is never shortened, so two workspaces never collide by shortening
+    Given a tabs template applied with a long workspace label
+    When a tab is labeled on a backend with no workspace tier
+    Then the workspace label appears in the tab label in full
+    # the prefix is the label the caller already chose, so the caller controls its length; shortening
+    # would invent a collision question that not shortening does not have
+
+  Scenario: a tab's label is never parsed back to recover its workspace
+    Given a workspace labeled "acme - beta" whose tab is labeled main
+    When the workspace's tabs are enumerated
+    Then the workspace is identified by its grouping tag rather than by splitting the tab label
+    # "acme - beta - main" is ambiguous under every split rule — it reads as workspace "acme" with tab
+    # "beta - main" just as well as workspace "acme - beta" with tab "main". The label is for a human
+    # to read; the tag is what a machine reads.
+
+  Scenario: herdr's root tab is named after birth, because it is the one tab that cannot be named at birth
+    Given a tabs template whose first tab is labeled editor
+    When it is applied on herdr
+    Then the workspace is created and its root tab is renamed to editor
+    And every later tab is named at birth
+    # herdr labels a new workspace's root tab 1 with no flag to change it; tab create --label names
+    # every subsequent tab at birth. This is the whole of the constraint the mux node's tab-naming
+    # non-goal was generalizing from.
 
   # ── Ratio and env: degrade, never reject ──
   # The schema is backend-agnostic, so a template's validity cannot depend on the live multiplexer.
@@ -324,6 +492,29 @@ Feature: layout — named, reusable pane layouts
     When the command runs
     Then the manifest's workspace field is null
     # matching how reportOpenedWorktree already reports it
+
+  Scenario: the manifest reports which tab each pane landed in
+    Given a tabs template of 2 tabs applied with --format json
+    When the manifest is reported
+    Then every pane carries the tab it landed in
+    And the pane list stays one flat list of every pane apply created
+    # the manifest is still the whole handoff — a consumer grouping panes by tab needs something to
+    # group on, exactly as it needs workspace to group by space
+
+  Scenario: a pane from a single-tab template reports no tab
+    Given a template declaring root applied with --format json
+    When the manifest is reported
+    Then each pane's tab is null
+    # absent rather than false: there is no tab structure to report, and inventing one would claim the
+    # template said something it did not
+
+  Scenario: the manifest's workspace is still null on tmux even when tabs are grouped
+    Given a tabs template applied on tmux
+    When the manifest is reported
+    Then the manifest's workspace is null
+    # the grouping tag is cyber-mux's own bookkeeping, not a workspace tier. Reporting it as workspace
+    # would claim a tier tmux does not have — the same absent-rather-than-false convention that makes
+    # the field null for a single-tab apply on tmux today.
 
   # ── Managing templates needs no multiplexer ──
 
@@ -460,16 +651,16 @@ Feature: layout — named, reusable pane layouts
     Then it exits 0
     # the round trip that matters: a capture that its own validator rejects is not a template
 
-  Scenario: a label two panes share is dropped from both, because a template's labels must be unique
+  Scenario: a label two panes share is captured onto both, because a human chose it
     Given a region where two panes are both labeled worker
     When it is captured
-    Then neither pane node carries a label
-    And a warning naming worker is written to stderr
-    # the one place the live model and the schema genuinely disagree: a region has no uniqueness rule,
-    # and a duplicate label is a hard validation error because label is the manifest's KEY. Keeping it
-    # would write a template that fails the validator the scenario above requires it to pass. Keeping
-    # only the first is worse than dropping both — nothing in the region says which pane the author
-    # meant by the name, so picking one invents an answer.
+    Then both pane nodes carry the label worker
+    And no warning about the label is written
+    # this is what capture is FOR. A pane's label got there because someone renamed the pane by hand,
+    # so dropping it discards the exact fact the capture exists to preserve — and reports "no label"
+    # where there is one, against the absent-rather-than-false rule everything else here follows. The
+    # live model has no uniqueness rule and neither does the schema: a pool of three panes all named
+    # worker is a thing a person may legitimately mean.
 
   Scenario: a label the author set is captured, and a backend's default pane title is not
     Given a tmux region where one pane's title was set to reviewer and every other pane carries tmux's default title
@@ -480,6 +671,77 @@ Feature: layout — named, reusable pane layouts
     # verbatim would hang the host's name on every pane of every capture. A title equal to the host
     # is the default; one that differs is a label someone chose. The trade is deliberate: a pane
     # labeled exactly its own hostname loses its label, which costs one hand-edit and is rare.
+
+  # ── Capturing a whole workspace ──
+  # save's subject is a region and stays one. --workspace widens it to every tab of the workspace the
+  # caller's region sits in, and is the exact inverse of the tabs walk.
+
+  Scenario: save --workspace captures every tab of the caller's workspace
+    Given a caller in a workspace of 3 tabs
+    When cyber-mux layout save pool --workspace runs
+    Then the written template declares tabs
+    And it carries one tab per tab of the workspace, each with that tab's own tree
+
+  Scenario: save without --workspace captures only the caller's own region
+    Given a caller in a workspace of 3 tabs
+    When cyber-mux layout save pool runs
+    Then the written template declares root rather than tabs
+    And it carries only the caller's own region
+    # the default subject is unchanged — widening it silently would rewrite what save has always meant
+
+  Scenario: a bare save in a multi-tab workspace says what it left out
+    Given a caller in a workspace of 3 tabs
+    When cyber-mux layout save pool runs with no --workspace
+    Then the path is printed on stdout
+    And stderr notes that the workspace holds more tabs than were captured
+    # the capture is honest about its own scope rather than letting a caller believe a 3-tab workspace
+    # round-trips from a 1-tab template
+
+  Scenario: a captured tab keeps the label its tab carries
+    Given a workspace whose tabs are labeled editor and logs
+    When it is captured with --workspace
+    Then the captured tabs are labeled editor and logs
+
+  Scenario: a captured tab's label is the tab's own name, never the composed one
+    Given a workspace labeled pool on tmux whose tab displays as "pool - editor"
+    When it is captured with --workspace
+    Then the captured tab is labeled editor
+    And re-applying the capture displays "pool - editor" again rather than compounding the prefix
+    # the tab's own name is read from where the walk stored it, not split back out of the display name
+    # — the separator is ambiguous, so parsing would be unsound, and taking the display name verbatim
+    # would re-prefix it on every round trip. Capture is the inverse of apply or it is a lie about the
+    # user's screen.
+
+  Scenario: re-applying a captured workspace reproduces the tabs it was captured from
+    Given a workspace of 2 tabs, each of 2 panes built by splitting
+    When it is captured with --workspace and the captured template is applied to a fresh workspace
+    Then the rebuilt workspace has the same tabs
+    And every pane matches the size of its counterpart in the original
+    # the round-trip property the derivation exists to hold, now at the tab level as well as the pane
+    # level — a capture that does not round-trip is a confident lie about the user's screen
+
+  Scenario: a captured workspace is still a draft carrying no command
+    Given a workspace of 2 tabs whose panes were launched with commands
+    When it is captured with --workspace
+    Then no pane in any tab carries a command
+    And the template records in its own description that it is geometry only
+    # unchanged and for the unchanged reason: no multiplexer reports the command a pane was launched
+    # with, and adding a level does not add that fact
+
+  Scenario: on a backend with no workspace tier, an untagged region captures as a single-tab workspace
+    Given a caller in a tmux window carrying no grouping tag
+    When cyber-mux layout save pool --workspace runs
+    Then the captured template carries exactly one tab
+    # a window nobody grouped is a workspace of one — the honest answer, and the reason the tag is read
+    # rather than the label parsed
+
+  Scenario: a backend that cannot enumerate a workspace's tabs refuses save --workspace cleanly
+    Given a backend that cannot report its workspace's tabs
+    When cyber-mux layout save pool --workspace runs
+    Then it exits 1 naming the backend
+    And no file is written
+    # the same refusal shape as a backend that cannot report a region's geometry — an absent optional
+    # seam member is a refusal, never a guess
 
   # ── save writes a file ──
 

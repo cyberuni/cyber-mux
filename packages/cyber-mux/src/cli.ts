@@ -11,7 +11,7 @@ import {
 	resolveTree,
 	validateLayout,
 } from './layout.ts'
-import { captureLayout } from './layout-capture.ts'
+import { captureLayout, captureWorkspaceLayout } from './layout-capture.ts'
 import {
 	applyLayoutToRegion,
 	LayoutApplyError,
@@ -259,12 +259,21 @@ function layoutValidateCommand(deps: Deps): Command {
  *
  * `--to` defaults to `repo`, matching resolution's own precedence: a template is a statement about
  * how the PROJECT is worked on, and that is the copy worth having by default.
+ *
+ * **`save`'s subject is a REGION and stays one.** `--workspace` widens it to every tab of the
+ * workspace the caller's region sits in — one captured tab per live tab, each with its own derived
+ * tree, the exact inverse of the tabs walk. It is opt-in rather than the default because widening the
+ * default silently would rewrite what `save` has always meant for every caller already relying on it.
+ * The bare form does not stay quiet about the narrowing, though: capturing one tab of three notes on
+ * stderr what it left out, rather than letting a caller believe a 3-tab workspace round-trips from a
+ * 1-tab template.
  */
 function layoutSaveCommand(deps: Deps): Command {
 	return new Command('save')
 		.description('Capture the live region around a pane into a named template')
 		.argument('<name>', 'Name for the captured template')
 		.option('--from <pane>', "Pane whose region to capture; defaults to this process's own pane")
+		.option('--workspace', "Capture every tab of the caller's workspace, as a tabs template")
 		.option('--description <text>', 'Description to record in the template')
 		.addOption(
 			new Option('--to <source>', 'Which layouts directory to write to').choices(['repo', 'user']).default('repo'),
@@ -276,46 +285,87 @@ function layoutSaveCommand(deps: Deps): Command {
 				'command a pane was launched with, so every pane is saved without one. Fill them in before\n' +
 				'the template is worth applying.',
 		)
-		.action((name: string, opts: { from?: string; description?: string; to: 'repo' | 'user'; force?: boolean }) => {
-			// Before the multiplexer is touched: a name is a lookup key that must also be a filename, so an
-			// unusable one should not cost a region read to find out.
-			if (!isValidLayoutName(name)) {
-				fail(`invalid layout name "${name}" — a name must match [a-z0-9][a-z0-9-]* and be a plain filename stem`)
-			}
-			try {
-				const path = join(layoutDirs(deps.exec, deps.env)[opts.to], `${name}.json`)
-				// Checked BEFORE the capture, so a refusal costs nothing — and refused by default, because a
-				// template is hand-edited after it is saved (the commands are added by hand) and silently
-				// overwriting one would throw that work away.
-				if (!opts.force && deps.store.read(path) !== null) {
-					fail(`layout "${name}" already exists at ${path} — pass --force to overwrite it`)
+		.action(
+			(
+				name: string,
+				opts: { from?: string; workspace?: boolean; description?: string; to: 'repo' | 'user'; force?: boolean },
+			) => {
+				// Before the multiplexer is touched: a name is a lookup key that must also be a filename, so an
+				// unusable one should not cost a region read to find out.
+				if (!isValidLayoutName(name)) {
+					fail(`invalid layout name "${name}" — a name must match [a-z0-9][a-z0-9-]* and be a plain filename stem`)
 				}
-				const adapter = selectSessionAdapter(deps.env, deps.exec)
-				// Geometry reporting is an optional capability, exactly as the worktree binding is. A
-				// backend that cannot describe its own region cannot be captured and there is nothing to
-				// degrade to — so this refuses, naming the backend, rather than guessing a tree.
-				const describeRegion = adapter.describeRegion
-				if (!describeRegion) {
-					fail(`${adapter.name} cannot report a region's geometry — layout save needs a backend that can`)
+				try {
+					const path = join(layoutDirs(deps.exec, deps.env)[opts.to], `${name}.json`)
+					// Checked BEFORE the capture, so a refusal costs nothing — and refused by default, because a
+					// template is hand-edited after it is saved (the commands are added by hand) and silently
+					// overwriting one would throw that work away.
+					if (!opts.force && deps.store.read(path) !== null) {
+						fail(`layout "${name}" already exists at ${path} — pass --force to overwrite it`)
+					}
+					const adapter = selectSessionAdapter(deps.env, deps.exec)
+					// Both geometry reads are optional capabilities, exactly as the worktree binding is — and
+					// each mode asks only for the one it needs, so a backend is never refused for lacking a
+					// member this run would not have called. A backend that cannot answer cannot be captured
+					// and there is nothing to degrade to, so this refuses NAMING the backend rather than
+					// guessing a tree.
+					const describeRegion = adapter.describeRegion
+					if (!opts.workspace && !describeRegion) {
+						fail(`${adapter.name} cannot report a region's geometry — layout save needs a backend that can`)
+					}
+					const describeWorkspace = adapter.describeWorkspace
+					if (opts.workspace && !describeWorkspace) {
+						fail(
+							`${adapter.name} cannot enumerate a workspace's tabs — layout save --workspace needs a backend that can`,
+						)
+					}
+					// `--from` names a pane explicitly; otherwise capture around the pane THIS process sits in,
+					// which is what makes a bare `layout save pool-4` mean "the screen I am looking at".
+					const target = opts.from ? { id: opts.from } : callerPane(adapter, deps.env)
+					if (!target) {
+						fail('layout save needs a pane to capture the region around — pass --from <pane>, or run it inside one')
+					}
+					const captureOpts = { name, description: opts.description ?? CAPTURED_DESCRIPTION }
+					const { template, warnings } = opts.workspace
+						? captureWorkspaceLayout(describeWorkspace!(deps.exec, target), captureOpts)
+						: captureLayout(describeRegion!(deps.exec, target), captureOpts)
+					deps.store.write(path, `${JSON.stringify(template, null, 2)}\n`)
+					// stderr, so stdout stays the path alone — `cyber-mux layout save x` composes into `$(...)`.
+					for (const warning of warnings) process.stderr.write(`${warning}\n`)
+					if (!opts.workspace) noteTabsLeftOut(deps, adapter, target)
+					console.log(path)
+				} catch (err) {
+					fail(err instanceof Error ? err.message : String(err))
 				}
-				// `--from` names a pane explicitly; otherwise capture the region THIS process sits in, which
-				// is what makes a bare `layout save pool-4` mean "the screen I am looking at".
-				const target = opts.from ? { id: opts.from } : callerPane(adapter, deps.env)
-				if (!target) {
-					fail('layout save needs a pane to capture the region around — pass --from <pane>, or run it inside one')
-				}
-				const { template, warnings } = captureLayout(describeRegion(deps.exec, target), {
-					name,
-					description: opts.description ?? CAPTURED_DESCRIPTION,
-				})
-				deps.store.write(path, `${JSON.stringify(template, null, 2)}\n`)
-				// stderr, so stdout stays the path alone — `cyber-mux layout save x` composes into `$(...)`.
-				for (const warning of warnings) process.stderr.write(`${warning}\n`)
-				console.log(path)
-			} catch (err) {
-				fail(err instanceof Error ? err.message : String(err))
-			}
-		})
+			},
+		)
+}
+
+/**
+ * What a bare `save` left behind: a note on stderr when the caller's workspace holds tabs this
+ * capture did not take. The capture is honest about its own scope rather than letting a caller
+ * believe a 3-tab workspace round-trips from a 1-tab template.
+ *
+ * stderr, never stdout — the path stays stdout's whole content so `$(cyber-mux layout save x)` still
+ * composes — and a NOTE rather than a refusal: the template the caller asked for is correct and is
+ * already written. Which is also why this is best-effort: a workspace read that fails or that the
+ * backend cannot do at all costs the caller a courtesy, not their capture. An untagged window on a
+ * backend with no workspace tier reports one tab and says nothing, which is right — a window nobody
+ * grouped is a workspace of one, and nothing was left out.
+ */
+function noteTabsLeftOut(deps: Deps, adapter: SessionAdapter, target: SessionTarget): void {
+	if (!adapter.describeWorkspace) return
+	let tabs: number
+	try {
+		tabs = adapter.describeWorkspace(deps.exec, target).length
+	} catch {
+		return
+	}
+	if (tabs <= 1) return
+	process.stderr.write(
+		`this pane's workspace holds ${tabs} tabs — only the caller's own region was captured. ` +
+			'Pass --workspace to capture every tab of it\n',
+	)
 }
 
 /**
@@ -593,6 +643,9 @@ function worktreeAddCommand(deps: Deps): Command {
 									root: opened.target,
 									cwd: opened.worktree.root,
 									workspace: opened.workspace ?? null,
+									// The same label the workspace was just opened under — a tabs template carries
+									// it into each later tab's name where the backend has no workspace tier.
+									label: opts.label ?? template.name,
 									// The route that opened the region is the only thing that knows whether it
 									// could carry the root pane's env; the walk falls back to a prefix when not.
 									rootEnvHonored: opened.envHonored,

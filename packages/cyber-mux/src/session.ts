@@ -9,6 +9,19 @@ import type { Worktree } from './worktree.ts'
  * other placement, which adds a pane/window inside it. */
 export type SessionPlacement = 'pane:right' | 'pane:down' | 'tab' | 'workspace'
 
+/**
+ * The tier a `rename` names — which SPACE is being named, not where one is opened, so this is its
+ * own vocabulary rather than a reuse of `SessionPlacement`. The caller must say, because the two
+ * tiers are different commands on both backends (tmux `rename-window` vs `select-pane -T`; herdr
+ * `tab rename` vs `pane rename`) and neither backend can infer one from the other's id.
+ *
+ * `pane` collapses `SessionPlacement`'s two split directions — a direction is how a pane is BORN and
+ * says nothing about naming one that already exists. There is no `workspace` member: renaming exists
+ * for the one tier birth cannot name (a new workspace's root tab, which is a `tab`), and every
+ * backend that has a workspace tier already takes its label at birth (`workspace create --label`).
+ */
+export type SessionSpaceTier = 'pane' | 'tab'
+
 export interface SessionOpenOptions {
 	/** Working directory the new pane/window/session should start in. */
 	cwd: string
@@ -62,6 +75,37 @@ export interface SessionOpenOptions {
 	 * own default.
 	 */
 	label?: string
+	/**
+	 * An OPAQUE id grouping the spaces one caller opens, for a backend with no workspace tier to group
+	 * them in. A caller opening several tabs as one workspace needs them recognizable as a group
+	 * afterwards; where a real Workspace tier exists the tier IS the group, so this is ignored (herdr
+	 * already stamps every pane and tab record with its `workspace_id` — a second grouping would
+	 * duplicate a fact the backend never reads). Where there is none, the adapter stores it in the
+	 * backend's own native mechanism (tmux: a window option it can filter on server-side, surviving a
+	 * window rename).
+	 *
+	 * Opaque means opaque: an adapter stores and forwards the value and never parses, splits, or
+	 * derives it. It is deliberately NOT the `label`, and that separation is the whole point — a label
+	 * is chosen by a human and may contain anything, so recovering a grouping by parsing one is
+	 * unsound (`acme - beta - main` reads as group `acme` with tab `beta - main` exactly as well as
+	 * group `acme - beta` with tab `main`). The label is what a human reads; this is what a machine
+	 * reads.
+	 *
+	 * NEW OPTIONAL member: an adapter that ignores it still satisfies the contract. Omit it and
+	 * nothing is grouped — no adapter invents one, and a space nobody grouped stays ungrouped.
+	 *
+	 * A group id is NOT a workspace: `open` still reports `OpenedPane.workspace` absent on a backend
+	 * with no workspace tier, tag or no tag. A tag cyber-mux wrote is its own bookkeeping, not a tier
+	 * the backend gained.
+	 *
+	 * This option is a CONVENIENCE over `group`, never a second implementation of it: every adapter
+	 * routes it through that member rather than spelling the grouping twice, exactly as `open`'s
+	 * pane-`label` routes through `rename`. It costs nothing to route — tmux has no birth flag for a
+	 * window option, so the grouping was always a second call after the space exists. A caller that
+	 * did not open the space calls `group` directly; this option is only the shorthand for a caller
+	 * that did.
+	 */
+	workspaceGroup?: string
 }
 
 /** Opaque handle to an open pane/window/session; backend-specific id lives in `id`. */
@@ -84,6 +128,30 @@ export interface SessionTarget {
  * panes by workspace had nothing to group on.
  */
 export interface OpenedPane extends SessionTarget {
+	/**
+	 * The tab the new pane landed in — a tab id, addressable by `rename(exec, { id: tab }, 'tab', …)`.
+	 *
+	 * REQUIRED, and the contrast with `workspace` below is the whole point: only SOME multiplexers
+	 * have a Workspace level, so that field is absent where the tier is; EVERY multiplexer has the Tab
+	 * level, so every backend answers this and none reports it absent. tmux's Tab is its Window, which
+	 * is also why `workspace` and `tab` placements both collapse onto `new-window` there — a tmux open
+	 * has no workspace to report and always has a window.
+	 *
+	 * Per route: a new tab reports itself, a created workspace reports its ROOT tab, and a split
+	 * reports the tab it landed in — the caller's own, since a split opens no tab of its own.
+	 *
+	 * This is what makes naming a new workspace's root tab portable, and it is not a convenience: a
+	 * caller reaching for `id` (the pane) instead would be green on tmux, which resolves a pane id in
+	 * a window target and succeeds, and silently broken on herdr, which refuses it outright
+	 * (`tab_not_found`) — and since a failed command's output is discarded, the root tab would just
+	 * stay named `1` with nothing raised.
+	 *
+	 * Costs no extra call on either backend — the same argument `workspace` is already reported on:
+	 * the backend answered when the pane was opened (herdr carries `tab_id` in the create envelope;
+	 * tmux reports `#{window_id}` from the same `-F` the pane id rides out on), so a surface that hid
+	 * it would be discarding a fact it already held.
+	 */
+	tab: string
 	/**
 	 * The workspace the new pane landed in; `undefined` when the backend has no workspace tier —
 	 * ABSENT rather than a false "none", the same convention `isPaneFocused`'s `undefined` follows.
@@ -135,6 +203,39 @@ export interface RegionPane {
 	label?: string
 }
 
+/**
+ * One tab of a workspace, as `describeWorkspace` reports it — a tab's identity, its own name, and the
+ * region inside it.
+ *
+ * `panes` is exactly what `describeRegion` reports for that tab, and deliberately so: a tab IS a
+ * region, so a workspace-wide read is the region read repeated rather than a second geometry
+ * vocabulary. Everything `RegionPane` documents — the rects' incomparable origin, `label` being the
+ * author's or absent — holds here unchanged.
+ */
+export interface WorkspaceTab {
+	/** Backend-native tab id (herdr `tab_id`; tmux `#{window_id}`, its Tab being its Window). */
+	id: string
+	/**
+	 * The tab's OWN name, when the backend reports one — the name a caller gave the tab, never the
+	 * display name composed out of it.
+	 *
+	 * Where the two differ they are stored separately and this reports the stored original: on a
+	 * backend with no workspace tier the display name is the composed `<workspace> - <tab>`, so `group`
+	 * stored `editor` beside the tag and the read takes it from THERE. Never split back out of the
+	 * display name — `acme - beta - main` is ambiguous under every split rule, which is the whole
+	 * reason the option exists — and never taken from the display name verbatim, which would compound
+	 * the prefix on every round trip (`pool - pool - editor`). Capture is the inverse of apply or it is
+	 * a lie about the user's screen.
+	 *
+	 * Where no own name was stored, the backend's own name for the space stands: nobody composed it, so
+	 * it already IS the tab's own name. A backend whose label is never composed (herdr) reports that
+	 * label unchanged and stores nothing.
+	 */
+	label?: string
+	/** Every pane in this tab, with its rectangle — `describeRegion`'s answer for this tab. */
+	panes: RegionPane[]
+}
+
 export interface CreateWorktreeWorkspaceOptions {
 	/** The primary checkout's root — the repo the new worktree branches from. */
 	primaryRoot: string
@@ -167,7 +268,17 @@ export interface OpenWorktreeWorkspaceOptions {
 
 /** A worktree open in a workspace bound to it — the capability's whole product. */
 export interface WorktreeWorkspace {
-	target: SessionTarget
+	/**
+	 * The workspace's root pane, and the ROOT TAB it sits in — an `OpenedPane` rather than a bare pane
+	 * handle for the reason that field is required everywhere else: every multiplexer has the Tab
+	 * level, and this route already holds the answer (herdr's worktree envelope carries `tab_id` in the
+	 * same `root_pane` record `workspace create` reports it in). A caller handed only the pane could
+	 * not address the region's tab — it could not group it, and it could not rename it — and reaching
+	 * for `id` instead would be green on tmux (which resolves a pane id in a window target) and
+	 * silently broken on herdr (`tab_not_found`, discarded). Reporting it costs nothing; hiding it
+	 * would discard a fact this route already held.
+	 */
+	target: OpenedPane
 	worktree: Worktree
 	/** The backend workspace now bound to the worktree. */
 	workspace: string
@@ -231,6 +342,68 @@ export interface SessionAdapter {
 	 * the workspace it landed in (absent on a backend with no workspace tier — see `OpenedPane`).
 	 */
 	open(exec: Exec, opts: SessionOpenOptions): OpenedPane
+	/**
+	 * Name an ALREADY-OPEN space at `tier`, addressed by that tier's own id (`target.id` is a tab id
+	 * for `'tab'`, a pane id for `'pane'`).
+	 *
+	 * This is the naming route for the one case birth cannot serve, NOT a second way to do what
+	 * `SessionOpenOptions.label` does: `label` names a space at birth wherever the backend's CLI
+	 * allows, and exactly one tier does not allow it — herdr labels a new workspace's ROOT TAB `1` and
+	 * offers no flag to change it, only `tab rename` afterwards. Every later tab takes `label` at birth
+	 * like any other space, so the whole cost of this member is one rename on herdr's first tab.
+	 *
+	 * REQUIRED rather than optional, unlike `describeRegion`/`worktree`. Those are optional because a
+	 * backend may genuinely lack the concept, leaving a caller something to do about it (refuse, or
+	 * fall back to plain git). Naming has neither property: every backend names every tier — the same
+	 * breadth `label` already relies on at birth (tmux a window name or a pane title, herdr a tab or a
+	 * pane rename) — and a caller that found this missing could not degrade, because a rename is the
+	 * ONLY way to name a root tab. An optional member here would buy a branch every caller must write
+	 * and no caller could ever take. Declaring it required is the adapter author's debt instead, which
+	 * is the honest place for it. (`canSizeSplits` is the other precedent, and the contrast holds: a
+	 * ratio has a real degrade — the backend's own even default — so it is DECLARED; a name has none.)
+	 *
+	 * As read-only in its side effects as `isPaneFocused` is: it moves no focus and opens nothing.
+	 * Naming a space is not visiting it.
+	 */
+	rename(exec: Exec, target: SessionTarget, tier: SessionSpaceTier, name: string): void
+	/**
+	 * Group an ALREADY-OPEN space into `group`, and store the space's own `name` beside it.
+	 * `target.id` is a TAB id — the tier a workspace groups, which is why this takes no
+	 * `SessionSpaceTier`: `rename` needs one because both its tiers are nameable and neither can be
+	 * inferred, while grouping has exactly one meaningful tier. A `pane` is not a member of a
+	 * workspace; the tab it sits in is. A tier parameter here would buy a branch every caller must
+	 * write and no caller could ever take — the same argument `SessionSpaceTier` itself makes for
+	 * having no `workspace` member.
+	 *
+	 * **`open` cannot be the only way in.** A caller that did not open the space still has to group it
+	 * — `worktree add --layout` has its region opened by the worktree verbs before the walk ever runs
+	 * — and it holds that space's own id the moment the open returns. So this is its own member acting
+	 * on an already-open space, exactly as `rename` does, and `SessionOpenOptions.workspaceGroup`
+	 * ROUTES THROUGH it, so there is one spelling per backend rather than two that can drift. Routing
+	 * costs no call: tmux has no birth flag for a window option, so grouping was ALREADY a second call
+	 * after the window exists.
+	 *
+	 * **`name` is the space's OWN name, never its display name**, and storing it is not optional
+	 * bookkeeping — it is the same rule the group id follows, one tier down. A backend with one name
+	 * field per space (tmux) whose caller composes a display name out of the tab's name has DESTROYED
+	 * the original: the field holds `pool - editor`, and `editor` is gone. Recovering it would mean
+	 * splitting on a separator already proven ambiguous (`acme - beta - main` splits two legal ways),
+	 * and taking the display name verbatim would re-prefix it on every round trip
+	 * (`pool - pool - editor`). So the caller that composed the name stores the original here, and a
+	 * reader takes it from there. The display name is a human's to read; an opaque option carries what
+	 * a machine reads back. Omit it when the caller named nothing — there is no own name to store, and
+	 * no adapter invents one.
+	 *
+	 * **A backend with a real workspace tier stores NEITHER**, and that is a complete answer rather
+	 * than a stub: its tier IS the group (herdr stamps every pane and tab record with its
+	 * `workspace_id`), and its tab label IS the tab's own name, never composed — so both are facts the
+	 * backend already holds, and storing them again would duplicate what it never reads.
+	 *
+	 * REQUIRED, for `rename`'s reason: a caller finding this missing could not degrade, because there
+	 * is no other way to group a space it did not open. As read-only in its side effects as `rename`
+	 * is — it moves no focus and opens nothing.
+	 */
+	group(exec: Exec, target: SessionTarget, group: string, name?: string): void
 	/**
 	 * Whether this backend can size a split — i.e. whether it honors `SessionOpenOptions.ratio`. Both
 	 * real backends can (herdr `--ratio`, tmux `-l`), so both declare it. Absent/`false` means a
@@ -343,4 +516,31 @@ export interface SessionAdapter {
 	 * region the backend could not describe would be a confident lie about the user's screen.
 	 */
 	describeRegion?(exec: Exec, target: SessionTarget): RegionPane[]
+	/**
+	 * Report every tab of the workspace the target pane sits in, each with its own region's geometry —
+	 * the workspace-wide read beside `describeRegion`'s one-region read. `layout save --workspace` runs
+	 * this backwards into a `tabs` template, and it is the exact inverse of the tabs walk.
+	 *
+	 * **Optional, exactly as `describeRegion` is**, and for the same reason: a backend that cannot
+	 * enumerate a workspace's tabs leaves a caller something to DO about it — `layout save --workspace`
+	 * exits naming the backend and writes nothing. An absent optional member is a refusal, never a
+	 * guess. (Contrast `rename`, which is required precisely because a caller finding it missing could
+	 * not degrade.) `save`'s default subject is unaffected: a bare `save` reads `describeRegion` and
+	 * captures one region, whatever this member does or does not do.
+	 *
+	 * **The grouping is read from the tag, never off the label.** On a backend with a real workspace
+	 * tier the tier IS the answer (herdr: the caller's `workspace_id`, whose tabs and panes the backend
+	 * already stamps). On one without, the workspace is not a fact the backend holds at all, so the
+	 * read is *"which spaces carry this group id"* — the tag `SessionOpenOptions.workspaceGroup` wrote,
+	 * which is opaque and survives a rename. Parsing `<workspace> - <tab>` back apart is unsound
+	 * (`acme - beta - main` splits two ways, both legal), which is the whole reason the tag exists.
+	 *
+	 * **A space carrying no tag is a workspace of ONE.** That is the honest answer for a space nobody
+	 * grouped, not an error and not an empty list: the caller's own region is a workspace of one tab.
+	 *
+	 * Throws rather than returning empty when the workspace cannot be read, matching `describeRegion`:
+	 * a template built from a workspace the backend could not describe would be a confident lie about
+	 * the user's screen.
+	 */
+	describeWorkspace?(exec: Exec, target: SessionTarget): WorkspaceTab[]
 }

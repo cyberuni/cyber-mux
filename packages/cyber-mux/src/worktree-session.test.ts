@@ -12,7 +12,7 @@ import { addAndOpenWorktree, listWorktrees, openExistingWorktree, removeWorktree
  */
 const HERDR_WORKTREE_OUT = JSON.stringify({
 	result: {
-		root_pane: { pane_id: 'w9:p1' },
+		root_pane: { pane_id: 'w9:p1', tab_id: 'w9:t1' },
 		workspace: { workspace_id: 'w9' },
 		worktree: { path: '/repo.worktrees/x', branch: 'feat/x' },
 	},
@@ -65,8 +65,8 @@ describe('spec:cyber-mux/mux', () => {
 		] as const)('a placement the binding cannot serve falls back rather than failing', (at, verb, sub) => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, {
-				'herdr pane split': '{"result":{"pane":{"pane_id":"w3:pB"}}}',
-				'herdr tab create': '{"result":{"root_pane":{"pane_id":"w3:pB"}}}',
+				'herdr pane split': '{"result":{"pane":{"pane_id":"w3:pB","tab_id":"w3:t1"}}}',
+				'herdr tab create': '{"result":{"root_pane":{"pane_id":"w3:pB","tab_id":"w3:t1"}}}',
 			})
 			const opened = addAndOpenWorktree(exec, herdrSessionAdapter, { ...addOpts, at: at as SessionPlacement })
 
@@ -94,7 +94,7 @@ describe('spec:cyber-mux/mux', () => {
 			const opened = addAndOpenWorktree(exec, herdrSessionAdapter, { ...addOpts, at: 'pane:right' })
 
 			// The pane knows where it landed...
-			expect(opened.target).toEqual({ id: 'w3:pB', workspace: 'w3' })
+			expect(opened.target).toEqual({ id: 'w3:pB', tab: 'w3:t1', workspace: 'w3' })
 			// ...and the worktree is STILL bound to nothing. This is the assertion that would break if
 			// occupancy were ever mistaken for a binding.
 			expect(opened.workspace).toBeUndefined()
@@ -108,7 +108,7 @@ describe('spec:cyber-mux/mux', () => {
 			'tab',
 		] as const)('a backend that binds nothing falls back without reporting a lost grouping', (at) => {
 			const calls: string[][] = []
-			const exec = fakeExec(calls, { 'tmux split-window': '%9', 'tmux new-window': '%9' })
+			const exec = fakeExec(calls, { 'tmux split-window': '%9\t@1', 'tmux new-window': '%9\t@1' })
 			const opened = addAndOpenWorktree(exec, tmuxSessionAdapter, { ...addOpts, at })
 
 			expect(opened.workspace).toBeUndefined()
@@ -128,7 +128,7 @@ describe('spec:cyber-mux/mux', () => {
 
 			// tmux, no binding: the same label names the window `workspace` collapses to.
 			const tmuxCalls: string[][] = []
-			addAndOpenWorktree(fakeExec(tmuxCalls, { 'tmux new-window': '%9' }), tmuxSessionAdapter, {
+			addAndOpenWorktree(fakeExec(tmuxCalls, { 'tmux new-window': '%9\t@1' }), tmuxSessionAdapter, {
 				...addOpts,
 				at: 'workspace',
 				label: 'my-name',
@@ -146,7 +146,7 @@ describe('spec:cyber-mux/mux', () => {
 			expect(herdrCalls[0]).toContain('--base')
 
 			const tmuxCalls: string[][] = []
-			addAndOpenWorktree(fakeExec(tmuxCalls, { 'tmux new-window': '%9' }), tmuxSessionAdapter, {
+			addAndOpenWorktree(fakeExec(tmuxCalls, { 'tmux new-window': '%9\t@1' }), tmuxSessionAdapter, {
 				...addOpts,
 				at: 'workspace',
 				base: 'origin/main',
@@ -182,7 +182,7 @@ describe('spec:cyber-mux/mux', () => {
 
 		it('falls back to a plain open on a backend that cannot bind, reading the branch from git', () => {
 			const calls: string[][] = []
-			const exec = fakeExec(calls, { 'tmux new-window': '%9', 'git -C /repo': GIT_PORCELAIN })
+			const exec = fakeExec(calls, { 'tmux new-window': '%9\t@1', 'git -C /repo': GIT_PORCELAIN })
 			const opened = openExistingWorktree(exec, tmuxSessionAdapter, { primaryRoot: '/repo', path: '/repo.worktrees/x' })
 
 			expect(opened.worktree).toEqual({ root: '/repo.worktrees/x', branch: 'feat/x' })
