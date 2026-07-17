@@ -101,10 +101,15 @@ Feature: layout — named, reusable pane layouts
       | -0.5  |
       | 1.5   |
 
-  Scenario: a duplicate label is a validation error because labels are manifest keys
+  Scenario: two panes may share a label, because a label is a name rather than a key
     Given a template with two pane nodes both labeled worker
     When the template is validated
-    Then it exits 1 naming the duplicated label
+    Then it is valid
+    # neither backend requires a unique name — tmux titles three panes worker without complaint and
+    # herdr's pane rename takes no uniqueness constraint — and the manifest's unique handle is the
+    # pane id, never the label. A pool of workers all named worker is a legitimate thing to mean.
+    # Ambiguity belongs to whoever LOOKS a pane up, where the candidates are known and a caller can
+    # choose, rather than to the author, where refusing it is only a guess about intent.
 
   Scenario Outline: exactly one of root, panes and tabs
     Given a template that declares <declares>
@@ -119,7 +124,7 @@ Feature: layout — named, reusable pane layouts
       | none of root, panes or tabs |
 
   Scenario: every validation error is reported at once, not first-only
-    Given a template carrying a cwd field, a duplicate label, and a ratio of 0
+    Given a template carrying a cwd field, an absolute dir, and a ratio of 0
     When cyber-mux layout validate runs
     Then all three errors are reported, one per line
     And each names its own JSON path
@@ -156,18 +161,13 @@ Feature: layout — named, reusable pane layouts
     When the template is validated
     Then it exits 1
 
-  Scenario: a pane label must be unique across every tab, because labels are the manifest's keys
-    Given a template with two tabs, each carrying a pane labeled worker
+  Scenario: two tabs may share a label, and so may panes in different tabs
+    Given a template declaring two tabs both labeled editor, each carrying a pane labeled worker
     When the template is validated
-    Then it exits 1 naming the duplicated label
-    # the manifest is one flat pane list for the whole apply, so its keys are global — a label is not
-    # scoped to the tab it sits in
-
-  Scenario: two tabs sharing a label are refused
-    Given a template declaring two tabs both labeled editor
-    When the template is validated
-    Then it exits 1 naming the duplicated tab label
-    # a tab label is a separate namespace from a pane label — a tab and a pane may share a name
+    Then it is valid
+    # nothing keys on either name. The manifest reports a pane's tab by INDEX, not by label, and a tab
+    # is addressed by its own id at the seam — herdr labels EVERY new workspace's root tab 1, so a
+    # backend that manufactures duplicates by default cannot be one a uniqueness rule describes.
 
   Scenario: a tab may leave its label to the backend
     Given a template declaring two tabs, neither carrying a label
@@ -651,16 +651,16 @@ Feature: layout — named, reusable pane layouts
     Then it exits 0
     # the round trip that matters: a capture that its own validator rejects is not a template
 
-  Scenario: a label two panes share is dropped from both, because a template's labels must be unique
+  Scenario: a label two panes share is captured onto both, because a human chose it
     Given a region where two panes are both labeled worker
     When it is captured
-    Then neither pane node carries a label
-    And a warning naming worker is written to stderr
-    # the one place the live model and the schema genuinely disagree: a region has no uniqueness rule,
-    # and a duplicate label is a hard validation error because label is the manifest's KEY. Keeping it
-    # would write a template that fails the validator the scenario above requires it to pass. Keeping
-    # only the first is worse than dropping both — nothing in the region says which pane the author
-    # meant by the name, so picking one invents an answer.
+    Then both pane nodes carry the label worker
+    And no warning about the label is written
+    # this is what capture is FOR. A pane's label got there because someone renamed the pane by hand,
+    # so dropping it discards the exact fact the capture exists to preserve — and reports "no label"
+    # where there is one, against the absent-rather-than-false rule everything else here follows. The
+    # live model has no uniqueness rule and neither does the schema: a pool of three panes all named
+    # worker is a thing a person may legitimately mean.
 
   Scenario: a label the author set is captured, and a backend's default pane title is not
     Given a tmux region where one pane's title was set to reviewer and every other pane carries tmux's default title

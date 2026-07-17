@@ -188,25 +188,6 @@ function toDir(paneCwd: string | undefined, rootCwd: string | undefined): { dir?
 	return { dir: rel, outside: false }
 }
 
-/**
- * Every label carried by more than one pane in the region.
- *
- * A live region has no uniqueness rule — nothing stops a user labeling two panes `worker`, and on
- * tmux nothing stops two panes sharing a title by accident. A template has the opposite rule: a
- * duplicate label is a hard validation error, because `label` is the apply manifest's KEY. This is
- * the one place the live model and the schema genuinely disagree, so the capture has to resolve it.
- */
-function duplicatedLabels(panes: RegionPane[]): Set<string> {
-	const seen = new Set<string>()
-	const duplicated = new Set<string>()
-	for (const pane of panes) {
-		if (!pane.label) continue
-		if (seen.has(pane.label)) duplicated.add(pane.label)
-		seen.add(pane.label)
-	}
-	return duplicated
-}
-
 /** The pane sitting on the region's own root — follow `first` down, exactly as `firstPane` does. */
 function rootOf(tree: RegionTree): RegionPane {
 	return tree.type === 'pane' ? tree.pane : rootOf(tree.first)
@@ -228,7 +209,7 @@ export interface CaptureLayoutOptions {
 export function captureLayout(panes: RegionPane[], opts: CaptureLayoutOptions): LayoutCapture {
 	if (panes.length === 0) throw new Error('a capture needs at least one pane — this region reported none')
 	const tree = partition(panes)
-	const ctx = context(panes, rootOf(tree).cwd)
+	const ctx = context(rootOf(tree).cwd)
 	const template = shell(opts)
 	template.root = convert(tree, ctx)
 	return { template, warnings: ctx.warnings }
@@ -240,12 +221,9 @@ export function captureLayout(panes: RegionPane[], opts: CaptureLayoutOptions): 
  * `partition`, because a tab is a region and the geometry rules cannot depend on how many of them
  * there are.
  *
- * Two things are workspace-WIDE rather than per-tab, and both follow from what the schema already
- * says. The target is the FIRST tab's root pane, because that is the pane apply's `--cwd` opens the
- * workspace at, so every tab's `dir` is measured from that one root. And label collisions are
- * detected across every tab at once — the apply manifest is one flat list for the whole workspace, so
- * its keys are global, which is exactly why the schema demands pane labels unique across tabs rather
- * than within one.
+ * One thing is workspace-WIDE rather than per-tab, and it follows from what the schema already says:
+ * the target is the FIRST tab's root pane, because that is the pane apply's `--cwd` opens the
+ * workspace at, so every tab's `dir` is measured from that one root.
  */
 export function captureWorkspaceLayout(tabs: WorkspaceTab[], opts: CaptureLayoutOptions): LayoutCapture {
 	if (tabs.length === 0) throw new Error('a workspace capture needs at least one tab — this workspace reported none')
@@ -255,10 +233,7 @@ export function captureWorkspaceLayout(tabs: WorkspaceTab[], opts: CaptureLayout
 		}
 		return partition(tab.panes)
 	})
-	const ctx = context(
-		tabs.flatMap((tab) => tab.panes),
-		rootOf(trees[0]!).cwd,
-	)
+	const ctx = context(rootOf(trees[0]!).cwd)
 	const template = shell(opts)
 	template.tabs = tabs.map((tab, index) => {
 		const node: TabNode = {}
@@ -282,37 +257,27 @@ function shell(opts: CaptureLayoutOptions): LayoutTemplate {
 
 /**
  * What converting a tree needs to know that the tree itself does not carry: the target the `dir`s are
- * measured from, the labels no pane may keep, and somewhere to say what could not be expressed.
+ * measured from, and somewhere to say what could not be expressed.
  *
- * Shared by both captures deliberately — a workspace's `dir`s and label collisions are global, so
- * threading one context through every tab is what makes them so.
+ * Shared by both captures deliberately — a workspace's `dir`s are measured from ONE root, so threading
+ * one context through every tab is what makes them so.
  */
 interface CaptureContext {
 	rootCwd: string | undefined
-	collisions: Set<string>
 	warnings: string[]
 }
 
-function context(panes: RegionPane[], rootCwd: string | undefined): CaptureContext {
-	const warnings: string[] = []
-	const collisions = duplicatedLabels(panes)
-	for (const label of collisions) {
-		warnings.push(
-			`two or more panes are labeled "${label}" — a label is the manifest's key, so it must be unique. ` +
-				'Every pane carrying it is captured without a label; name them apart yourself',
-		)
-	}
-	return { rootCwd, collisions, warnings }
+function context(rootCwd: string | undefined): CaptureContext {
+	return { rootCwd, warnings: [] }
 }
 
 function toPaneNode(pane: RegionPane, ctx: CaptureContext): PaneNode {
 	const node: PaneNode = { type: 'pane' }
-	// A label shared by two panes is dropped from BOTH rather than kept on the first. It is a real
-	// case — a user labels two panes `worker` — and the schema rejects the duplicate outright, so
-	// keeping it would emit a template that fails the very validator this capture has to satisfy.
-	// Keeping the first instead would be worse than dropping: nothing in the region says which pane
-	// the author meant by the name, so picking one invents an answer.
-	if (pane.label && !ctx.collisions.has(pane.label)) node.label = pane.label
+	// A label two panes share is captured onto BOTH, verbatim. It got there because a human renamed the
+	// pane by hand, which is the exact fact this capture exists to preserve — dropping it would report
+	// "no label" where there is one, against the absent-rather-than-false rule the rest of this node
+	// follows. Nothing keys on a label, so a shared one is a name two panes have, not a collision.
+	if (pane.label) node.label = pane.label
 	const { dir, outside } = toDir(pane.cwd, ctx.rootCwd)
 	if (dir) node.dir = dir
 	if (outside) {

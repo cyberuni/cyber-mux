@@ -297,11 +297,9 @@ describe('spec:cyber-mux/layout', () => {
 			// anyone chose. A title equal to the host is that default; one that differs is a real label
 			// (cyber-mux's own `select-pane -T` among them).
 			//
-			// EXACTLY ONE pane carries the host default here, and that is load-bearing rather than
-			// incidental. With two, a broken host filter labels both `zeta` — which makes them DUPLICATES,
-			// so `duplicatedLabels` drops them and the capture looks correct for entirely the wrong
-			// reason. One host-titled pane leaves the duplicate path out of it, so this fails if and only
-			// if the host filter itself breaks.
+			// EXACTLY ONE pane carries the host default here, so a broken host filter shows up as that
+			// pane's label rather than being absorbed anywhere: the assertion below pins `undefined` in
+			// first position, and the hostname is checked against the whole written template besides.
 			const panes = tmuxSessionAdapter.describeRegion!(
 				() =>
 					[
@@ -319,30 +317,10 @@ describe('spec:cyber-mux/layout', () => {
 			expect(JSON.stringify(template)).not.toContain('zeta')
 		})
 
-		it('captureLayout drops a shared label from every pane carrying it, and reports it', () => {
-			// A live region has no uniqueness rule; a template's labels are manifest KEYS and must be
-			// unique. Keeping the duplicate would write a template that fails validateLayout — which the
-			// scenario below forbids outright.
-			const { template, warnings } = captureLayout(
-				[
-					pane('%0', 0, 0, 99, 50, { cwd: '/repo', label: 'worker' }),
-					pane('%1', 100, 0, 100, 50, { cwd: '/repo', label: 'worker' }),
-				],
-				{ name: 'captured' },
-			)
-			for (const node of collectPanes(resolveTree(template))) {
-				expect(node.label).toBeUndefined()
-			}
-			expect(warnings).toHaveLength(1)
-			expect(warnings[0]).toContain('worker')
-			// The whole point of dropping it: the result still validates.
-			expect(validateLayout(template, 'captured')).toEqual([])
-		})
-
 		it('a captured template passes validate', () => {
 			// The round trip that matters: a capture has to be loadable. Run the REAL validator over it —
-			// asserting the name and description came back would pass for a template carrying a cwd, a
-			// duplicate label or a degenerate ratio, which is exactly what this has to rule out.
+			// asserting the name and description came back would pass for a template carrying a cwd or a
+			// degenerate ratio, which is exactly what this has to rule out.
 			const { template } = captureLayout(
 				[
 					pane('%0', 0, 0, 119, 34, { cwd: '/repo', label: 'top' }),

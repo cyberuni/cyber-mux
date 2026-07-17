@@ -184,14 +184,12 @@ describe('spec:cyber-mux/layout', () => {
 			expect(errors).toEqual([])
 		})
 
-		it('a duplicate label fails, because labels are manifest keys', () => {
-			const errors = validateLayout(
-				{ name: 'render-farm', panes: [{ label: 'worker' }, { label: 'worker' }] },
-				'render-farm',
-			)
-			expect(errors).toHaveLength(1)
-			expect(errors[0]).toContain('worker')
-			expect(errors[0]).toContain('duplicated')
+		it('two panes may share a label, because a label is a name rather than a key', () => {
+			// Nothing keys on a label — the manifest's unique handle is the pane id — and neither backend
+			// requires a unique name. A pool of renderers all named `gpu` is a legitimate thing to mean.
+			expect(
+				validateLayout({ name: 'render-farm', panes: [{ label: 'gpu' }, { label: 'gpu' }] }, 'render-farm'),
+			).toEqual([])
 		})
 
 		// The Examples rows are the contract's own vectors. Two of them is ambiguous about which geometry
@@ -216,7 +214,7 @@ describe('spec:cyber-mux/layout', () => {
 			}
 		})
 
-		it('reports every error at once, one per line, each naming its own JSON path', () => {
+		it('every validation error is reported at once, not first-only', () => {
 			// CI's whole reason to run this is being told everything wrong in one pass — a template with
 			// three mistakes must not take three runs to fix.
 			const errors = validateLayout(
@@ -227,7 +225,7 @@ describe('spec:cyber-mux/layout', () => {
 						direction: 'right',
 						ratio: 0,
 						first: { type: 'pane', label: 'gpu', cwd: '/home/someone/render' },
-						second: { type: 'pane', label: 'gpu' },
+						second: { type: 'pane', label: 'cpu', dir: '/var/spool/frames' },
 					},
 				},
 				'render-farm',
@@ -235,7 +233,7 @@ describe('spec:cyber-mux/layout', () => {
 			expect(errors).toHaveLength(3)
 			expect(errors.some((e) => e.includes('root.ratio'))).toBe(true)
 			expect(errors.some((e) => e.includes('root.first.cwd'))).toBe(true)
-			expect(errors.some((e) => e.includes('label "gpu"'))).toBe(true)
+			expect(errors.some((e) => e.includes('root.second.dir'))).toBe(true)
 		})
 
 		it('a cwd nested deep in the tree is named at its own path, not the root’s', () => {
@@ -319,38 +317,22 @@ describe('spec:cyber-mux/layout', () => {
 			expect(errors.some((e) => e.startsWith('root/panes/tabs:'))).toBe(false)
 		})
 
-		it("a pane label must be unique across every tab, because labels are the manifest's keys", () => {
-			// The manifest is one flat pane list for the whole apply, so its keys are global — a label is
-			// not scoped to the tab it sits in.
-			const errors = validateLayout(
-				{
-					name: 'render-farm',
-					tabs: [
-						{ label: 'shots', panes: [{ label: 'gpu' }] },
-						{ label: 'frames', root: { type: 'pane', label: 'gpu' } },
-					],
-				},
-				'render-farm',
-			)
-			expect(errors).toHaveLength(1)
-			expect(errors[0]).toContain('gpu')
-			expect(errors[0]).toContain('duplicated')
-		})
-
-		it('two tabs sharing a label are refused', () => {
-			const errors = validateLayout(
-				{
-					name: 'render-farm',
-					tabs: [
-						{ label: 'shots', panes: [{ label: 'gpu' }] },
-						{ label: 'shots', panes: [{ label: 'cpu' }] },
-					],
-				},
-				'render-farm',
-			)
-			expect(errors).toHaveLength(1)
-			expect(errors[0]).toContain('shots')
-			expect(errors[0]).toContain('duplicated')
+		it('two tabs may share a label, and so may panes in different tabs', () => {
+			// Nothing keys on either name: the manifest reports a pane's tab by INDEX, and a tab is addressed
+			// by its own id at the seam. herdr labels every new workspace's root tab `1`, so a backend that
+			// manufactures duplicates by default cannot be one a uniqueness rule describes.
+			expect(
+				validateLayout(
+					{
+						name: 'render-farm',
+						tabs: [
+							{ label: 'shots', panes: [{ label: 'gpu' }] },
+							{ label: 'shots', root: { type: 'pane', label: 'gpu' } },
+						],
+					},
+					'render-farm',
+				),
+			).toEqual([])
 		})
 
 		it('a tab label is a separate namespace from a pane label, so a tab and a pane may share a name', () => {

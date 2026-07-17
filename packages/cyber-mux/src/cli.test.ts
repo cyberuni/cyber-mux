@@ -781,8 +781,8 @@ describe('spec:cyber-mux/mux', () => {
 								type: 'split',
 								direction: 'right',
 								ratio: 0,
-								first: { type: 'pane', label: 'dup', cwd: '/home/someone/proj' },
-								second: { type: 'pane', label: 'dup' },
+								first: { type: 'pane', label: 'alpha', cwd: '/home/someone/proj' },
+								second: { type: 'pane', label: 'beta', dir: '/var/log' },
 							},
 						},
 					})
@@ -792,7 +792,7 @@ describe('spec:cyber-mux/mux', () => {
 					expect(lines).toHaveLength(3)
 					expect(lines.some((l) => l.includes('root.ratio'))).toBe(true)
 					expect(lines.some((l) => l.includes('root.first.cwd'))).toBe(true)
-					expect(lines.some((l) => l.includes('label "dup"'))).toBe(true)
+					expect(lines.some((l) => l.includes('root.second.dir'))).toBe(true)
 				})
 
 				it('exits 0 on a valid template, saying nothing at all', async () => {
@@ -1490,9 +1490,8 @@ describe('spec:cyber-mux/layout', () => {
 			expect(written.root.second).toEqual({ type: 'pane', label: 'editor' })
 			// ...while the ONE pane whose title is merely the hostname gets no label at all. tmux defaults
 			// `pane_title` to the host, so capturing it blindly would hang `label: "zeta"` on every
-			// untouched pane. Exactly one pane carries the default on purpose: with two, a broken filter
-			// would label both `zeta`, and the duplicate-label drop would hide it by producing the right
-			// answer for the wrong reason.
+			// untouched pane. The hostname is checked against the whole written template below, so a broken
+			// filter cannot hide anywhere.
 			expect(written.root.first.first).toEqual({ type: 'pane' })
 			expect(JSON.stringify(written)).not.toContain('zeta')
 			// cwd is never in a template — it comes back as a relative dir under the captured root.
@@ -1617,12 +1616,12 @@ describe('spec:cyber-mux/layout', () => {
 			expect(logs).toEqual([repo('pool-2')])
 		})
 
-		it("a label two panes share is dropped from both, because a template's labels must be unique", async () => {
-			// Bound at CLI level for the same reason: the Then names a warning on stderr.
+		it('a label two panes share is captured onto both, because a human chose it', async () => {
+			// Bound at CLI level for the same reason: the Then names what stderr does NOT carry.
 			const stderr = captureStderr()
 			const store = fakeStore({})
-			// Both panes deliberately titled `worker` — neither is tmux's hostname default, so both are real
-			// labels, and they collide.
+			// Both panes deliberately titled `worker` — neither is tmux's hostname default, so both are
+			// labels a human set by hand, which is the exact fact the capture exists to preserve.
 			const exec = saveExec(
 				[],
 				['%0\t0\t0\t119\t50\t/repo\tworker\tzeta', '%1\t120\t0\t80\t50\t/repo\tworker\tzeta'].join('\n'),
@@ -1630,9 +1629,11 @@ describe('spec:cyber-mux/layout', () => {
 			const program = buildProgram({ env: SAVE_ENV, exec, store })
 			await run(program, ['layout', 'save', 'pool-2'])
 			const written = JSON.parse(store.writes[repo('pool-2')]!)
-			expect(written.root.first).toEqual({ type: 'pane' })
-			expect(written.root.second).toEqual({ type: 'pane' })
-			expect(stderr.join('')).toContain('worker')
+			// BOTH carry it — dropping either would report "no label" where there is one.
+			expect(written.root.first).toEqual({ type: 'pane', label: 'worker' })
+			expect(written.root.second).toEqual({ type: 'pane', label: 'worker' })
+			// And nothing is said about it: a shared name is not a problem to warn a caller about.
+			expect(stderr.join('')).toBe('')
 			expect(logs).toEqual([repo('pool-2')])
 		})
 

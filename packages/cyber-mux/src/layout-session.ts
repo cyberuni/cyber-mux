@@ -641,9 +641,9 @@ function buildGeometry(tab: TabState, ctx: WalkContext): void {
 }
 
 /**
- * The manifest, across every tab built so far. ONE FLAT pane list — the tabs are a field on each pane
- * rather than a second nesting a consumer has to walk, which is also why a pane `label` is unique
- * across the whole template rather than per tab: the keys are global.
+ * The manifest, across every tab built so far. ONE FLAT pane list — the tab is a field on each pane
+ * rather than a second nesting a consumer has to walk. The unique handle is the pane `id`; `label` is
+ * a name two panes may share, and the tab is reported by INDEX rather than by either.
  */
 function report(ctx: WalkContext, tabs: TabState[]): LayoutManifest {
 	return {
