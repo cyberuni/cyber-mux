@@ -159,13 +159,14 @@ a target directory supplied at apply time:
   broken **columns-first**, to match what `tiled` emits rather than its transpose.
 
 - **Ratio and env degrade; they never reject** — the schema is backend-agnostic, so a template's
-  validity cannot depend on which multiplexer happens to be running. Both are native on both real
-  backends, and the sign convention is the trap: template `ratio` is the fraction kept by `first`
-  (the **original** pane), so herdr's `--ratio` — which sizes the original — passes through
-  unconverted, while tmux's `-l` sizes the **new** pane and takes `1 - ratio`. The two backends
-  convert in opposite directions. A backend that cannot size a split degrades to its own 50/50
-  default with one stderr warning; a wrong-looking split is not worth failing an otherwise-correct
-  pool over.
+  validity cannot depend on which multiplexer happens to be running. A backend that cannot size a
+  split degrades to its own 50/50 default with one stderr warning; a wrong-looking split is not worth
+  failing an otherwise-correct pool over. The degrade **policy** is this node's; what `ratio` and
+  `env` *mean* at the seam is not. Template `ratio` is the fraction kept by `first` (the **original**
+  pane) and template `env` is per-pane — how each backend renders those, the opposite sign
+  conventions they convert in, and the tier env reaches, belong to the pane abstraction and are
+  specified there ([`mux/`](../mux/README.md), "A split can be told which pane, how big, and what
+  environment"). This node passes them down and owns what a template does with them.
 
 **Non-goals** — **dispatch**, in all its forms: no message bus, no mailbox, no routing, no "give
 this work to an idle pane". A layout is **write-only** — it takes a template and a cwd and produces
@@ -214,7 +215,7 @@ Every scenario in [`layout.feature`](./layout.feature) maps to one of these beha
 | **the tree, and no `cwd` in it** | `split`/`pane` nodes, explicit `type`, `right`/`down`; a template setting `cwd` fails validation naming `--cwd` and `dir`; `dir` is relative-only, absolute and `..` refused; `ratio` of 0 or 1 refused; duplicate `label` refused; `root` xor `panes`; every error at once with a JSON path |
 | **flat-N sugar is desugared by cyber-mux** | `panes` + `arrange` expands to a canonical tree, a pure function of `n` and `arrange`; `n = 1` yields one pane and no split; the same tree on every backend, never tmux's `select-layout`; `show --desugar` prints what apply builds |
 | **the walk** | region opened blank; geometry depth-first; each split targets the pane it names via `from`, never the current one; commands submitted last in template order; `dir` joined onto the apply-time cwd; a missing `dir` fails naming the pane and the resolved path |
-| **ratio and env degrade, never reject** | the sign convention in both directions (herdr passes `ratio` through, tmux emits `1 - ratio`); `env` native on both backends; a pane with `env` and no `command` is valid; a backend that cannot size a split warns once and takes its default |
+| **ratio and env degrade, never reject** | a pane with `env` and no `command` is valid; a backend that cannot size a split warns once and takes its default. The seam conventions themselves — the opposite sign directions and env's native tier — are the pane abstraction's, specified in [`mux/`](../mux/README.md) |
 | **resolution precedes side effects; apply does not roll back** | a bad layout name leaves no worktree behind; a throw mid-walk reports what was built and exits 1 without killing anything |
 | **`--layout` is `--launch`'s sibling** | mutually exclusive with `--launch`; `--at` defaults to `workspace`; `--label` defaults to the template name; `worktree add --layout` reports the manifest alongside `root`/`branch` |
 | **the manifest is the handoff** | `--format json` reports `(label, pane, dir, command)` per created pane, plus `layout`/`cwd`/`workspace`; `workspace` carries the workspace the region opened in, and is `null` on a backend with no workspace tier such as tmux |

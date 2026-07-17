@@ -30,6 +30,41 @@ once opened:
   without stealing the caller's focus. `open` is placement and nothing more: the workspace it makes
   carries no worktree record even when its cwd is a checkout, so it is never grouped with a repo —
   that is the `worktree` verbs' job, below.
+- **A split can be told which pane, how big, and what environment** — three options on the seam's
+  own open contract shape a `pane:*` placement, and none of them is a CLI flag: a caller reaches them
+  through the adapter. The layout capability is one such caller. What a template *does* with them is
+  [`layout/`](../layout/README.md)'s business; what they *mean* is this node's.
+  - **`from` names the pane to split, and passing it is the only way `pane:right` means the same
+    thing on both backends.** Omitting it does not mean "the calling pane" — it means "whatever this
+    backend defaults to", and the two defaults disagree while both tracking the pane the *user* is
+    looking at: tmux always splits the session's active pane and ignores `$TMUX_PANE` entirely; herdr
+    resolves `--current` from `$HERDR_PANE_ID`, silently falling back to the UI-focused pane when
+    that is unset. They agree whenever a human is typing and diverge exactly when a program is
+    driving — which is when this seam's callers are running. `tab` and `workspace` split nothing, so
+    they ignore it.
+  - **`ratio` is the fraction kept by the ORIGINAL pane, and the sign convention is the trap** — the
+    two backends convert in **opposite** directions. herdr's `--ratio` sizes the original, so the
+    number passes through unconverted; tmux's `-l` sizes the **new** pane, so it takes `1 - ratio`.
+    Applying the inversion to both, or to neither, is the single most likely way to get a split
+    backwards. Omitted, each backend takes its own even default. Ratio is a *split* concept: a tab or
+    workspace is never sized against a pane, so it is not passed there.
+  - **A backend declares whether it can size a split at all**, so a caller can degrade a ratio rather
+    than fail on a backend that cannot honor one — the degrade *policy* is the caller's, not this
+    seam's (layout warns once and takes the default). Both real backends can size, so both declare
+    it; silence is taken as cannot.
+  - **`env` is set natively at the birth of whatever tier opens — not just a split.** Both backends
+    take a repeatable flag on every space-creating command (herdr `--env KEY=VALUE`, tmux
+    `-e KEY=VALUE`), one per variable. That breadth is load-bearing rather than incidental: a pane
+    pool's root pane is born by the region open and never by a split, so a seam that scoped env to
+    `pane:*` would drop it silently exactly where a caller needs it. Valid with or without a launch —
+    a pane with env and no command is a blank shell with that env set. The one exception is herdr's
+    **worktree** verbs, whose create/open take no env parameter and refuse the flag outright; env is
+    dropped there rather than failing the checkout.
+
+  **Boundary — the seam does not validate `ratio`.** It renders whatever number it is given; the
+  `0 < ratio < 1` bar belongs to the caller (layout's schema enforces it, and is where a degenerate
+  ratio is refused). An adapter author owes the rendering, not the range check.
+
 - **Multiplexer detection is two-mode** — `probeMultiplexer` first trusts `$CYBER_MUX`
   (`tmux`|`herdr`|`screen`|`none`) outright — this doubles as an override (`=none` forces no-mux even
   inside a real multiplexer). Failing that it walks the process ancestry from `$$` looking for a
@@ -229,8 +264,7 @@ Every scenario in [`mux.feature`](./mux.feature) maps to one of these behaviors:
 |---|---|
 | **backend selected by environment** | tmux vs herdr selection; neither present errors |
 | **placement** | `--at` choices; tab honored per backend, never a split; `workspace` → each backend's own visible space (herdr `workspace create`, tmux window), never a detached tmux session; a workspace `open` makes is bound to no repo; omitted `--at` falls back to `tab` |
-
-| **placement** | `--at` choices; tab honored per backend, never a split; `workspace` → each backend's own visible space (herdr nested workspace, tmux window), never a detached tmux session; omitted `--at` falls back to `tab` |
+| **split options — which pane, how big, what environment** | `from` targets a `pane:*` split on both backends (tmux `-t`, herdr positional) and is ignored by `tab`/`workspace`; omitted, each backend takes its own default, which tracks the user's focus rather than the caller's. `ratio` is the fraction kept by the ORIGINAL pane and converts in opposite directions (herdr passes it through, tmux inverts to `1 - ratio`); omitted, each backend splits evenly; never passed to a tab or workspace. Each backend declares whether it can size a split at all. `env` is native at the birth of every tier on both backends, one repeated flag per variable, with or without a launch — except herdr's worktree verbs, which take no env param and drop it |
 | **text and keys are separate; only submit presses Enter for you** | `send text` types literal characters and presses no Enter (a key-named word is typed, not interpreted; no text → rejected); `send keys` presses named keys in order and types nothing — core keys normalized onto each backend, a non-core token forwarded verbatim to the backend's own semantics (no tokens at all → rejected); `send keys Enter` presses Enter and takes the turn, because the caller wrote it; bare `send` is incomplete input — help to stderr, exit 1, stdout clean (an acknowledged amendment to axi #8, not an application of it); `submit` always presses Enter — with text it types it literally then Enters, with none (or empty text) it bare-Enter flushes without retyping; `open --launch` submits |
 | **multiplexer detection is two-mode** | `$CYBER_MUX` fast-path + override; ancestry walk; hint fallback; `doctor` hint |
 | **mux mode** | reports the detected session backend; "none" (exit 0) when no adapter is selectable |
