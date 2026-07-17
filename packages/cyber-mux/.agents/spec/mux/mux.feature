@@ -307,6 +307,76 @@ Feature: mux — the pane abstraction
     # workspace tier, and a tag cyber-mux wrote is its own bookkeeping rather than a tier the backend
     # gained. Reporting it as a workspace would be a confident lie.
 
+  # ── open reports the tab the pane landed in ──
+  # The same move, and the same argument, as the workspace above: the backend already answered when
+  # the pane was opened, so a surface that hid it would discard a fact it already held.
+
+  Scenario Outline: open reports the tab the new pane landed in
+    Given a caller opening at <at> through the <adapter> adapter
+    When open runs
+    Then the reported tab is the tab the pane landed in
+    And it is read from the output the pane id already comes from
+
+    Examples:
+      | at         | adapter |
+      | tab        | herdr   |
+      | workspace  | herdr   |
+      | pane:right | herdr   |
+      | tab        | tmux    |
+      | workspace  | tmux    |
+      | pane:right | tmux    |
+
+    # Every multiplexer has the Tab level — unlike the Workspace level, which only some have — so
+    # every backend answers this and none reports it absent. herdr's create envelope carries the
+    # pane's own tab id beside its pane id on every route: a new tab reports itself, a created
+    # workspace reports its root tab, and a split reports the tab it landed in, which is the caller's.
+    # tmux's Tab is its Window, so the answer is the window the pane landed in, read from the same
+    # -F the pane id already rides out on. Either way the backend already answered when the pane was
+    # opened, so it costs no extra call — the argument the workspace field is already reported on.
+
+  Scenario: the reported tab is what names a new workspace's root tab
+    Given a caller creating a workspace through the herdr adapter
+    When the workspace's root tab is renamed using the tab open reported
+    Then the rename addresses the tab rather than the pane
+    # a rename addressed by a pane id is refused outright by herdr (tab_not_found) while tmux resolves
+    # it and succeeds — so a caller reaching for the pane id would be green on one backend and
+    # silently broken on the other. The reported tab is what makes the rename portable.
+
+  # ── Naming a space after its birth ──
+  # --label names a space AT birth wherever the backend's CLI allows. One tier cannot be: a new
+  # workspace's root tab. So the seam also names a space that already exists.
+
+  Scenario Outline: a space is named after birth on every backend
+    Given a caller renaming an already-open <tier> through the <adapter> adapter
+    When the rename runs
+    Then the backend receives its own rename command for that tier
+
+    Examples:
+      | tier      | adapter |
+      | tab       | tmux    |
+      | tab       | herdr   |
+      | pane      | tmux    |
+      | pane      | herdr   |
+
+    # Every backend can name every tier — the same breadth --label relies on at birth. tmux names a
+    # window and a pane title; herdr renames a tab and a pane. This is the naming route for the one
+    # case birth cannot serve, not a second way to do what --label already does.
+
+  Scenario: renaming is the only way to name a new workspace's root tab
+    Given a caller creating a workspace through the herdr adapter
+    When the workspace's root tab is given a name
+    Then the name is set by a rename after the workspace exists
+    # herdr labels a new workspace's root tab 1 and offers no flag to change it at birth. This is the
+    # whole of the constraint the tab-naming non-goal generalized from — it binds the ROOT tab alone,
+    # and every later tab takes --label at birth like any other space.
+
+  Scenario: a rename moves no focus and opens nothing
+    Given a caller renaming a tab the caller is not focused on
+    When the rename runs
+    Then the caller's focus is where it was
+    And no space is created
+    # a write as read-only in its side effects as isPaneFocused is: naming a space is not visiting it
+
   Scenario Outline: a backend declares whether it can size a split
     Given a caller asking the <adapter> adapter whether it can size a split
     When it reads the declaration

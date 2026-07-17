@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Exec } from './exec.ts'
 import { herdrSessionAdapter } from './session.herdr.ts'
-import type { SessionPlacement } from './session.ts'
+import type { SessionPlacement, SessionSpaceTier } from './session.ts'
 
 function fakeExec(calls: string[][], responses: Record<string, string | null> = {}): Exec {
 	return (_cmd, args) => {
@@ -22,7 +22,7 @@ function worktree() {
 function worktreeOut() {
 	return JSON.stringify({
 		result: {
-			root_pane: { pane_id: 'w9:p1' },
+			root_pane: { pane_id: 'w9:p1', tab_id: 'w9:t1' },
 			workspace: { workspace_id: 'w9' },
 			worktree: { path: '/p', branch: 'b' },
 		},
@@ -66,25 +66,25 @@ describe('spec:cyber-mux/mux', () => {
 		it.each<{
 			at: SessionPlacement
 			response: Record<string, string | null>
-			expected: { id: string; workspace: string }
+			expected: { id: string; tab: string; workspace: string }
 		}>([
 			{
 				at: 'workspace',
 				response: { 'workspace create': PANE_IN_WORKSPACE('w7:p1', 'w7') },
 				// The workspace it created.
-				expected: { id: 'w7:p1', workspace: 'w7' },
+				expected: { id: 'w7:p1', tab: 'w7:t1', workspace: 'w7' },
 			},
 			{
 				at: 'tab',
 				response: { 'tab create': PANE_IN_TAB('w3:pT', 'w3') },
 				// The workspace the new tab was created in.
-				expected: { id: 'w3:pT', workspace: 'w3' },
+				expected: { id: 'w3:pT', tab: 'w3:t2', workspace: 'w3' },
 			},
 			{
 				at: 'pane:right',
 				response: { 'pane split': PANE_IN_SPLIT('w3:pB', 'w3') },
 				// The workspace the split landed in — the caller's own.
-				expected: { id: 'w3:pB', workspace: 'w3' },
+				expected: { id: 'w3:pB', tab: 'w3:t1', workspace: 'w3' },
 			},
 		])('open returns the workspace the new pane landed in', ({ at, response, expected }) => {
 			const target = herdrSessionAdapter.open(fakeExec([], response), { cwd: '/unit', at })
@@ -101,7 +101,7 @@ describe('spec:cyber-mux/mux', () => {
 			const target = herdrSessionAdapter.open(exec, { cwd: '/unit', launch: 'claude', at: 'pane:right' })
 			// The workspace the split LANDED IN — the caller's own. Free: it rides in on the same output
 			// the pane id is read from.
-			expect(target).toEqual({ id: 'w3:pB', workspace: 'w3' })
+			expect(target).toEqual({ id: 'w3:pB', tab: 'w3:t1', workspace: 'w3' })
 			expect(calls[0]).toEqual(['pane', 'split', '--current', '--direction', 'right', '--cwd', '/unit'])
 			expect(calls[1]).toEqual(['pane', 'run', 'w3:pB', 'claude'])
 		})
@@ -117,7 +117,7 @@ describe('spec:cyber-mux/mux', () => {
 			})
 			const exec = fakeExec(calls, { 'tab create': tabOut })
 			const target = herdrSessionAdapter.open(exec, { cwd: '/unit', launch: 'claude', at: 'tab' })
-			expect(target).toEqual({ id: 'w3:pT', workspace: 'w3' })
+			expect(target).toEqual({ id: 'w3:pT', tab: 'w3:t2', workspace: 'w3' })
 			expect(calls[0]).toEqual(['tab', 'create', '--cwd', '/unit', '--no-focus'])
 			expect(calls[1]).toEqual(['pane', 'run', 'w3:pT', 'claude'])
 		})
@@ -133,7 +133,7 @@ describe('spec:cyber-mux/mux', () => {
 			})
 			const exec = fakeExec(calls, { 'tab create': tabOut })
 			const target = herdrSessionAdapter.open(exec, { cwd: '/unit', launch: 'claude' })
-			expect(target).toEqual({ id: 'w3:pT', workspace: 'w3' })
+			expect(target).toEqual({ id: 'w3:pT', tab: 'w3:t2', workspace: 'w3' })
 			expect(calls[0]).toEqual(['tab', 'create', '--cwd', '/unit', '--no-focus'])
 			expect(calls[1]).toEqual(['pane', 'run', 'w3:pT', 'claude'])
 		})
@@ -149,7 +149,7 @@ describe('spec:cyber-mux/mux', () => {
 			})
 			const exec = fakeExec(calls, { 'workspace create': createOut })
 			const target = herdrSessionAdapter.open(exec, { cwd: '/unit', launch: 'claude', at: 'workspace' })
-			expect(target).toEqual({ id: 'w7:p1', workspace: 'w7' })
+			expect(target).toEqual({ id: 'w7:p1', tab: 'w7:t1', workspace: 'w7' })
 			// `workspace create` — NOT `worktree create`. It carries no --branch/--path and produces no
 			// worktree record, so the workspace is bound to no repo even when its cwd is a checkout.
 			expect(calls[0]).toEqual(['workspace', 'create', '--cwd', '/unit', '--no-focus'])
@@ -169,7 +169,7 @@ describe('spec:cyber-mux/mux', () => {
 			})
 			const exec = fakeExec(calls, { 'workspace create': createOut })
 			const target = herdrSessionAdapter.open(exec, { cwd: '/unit', at: 'workspace' })
-			expect(target).toEqual({ id: 'w7:p1', workspace: 'w7' })
+			expect(target).toEqual({ id: 'w7:p1', tab: 'w7:t1', workspace: 'w7' })
 			expect(calls).toHaveLength(1)
 			expect(calls.some((c) => c[1] === 'get' || c[1] === 'list')).toBe(false)
 		})
@@ -185,7 +185,7 @@ describe('spec:cyber-mux/mux', () => {
 			})
 			const exec = fakeExec(calls, { 'pane split': splitOut })
 			const target = herdrSessionAdapter.open(exec, { cwd: '/unit', at: 'pane:right' })
-			expect(target).toEqual({ id: 'w3:pB' })
+			expect(target).toEqual({ id: 'w3:pB', tab: 'w3:t1' })
 			expect(target.workspace).toBeUndefined()
 		})
 
@@ -197,7 +197,7 @@ describe('spec:cyber-mux/mux', () => {
 			})
 			const exec = fakeExec(calls, { 'pane split': splitOut })
 			const target = herdrSessionAdapter.open(exec, { cwd: '/unit', at: 'pane:right' })
-			expect(target).toEqual({ id: 'w3:pB', workspace: 'w3' })
+			expect(target).toEqual({ id: 'w3:pB', tab: 'w3:t1', workspace: 'w3' })
 			expect(calls).toHaveLength(1)
 			expect(calls.some((c) => c[0] === 'pane' && c[1] === 'run')).toBe(false)
 		})
@@ -210,7 +210,7 @@ describe('spec:cyber-mux/mux', () => {
 			const calls: string[][] = []
 			const splitOut = JSON.stringify({
 				id: 'cli:pane:split',
-				result: { pane: { pane_id: 'w3:pB' }, type: 'pane_info' },
+				result: { pane: { pane_id: 'w3:pB', tab_id: 'w3:t1' }, type: 'pane_info' },
 			})
 			const exec = fakeExec(calls, { 'pane split': splitOut })
 			herdrSessionAdapter.open(exec, { cwd: '/unit', at: 'pane:right', from: { id: 'w3:pA' } })
@@ -226,7 +226,7 @@ describe('spec:cyber-mux/mux', () => {
 			const calls: string[][] = []
 			const splitOut = JSON.stringify({
 				id: 'cli:pane:split',
-				result: { pane: { pane_id: 'w3:pB' }, type: 'pane_info' },
+				result: { pane: { pane_id: 'w3:pB', tab_id: 'w3:t1' }, type: 'pane_info' },
 			})
 			const exec = fakeExec(calls, { 'pane split': splitOut })
 			herdrSessionAdapter.open(exec, { cwd: '/unit', at: 'pane:right' })
@@ -239,7 +239,7 @@ describe('spec:cyber-mux/mux', () => {
 		// against 0.7.4 rather than documented, which is why the literal flag is asserted, not trusted.
 		it('the ratio sign convention converts in opposite directions per backend', () => {
 			const calls: string[][] = []
-			const splitOut = JSON.stringify({ result: { pane: { pane_id: 'w3:pB' } } })
+			const splitOut = JSON.stringify({ result: { pane: { pane_id: 'w3:pB', tab_id: 'w3:t1' } } })
 			const exec = fakeExec(calls, { 'pane split': splitOut })
 			herdrSessionAdapter.open(exec, { cwd: '/u', at: 'pane:right', from: { id: 'w3:pA' }, ratio: 0.333 })
 			expect(calls[0]).toEqual(['pane', 'split', 'w3:pA', '--direction', 'right', '--cwd', '/u', '--ratio', '0.333'])
@@ -249,14 +249,18 @@ describe('spec:cyber-mux/mux', () => {
 
 		it('ratio omitted leaves each backend its own even default', () => {
 			const calls: string[][] = []
-			const exec = fakeExec(calls, { 'pane split': JSON.stringify({ result: { pane: { pane_id: 'w3:pB' } } }) })
+			const exec = fakeExec(calls, {
+				'pane split': JSON.stringify({ result: { pane: { pane_id: 'w3:pB', tab_id: 'w3:t1' } } }),
+			})
 			herdrSessionAdapter.open(exec, { cwd: '/u', at: 'pane:right' })
 			expect(calls[0]).not.toContain('--ratio')
 		})
 
 		it('each env variable gets its own flag, in the order given', () => {
 			const calls: string[][] = []
-			const exec = fakeExec(calls, { 'pane split': JSON.stringify({ result: { pane: { pane_id: 'w3:pB' } } }) })
+			const exec = fakeExec(calls, {
+				'pane split': JSON.stringify({ result: { pane: { pane_id: 'w3:pB', tab_id: 'w3:t1' } } }),
+			})
 			herdrSessionAdapter.open(exec, { cwd: '/u', at: 'pane:right', env: { ROLE: 'worker', TIER: 'gpu' } })
 			expect(calls[0]).toEqual([
 				'pane',
@@ -276,7 +280,9 @@ describe('spec:cyber-mux/mux', () => {
 		it('env with no launch opens a blank shell carrying the env', () => {
 			// Native env means no command to prefix is needed, so a warm pane with no command is coherent.
 			const calls: string[][] = []
-			const exec = fakeExec(calls, { 'pane split': JSON.stringify({ result: { pane: { pane_id: 'w3:pB' } } }) })
+			const exec = fakeExec(calls, {
+				'pane split': JSON.stringify({ result: { pane: { pane_id: 'w3:pB', tab_id: 'w3:t1' } } }),
+			})
 			herdrSessionAdapter.open(exec, { cwd: '/u', at: 'pane:right', env: { ROLE: 'worker' } })
 			expect(calls[0]).toContain('ROLE=worker')
 			// The scenario says NOTHING is typed, sent, or run — so rule out all three of herdr's input
@@ -288,6 +294,81 @@ describe('spec:cyber-mux/mux', () => {
 
 		it('a backend declares whether it can size a split', () => {
 			expect(herdrSessionAdapter.canSizeSplits).toBe(true)
+		})
+
+		// The outline is ONE key, so herdr's three Examples rows fold under this one static title. Each
+		// row pins the tab herdr reports for that route AND that it cost no second call — the outline's
+		// two Thens are one claim, so asserting the tab without the call count would leave the half that
+		// a `pane get` follow-up would silently break.
+		it.each<{ at: SessionPlacement; response: Record<string, string>; tab: string }>([
+			// A new tab reports ITSELF — t2, the tab just created, not the workspace's root t1.
+			{ at: 'tab', response: { 'tab create': PANE_IN_TAB('w3:pT', 'w3') }, tab: 'w3:t2' },
+			// A created workspace reports its ROOT tab — the one herdr labels `1` and cannot name at birth.
+			{ at: 'workspace', response: { 'workspace create': PANE_IN_WORKSPACE('w7:p1', 'w7') }, tab: 'w7:t1' },
+			// A split opens no tab of its own, so it reports the tab it LANDED in — the caller's own.
+			{ at: 'pane:right', response: { 'pane split': PANE_IN_SPLIT('w3:pB', 'w3') }, tab: 'w3:t1' },
+		])('open reports the tab the new pane landed in', ({ at, response, tab }) => {
+			const calls: string[][] = []
+			const opened = herdrSessionAdapter.open(fakeExec(calls, response), { cwd: '/unit', at })
+			expect(opened.tab).toBe(tab)
+			// Read from the output the pane id already comes from: one call, so the tab rode in on the
+			// envelope that opened the pane rather than a query issued after it.
+			expect(calls).toHaveLength(1)
+		})
+
+		// The trap this field exists to close. herdr refuses a rename addressed by a pane id outright
+		// (`tab_not_found`, exit 1) — and since a failed command's output is discarded, a caller reaching
+		// for `id` would leave the root tab named `1` with nothing raised. So the assertion is that the
+		// rename carries the TAB and not the pane; asserting only "a tab rename ran" would pass on the
+		// broken spelling.
+		it("the reported tab is what names a new workspace's root tab", () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'workspace create': PANE_IN_WORKSPACE('w7:p1', 'w7') })
+			const opened = herdrSessionAdapter.open(exec, { cwd: '/unit', at: 'workspace' })
+			// The caller names the root tab with the tab open reported — never reaching for the pane.
+			herdrSessionAdapter.rename(exec, { id: opened.tab }, 'tab', 'ledger')
+			expect(calls[1]).toEqual(['tab', 'rename', 'w7:t1', 'ledger'])
+			// The pane id and the tab id are different strings, and only the tab may appear.
+			expect(opened.id).toBe('w7:p1')
+			expect(calls[1]).not.toContain(opened.id)
+		})
+
+		// The outline is ONE key, so both of herdr's Examples rows fold under this one static title.
+		it.each<{ tier: SessionSpaceTier; id: string; expected: string[] }>([
+			{ tier: 'tab', id: 'w2:t3', expected: ['tab', 'rename', 'w2:t3', 'ledger'] },
+			{ tier: 'pane', id: 'w2:pB', expected: ['pane', 'rename', 'w2:pB', 'ledger'] },
+		])('a space is named after birth on every backend', ({ tier, id, expected }) => {
+			const calls: string[][] = []
+			herdrSessionAdapter.rename(fakeExec(calls), { id }, tier, 'ledger')
+			expect(calls).toEqual([expected])
+		})
+
+		// herdr labels a new workspace's root tab `1` and takes no flag for it at birth — `--label` on
+		// `workspace create` names the WORKSPACE, never that tab. So the check is ordering plus absence:
+		// the name must reach herdr only through a `tab rename`, and only after the create that made the
+		// tab exist. A `workspace create` that carried the tab name would be the invented flag 0.7.4
+		// answers with `unknown option`.
+		it("renaming is the only way to name a new workspace's root tab", () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'workspace create': PANE_IN_WORKSPACE('w7:p1', 'w7') })
+			herdrSessionAdapter.open(exec, { cwd: '/unit', at: 'workspace' })
+			herdrSessionAdapter.rename(exec, { id: 'w7:t1' }, 'tab', 'ledger')
+			// The create names no tab: the root tab's name is nowhere in the opening call.
+			expect(calls[0]).toEqual(['workspace', 'create', '--cwd', '/unit', '--no-focus'])
+			expect(calls[0]).not.toContain('ledger')
+			// And the name arrives by a rename, issued AFTER the workspace (and so its root tab) exists.
+			expect(calls[1]).toEqual(['tab', 'rename', 'w7:t1', 'ledger'])
+		})
+
+		// The read-only claim, asserted as the ABSENCE of any other call rather than as the presence of
+		// the rename: a rename that also beamed the client would still emit the right rename argv, so
+		// only the exact-call-list assertion can catch it. `workspace focus`/`tab focus` would move
+		// focus and `tab create` would open a space — none may appear, and nothing else may either.
+		it('a rename moves no focus and opens nothing', () => {
+			const calls: string[][] = []
+			// A tab the caller is not in — the rename addresses it by id, never by visiting it.
+			herdrSessionAdapter.rename(fakeExec(calls), { id: 'w9:t4' }, 'tab', 'ledger')
+			expect(calls).toEqual([['tab', 'rename', 'w9:t4', 'ledger']])
 		})
 
 		// herdr's workspace IS the group: every pane and tab record already carries its `workspace_id`,
@@ -319,7 +400,9 @@ describe('spec:cyber-mux/mux', () => {
 		// neighbouring key. Many-to-one binding is intended here.
 		it('env is set natively at the birth of whatever tier is opened', () => {
 			const calls: string[][] = []
-			const exec = fakeExec(calls, { 'pane split': JSON.stringify({ result: { pane: { pane_id: 'w3:pB' } } }) })
+			const exec = fakeExec(calls, {
+				'pane split': JSON.stringify({ result: { pane: { pane_id: 'w3:pB', tab_id: 'w3:t1' } } }),
+			})
 			herdrSessionAdapter.open(exec, { cwd: '/unit', at: 'pane:right', env: { ROLE: 'planner' } })
 			expect(calls[0]).toEqual([
 				'pane',
@@ -336,7 +419,7 @@ describe('spec:cyber-mux/mux', () => {
 
 		it('env is set natively at the birth of whatever tier is opened', () => {
 			const calls: string[][] = []
-			const createOut = JSON.stringify({ result: { root_pane: { pane_id: 'w7:p1' } } })
+			const createOut = JSON.stringify({ result: { root_pane: { pane_id: 'w7:p1', tab_id: 'w7:t1' } } })
 			const exec = fakeExec(calls, { 'workspace create': createOut })
 			herdrSessionAdapter.open(exec, { cwd: '/unit', at: 'workspace', env: { ROLE: 'planner', TIER: 'cpu' } })
 			expect(calls[0]).toEqual([
@@ -354,7 +437,7 @@ describe('spec:cyber-mux/mux', () => {
 
 		it('env is set natively at the birth of whatever tier is opened', () => {
 			const calls: string[][] = []
-			const tabOut = JSON.stringify({ result: { root_pane: { pane_id: 'w3:pT' } } })
+			const tabOut = JSON.stringify({ result: { root_pane: { pane_id: 'w3:pT', tab_id: 'w3:t1' } } })
 			const exec = fakeExec(calls, { 'tab create': tabOut })
 			herdrSessionAdapter.open(exec, { cwd: '/unit', at: 'tab', env: { ROLE: 'planner' } })
 			expect(calls[0]).toEqual(['tab', 'create', '--cwd', '/unit', '--env', 'ROLE=planner', '--no-focus'])
@@ -402,7 +485,7 @@ describe('spec:cyber-mux/mux', () => {
 			const calls: string[][] = []
 			const created = JSON.stringify({
 				id: 'cli:workspace:create',
-				result: { root_pane: { pane_id: 'w4:p1' }, type: 'workspace_created' },
+				result: { root_pane: { pane_id: 'w4:p1', tab_id: 'w4:t1' }, type: 'workspace_created' },
 			})
 			const exec = fakeExec(calls, { 'workspace create': created, 'tab create': created })
 			herdrSessionAdapter.open(exec, { cwd: '/unit', at: 'tab', from: { id: 'w3:pA' } })
@@ -433,7 +516,7 @@ describe('spec:cyber-mux/mux', () => {
 			const createOut = JSON.stringify({
 				id: 'cli:worktree:create',
 				result: {
-					root_pane: { pane_id: 'w9:p1' },
+					root_pane: { pane_id: 'w9:p1', tab_id: 'w9:t1' },
 					workspace: { workspace_id: 'w9' },
 					worktree: { branch: 'cyber-mux/unit-abc123', path: '/repo.worktrees/mux-abc123' },
 				},
@@ -465,7 +548,7 @@ describe('spec:cyber-mux/mux', () => {
 
 		it('open({at:workspace}) labels the workspace', () => {
 			const calls: string[][] = []
-			const out = JSON.stringify({ result: { root_pane: { pane_id: 'w7:p1' } } })
+			const out = JSON.stringify({ result: { root_pane: { pane_id: 'w7:p1', tab_id: 'w7:t1' } } })
 			herdrSessionAdapter.open(fakeExec(calls, { 'workspace create': out }), {
 				cwd: '/unit',
 				at: 'workspace',
@@ -476,14 +559,14 @@ describe('spec:cyber-mux/mux', () => {
 
 		it('open({at:tab}) labels the tab', () => {
 			const calls: string[][] = []
-			const out = JSON.stringify({ result: { root_pane: { pane_id: 'w7:p1' } } })
+			const out = JSON.stringify({ result: { root_pane: { pane_id: 'w7:p1', tab_id: 'w7:t1' } } })
 			herdrSessionAdapter.open(fakeExec(calls, { 'tab create': out }), { cwd: '/unit', at: 'tab', label: 'my-name' })
 			expect(calls[0]).toEqual(['tab', 'create', '--cwd', '/unit', '--label', 'my-name', '--no-focus'])
 		})
 
 		it('open({at:pane:right}) renames the pane after the split — herdr has no label flag there', () => {
 			const calls: string[][] = []
-			const out = JSON.stringify({ result: { pane: { pane_id: 'w3:pB' } } })
+			const out = JSON.stringify({ result: { pane: { pane_id: 'w3:pB', tab_id: 'w3:t1' } } })
 			herdrSessionAdapter.open(fakeExec(calls, { 'pane split': out }), {
 				cwd: '/unit',
 				at: 'pane:right',
@@ -495,7 +578,7 @@ describe('spec:cyber-mux/mux', () => {
 
 		it('open() names nothing when no label is given', () => {
 			const calls: string[][] = []
-			const out = JSON.stringify({ result: { root_pane: { pane_id: 'w7:p1' } } })
+			const out = JSON.stringify({ result: { root_pane: { pane_id: 'w7:p1', tab_id: 'w7:t1' } } })
 			herdrSessionAdapter.open(fakeExec(calls, { 'workspace create': out }), { cwd: '/unit', at: 'workspace' })
 			expect(calls[0]).toEqual(['workspace', 'create', '--cwd', '/unit', '--no-focus'])
 		})
@@ -571,7 +654,10 @@ describe('spec:cyber-mux/mux', () => {
 		})
 
 		it('worktree.createInWorkspace() throws when herdr reports no worktree path/branch', () => {
-			const out = JSON.stringify({ id: 'cli:worktree:create', result: { root_pane: { pane_id: 'w9:p1' } } })
+			const out = JSON.stringify({
+				id: 'cli:worktree:create',
+				result: { root_pane: { pane_id: 'w9:p1', tab_id: 'w9:t1' } },
+			})
 			const exec = fakeExec([], { 'worktree create': out })
 			expect(() => worktree().createInWorkspace(exec, { primaryRoot: '/repo', branch: 'b', path: '/p' })).toThrow(
 				/worktree/,
@@ -581,7 +667,7 @@ describe('spec:cyber-mux/mux', () => {
 		it('worktree.createInWorkspace() throws when herdr reports no bound workspace', () => {
 			const out = JSON.stringify({
 				id: 'cli:worktree:create',
-				result: { root_pane: { pane_id: 'w9:p1' }, worktree: { path: '/p', branch: 'b' } },
+				result: { root_pane: { pane_id: 'w9:p1', tab_id: 'w9:t1' }, worktree: { path: '/p', branch: 'b' } },
 			})
 			const exec = fakeExec([], { 'worktree create': out })
 			expect(() => worktree().createInWorkspace(exec, { primaryRoot: '/repo', branch: 'b', path: '/p' })).toThrow(

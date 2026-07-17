@@ -86,12 +86,23 @@ export const herdrSessionAdapter: SessionAdapter = {
 			])
 			if (!out) throw new Error(withReason(exec, 'herdr pane split failed'))
 			opened = parsePaneId(out)
-			if (opts.label) exec('herdr', ['pane', 'rename', opened.id, opts.label])
+			// Through `rename`, not a second `pane rename` spelled here: post-birth pane naming and the
+			// seam's rename are the same act, so one spelling per backend is the only way the two cannot
+			// drift.
+			if (opts.label) herdrSessionAdapter.rename(exec, opened, 'pane', opts.label)
 		}
 		// `submit`, not `sendText` — a launch command has to actually run, and `submit` is the only
 		// verb that supplies the Enter.
 		if (opts.launch) herdrSessionAdapter.submit(exec, opened, opts.launch)
 		return opened
+	},
+
+	rename(exec, target, tier, name) {
+		// herdr spells both tiers the same way — `<tier> rename <id> <name>` — so the tier selects the
+		// noun and nothing else. Neither verb focuses what it names, and neither creates anything.
+		// `tab rename` is what makes a new workspace's root tab nameable at all: `workspace create`
+		// labels that tab `1` and takes no flag for it (verified against 0.7.4).
+		exec('herdr', [tier, 'rename', target.id, name])
 	},
 
 	worktree: herdrWorktreeCapability(),
@@ -388,7 +399,7 @@ function parseRootPaneId(out: string, label: string): OpenedPane {
  * new one for a field no caller is required to use.
  */
 function parseOpenedPane(out: string, label: string, key: 'pane' | 'root_pane'): OpenedPane {
-	let pane: { pane_id?: unknown; workspace_id?: unknown } | undefined
+	let pane: { pane_id?: unknown; tab_id?: unknown; workspace_id?: unknown } | undefined
 	try {
 		pane = JSON.parse(out)?.result?.[key]
 	} catch {
@@ -398,8 +409,21 @@ function parseOpenedPane(out: string, label: string, key: 'pane' | 'root_pane'):
 	if (typeof paneId !== 'string' || paneId === '') {
 		throw new Error(`${label} output had no result.${key}.pane_id: ${out.slice(0, 200)}`)
 	}
+	// The pane's OWN tab, carried in the same envelope on every route — a created tab reports itself,
+	// a created workspace reports its root tab, a split reports the tab it landed in. Read here rather
+	// than from the sibling `result.tab`, which only the tab route has, so one spelling serves all
+	// three.
+	//
+	// Throws when absent, unlike `workspace` below: `OpenedPane.tab` is required because every
+	// multiplexer has the Tab level, so a herdr envelope with no `tab_id` is herdr failing to answer
+	// a question it always answers, not a tier it lacks. Returning a pane with no tab would hand the
+	// caller a rename target it could only get wrong.
+	const tab = pane?.tab_id
+	if (typeof tab !== 'string' || tab === '') {
+		throw new Error(`${label} output had no result.${key}.tab_id: ${out.slice(0, 200)}`)
+	}
 	const workspace = pane?.workspace_id
-	return typeof workspace === 'string' && workspace !== '' ? { id: paneId, workspace } : { id: paneId }
+	return typeof workspace === 'string' && workspace !== '' ? { id: paneId, tab, workspace } : { id: paneId, tab }
 }
 
 /**

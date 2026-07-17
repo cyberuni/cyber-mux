@@ -24,6 +24,9 @@ function fakeAdapter(
 		open: () => {
 			throw new Error('not used')
 		},
+		rename: () => {
+			throw new Error('nudge names no space — it takes turns in one that already exists')
+		},
 		sendText: () => {
 			throw new Error('nudge must not type without submitting — it takes turns via submit')
 		},

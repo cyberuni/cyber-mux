@@ -121,6 +121,23 @@ once opened:
   reports itself, a new tab reports the workspace it was created in, and a split reports the
   workspace it landed in, which is the caller's. Established empirically against herdr 0.7.4.
 
+- **`open` also returns the tab the new pane landed in** — the same move as the workspace above, on
+  the tier below it, and reported for the same reason: the backend already answered when the pane was
+  opened, so a surface that hid it would discard a fact it already held. The difference is **breadth**.
+  Only *some* multiplexers have a Workspace level, so that field is **absent** on a backend without
+  one; **every** multiplexer has the Tab level (the vocabulary table below), so every backend answers
+  this and none reports it absent. On herdr the create envelope carries the pane's own `tab_id` beside
+  its pane id on every route — a new tab reports itself, a created workspace reports its **root tab**,
+  and a split reports the tab it landed in, which is the caller's. On tmux the Tab is the Window, read
+  from the same `-F` the pane id already rides out on.
+
+  **It is load-bearing rather than a convenience, and the reason is a trap.** Naming a space after
+  birth addresses a space *at its own tier*, so renaming a tab needs a **tab** id. A caller reaching
+  for the pane id instead is not merely sloppy — it is **green on one backend and silently broken on
+  the other**: herdr refuses it outright (`tab_not_found`, exit 1) while tmux resolves a pane id and
+  succeeds. Since a failed command's output is discarded, that caller would leave herdr's root tab
+  named `1` and never hear about it. Reporting the tab is what makes the rename portable.
+
   This is **occupancy** — which workspace a pane *lives in* — and it is a different question from the
   worktree **binding** below, though both concern the one workspace tier. A worktree opened at a
   `pane:right` placement lives in the caller's workspace while being bound to none: the pane has a
@@ -194,6 +211,17 @@ once opened:
   `new-window -n` — which also turns tmux's `automatic-rename` off, so the name survives whatever
   the pane goes on to run) and names it immediately after where it does not (herdr `pane rename`,
   tmux `select-pane -T`). Omitted, each backend keeps its own default.
+- **A space is also named after its birth, because one tier cannot be named at birth** — `--label`
+  above covers birth wherever each backend's CLI allows it. Exactly one tier does not: herdr labels a
+  new **workspace's root tab** `1` and offers no flag to change it. So the seam also renames a space
+  that already exists — tmux names a window or a pane title, herdr renames a tab or a pane, the same
+  breadth `--label` already relies on. This is the naming route for the case birth cannot serve, not a
+  second way to do what `--label` does. It is the mechanism behind the reversed tab-naming non-goal
+  below, and the whole of its cost: **one rename, on herdr's first tab**.
+
+  A rename is **as read-only in its side effects as the focus probe is**: it moves no focus and opens
+  nothing. Naming a space is not visiting it — the same rule every spawn path already holds.
+
 - **A worktree's default label is the backend's own** — worth knowing that `worktree add` always
   passes `--path` (to hold the sibling convention across backends), and herdr labels a workspace by
   the checkout path's **basename** when given one, using the branch only when it picks the location
@@ -302,6 +330,8 @@ Every scenario in [`mux.feature`](./mux.feature) maps to one of these behaviors:
 | **backend selected by environment** | tmux vs herdr selection; neither present errors |
 | **placement** | `--at` choices; tab honored per backend, never a split; `workspace` → each backend's own visible space (herdr `workspace create`, tmux window), never a detached tmux session; a workspace `open` makes is bound to no repo; omitted `--at` falls back to `tab` |
 | **split options — which pane, how big, what environment** | `from` targets a `pane:*` split on both backends (tmux `-t`, herdr positional) and is ignored by `tab`/`workspace`; omitted, each backend takes its own default, which tracks the user's focus rather than the caller's. `ratio` is the fraction kept by the ORIGINAL pane and converts in opposite directions (herdr passes it through, tmux inverts to `1 - ratio`); omitted, each backend splits evenly; never passed to a tab or workspace. Each backend declares whether it can size a split at all. `env` is native at the birth of every tier on both backends, one repeated flag per variable, with or without a launch — except herdr's worktree verbs, which take no env param and drop it |
+| **open returns the pane's tab, and reports it** | the tab the new pane landed in, per placement on both backends (herdr: a new tab reports itself, a created workspace its root tab, a split the caller's; tmux: the Window the pane landed in); reported by every backend and absent on none, because every multiplexer has the Tab level; read from the output the pane id already comes from, so it costs no extra call; it is what addresses a rename at the tab tier, which a pane id cannot do portably |
+| **naming a space after its birth** | every backend renames every tier it can name at birth (tmux a window name or pane title; herdr a tab or pane rename); a new workspace's root tab is named this way because herdr offers no flag to name it at birth; a rename moves no focus and opens nothing |
 | **the workspace group — carrying a grouping a backend has no tier for** | the open contract carries an opaque group id, never parsed, split, or derived from the label; a backend with no workspace tier stores it natively (tmux: a window option it can filter on, surviving a rename); a backend with a real workspace tier ignores it, its tier being the group; no id is invented for a caller that did not ask; the id is not a workspace, so `open` still reports the workspace absent |
 | **text and keys are separate; only submit presses Enter for you** | `send text` types literal characters and presses no Enter (a key-named word is typed, not interpreted; no text → rejected); `send keys` presses named keys in order and types nothing — core keys normalized onto each backend, a non-core token forwarded verbatim to the backend's own semantics (no tokens at all → rejected); `send keys Enter` presses Enter and takes the turn, because the caller wrote it; bare `send` is incomplete input — help to stderr, exit 1, stdout clean (an acknowledged amendment to axi #8, not an application of it); `submit` always presses Enter — with text it types it literally then Enters, with none (or empty text) it bare-Enter flushes without retyping; `open --launch` submits |
 | **multiplexer detection is two-mode** | `$CYBER_MUX` fast-path + override; ancestry walk; hint fallback; `doctor` hint |
