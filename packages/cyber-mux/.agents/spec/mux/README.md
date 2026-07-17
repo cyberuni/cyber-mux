@@ -99,6 +99,15 @@ once opened:
   read; an opaque option carries what a machine reads back. A backend with a real workspace tier
   stores **neither**: its tier is the group, and its tab label is the tab's own name, never composed.
 
+  **The tag lives exactly as long as the space it tags, and that is a property of the backend rather
+  than a promise this seam can make.** On tmux it survives a window rename — the reason it, and not
+  the name, carries the grouping. It does **not** survive a server restart; but a restart destroys
+  every window too, so there is nothing left to group and nothing is lost. The one real exposure is
+  session-restoring tooling (`tmux-resurrect` and kin) that brings windows back **without** their user
+  options: a restored workspace reads as N separate workspaces-of-one. That is a stated limit of an
+  external tool, not a defect here and not something the seam can defend against — a restored window
+  genuinely carries no tag, and reading it as ungrouped is the honest answer.
+
   **A group id is not a workspace, and `open` never reports it as one.** A caller that asks for no
   grouping gets none — a window nobody grouped stays ungrouped and reads back as a group of one — and
   a backend carrying a tag still reports its workspace **absent**, because a tag cyber-mux wrote is its
