@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Exec } from './exec.ts'
-import { TMUX_WORKSPACE_GROUP_OPTION, tmuxSessionAdapter } from './session.tmux.ts'
+import { TMUX_TAB_NAME_OPTION, TMUX_WORKSPACE_GROUP_OPTION, tmuxSessionAdapter } from './session.tmux.ts'
 import type { SessionPlacement, SessionSpaceTier } from './session.ts'
 
 function fakeExec(calls: string[][], responses: Record<string, string | null> = {}): Exec {
@@ -250,6 +250,55 @@ describe('spec:cyber-mux/mux', () => {
 			// The tag is written BEFORE anything the caller launches starts running in the window.
 			const setAt = calls.findIndex((c) => c[0] === 'set-option')
 			expect(setAt).toBe(1)
+		})
+
+		// `open` cannot be the only way in: a caller that did not open the space still has to group it,
+		// and it holds that space's id the moment the open returns. The claim is not merely that the
+		// verb works — it is that the verb and `open`'s option are ONE spelling, so they cannot drift.
+		it('a space already open is grouped by the same verb open uses', () => {
+			const direct: string[][] = []
+			// A window that already exists — nothing opens it here, which is the whole point.
+			tmuxSessionAdapter.group(fakeExec(direct), { id: '@8' }, 'shift-a')
+			// The backend stores the id ON THAT SPACE: `-w` scopes it to the window, targeted by id.
+			expect(direct).toEqual([['set-option', '-w', '-t', '@8', TMUX_WORKSPACE_GROUP_OPTION, 'shift-a']])
+
+			// The SAME command open itself issues to group a space it just created. Compared as argv
+			// rather than asserted twice: two spellings that agree today are exactly what drifts, and a
+			// second `set-option` hand-written inside `open` would pass a per-call check while being free
+			// to diverge on the next edit.
+			const viaOpen: string[][] = []
+			tmuxSessionAdapter.open(fakeExec(viaOpen, { 'new-window': '%4\t@8' }), {
+				cwd: '/quarry',
+				at: 'tab',
+				workspaceGroup: 'shift-a',
+			})
+			expect(viaOpen.filter((c) => c[0] === 'set-option')).toEqual(direct)
+			// And routing costs NO call: tmux has no birth flag for a window option, so grouping was
+			// already a second call after the window exists. An exact count — a verb that grouped by
+			// re-querying and then setting would emit the right set-option and still be wrong.
+			expect(viaOpen).toHaveLength(2)
+		})
+
+		// tmux has ONE name field per space. A caller that composes a display name out of the tab's name
+		// has DESTROYED the original, and splitting it back out is unsound. So the own name is stored
+		// beside the group — the same rule the group id follows, one tier down.
+		it("a backend whose display name is composed stores the space's own name beside the group", () => {
+			const calls: string[][] = []
+			tmuxSessionAdapter.group(fakeExec(calls), { id: '@8' }, 'shift-a', 'editor')
+			// Stored as the space's own name, verbatim.
+			expect(calls).toContainEqual(['set-option', '-w', '-t', '@8', TMUX_TAB_NAME_OPTION, 'editor'])
+			// SEPARATELY from its display name: the display name is tmux's `window_name`, and this write
+			// must not touch it. A verb that stored the own name by renaming the window would satisfy
+			// "stores editor" while destroying the composed name the human reads.
+			expect(calls.some((c) => c[0] === 'rename-window')).toBe(false)
+			expect(calls.flat()).not.toContain('window_name')
+			// Two distinct options, never one: the group and the name are different facts, and a reader
+			// that had to split one value apart would be back to the ambiguous parse this refuses.
+			expect(TMUX_TAB_NAME_OPTION).not.toBe(TMUX_WORKSPACE_GROUP_OPTION)
+			// A user option, like the group — tmux stores it without interpreting it, and it survives the
+			// rename that composed the display name in the first place.
+			expect(TMUX_TAB_NAME_OPTION.startsWith('@')).toBe(true)
+			expect(calls).toHaveLength(2)
 		})
 
 		it('a group id is never invented for a caller that did not ask for one', () => {
@@ -717,6 +766,59 @@ describe('spec:cyber-mux/mux', () => {
 			// A blank line, not '' — '' is falsy and would hit the null-output throw instead of this one.
 			const exec = fakeExec([], { 'list-panes': '\n' })
 			expect(() => describeRegion(exec, { id: '%0' })).toThrow(/reported no panes/)
+		})
+
+		/**
+		 * The workspace-wide read. tmux has NO workspace tier, so a workspace is not a fact it holds —
+		 * what it holds is the grouping TAG the walk wrote into a window user option. The read is
+		 * therefore literally "which windows carry this group id", filtered server-side on the tag.
+		 */
+		const describeWorkspace = tmuxSessionAdapter.describeWorkspace
+		if (!describeWorkspace) throw new Error('the tmux adapter must implement describeWorkspace')
+
+		it('describeWorkspace() reads the caller’s window and its tag in one call, then the tagged windows', () => {
+			const calls: string[][] = []
+			// Each window DISPLAYS the composed `pool - <tab>` and carries its own name in @cm_tab beside
+			// the tag — exactly what the walk stored, because composing the display name destroyed the
+			// original.
+			const exec = fakeExec(calls, {
+				'display-message': '@1\tws-7\teditor\tpool - editor',
+				'list-windows': ['@1\teditor\tpool - editor', '@2\tlogs\tpool - logs'].join('\n'),
+				'list-panes': REGION_OUT,
+			})
+			const tabs = describeWorkspace(exec, { id: '%0' })
+			expect(calls[0]).toEqual([
+				'display-message',
+				'-p',
+				'-t',
+				'%0',
+				`#{window_id}\t#{${TMUX_WORKSPACE_GROUP_OPTION}}\t#{${TMUX_TAB_NAME_OPTION}}\t#{window_name}`,
+			])
+			// Keyed on the TAG, filtered server-side. `list-windows -a` spans sessions, so a name match
+			// would over-collect a same-named window belonging to somebody else's session entirely.
+			expect(calls[1]).toEqual([
+				'list-windows',
+				'-a',
+				'-F',
+				`#{window_id}\t#{${TMUX_TAB_NAME_OPTION}}\t#{window_name}`,
+				'-f',
+				`#{==:#{${TMUX_WORKSPACE_GROUP_OPTION}},ws-7}`,
+			])
+			// One region read per tagged window — by WINDOW id, since a workspace's other tabs have no
+			// pane the caller named.
+			expect(calls.slice(2).map((c) => [c[0], c[1], c[2]])).toEqual([
+				['list-panes', '-t', '@1'],
+				['list-panes', '-t', '@2'],
+			])
+			// The tab's OWN name, from the option — never the composed display name the window shows.
+			expect(tabs.map((t) => ({ id: t.id, label: t.label, panes: t.panes.length }))).toEqual([
+				{ id: '@1', label: 'editor', panes: 3 },
+				{ id: '@2', label: 'logs', panes: 3 },
+			])
+		})
+
+		it('describeWorkspace() throws when tmux cannot resolve the caller’s window', () => {
+			expect(() => describeWorkspace(() => null, { id: '%0' })).toThrow(/could not resolve the workspace/)
 		})
 	})
 })

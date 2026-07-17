@@ -10,7 +10,7 @@ import {
 	resolveTree,
 	type TabNode,
 } from './layout.ts'
-import type { SessionAdapter, SessionPlacement, SessionTarget } from './session.ts'
+import type { OpenedPane, SessionAdapter, SessionPlacement, SessionTarget } from './session.ts'
 
 /**
  * Layouts × sessions — the walk, and the only module that knows both halves. `layout.ts` stays pure
@@ -270,7 +270,13 @@ function workspaceLabelOf(template: LayoutTemplate, label: string | undefined): 
 
 /** The first tab's region, however the route in question came by it. */
 interface FirstTab {
-	root: SessionTarget
+	/**
+	 * An `OpenedPane`, not a bare handle: the walk groups this tab like every other, and grouping
+	 * addresses the TAB. Both routes already hold it — `open --layout` from the open it just ran,
+	 * `worktree add --layout` from the one the worktree verbs ran — so requiring it here takes nothing
+	 * from either and is what lets the first tab be grouped rather than left out.
+	 */
+	root: OpenedPane
 	rootDir: string
 	rootEnvHonored: boolean
 }
@@ -295,19 +301,35 @@ function walkTabs(
 	tabs: TabNode[],
 	trees: LayoutNode[],
 	workspaceLabel: string,
-	group: string | undefined,
+	group: string,
 	firstTab: () => FirstTab,
 ): LayoutManifest {
 	const built: TabState[] = []
 	try {
 		trees.forEach((tree, index) => {
+			let opened: OpenedPane
 			if (index === 0) {
 				const first = firstTab()
+				opened = first.root
 				built.push(tabState(tree, 0, first.root, first.rootDir, first.rootEnvHonored))
+				// The one tab no backend can name at birth, named HERE — in the walk both routes share —
+				// rather than in either route's own `firstTab`. The scenarios this serves say "when it is
+				// applied", naming no route, so a route that could forget this is a scenario that is
+				// silently false on it. Only the shared path makes forgetting impossible.
+				//
+				// Runs AFTER `firstTab()` because that is what settles the tier signal: `open --layout`
+				// learns it from the open it just ran, and `tabLabelFor` reads it to decide whether the
+				// workspace is carried into the name.
+				//
+				// `opened.tab`, NEVER `opened.id`: the pane id would be green on tmux (which resolves a
+				// pane in a window target) and silently broken on herdr (`tab_not_found`, discarded),
+				// leaving the root tab named `1` with nothing raised.
+				const name = tabLabelFor(ctx, tabs[0]!, workspaceLabel)
+				if (name !== undefined) ctx.adapter.rename(ctx.exec, { id: opened.tab }, 'tab', name)
 			} else {
 				const rootLeaf = firstPane(tree)
 				const rootDir = resolveDir(ctx.cwd, rootLeaf.dir)
-				const opened = ctx.adapter.open(ctx.exec, {
+				opened = ctx.adapter.open(ctx.exec, {
 					cwd: rootDir,
 					// A real tab in the workspace the first tab established — never a `pane:*` placement,
 					// which would make this tab a split of the tab before it.
@@ -315,11 +337,22 @@ function walkTabs(
 					// Named at BIRTH: every tab but a new workspace's root can be, on both backends.
 					label: tabLabelFor(ctx, tabs[index]!, workspaceLabel),
 					env: rootLeaf.env,
-					workspaceGroup: group,
 				})
 				// `open` sets env natively at every tier on both backends, so no tab ever needs the prefix.
 				built.push(tabState(tree, index, opened, rootDir, true))
 			}
+			// EVERY tab, the first one included, and through the verb rather than `open`'s option — which
+			// is the whole reason grouping is a verb. The first tab's region may have been opened before
+			// this walk ever ran (`worktree add --layout`), so an option on `open` could only ever have
+			// covered tabs 2..N, and a group missing the workspace's own first tab is worse than no
+			// group: `save --workspace` would confidently round-trip a 3-tab workspace as 2. Grouping
+			// here means the route that opened the region cannot change what the template means.
+			//
+			// The tab's OWN name, never `tabLabelFor`'s composed display name: where the backend has no
+			// workspace tier the display name is `<workspace> - <tab>`, so the backend's single name
+			// field no longer holds the original. Handing the composed one here would re-prefix it on
+			// every round trip. `undefined` when the tab left its name to the backend — nothing to store.
+			ctx.adapter.group(ctx.exec, { id: opened.tab }, group, tabs[index]!.label)
 			// Against THIS tab's own root pane — the id threaded through every split of this tree.
 			buildGeometry(built[index]!, ctx)
 		})
@@ -374,21 +407,13 @@ function openTabsLayout(
 			label: workspaceLabel,
 			env: rootLeaf.env,
 			from: opts.from,
-			workspaceGroup: group,
 		})
 		// The tier signal, read from what the backend ACTUALLY reported rather than from its name: a
 		// workspace on the open means this backend has a tier to have landed in; absent means it has
-		// none (tmux). Set BEFORE the rename below, which turns on exactly this.
+		// none (tmux). Set here because only this route can learn it — the worktree route is TOLD its
+		// workspace by the caller that opened the region. Either way it is settled before `walkTabs`
+		// names this tab, which is what turns on exactly this.
 		ctx.workspace = opened.workspace ?? null
-		// The one tab no backend can name at birth. herdr labels a new workspace's root tab `1` with no
-		// flag for it, and on tmux the `label` above went to the window as a whole — so both need the
-		// name set after the fact, and `rename` is the seam's route for exactly this case.
-		//
-		// `opened.tab`, NEVER `opened.id`: the pane id would be green on tmux (which resolves a pane in
-		// a window target) and silently broken on herdr (`tab_not_found`, discarded), leaving the root
-		// tab named `1` with nothing raised.
-		const name = tabLabelFor(ctx, tabs[0]!, workspaceLabel)
-		if (name !== undefined) adapter.rename(exec, { id: opened.tab }, 'tab', name)
 		return { root: opened, rootDir, rootEnvHonored: true }
 	})
 }
@@ -431,8 +456,15 @@ export function layoutRootPane(template: LayoutTemplate): PaneNode {
 }
 
 export interface ApplyLayoutOptions {
-	/** An ALREADY-OPEN blank region whose pane is the tree's root — e.g. a worktree's workspace. */
-	root: SessionTarget
+	/**
+	 * An ALREADY-OPEN blank region whose pane is the tree's root — e.g. a worktree's workspace.
+	 *
+	 * An `OpenedPane` rather than a bare handle, because a tabs template groups this region's tab like
+	 * every other tab it builds, and grouping addresses the tab. The caller that opened the region
+	 * already holds it — every backend reports the tab an open landed in — so requiring it costs
+	 * nothing and is what keeps the workspace's own first tab inside the group.
+	 */
+	root: OpenedPane
 	cwd: string
 	/** The backend workspace the region lives in, when the backend binds one; `null` on tmux. */
 	workspace: string | null
@@ -528,13 +560,11 @@ function applyTabsToRegion(
 		)
 	}
 
-	// Deliberately UNGROUPED, and this is the one honest answer available: the first tab's region was
-	// opened before this walk ran, and the seam only carries a group id AT an open — so a tag here
-	// could only cover tabs 2..N, and a group that silently omits the workspace's own first tab is
-	// worse than no group. `save --workspace` then reads each window as the workspace of one it can
-	// actually see, which is the frozen answer for a window nobody grouped. Grouping this route needs
-	// the worktree open itself to carry the id; see the report accompanying this CR.
-	return walkTabs(ctx, tabs, trees, workspaceLabelOf(template, opts.label), undefined, () => ({
+	// Grouped exactly as `open --layout` is, and by the same walk: the route that opened the region
+	// cannot change what the template means. Nothing has to be threaded through the worktree verbs to
+	// make this work — `opts.root` is the region they opened, and it carries its own tab, which is all
+	// grouping an already-open space needs.
+	return walkTabs(ctx, tabs, trees, workspaceLabelOf(template, opts.label), randomUUID(), () => ({
 		// The region that already exists. Where it actually is, not where the template asked for.
 		root: opts.root,
 		rootDir: opts.cwd,

@@ -1,5 +1,5 @@
 import type { Exec } from './exec.ts'
-import type { SessionAdapter, SessionPlacement, SessionTarget } from './session.ts'
+import type { OpenedPane, SessionAdapter, SessionPlacement, SessionTarget } from './session.ts'
 import {
 	gitWorktreeAdapter,
 	listWorktreesFromGit,
@@ -18,7 +18,13 @@ import {
 /** A worktree that has been opened somewhere — the product of every routing decision below. */
 export interface OpenedWorktree {
 	worktree: Worktree
-	target: SessionTarget
+	/**
+	 * The opened root pane, and the tab it sits in. Both routes report the tab — the binding route from
+	 * the backend's own worktree envelope, the plain-git fallback from `open` — so a caller handed this
+	 * region can address its tab (to group it, to name it) without reaching for the pane id, which
+	 * resolves on tmux and is refused by herdr.
+	 */
+	target: OpenedPane
 	/** The workspace bound to the worktree; absent when it opened ungrouped. */
 	workspace?: string
 	/**

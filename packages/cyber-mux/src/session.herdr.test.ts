@@ -390,6 +390,24 @@ describe('spec:cyber-mux/mux', () => {
 			expect(grouped[0]).toEqual(['tab', 'create', '--cwd', '/quarry', '--label', 'oak - ridge - mill', '--no-focus'])
 		})
 
+		// The same answer the ignored `workspaceGroup` gives, now at the verb: herdr's tier IS the group
+		// (every pane and tab record already carries its `workspace_id`), and its tab label IS the tab's
+		// own name — its UI groups by the real workspace label, so the walk composes nothing to prefix.
+		// Both are facts the backend already holds, so storing either would duplicate what it never
+		// reads.
+		it('a backend with a real workspace tier stores neither', () => {
+			const calls: string[][] = []
+			// Both a group id AND an own name are offered; neither may reach herdr.
+			herdrSessionAdapter.group(fakeExec(calls), { id: 'w3:t1' }, 'shift-a', 'editor')
+			// No grouping flag and no name flag — asserted as NO CALL AT ALL, which is stronger and is
+			// the honest claim: there is no herdr command for this, so any argv would be invented. A
+			// weaker "does not contain shift-a" check would pass an adapter that renamed the tab to
+			// `editor`, silently overwriting a label the caller never asked to change.
+			expect(calls).toEqual([])
+			expect(calls.flat().join(' ')).not.toContain('shift-a')
+			expect(calls.flat().join(' ')).not.toContain('editor')
+		})
+
 		// `WorkspaceCreateParams` and `TabCreateParams` both carry a native `env` Record in herdr's
 		// socket schema (protocol 16), and the CLI takes the same repeatable `--env` there as `pane
 		// split` does — verified against 0.7.4. Env is therefore native at EVERY tier, which a layout's
@@ -528,7 +546,11 @@ describe('spec:cyber-mux/mux', () => {
 				path: '/repo.worktrees/mux-abc123',
 				launch: 'claude',
 			})
-			expect(result.target).toEqual({ id: 'w9:p1' })
+			// The root pane AND its root tab — read from the same `root_pane` record `workspace create`
+			// reports both in, so this route hides no fact it already held. The tab is what lets a caller
+			// handed this workspace address its region's tab (group it, name it) without reaching for the
+			// pane id, which herdr refuses outright.
+			expect(result.target).toEqual({ id: 'w9:p1', tab: 'w9:t1' })
 			expect(result.worktree).toEqual({ root: '/repo.worktrees/mux-abc123', branch: 'cyber-mux/unit-abc123' })
 			// The workspace id IS the binding — the whole reason to route through herdr rather than git.
 			expect(result.workspace).toBe('w9')
@@ -1047,6 +1069,73 @@ describe('spec:cyber-mux/mux', () => {
 				{ height: 13, width: 121, x: 36, y: 33 },
 				{ height: 45, width: 80, x: 157, y: 1 },
 			])
+		})
+
+		/**
+		 * The workspace-wide read. herdr HAS a workspace tier, so every fact here is one the backend
+		 * already holds: the caller's pane names its workspace, `tab list` enumerates it, and `pane list`
+		 * stamps every pane with its tab. No grouping tag is read and none is written — the tier IS the
+		 * group, which is why `open` ignores `workspaceGroup` on this backend.
+		 */
+		const WS_TABS_OUT = JSON.stringify({
+			result: {
+				tabs: [
+					{ tab_id: 'w3V:t1', workspace_id: 'w3V', number: 1, label: 'editor', focused: true, pane_count: 1 },
+					{ tab_id: 'w3V:t2', workspace_id: 'w3V', number: 2, label: 'logs', focused: false, pane_count: 1 },
+				],
+			},
+		})
+		const WS_PANES_OUT = JSON.stringify({
+			result: {
+				panes: [
+					{ pane_id: 'w3V:p1', tab_id: 'w3V:t1', cwd: '/repo', label: 'editor' },
+					{ pane_id: 'w3V:p9', tab_id: 'w3V:t2', cwd: '/repo/logs' },
+				],
+			},
+		})
+		const WS_PANE_GET = JSON.stringify({
+			result: { pane: { pane_id: 'w3V:p1', tab_id: 'w3V:t1', workspace_id: 'w3V' } },
+		})
+		const ONE_PANE_LAYOUT = JSON.stringify({
+			result: { layout: { panes: [{ pane_id: 'w3V:p9', rect: { x: 0, y: 0, width: 200, height: 50 } }] } },
+		})
+
+		const describeWorkspace = herdrSessionAdapter.describeWorkspace
+		if (!describeWorkspace) throw new Error('the herdr adapter must implement describeWorkspace')
+
+		it('describeWorkspace() resolves the caller’s workspace, enumerates its tabs, and reads each tab’s geometry', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, {
+				'pane get': WS_PANE_GET,
+				'tab list': WS_TABS_OUT,
+				'pane list': WS_PANES_OUT,
+				'pane layout': ONE_PANE_LAYOUT,
+			})
+			const tabs = describeWorkspace(exec, { id: 'w3V:p1' })
+			expect(calls).toEqual([
+				// The workspace the caller sits in — the tier herdr really has, read off the pane record.
+				['pane', 'get', 'w3V:p1'],
+				['tab', 'list', '--workspace', 'w3V'],
+				// Scoped to the workspace, so another workspace's panes never reach a capture — and ONE call
+				// for every tab, since each pane arrives stamped with the tab it sits in.
+				['pane', 'list', '--workspace', 'w3V'],
+				// Geometry is per-PANE, never per-tab: `herdr layout` takes a tab_id but is socket-API-only
+				// in 0.7.4, so each tab's rects come through any one pane that sits in it. Race-free — an
+				// unfocused tab reports live geometry, so nothing is focused first.
+				['pane', 'layout', '--pane', 'w3V:p1'],
+				['pane', 'layout', '--pane', 'w3V:p9'],
+			])
+			expect(tabs.map((t) => t.id)).toEqual(['w3V:t1', 'w3V:t2'])
+			expect(tabs.map((t) => t.label)).toEqual(['editor', 'logs'])
+		})
+
+		it('describeWorkspace() throws when herdr cannot resolve the pane, rather than guessing a workspace', () => {
+			expect(() => describeWorkspace(() => null, { id: 'gone' })).toThrow(/could not resolve the workspace/)
+		})
+
+		it('describeWorkspace() throws when the workspace reports no tabs', () => {
+			const exec = fakeExec([], { 'pane get': WS_PANE_GET, 'tab list': JSON.stringify({ result: { tabs: [] } }) })
+			expect(() => describeWorkspace(exec, { id: 'w3V:p1' })).toThrow(/reported no tabs/)
 		})
 	})
 })

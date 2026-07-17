@@ -2,8 +2,11 @@ import type { Command } from 'commander'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildProgram } from './cli.ts'
 import type { Exec } from './exec.ts'
+import { collectPanes, type LayoutTemplate, resolveTree } from './layout.ts'
+import { captureWorkspaceLayout } from './layout-capture.ts'
 import type { LayoutStore } from './layout-store.ts'
 import { tmuxSessionAdapter } from './session.tmux.ts'
+import type { PaneRect } from './session.ts'
 
 /** No ancestry available — forces every probe onto the env fast-path/hint, deterministic in CI. */
 const noAncestry: Exec = () => null
@@ -1155,6 +1158,82 @@ describe('spec:cyber-mux/layout', () => {
 		],
 	}
 
+	/** Three tabs — enough that a group which omits the first round-trips as a visibly wrong COUNT. */
+	const POOL_TABS_3 = {
+		name: 'pool',
+		tabs: [
+			{ label: 'editor', panes: [{ label: 'edit' }] },
+			{ label: 'logs', panes: [{ label: 'tail' }] },
+			{ label: 'shell', panes: [{ label: 'sh' }] },
+		],
+	}
+
+	/**
+	 * tmux with REAL window state — names, user options, and which window each pane sits in.
+	 *
+	 * Stateful on purpose: this scenario's second claim is that the workspace CAPTURES BACK, and a
+	 * capture fed hand-written fixtures would assert what the fixture author already believed. Here
+	 * the read side sees only what the walk actually wrote, so a tab the walk failed to tag is a tab
+	 * the capture genuinely cannot find.
+	 */
+	function tmuxState() {
+		const calls: string[][] = []
+		const windows = new Map<string, { name: string; opts: Record<string, string> }>()
+		const paneWindow = new Map<string, string>()
+		let n = 0
+		const exec: Exec = (cmd, args) => {
+			calls.push([cmd, ...args])
+			if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
+			const [verb] = args
+			if (verb === 'new-window') {
+				const id = `@${n}`
+				const pane = `%${n++}`
+				const named = args.indexOf('-n')
+				windows.set(id, { name: named === -1 ? 'zsh' : args[named + 1]!, opts: {} })
+				paneWindow.set(pane, id)
+				return `${pane}\t${id}`
+			}
+			if (verb === 'split-window') {
+				// A split opens no window of its own — it lands in the window its target pane sits in.
+				const at = args.indexOf('-t')
+				const host = paneWindow.get(args[at + 1]!)!
+				const pane = `%${n++}`
+				paneWindow.set(pane, host)
+				return `${pane}\t${host}`
+			}
+			if (verb === 'set-option') {
+				windows.get(args[3]!)!.opts[args[4]!] = args[5]!
+				return ''
+			}
+			if (verb === 'rename-window') {
+				windows.get(args[2]!)!.name = args[3]!
+				return ''
+			}
+			if (verb === 'display-message') {
+				const id = paneWindow.get(args[3]!)!
+				const w = windows.get(id)!
+				return [id, w.opts['@cm_ws'] ?? '', w.opts['@cm_tab'] ?? '', w.name].join('\t')
+			}
+			if (verb === 'list-windows') {
+				// `-f '#{==:#{@cm_ws},<group>}'` — the server-side filter, modeled as the filter it is.
+				const group = args[args.indexOf('-f') + 1]!.replace(/^#\{==:#\{@cm_ws\},/, '').replace(/\}$/, '')
+				return [...windows]
+					.filter(([, w]) => w.opts['@cm_ws'] === group)
+					.map(([id, w]) => [id, w.opts['@cm_tab'] ?? '', w.name].join('\t'))
+					.join('\n')
+			}
+			if (verb === 'list-panes') {
+				const id = args[2]!
+				return [...paneWindow]
+					.filter(([, w]) => w === id)
+					.map(([p]) => `${p}\t0\t0\t200\t50\t/repo.worktrees/feat-x\tzeta\tzeta`)
+					.join('\n')
+			}
+			return ''
+		}
+		return { exec, calls, windows }
+	}
+
 	/** The same, with a SPLIT in the first tab — so "built into the region" is observable in the argv. */
 	const POOL_TABS_SPLIT = {
 		name: 'pool',
@@ -1280,6 +1359,46 @@ describe('spec:cyber-mux/layout', () => {
 			expect(opens[1]?.slice(1, 3)).toEqual(['tab', 'create'])
 			// Nothing is ever split: a tab is not a split of another tab's pane.
 			expect(calls.some((c) => c[1] === 'pane' && c[2] === 'split')).toBe(false)
+		})
+
+		// The route that opened the region cannot change what the template means. `worktree add --layout`
+		// has its region opened by the worktree verbs BEFORE the walk runs, so an option on `open` could
+		// only ever have covered tabs 2..N — and a group missing the workspace's own first tab is worse
+		// than no group, because the capture would confidently round-trip a 3-tab workspace as 2.
+		it('a tabs template groups the same way whichever verb opened the workspace', async () => {
+			const { exec, calls, windows } = tmuxState()
+			const store = fakeStore({ [repo('pool')]: POOL_TABS_3 })
+			// tmux: no worktree capability, so this route is plain git plus an `open` at the workspace
+			// placement — the region exists before the walk ever sees it.
+			const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'tmux' }, exec, store })
+			await withArgv(['worktree', 'add', '--format', 'json'], () =>
+				run(program, ['worktree', 'add', '--branch', 'feat-x', '--layout', 'pool', '--format', 'json']),
+			)
+
+			// Three tabs, three windows, and EVERY one of them carries a group — the first included.
+			const tagged = [...windows.values()].map((w) => w.opts['@cm_ws'])
+			expect(tagged).toHaveLength(3)
+			expect(tagged.every(Boolean)).toBe(true)
+			// The SAME group, not three groups that each happen to exist: a per-tab id would tag every
+			// window and still split the workspace into three workspaces of one.
+			expect(new Set(tagged).size).toBe(1)
+			// The first tab is tagged by the same verb as the rest — one `set-option @cm_ws` per window,
+			// nothing threaded through the worktree verbs to make it happen.
+			expect(calls.filter((c) => c[1] === 'set-option' && c[5] === '@cm_ws')).toHaveLength(3)
+
+			// And the workspace CAPTURES BACK with every tab it was built with. This is the claim the
+			// bug broke: with the first tab left ungrouped, its window reads as an untagged workspace of
+			// ONE and a 3-tab workspace round-trips as 1.
+			// Captured from the region's own root pane — the pane the worktree open returned, exactly what
+			// a caller sitting in that workspace would run `layout save --workspace` from.
+			const tabs = tmuxSessionAdapter.describeWorkspace!(exec, { id: '%0' })
+			expect(tabs).toHaveLength(3)
+			// Each tab's OWN name comes back, in template order — every tab it was built with.
+			expect(captureWorkspaceLayout(tabs, { name: 'captured' }).template.tabs?.map((t) => t.label)).toEqual([
+				'editor',
+				'logs',
+				'shell',
+			])
 		})
 
 		it("worktree add --layout builds a tabs template into the worktree's own workspace", async () => {
@@ -1558,6 +1677,251 @@ describe('spec:cyber-mux/layout', () => {
 			// Names the backend, so the reader knows WHICH mux cannot do this rather than that save broke.
 			expect(stderr.join('')).toContain('tmux')
 			// Refuses rather than degrading: there is no half-geometry to fall back to.
+			expect(store.writes).toEqual({})
+		})
+	})
+
+	describe('capturing a whole workspace', () => {
+		/**
+		 * herdr, and herdr DELIBERATELY rather than tmux: every claim below turns on the workspace tier
+		 * being real — "every tab of the caller's WORKSPACE", "the label its TAB carries" — and tmux
+		 * collapses workspace and tab onto the same Window. A tmux binding would pass without ever
+		 * exercising the distinction, which is a false green rather than a weaker one. The two scenarios
+		 * that are ABOUT a backend with no workspace tier are bound on tmux below, where they belong.
+		 *
+		 * A live workspace `w1` of three tabs, shaped so each tab's tree is distinguishable from the
+		 * others': a right split, a lone pane, and a down split. A capture that reused one tab's tree for
+		 * every tab could not pass this fixture.
+		 */
+		const TABS_3 = [
+			{ tab_id: 'w1:t1', label: 'editor' },
+			{ tab_id: 'w1:t2', label: 'logs' },
+			{ tab_id: 'w1:t3', label: 'shell' },
+		]
+		const PANES_3 = [
+			{ pane_id: 'w1:p1', tab_id: 'w1:t1', cwd: '/repo', label: 'edit' },
+			{ pane_id: 'w1:p2', tab_id: 'w1:t1', cwd: '/repo/api', label: 'api' },
+			{ pane_id: 'w1:p3', tab_id: 'w1:t2', cwd: '/repo/logs' },
+			{ pane_id: 'w1:p4', tab_id: 'w1:t3', cwd: '/repo' },
+			{ pane_id: 'w1:p5', tab_id: 'w1:t3', cwd: '/repo' },
+		]
+		/** Rects as herdr reports them: screen-absolute, and no divider between panes. */
+		const LAYOUT_OF: Record<string, Array<{ pane_id: string; rect: PaneRect }>> = {
+			'w1:t1': [
+				{ pane_id: 'w1:p1', rect: { x: 0, y: 0, width: 120, height: 50 } },
+				{ pane_id: 'w1:p2', rect: { x: 120, y: 0, width: 80, height: 50 } },
+			],
+			'w1:t2': [{ pane_id: 'w1:p3', rect: { x: 0, y: 0, width: 200, height: 50 } }],
+			'w1:t3': [
+				{ pane_id: 'w1:p4', rect: { x: 0, y: 0, width: 200, height: 30 } },
+				{ pane_id: 'w1:p5', rect: { x: 0, y: 30, width: 200, height: 20 } },
+			],
+		}
+
+		/** The two-tab cut of the same workspace, for the claims that are about two named tabs. */
+		const TABS_2 = TABS_3.slice(0, 2)
+		const PANES_2 = PANES_3.filter((p) => p.tab_id !== 'w1:t3')
+
+		type HerdrTab = { tab_id: string; label?: string }
+		type HerdrPane = { pane_id: string; tab_id: string; cwd?: string; label?: string }
+
+		/** git, plus a herdr that answers the four verbs a workspace read walks. */
+		function herdrWorkspaceExec(calls: string[][], workspace: { tabs: HerdrTab[]; panes: HerdrPane[] }): Exec {
+			return (cmd, args) => {
+				calls.push([cmd, ...args])
+				if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
+				const verb = args.slice(0, 2).join(' ')
+				if (verb === 'pane get') {
+					const pane = workspace.panes.find((p) => p.pane_id === args[2])
+					return JSON.stringify({ result: { pane: { ...pane, workspace_id: 'w1' } } })
+				}
+				if (verb === 'tab list') return JSON.stringify({ result: { tabs: workspace.tabs } })
+				if (verb === 'pane list') return JSON.stringify({ result: { panes: workspace.panes } })
+				if (verb === 'pane layout') {
+					// Geometry is per-PANE on herdr, so the answer is the region the named pane sits in.
+					const tab = workspace.panes.find((p) => p.pane_id === args[3])?.tab_id
+					return JSON.stringify({ result: { layout: { panes: tab ? LAYOUT_OF[tab] : [] } } })
+				}
+				return ''
+			}
+		}
+
+		const WS_3 = { tabs: TABS_3, panes: PANES_3 }
+		const WS_2 = { tabs: TABS_2, panes: PANES_2 }
+		/** In herdr's workspace w1, in tab t1 — the caller of every test below. */
+		const HERDR_ENV = { ...XDG, CYBER_MUX: 'herdr', CYBER_MUX_PANE: 'w1:p1' }
+
+		/** The tree each tab of the fixture must capture back as — its own, not its neighbour's. */
+		const TAB_1_TREE = {
+			type: 'split',
+			direction: 'right',
+			ratio: 0.6,
+			first: { type: 'pane', label: 'edit' },
+			second: { type: 'pane', label: 'api', dir: 'api' },
+		}
+		const TAB_2_TREE = { type: 'pane', dir: 'logs' }
+		const TAB_3_TREE = {
+			type: 'split',
+			direction: 'down',
+			ratio: 0.6,
+			first: { type: 'pane' },
+			second: { type: 'pane' },
+		}
+
+		it("save --workspace captures every tab of the caller's workspace", async () => {
+			const store = fakeStore({})
+			const program = buildProgram({ env: HERDR_ENV, exec: herdrWorkspaceExec([], WS_3), store })
+			await run(program, ['layout', 'save', 'pool', '--workspace'])
+			const written = JSON.parse(store.writes[repo('pool')]!)
+			// The two-level form, not the one-level one — a workspace is tabs of panes.
+			expect(written.tabs).toHaveLength(3)
+			expect(written.root).toBeUndefined()
+			// One tab per LIVE tab, EACH WITH THAT TAB'S OWN TREE. Asserted per tab rather than by count:
+			// a capture that read the caller's region three times would have the right number of tabs and
+			// the wrong contents, which is the failure worth catching.
+			expect(written.tabs.map((t: { root: unknown }) => t.root)).toEqual([TAB_1_TREE, TAB_2_TREE, TAB_3_TREE])
+		})
+
+		it("save without --workspace captures only the caller's own region", async () => {
+			const store = fakeStore({})
+			const program = buildProgram({ env: HERDR_ENV, exec: herdrWorkspaceExec([], WS_3), store })
+			await run(program, ['layout', 'save', 'pool'])
+			const written = JSON.parse(store.writes[repo('pool')]!)
+			// The default subject is UNCHANGED — the caller sits in t1, and t1 is all that is captured.
+			// Widening it silently would rewrite what `save` has always meant for every existing caller.
+			expect(written.root).toEqual(TAB_1_TREE)
+			expect(written.tabs).toBeUndefined()
+		})
+
+		it('a bare save in a multi-tab workspace says what it left out', async () => {
+			const stderr = captureStderr()
+			const store = fakeStore({})
+			const program = buildProgram({ env: HERDR_ENV, exec: herdrWorkspaceExec([], WS_3), store })
+			await run(program, ['layout', 'save', 'pool'])
+			// The note names the scope it did NOT take, so a caller cannot believe a 3-tab workspace
+			// round-trips from the 1-tab template they just saved.
+			expect(stderr.join('')).toContain('3 tabs')
+			expect(stderr.join('')).toContain('--workspace')
+			// On stderr, never stdout: the path stays stdout's whole content so `$(...)` still composes.
+			expect(logs).toEqual([repo('pool')])
+		})
+
+		it('a captured tab keeps the label its tab carries', async () => {
+			const store = fakeStore({})
+			const program = buildProgram({ env: HERDR_ENV, exec: herdrWorkspaceExec([], WS_2), store })
+			await run(program, ['layout', 'save', 'pool', '--workspace'])
+			const written = JSON.parse(store.writes[repo('pool')]!)
+			// The TAB's labels, not its panes' — the panes are labeled `edit`/`api`, so a capture reaching
+			// for the wrong level cannot pass by coincidence.
+			expect(written.tabs.map((t: { label?: string }) => t.label)).toEqual(['editor', 'logs'])
+		})
+
+		// The inverse property, on the backend that actually composes: tmux has ONE name field, so the
+		// walk's `pool - editor` DESTROYED `editor`. Capture must read the own name back from where the
+		// walk stored it — never by splitting the display name (unsound: the separator is ambiguous) and
+		// never by taking it verbatim (which re-prefixes on every round trip).
+		it("a captured tab's label is the tab's own name, never the composed one", async () => {
+			const { exec, windows } = tmuxState()
+			const store = fakeStore({ [repo('pool')]: POOL_TABS })
+			const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'tmux' }, exec, store })
+			// A workspace labeled pool, applied on tmux — so its tab DISPLAYS as "pool - editor".
+			await run(program, ['open', '--layout', 'pool'])
+			const displayed = [...windows.values()].map((w) => w.name)
+			expect(displayed).toEqual(['pool - editor', 'pool - logs'])
+
+			// Captured with --workspace, from a pane in that workspace.
+			const captured = buildProgram({ env: { ...XDG, CYBER_MUX: 'tmux', CYBER_MUX_PANE: '%0' }, exec, store })
+			await run(captured, ['layout', 'save', 'pool-copy', '--workspace'])
+			const written: LayoutTemplate = JSON.parse(store.writes[repo('pool-copy')]!)
+			// The captured tab is labeled `editor` — the tab's OWN name. Not "pool - editor", which is
+			// what reading the window name verbatim would give.
+			expect(written.tabs?.map((t) => t.label)).toEqual(['editor', 'logs'])
+
+			// And re-applying the capture displays "pool - editor" AGAIN rather than compounding the
+			// prefix. This is the assertion that matters: a capture that took the display name verbatim
+			// would still round-trip a label, and would name this window "pool - pool - editor".
+			const { exec: exec2, windows: windows2 } = tmuxState()
+			const replay = buildProgram({ env: { ...XDG, CYBER_MUX: 'tmux' }, exec: exec2, store })
+			await run(replay, ['open', '--layout', 'pool-copy', '--label', 'pool'])
+			expect([...windows2.values()].map((w) => w.name)).toEqual(['pool - editor', 'pool - logs'])
+			// Said outright, because the compounding is the whole failure mode.
+			expect([...windows2.values()].some((w) => w.name.includes('pool - pool'))).toBe(false)
+		})
+
+		it('a captured workspace is still a draft carrying no command', async () => {
+			const store = fakeStore({})
+			const program = buildProgram({ env: HERDR_ENV, exec: herdrWorkspaceExec([], WS_2), store })
+			await run(program, ['layout', 'save', 'pool', '--workspace'])
+			const written: LayoutTemplate = JSON.parse(store.writes[repo('pool')]!)
+			// EVERY pane of EVERY tab — adding a level does not add a fact no multiplexer reports.
+			const panes = (written.tabs ?? []).flatMap((tab) => collectPanes(resolveTree(tab)))
+			expect(panes).not.toHaveLength(0)
+			for (const pane of panes) expect(pane.command).toBeUndefined()
+			// And the file says so ITSELF: `layout list` shows this beside finished templates, so a note
+			// that only reached the terminal that ran `save` would be gone by the time anyone read it.
+			expect(written.description).toMatch(/geometry only/)
+			expect(written.description).toMatch(/command/)
+		})
+
+		/**
+		 * tmux, and tmux DELIBERATELY: this scenario is ABOUT a backend with no workspace tier. A window
+		 * carrying no grouping tag is a workspace of one — the honest answer for a window nobody grouped.
+		 */
+		function untaggedTmuxExec(calls: string[][]): Exec {
+			return (cmd, args) => {
+				calls.push([cmd, ...args])
+				if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
+				// The tag field comes back EMPTY — tmux prints an unset user option as nothing at all.
+				if (args[0] === 'display-message') return '@1\t\tzsh'
+				if (args[0] === 'list-panes') {
+					return ['%0\t0\t0\t119\t50\t/repo\tzeta\tzeta', '%1\t120\t0\t80\t50\t/repo/api\tzeta\tzeta'].join('\n')
+				}
+				return ''
+			}
+		}
+
+		it('on a backend with no workspace tier, an untagged region captures as a single-tab workspace', async () => {
+			const calls: string[][] = []
+			const store = fakeStore({})
+			const program = buildProgram({
+				env: { ...XDG, CYBER_MUX: 'tmux', CYBER_MUX_PANE: '%0' },
+				exec: untaggedTmuxExec(calls),
+				store,
+			})
+			await run(program, ['layout', 'save', 'pool', '--workspace'])
+			const written = JSON.parse(store.writes[repo('pool')]!)
+			// Exactly one tab — not a refusal, and not an empty template. The caller's own window IS the
+			// workspace, and it carries the region the caller is in.
+			expect(written.tabs).toHaveLength(1)
+			expect(written.tabs[0].root.type).toBe('split')
+			// No window is grouped, so there is no group to enumerate — asked for, `list-windows` could
+			// only over-collect every window on the server.
+			expect(calls.some((c) => c[1] === 'list-windows')).toBe(false)
+		})
+
+		it("a backend that cannot enumerate a workspace's tabs refuses save --workspace cleanly", async () => {
+			// describeWorkspace is OPTIONAL on the seam, exactly as describeRegion is. Both real backends
+			// implement it, so the only way to reach this branch is to take it away: stand in for a backend
+			// that never had it. Restored in `finally` — the adapter is a module singleton every other test
+			// shares.
+			catchExit()
+			const stderr = captureStderr()
+			const store = fakeStore({})
+			const original = tmuxSessionAdapter.describeWorkspace
+			try {
+				delete (tmuxSessionAdapter as { describeWorkspace?: unknown }).describeWorkspace
+				const program = buildProgram({
+					env: { ...XDG, CYBER_MUX: 'tmux', CYBER_MUX_PANE: '%0' },
+					exec: untaggedTmuxExec([]),
+					store,
+				})
+				await expect(run(program, ['layout', 'save', 'pool', '--workspace'])).rejects.toThrow('exit:1')
+			} finally {
+				tmuxSessionAdapter.describeWorkspace = original
+			}
+			// Names the backend, so the reader learns WHICH mux cannot do this rather than that save broke.
+			expect(stderr.join('')).toContain('tmux')
+			// An absent optional member is a refusal, never a guess — so nothing lands on disk.
 			expect(store.writes).toEqual({})
 		})
 	})

@@ -322,6 +322,15 @@ Feature: layout — named, reusable pane layouts
     When the command runs
     Then the first tab is built into the workspace the worktree opened
     And every later tab opens as a tab in it
+
+  Scenario: a tabs template groups the same way whichever verb opened the workspace
+    Given a caller running cyber-mux worktree add --layout with a tabs template on tmux
+    When the command runs
+    Then every tab carries the same workspace group, the first one included
+    And the workspace captures back with every tab it was built with
+    # the route that opened the region cannot change what the template means. Grouping only the tabs
+    # the walk itself opened would leave the workspace's own first tab out, and a group missing a tab
+    # is worse than no group: capture would confidently round-trip a 3-tab workspace as 2.
     # worktree add --layout already forces the workspace placement, so a set of tabs has a workspace
     # to live in and needs no second one. The route differs from open --layout in one way only: the
     # region already exists, so the first tab builds into it rather than opening it.
@@ -692,6 +701,16 @@ Feature: layout — named, reusable pane layouts
     Given a workspace whose tabs are labeled editor and logs
     When it is captured with --workspace
     Then the captured tabs are labeled editor and logs
+
+  Scenario: a captured tab's label is the tab's own name, never the composed one
+    Given a workspace labeled pool on tmux whose tab displays as "pool - editor"
+    When it is captured with --workspace
+    Then the captured tab is labeled editor
+    And re-applying the capture displays "pool - editor" again rather than compounding the prefix
+    # the tab's own name is read from where the walk stored it, not split back out of the display name
+    # — the separator is ambiguous, so parsing would be unsound, and taking the display name verbatim
+    # would re-prefix it on every round trip. Capture is the inverse of apply or it is a lie about the
+    # user's screen.
 
   Scenario: re-applying a captured workspace reproduces the tabs it was captured from
     Given a workspace of 2 tabs, each of 2 panes built by splitting

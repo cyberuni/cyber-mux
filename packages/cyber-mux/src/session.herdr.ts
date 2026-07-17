@@ -6,6 +6,7 @@ import type {
 	RegionPane,
 	SessionAdapter,
 	SessionReadOptions,
+	WorkspaceTab,
 	WorktreeWorkspace,
 	WorktreeWorkspaceCapability,
 } from './session.ts'
@@ -103,6 +104,17 @@ export const herdrSessionAdapter: SessionAdapter = {
 		// `tab rename` is what makes a new workspace's root tab nameable at all: `workspace create`
 		// labels that tab `1` and takes no flag for it (verified against 0.7.4).
 		exec('herdr', [tier, 'rename', target.id, name])
+	},
+
+	group() {
+		// Deliberately empty, and that IS this backend's complete answer — not a stub and not a
+		// degrade. herdr's workspace is a REAL tier: every pane and tab record already carries its
+		// `workspace_id`, so the tier already is the group; and its tab label is the tab's own name,
+		// never a composed display name, because its UI groups by the real workspace label and the walk
+		// therefore composes nothing to prefix. Both facts the backend already holds, so no grouping
+		// flag and no name flag reach herdr — storing either would duplicate a fact it never reads, and
+		// herdr would have to be taught to read it. Same answer, and the same reason, as `open`'s unread
+		// `workspaceGroup`.
 	},
 
 	worktree: herdrWorktreeCapability(),
@@ -213,43 +225,129 @@ export const herdrSessionAdapter: SessionAdapter = {
 		// recoverable only by parsing the parent out of that id string, a convention herdr's CLI help
 		// never documents and could respell without warning. The rects say the same thing in a fact
 		// herdr does promise, so the derivation runs off those; see `describeRegion` in `session.ts`.
-		const out = exec('herdr', ['pane', 'layout', '--pane', target.id])
-		if (!out) throw new Error(withReason(exec, `herdr could not describe the region around pane ${target.id}`))
-		let reported: unknown
-		try {
-			reported = JSON.parse(out)?.result?.layout?.panes
-		} catch {
-			throw new Error(`herdr pane layout returned unparseable output: ${out.slice(0, 200)}`)
-		}
-		if (!Array.isArray(reported) || reported.length === 0) {
-			throw new Error(`herdr pane layout reported no panes for ${target.id}: ${out.slice(0, 200)}`)
-		}
 		// Best-effort: a region whose geometry is known is still worth exporting when the cwd/label
 		// lookup fails — the geometry is the verbose part, and the missing dirs are visibly absent.
-		const details = herdrPaneDetails(exec)
-		return reported
-			.filter((p): p is { pane_id: string; rect: Record<string, number> } => typeof p?.pane_id === 'string')
-			.map((p) => {
-				const detail = details.get(p.pane_id)
-				const pane: RegionPane = {
-					id: p.pane_id,
-					// Screen-absolute, unlike tmux's window-relative origin — which is why nothing downstream
-					// may assume a region starts at 0,0. See `PaneRect`.
-					rect: { x: p.rect?.x ?? 0, y: p.rect?.y ?? 0, width: p.rect?.width ?? 0, height: p.rect?.height ?? 0 },
-				}
-				if (detail?.cwd) pane.cwd = detail.cwd
-				// herdr has no default label — the key is absent until `pane rename`, so whatever is here
-				// is one the author set. No hostname filtering needed, unlike tmux.
-				if (detail?.label) pane.label = detail.label
-				return pane
-			})
+		return herdrRegionPanes(exec, target.id, herdrPaneDetails(exec))
+	},
+
+	/**
+	 * herdr HAS a workspace tier, so the workspace is a fact the backend holds rather than one
+	 * cyber-mux has to reconstruct: the caller's pane names its `workspace_id`, `tab list --workspace`
+	 * enumerates that workspace's tabs, and `pane list --workspace` hands back every pane already
+	 * stamped with the tab it sits in. No grouping tag is read here and none is written — the tier IS
+	 * the group, which is exactly why `open` ignores `workspaceGroup` on this backend.
+	 *
+	 * The one indirection: geometry is per-PANE (`pane layout --pane`), never per-tab, so each tab's
+	 * rects are fetched through any one pane that sits in it. That is safe and race-free, and both
+	 * halves were established against 0.7.4: `pane layout` reports live geometry for an UNFOCUSED tab
+	 * in a DIFFERENT workspace, so nothing has to be focused first and nothing moves while this runs.
+	 *
+	 * herdr's own native per-tab layout export would be the obvious road — it takes a `tab_id` — but
+	 * `layout` is NOT a CLI verb in 0.7.4; it is socket-API-only, and this adapter speaks the CLI by
+	 * design (so it composes with the synchronous `Exec` seam). The road is closed, hence the pane
+	 * indirection.
+	 */
+	describeWorkspace(exec, target) {
+		const { workspaceId } = parsePaneRecord(exec('herdr', ['pane', 'get', target.id]))
+		if (!workspaceId) {
+			throw new Error(withReason(exec, `herdr could not resolve the workspace around pane ${target.id}`))
+		}
+		const out = exec('herdr', ['tab', 'list', '--workspace', workspaceId])
+		if (!out) throw new Error(withReason(exec, `herdr could not enumerate the tabs of workspace ${workspaceId}`))
+		let reported: unknown
+		try {
+			reported = JSON.parse(out)?.result?.tabs
+		} catch {
+			throw new Error(`herdr tab list returned unparseable output: ${out.slice(0, 200)}`)
+		}
+		if (!Array.isArray(reported) || reported.length === 0) {
+			throw new Error(`herdr reported no tabs in workspace ${workspaceId}: ${out.slice(0, 200)}`)
+		}
+		// Scoped to the workspace, so a busy machine's other workspaces never reach the capture. Every
+		// pane arrives stamped with its `tab_id`, which is what makes ONE call enough for every tab.
+		const details = herdrPaneDetails(exec, workspaceId)
+		const tabs: WorkspaceTab[] = []
+		for (const reportedTab of reported) {
+			if (typeof reportedTab?.tab_id !== 'string') continue
+			const tabId: string = reportedTab.tab_id
+			// Any pane of the tab will do — `pane layout` reports the whole region the pane sits in, so
+			// which one is asked is immaterial.
+			const anchor = [...details].find(([, detail]) => detail.tab === tabId)?.[0]
+			if (!anchor) throw new Error(`herdr reported no panes in tab ${tabId} of workspace ${workspaceId}`)
+			const tab: WorkspaceTab = { id: tabId, panes: herdrRegionPanes(exec, anchor, details) }
+			// Verbatim, never parsed: herdr labels a tab with the tab's own name because the real
+			// workspace tier already carries the grouping, so there is nothing composed to take apart.
+			if (typeof reportedTab.label === 'string' && reportedTab.label !== '') tab.label = reportedTab.label
+			tabs.push(tab)
+		}
+		if (tabs.length === 0)
+			throw new Error(`herdr reported no usable tabs in workspace ${workspaceId}: ${out.slice(0, 200)}`)
+		return tabs
 	},
 }
 
-/** Each pane's cwd and label, keyed by pane id — the half `pane layout` does not report. */
-function herdrPaneDetails(exec: Exec): Map<string, { cwd?: string; label?: string }> {
-	const details = new Map<string, { cwd?: string; label?: string }>()
-	const out = exec('herdr', ['pane', 'list'])
+/**
+ * The rects of the region `paneId` sits in, joined with the cwd/label half.
+ *
+ * Two sources, because herdr splits the answer across two verbs: `pane layout` reports the region's
+ * rects (`layout.panes[].rect`) but carries no cwd and no label, while `pane list` carries both and
+ * no geometry. Neither alone can build a template — hence `details` is passed IN, so a caller reading
+ * many tabs pays for that list once rather than once per tab.
+ *
+ * `layout.splits[]` is deliberately ignored even though it reports `direction` and `ratio` outright.
+ * It is FLAT — `[{id:"split_0_root",...},{id:"split_1_0",...}]` — so the tree is recoverable only by
+ * parsing the parent out of that id string, a convention herdr's CLI help never documents and could
+ * respell without warning. The rects say the same thing in a fact herdr does promise, so the
+ * derivation runs off those; see `describeRegion` in `session.ts`.
+ */
+function herdrRegionPanes(exec: Exec, paneId: string, details: Map<string, HerdrPaneDetail>): RegionPane[] {
+	const out = exec('herdr', ['pane', 'layout', '--pane', paneId])
+	if (!out) throw new Error(withReason(exec, `herdr could not describe the region around pane ${paneId}`))
+	let reported: unknown
+	try {
+		reported = JSON.parse(out)?.result?.layout?.panes
+	} catch {
+		throw new Error(`herdr pane layout returned unparseable output: ${out.slice(0, 200)}`)
+	}
+	if (!Array.isArray(reported) || reported.length === 0) {
+		throw new Error(`herdr pane layout reported no panes for ${paneId}: ${out.slice(0, 200)}`)
+	}
+	return reported
+		.filter((p): p is { pane_id: string; rect: Record<string, number> } => typeof p?.pane_id === 'string')
+		.map((p) => {
+			const detail = details.get(p.pane_id)
+			const pane: RegionPane = {
+				id: p.pane_id,
+				// Screen-absolute, unlike tmux's window-relative origin — which is why nothing downstream
+				// may assume a region starts at 0,0. See `PaneRect`.
+				rect: { x: p.rect?.x ?? 0, y: p.rect?.y ?? 0, width: p.rect?.width ?? 0, height: p.rect?.height ?? 0 },
+			}
+			if (detail?.cwd) pane.cwd = detail.cwd
+			// herdr has no default label — the key is absent until `pane rename`, so whatever is here
+			// is one the author set. No hostname filtering needed, unlike tmux.
+			if (detail?.label) pane.label = detail.label
+			return pane
+		})
+}
+
+/** What `pane list` knows and `pane layout` does not: a pane's cwd, its label, and the tab it sits in. */
+interface HerdrPaneDetail {
+	cwd?: string
+	label?: string
+	/** The tab this pane sits in — herdr stamps every pane record with it. */
+	tab?: string
+}
+
+/**
+ * Each pane's cwd, label and tab, keyed by pane id — the half `pane layout` does not report.
+ *
+ * `workspace` scopes the list to one workspace when the caller has one to scope by; omitting it lists
+ * every pane herdr can see, which is what a single-region read wants (it keys by pane id and never
+ * cares which workspace a pane came from).
+ */
+function herdrPaneDetails(exec: Exec, workspace?: string): Map<string, HerdrPaneDetail> {
+	const details = new Map<string, HerdrPaneDetail>()
+	const out = exec('herdr', ['pane', 'list', ...(workspace ? ['--workspace', workspace] : [])])
 	if (!out) return details
 	let panes: unknown
 	try {
@@ -260,7 +358,7 @@ function herdrPaneDetails(exec: Exec): Map<string, { cwd?: string; label?: strin
 	if (!Array.isArray(panes)) return details
 	for (const pane of panes) {
 		if (typeof pane?.pane_id !== 'string') continue
-		details.set(pane.pane_id, { cwd: pane.cwd, label: pane.label })
+		details.set(pane.pane_id, { cwd: pane.cwd, label: pane.label, tab: pane.tab_id })
 	}
 	return details
 }
@@ -290,26 +388,33 @@ function parsePaneId(out: string): OpenedPane {
 }
 
 /**
- * `herdr pane get <id>` emits `{"result":{"pane":{"workspace_id":...,"tab_id":...,...}}}`. Resolving
- * fails — `out` is null (Exec failure: the pane no longer names a live pane in the backend) or the
- * JSON has no string `workspace_id`/`tab_id` — and that must throw so `focus` never issues a
- * workspace/tab switch against a pane it couldn't actually resolve.
+ * `herdr pane get <id>` emits `{"result":{"pane":{"workspace_id":...,"tab_id":...,...}}}`, or an
+ * error envelope when the id no longer names a live pane. Every unresolvable shape — `out` is null
+ * (an Exec failure), the JSON does not parse, or a field is missing/empty/not a string — folds to the
+ * field simply being absent, so each caller states its OWN failure rather than inheriting one
+ * phrased for somebody else's verb.
+ */
+function parsePaneRecord(out: string | null): { workspaceId?: string; tabId?: string } {
+	if (out == null) return {}
+	try {
+		const pane = JSON.parse(out)?.result?.pane
+		return { workspaceId: nonEmpty(pane?.workspace_id), tabId: nonEmpty(pane?.tab_id) }
+	} catch {
+		return {}
+	}
+}
+
+function nonEmpty(value: unknown): string | undefined {
+	return typeof value === 'string' && value !== '' ? value : undefined
+}
+
+/**
+ * The pane's workspace and tab, or a throw — so `focus` never issues a workspace/tab switch against a
+ * pane it couldn't actually resolve.
  */
 function parsePaneLocation(out: string | null, id: string): { workspaceId: string; tabId: string } {
-	let workspaceId: unknown
-	let tabId: unknown
-	if (out != null) {
-		try {
-			const pane = JSON.parse(out)?.result?.pane
-			workspaceId = pane?.workspace_id
-			tabId = pane?.tab_id
-		} catch {
-			// unparseable — falls through to the unresolved check below
-		}
-	}
-	if (typeof workspaceId !== 'string' || workspaceId === '' || typeof tabId !== 'string' || tabId === '') {
-		throw new Error(`peer's pane ${id} could not be resolved to beam to`)
-	}
+	const { workspaceId, tabId } = parsePaneRecord(out)
+	if (!workspaceId || !tabId) throw new Error(`peer's pane ${id} could not be resolved to beam to`)
 	return { workspaceId, tabId }
 }
 
@@ -432,6 +537,12 @@ function parseOpenedPane(out: string, label: string, key: 'pane' | 'root_pane'):
  * `.result.worktree.{path,branch}`, and the bound workspace at `.result.workspace.workspace_id`.
  * That workspace id IS the binding — the whole reason to route through these instead of plain git.
  * `label` names the command in error messages (e.g. "herdr worktree create").
+ *
+ * The root pane is read through `parseOpenedPane`, NOT re-parsed here: `root_pane` is the same record
+ * `workspace create` emits, so it carries the same `tab_id`, and one spelling is what keeps the two
+ * routes from disagreeing about a field both report. That tab is the region's root tab — what lets a
+ * caller handed this workspace group or rename it without reaching for the pane id, which would be
+ * green on tmux and silently broken on herdr.
  */
 function parseWorktreeWorkspace(out: string, label: string): WorktreeWorkspace {
 	let parsed: unknown
@@ -442,25 +553,22 @@ function parseWorktreeWorkspace(out: string, label: string): WorktreeWorkspace {
 	}
 	const result = (parsed as { result?: unknown })?.result as
 		| {
-				root_pane?: { pane_id?: unknown }
 				workspace?: { workspace_id?: unknown }
 				worktree?: { path?: unknown; branch?: unknown }
 		  }
 		| undefined
-	const paneId = result?.root_pane?.pane_id
+	// Throws on a missing pane id or tab id, with `parseOpenedPane`'s own message.
+	const target = parseOpenedPane(out, label, 'root_pane')
 	const workspace = result?.workspace?.workspace_id
 	const path = result?.worktree?.path
 	const branch = result?.worktree?.branch
-	if (typeof paneId !== 'string' || paneId === '') {
-		throw new Error(`${label} output had no result.root_pane.pane_id: ${out.slice(0, 200)}`)
-	}
 	if (typeof path !== 'string' || path === '' || typeof branch !== 'string' || branch === '') {
 		throw new Error(`${label} output had no result.worktree.{path,branch}: ${out.slice(0, 200)}`)
 	}
 	if (typeof workspace !== 'string' || workspace === '') {
 		throw new Error(`${label} output had no result.workspace.workspace_id: ${out.slice(0, 200)}`)
 	}
-	return { target: { id: paneId }, worktree: { root: resolve(path), branch }, workspace }
+	return { target, worktree: { root: resolve(path), branch }, workspace }
 }
 
 /**

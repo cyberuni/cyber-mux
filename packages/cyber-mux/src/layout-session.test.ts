@@ -4,7 +4,7 @@ import type { LayoutTemplate } from './layout.ts'
 import { applyLayoutToRegion, LayoutApplyError, openLayout } from './layout-session.ts'
 import { herdrSessionAdapter } from './session.herdr.ts'
 import { TMUX_WORKSPACE_GROUP_OPTION, tmuxSessionAdapter } from './session.tmux.ts'
-import type { SessionAdapter, SessionOpenOptions, SessionTarget } from './session.ts'
+import type { OpenedPane, SessionAdapter, SessionOpenOptions } from './session.ts'
 
 /** Every dir the walk asks about exists, unless a test says otherwise. */
 const anyDir = () => true
@@ -57,8 +57,14 @@ interface Recorded {
 	submits: { pane: string; text: string | undefined }[]
 	teardowns: string[]
 	focuses: string[]
+	/**
+	 * Every `group` call: the TAB it addressed, the group id, and the tab's own name. Recorded at the
+	 * seam because the claim is about what the walk asks of a backend — every tab grouped alike, under
+	 * the name the template gave it — not about how a backend spells the storing.
+	 */
+	groups: { tab: string; group: string; name: string | undefined }[]
 	/** Every seam call in the order it was made — for the claims that are about ORDER across verbs. */
-	log: ('open' | 'submit' | 'focus' | 'rename')[]
+	log: ('open' | 'submit' | 'focus' | 'rename' | 'group')[]
 }
 
 /**
@@ -70,7 +76,7 @@ interface Recorded {
  * landed in. Omit it for a backend that has none (tmux), which reports absent.
  */
 function fakeAdapter(opts: { canSizeSplits?: boolean; failOnOpen?: number; workspace?: string } = {}) {
-	const calls: Recorded = { opens: [], submits: [], teardowns: [], focuses: [], log: [] }
+	const calls: Recorded = { opens: [], submits: [], teardowns: [], focuses: [], groups: [], log: [] }
 	let n = 0
 	const adapter: SessionAdapter = {
 		name: 'fake',
@@ -87,6 +93,10 @@ function fakeAdapter(opts: { canSizeSplits?: boolean; failOnOpen?: number; works
 			// reports it absent (unlike `workspace`, which only some have a tier for). A distinct id per
 			// open, so a caller that mixes up pane and tab ids cannot pass by coincidence.
 			return opts.workspace ? { id: `p${n}`, tab: `t${n}`, workspace: opts.workspace } : { id: `p${n}`, tab: `t${n}` }
+		},
+		group(_exec, target, group, name) {
+			calls.groups.push({ tab: target.id, group, name })
+			calls.log.push('group')
 		},
 		submit(_exec, target, text) {
 			calls.submits.push({ pane: target.id, text })
@@ -520,8 +530,13 @@ describe('spec:cyber-mux/layout', () => {
 			expect(calls.filter((c) => c[0] === 'rename-window')).toEqual([['rename-window', '-t', '@0', 'pool - editor']])
 			// The second is named at birth, and carries the same prefix.
 			expect(calls.find((c) => c[0] === 'new-window' && c.includes('pool - logs'))).toBeDefined()
-			// Never the bare tab name, on either window — that is the label that would lose the group.
-			expect(calls.some((c) => c.includes('editor') || c.includes('logs'))).toBe(false)
+			// Never the bare tab name as either window's NAME — that is the label that would lose the
+			// group. Scoped to the naming verbs on purpose: the bare name is not absent from the apply
+			// altogether, and must not be. `set-option @cm_tab editor` carries it deliberately, because
+			// composing the display name destroyed the original and capture has to read it back from
+			// somewhere that is not a split of "pool - editor".
+			const naming = calls.filter((c) => c[0] === 'rename-window' || (c[0] === 'new-window' && c.includes('-n')))
+			expect(naming.some((c) => c.includes('editor') || c.includes('logs'))).toBe(false)
 		})
 
 		it('on a backend with a real workspace tier, a tab carries its own label unprefixed', () => {
@@ -540,6 +555,59 @@ describe('spec:cyber-mux/layout', () => {
 			)
 			// No prefix reaches herdr anywhere — the workspace label is never composed into a tab's.
 			expect(calls.flat().some((arg) => arg.includes(' - '))).toBe(false)
+		})
+
+		/**
+		 * The same two claims, on the OTHER route — a second binding to each scenario rather than a new
+		 * scenario, because the scenarios say "when it is applied" and name no route.
+		 *
+		 * `worktree add --layout` has its region opened by the worktree verbs BEFORE the walk runs, so
+		 * its first tab is the one a route-specific implementation forgets. It was forgotten: the first
+		 * tab kept the workspace's own label and the tmux scenario was silently false here while passing
+		 * on `open --layout`. That is the third time in this CR a route-agnostic claim was implemented on
+		 * one route and tested there — which is why the naming now lives in the walk both routes share,
+		 * and why both routes are bound.
+		 */
+		describe('applied on the route whose region the worktree verbs already opened', () => {
+			it('on a backend with no workspace tier, a tab is labeled with its workspace and its own name', () => {
+				const calls: string[][] = []
+				// The region already exists — the worktree's own workspace, opened under the label `pool`.
+				applyLayoutToRegion(tmuxExec(calls), tmuxSessionAdapter, pool, {
+					root: { id: '%0', tab: '@0' },
+					cwd: '/repo.worktrees/feat-x',
+					// tmux: no workspace tier, so the workspace must be carried into every tab's name.
+					workspace: null,
+					rootEnvHonored: true,
+					label: 'pool',
+					dirExists: anyDir,
+				})
+				// The first tab is renamed even though this route did not open it — the window it was
+				// handed is named `pool`, and the tab in it is `editor`.
+				expect(calls.filter((c) => c[0] === 'rename-window')).toEqual([['rename-window', '-t', '@0', 'pool - editor']])
+				// The later tab is named at birth, carrying the same prefix.
+				expect(calls.find((c) => c[0] === 'new-window' && c.includes('pool - logs'))).toBeDefined()
+			})
+
+			it('on a backend with a real workspace tier, a tab carries its own label unprefixed', () => {
+				const calls: string[][] = []
+				applyLayoutToRegion(herdrExec(calls), herdrSessionAdapter, pool, {
+					root: { id: 'w1:p0', tab: 'w1:t1' },
+					cwd: '/repo.worktrees/feat-x',
+					// herdr: the tier IS the group, so its UI already shows the workspace and no tab is
+					// prefixed. The region's workspace is known from the caller that opened it.
+					workspace: 'w1',
+					rootEnvHonored: true,
+					label: 'pool',
+					dirExists: anyDir,
+				})
+				// The first tab carries its OWN label — named, but never prefixed.
+				expect(calls.find((c) => c[0] === 'tab' && c[1] === 'rename')).toEqual(['tab', 'rename', 'w1:t1', 'editor'])
+				expect(calls.find((c) => c[0] === 'tab' && c[1] === 'create')).toEqual(
+					expect.arrayContaining(['--label', 'logs']),
+				)
+				// No prefix reaches herdr anywhere, on this route either.
+				expect(calls.flat().some((arg) => arg.includes(' - '))).toBe(false)
+			})
 		})
 
 		it('the workspace label is never shortened, so two workspaces never collide by shortening', () => {
@@ -811,7 +879,7 @@ describe('spec:cyber-mux/layout', () => {
 			// The worktree flow: the worktree's own workspace IS the region, and its root pane is the
 			// tree's root — so the walk splits into it rather than opening a second space.
 			const { adapter, calls } = fakeAdapter()
-			const root: SessionTarget = { id: 'w9:p1' }
+			const root: OpenedPane = { id: 'w9:p1', tab: 'w9:t1' }
 			const manifest = applyLayoutToRegion(noExec, adapter, agentPool3, {
 				root,
 				cwd: '/repo.worktrees/feat-x',
@@ -823,7 +891,9 @@ describe('spec:cyber-mux/layout', () => {
 			expect(manifest.cwd).toBe('/repo.worktrees/feat-x')
 			// The pre-opened pane is the tree's root, so only the two splits are opened here.
 			expect(calls.opens).toHaveLength(2)
-			expect(calls.opens[0]?.from).toEqual(root)
+			// The pre-opened region's PANE is what the first split targets — a split splits a pane, so the
+			// walk names it by its pane handle rather than passing the whole opened region through.
+			expect(calls.opens[0]?.from).toEqual({ id: root.id })
 			expect(manifest.panes[0]).toMatchObject({ label: 'planner', pane: 'w9:p1' })
 		})
 
@@ -839,7 +909,7 @@ describe('spec:cyber-mux/layout', () => {
 				panes: [{ label: 'editor', dir: 'apps/web' }, { label: 'spare' }],
 			}
 			const manifest = applyLayoutToRegion(noExec, adapter, template, {
-				root: { id: 'w9:root' },
+				root: { id: 'w9:root', tab: 'w9:t1' },
 				cwd: '/repo.worktrees/feat-x',
 				workspace: 'w9',
 				rootEnvHonored: true,
@@ -868,7 +938,7 @@ describe('spec:cyber-mux/layout', () => {
 				panes: [{ label: 'editor' }, { label: 'watcher', dir: 'apps/web' }],
 			}
 			const manifest = applyLayoutToRegion(noExec, adapter, template, {
-				root: { id: 'w9:root' },
+				root: { id: 'w9:root', tab: 'w9:t1' },
 				cwd: '/repo.worktrees/feat-x',
 				workspace: 'w9',
 				rootEnvHonored: true,
@@ -882,7 +952,7 @@ describe('spec:cyber-mux/layout', () => {
 			const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
 			const { adapter } = fakeAdapter()
 			const manifest = applyLayoutToRegion(noExec, adapter, agentPool3, {
-				root: { id: 'w9:root' },
+				root: { id: 'w9:root', tab: 'w9:t1' },
 				cwd: '/repo.worktrees/feat-x',
 				workspace: 'w9',
 				rootEnvHonored: true,
@@ -906,7 +976,7 @@ describe('spec:cyber-mux/layout', () => {
 			it('prefixes the root pane’s command when the region open could not carry its env', () => {
 				const { adapter, calls } = fakeAdapter()
 				applyLayoutToRegion(noExec, adapter, farm, {
-					root: { id: 'w9:root' },
+					root: { id: 'w9:root', tab: 'w9:t1' },
 					cwd: '/repo.worktrees/feat-x',
 					workspace: 'w9',
 					rootEnvHonored: false,
@@ -922,7 +992,7 @@ describe('spec:cyber-mux/layout', () => {
 				// The double-application guard: prefixing here would set TIER twice and lie about which won.
 				const { adapter, calls } = fakeAdapter()
 				applyLayoutToRegion(noExec, adapter, farm, {
-					root: { id: 'w9:root' },
+					root: { id: 'w9:root', tab: 'w9:t1' },
 					cwd: '/repo.worktrees/feat-x',
 					workspace: 'w9',
 					rootEnvHonored: true,
@@ -955,7 +1025,7 @@ describe('spec:cyber-mux/layout', () => {
 					panes: [{ label: 'dispatcher', env: { NOTE: "it's a big one", FLAGS: '--x 1' }, command: 'render' }],
 				}
 				applyLayoutToRegion(noExec, adapter, template, {
-					root: { id: 'w9:root' },
+					root: { id: 'w9:root', tab: 'w9:t1' },
 					cwd: '/target',
 					workspace: 'w9',
 					rootEnvHonored: false,
@@ -974,7 +1044,7 @@ describe('spec:cyber-mux/layout', () => {
 					panes: [{ label: 'dispatcher', env: { TIER: 'gpu' } }, { label: 'encoder' }],
 				}
 				applyLayoutToRegion(noExec, adapter, template, {
-					root: { id: 'w9:root' },
+					root: { id: 'w9:root', tab: 'w9:t1' },
 					cwd: '/target',
 					workspace: 'w9',
 					rootEnvHonored: false,
@@ -991,7 +1061,7 @@ describe('spec:cyber-mux/layout', () => {
 				const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
 				const { adapter } = fakeAdapter()
 				applyLayoutToRegion(noExec, adapter, agentPool3, {
-					root: { id: 'w9:root' },
+					root: { id: 'w9:root', tab: 'w9:t1' },
 					cwd: '/target',
 					workspace: 'w9',
 					rootEnvHonored: false,
@@ -1004,7 +1074,7 @@ describe('spec:cyber-mux/layout', () => {
 		it('reports a null workspace on a backend that binds none', () => {
 			const { adapter } = fakeAdapter()
 			const manifest = applyLayoutToRegion(noExec, adapter, pool4, {
-				root: { id: '%0' },
+				root: { id: '%0', tab: '@0' },
 				cwd: '/target',
 				workspace: null,
 				rootEnvHonored: true,

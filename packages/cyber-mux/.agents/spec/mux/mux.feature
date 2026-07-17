@@ -299,6 +299,33 @@ Feature: mux — the pane abstraction
     Then no window option is set
     # a window nobody grouped stays ungrouped, and reads back as a workspace of one
 
+  Scenario: a space already open is grouped by the same verb open uses
+    Given a caller grouping a tab that is already open through the tmux adapter
+    When the grouping runs
+    Then the backend stores the id on that space
+    And it is the same command open itself issues to group a space it just created
+    # open cannot be the only way in. A caller that did not open the space -- the worktree route opens
+    # its region before the walk ever runs -- still has to group it, and it holds the space's own id
+    # the moment the open returns. tmux has no birth flag for a window option anyway, so grouping is
+    # ALREADY a second call after the window exists; routing open through this verb adds none.
+
+  Scenario: a backend whose display name is composed stores the space's own name beside the group
+    Given a caller grouping a tab through the tmux adapter, naming the tab editor
+    When the grouping runs
+    Then the backend stores editor as the space's own name
+    And the space's own name is stored separately from its display name
+    # tmux has ONE name field per space, so a caller that composes a display name out of the tab's name
+    # DESTROYS the original -- and recovering it means splitting on a separator already proven
+    # ambiguous. The same rule the group id follows, one tier down: the display name is a human's to
+    # read, and an opaque option carries what a machine reads back.
+
+  Scenario: a backend with a real workspace tier stores neither
+    Given a caller grouping a tab through the herdr adapter
+    When the grouping runs
+    Then no grouping flag and no name flag reach herdr
+    # its tier IS the group and its tab label IS the tab's own name, never composed -- so both are
+    # facts the backend already holds
+
   Scenario: the group id is not a workspace, and open never reports it as one
     Given a caller opening a tab through the tmux adapter, with a workspace group id
     When open reports the pane

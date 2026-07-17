@@ -1,6 +1,6 @@
 import { relative, sep } from 'node:path'
-import type { LayoutNode, LayoutTemplate, PaneNode, SplitNode } from './layout.ts'
-import type { PaneRect, RegionPane } from './session.ts'
+import type { LayoutNode, LayoutTemplate, PaneNode, SplitNode, TabNode } from './layout.ts'
+import type { PaneRect, RegionPane, WorkspaceTab } from './session.ts'
 
 /**
  * A live region, run backwards into a template — `layout save`. PURE, like `layout.ts` and for the
@@ -228,7 +228,72 @@ export interface CaptureLayoutOptions {
 export function captureLayout(panes: RegionPane[], opts: CaptureLayoutOptions): LayoutCapture {
 	if (panes.length === 0) throw new Error('a capture needs at least one pane — this region reported none')
 	const tree = partition(panes)
-	const rootCwd = rootOf(tree).cwd
+	const ctx = context(panes, rootOf(tree).cwd)
+	const template = shell(opts)
+	template.root = convert(tree, ctx)
+	return { template, warnings: ctx.warnings }
+}
+
+/**
+ * Capture a whole workspace into a `tabs` template — the exact inverse of the tabs walk, and
+ * `captureLayout` one level up rather than a second derivation: each tab's tree comes off the SAME
+ * `partition`, because a tab is a region and the geometry rules cannot depend on how many of them
+ * there are.
+ *
+ * Two things are workspace-WIDE rather than per-tab, and both follow from what the schema already
+ * says. The target is the FIRST tab's root pane, because that is the pane apply's `--cwd` opens the
+ * workspace at, so every tab's `dir` is measured from that one root. And label collisions are
+ * detected across every tab at once — the apply manifest is one flat list for the whole workspace, so
+ * its keys are global, which is exactly why the schema demands pane labels unique across tabs rather
+ * than within one.
+ */
+export function captureWorkspaceLayout(tabs: WorkspaceTab[], opts: CaptureLayoutOptions): LayoutCapture {
+	if (tabs.length === 0) throw new Error('a workspace capture needs at least one tab — this workspace reported none')
+	const trees = tabs.map((tab) => {
+		if (tab.panes.length === 0) {
+			throw new Error(`a capture needs at least one pane — tab ${tab.id} reported none`)
+		}
+		return partition(tab.panes)
+	})
+	const ctx = context(
+		tabs.flatMap((tab) => tab.panes),
+		rootOf(trees[0]!).cwd,
+	)
+	const template = shell(opts)
+	template.tabs = tabs.map((tab, index) => {
+		const node: TabNode = {}
+		// The label the tab carries, verbatim — never a workspace parsed back out of it. On a backend
+		// with no workspace tier this is the composed `<workspace> - <tab>` the walk wrote, and
+		// `acme - beta - main` reads as two different groupings under every split rule, so recovering one
+		// is guessing. The grouping came from the tag; this is a human's to read and to fix up by hand.
+		if (tab.label) node.label = tab.label
+		node.root = convert(trees[index]!, ctx)
+		return node
+	})
+	return { template, warnings: ctx.warnings }
+}
+
+/** The template every capture starts from — the fields that owe nothing to the geometry. */
+function shell(opts: CaptureLayoutOptions): LayoutTemplate {
+	const template: LayoutTemplate = { name: opts.name }
+	if (opts.description) template.description = opts.description
+	return template
+}
+
+/**
+ * What converting a tree needs to know that the tree itself does not carry: the target the `dir`s are
+ * measured from, the labels no pane may keep, and somewhere to say what could not be expressed.
+ *
+ * Shared by both captures deliberately — a workspace's `dir`s and label collisions are global, so
+ * threading one context through every tab is what makes them so.
+ */
+interface CaptureContext {
+	rootCwd: string | undefined
+	collisions: Set<string>
+	warnings: string[]
+}
+
+function context(panes: RegionPane[], rootCwd: string | undefined): CaptureContext {
 	const warnings: string[] = []
 	const collisions = duplicatedLabels(panes)
 	for (const label of collisions) {
@@ -237,40 +302,41 @@ export function captureLayout(panes: RegionPane[], opts: CaptureLayoutOptions): 
 				'Every pane carrying it is captured without a label; name them apart yourself',
 		)
 	}
+	return { rootCwd, collisions, warnings }
+}
 
-	const toPaneNode = (pane: RegionPane): PaneNode => {
-		const node: PaneNode = { type: 'pane' }
-		// A label shared by two panes is dropped from BOTH rather than kept on the first. It is a real
-		// case — a user labels two panes `worker` — and the schema rejects the duplicate outright, so
-		// keeping it would emit a template that fails the very validator this capture has to satisfy.
-		// Keeping the first instead would be worse than dropping: nothing in the region says which pane
-		// the author meant by the name, so picking one invents an answer.
-		if (pane.label && !collisions.has(pane.label)) node.label = pane.label
-		const { dir, outside } = toDir(pane.cwd, rootCwd)
-		if (dir) node.dir = dir
-		if (outside) {
-			warnings.push(
-				`pane ${pane.id}${pane.label ? ` ("${pane.label}")` : ''} runs in ${pane.cwd}, which is not under the ` +
-					`captured root ${rootCwd} — a template cannot pin a directory, so this pane is captured without one`,
-			)
-		}
-		return node
+function toPaneNode(pane: RegionPane, ctx: CaptureContext): PaneNode {
+	const node: PaneNode = { type: 'pane' }
+	// A label shared by two panes is dropped from BOTH rather than kept on the first. It is a real
+	// case — a user labels two panes `worker` — and the schema rejects the duplicate outright, so
+	// keeping it would emit a template that fails the very validator this capture has to satisfy.
+	// Keeping the first instead would be worse than dropping: nothing in the region says which pane
+	// the author meant by the name, so picking one invents an answer.
+	if (pane.label && !ctx.collisions.has(pane.label)) node.label = pane.label
+	const { dir, outside } = toDir(pane.cwd, ctx.rootCwd)
+	if (dir) node.dir = dir
+	if (outside) {
+		ctx.warnings.push(
+			`pane ${pane.id}${pane.label ? ` ("${pane.label}")` : ''} runs in ${pane.cwd}, which is not under the ` +
+				`captured root ${ctx.rootCwd} — a template cannot pin a directory, so this pane is captured without one`,
+		)
 	}
+	return node
+}
 
-	const convert = (node: RegionTree): LayoutNode => {
-		if (node.type === 'pane') return toPaneNode(node.pane)
-		const split: SplitNode = {
-			type: 'split',
-			direction: node.direction,
-			first: convert(node.first),
-			second: convert(node.second),
-		}
-		if (node.ratio !== undefined) split.ratio = node.ratio
-		return split
+/**
+ * A partition into schema nodes. `command` is never emitted and there is no branch here that could
+ * emit one: no multiplexer reports the command a pane was launched with, so a capture at any tier is
+ * a DRAFT with `command` left for the author.
+ */
+function convert(node: RegionTree, ctx: CaptureContext): LayoutNode {
+	if (node.type === 'pane') return toPaneNode(node.pane, ctx)
+	const split: SplitNode = {
+		type: 'split',
+		direction: node.direction,
+		first: convert(node.first, ctx),
+		second: convert(node.second, ctx),
 	}
-
-	const template: LayoutTemplate = { name: opts.name }
-	if (opts.description) template.description = opts.description
-	template.root = convert(tree)
-	return { template, warnings }
+	if (node.ratio !== undefined) split.ratio = node.ratio
+	return split
 }

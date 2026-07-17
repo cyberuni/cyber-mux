@@ -1,5 +1,6 @@
+import type { Exec } from './exec.ts'
 import { withReason } from './exec.ts'
-import type { LivePane, OpenedPane, RegionPane, SessionAdapter, SessionReadOptions } from './session.ts'
+import type { LivePane, OpenedPane, RegionPane, SessionAdapter, SessionReadOptions, WorkspaceTab } from './session.ts'
 
 /**
  * The tmux window user option `SessionOpenOptions.workspaceGroup` is stored in. A user option (the
@@ -11,6 +12,24 @@ import type { LivePane, OpenedPane, RegionPane, SessionAdapter, SessionReadOptio
  * Server-lifetime, like every window: it dies with the tmux server, along with the windows it tags.
  */
 export const TMUX_WORKSPACE_GROUP_OPTION = '@cm_ws'
+
+/**
+ * The tmux window user option a grouped window's OWN name is stored in — the name the caller gave the
+ * tab, beside the group id, because tmux's single `window_name` field no longer holds it.
+ *
+ * tmux has ONE name field per space. A caller that composes a display name out of a tab's name
+ * (`pool - editor`) has destroyed `editor`, and there is no sound way back: splitting on the separator
+ * is ambiguous (`acme - beta - main` reads two legal ways), and reading the display name verbatim
+ * re-prefixes it on every round trip (`pool - pool - editor`). So the original is stored here and read
+ * back from here — the same rule the group id follows, one tier down. The display name is a human's to
+ * read; this is what a machine reads.
+ *
+ * A user option (the `@` prefix) for `TMUX_WORKSPACE_GROUP_OPTION`'s reasons exactly: tmux stores it
+ * without interpreting it, it survives a window rename, and `list-windows` reads it back
+ * (`#{@cm_tab}`). Named here rather than spelled at each use so the write side and every read side
+ * cannot drift.
+ */
+export const TMUX_TAB_NAME_OPTION = '@cm_tab'
 
 /** tmux backend — detected via `$TMUX`. */
 export const tmuxSessionAdapter: SessionAdapter = {
@@ -82,15 +101,17 @@ export const tmuxSessionAdapter: SessionAdapter = {
 		// `isPaneFocused`'s `undefined`); reporting a null here would assert a "none" tmux never said.
 		// `tab` is the opposite case and is never absent: every multiplexer has the Tab level.
 		const target: OpenedPane = { id: pane, tab: windowId }
-		// The group id, stored in tmux's own native mechanism for exactly this: a window user option.
-		// It survives a window rename (unlike a name-encoded grouping), and tmux can filter on it
-		// server-side (`list-windows -f '#{==:#{@cm_ws},<id>}'`). Necessarily a SECOND call — tmux has
-		// no `new-window` flag to set an option at birth — and it runs before any `--launch` submit, so
-		// the window is grouped before anything starts running in it. Set verbatim: opaque means the
-		// adapter never parses, splits, or derives the value, and never reads it off the label.
-		if (group && windowId) {
-			exec('tmux', ['set-option', '-w', '-t', windowId, TMUX_WORKSPACE_GROUP_OPTION, opts.workspaceGroup!])
-		}
+		// Through `group`, not a second `set-option` spelled here: grouping a space this open just
+		// created and grouping one that was already open are the same act, so one spelling per backend
+		// is the only way the two cannot drift. It costs no call — tmux has no `new-window` flag to set
+		// an option at birth, so this was ALREADY a second call after the window exists — and it still
+		// runs before any `--launch` submit, so the window is grouped before anything runs in it.
+		//
+		// No name: `open` knows only the DISPLAY name it just wrote with `-n`, which is exactly the
+		// composed name that must never be stored as the space's own. A caller that composed one knows
+		// the original and calls `group` itself with it; one that did not compose has nothing to store,
+		// its display name already being its own name.
+		if (group && windowId) tmuxSessionAdapter.group(exec, { id: windowId }, opts.workspaceGroup!)
 		// Through `rename`, not a second `select-pane -T` spelled here: post-birth pane naming and the
 		// seam's rename are the same act, so one spelling per backend is the only way the two cannot
 		// drift. A window took its name at birth via `-n` above and needs nothing here.
@@ -115,6 +136,18 @@ export const tmuxSessionAdapter: SessionAdapter = {
 		// never reaches the code that would make the pane active (verified on 3.6b), so this moves no
 		// focus despite the verb's name. That is what lets it serve a rename's read-only side effects.
 		exec('tmux', ['select-pane', '-t', target.id, '-T', name])
+	},
+
+	group(exec, target, group, name) {
+		// A window user option — tmux's own mechanism for a value it stores but never interprets. It
+		// survives a window rename (unlike a name-encoded grouping), and tmux filters on it server-side
+		// (`list-windows -f '#{==:#{@cm_ws},<id>}'`). Set verbatim: opaque means this adapter never
+		// parses, splits, or derives the value, and never reads it off the label.
+		exec('tmux', ['set-option', '-w', '-t', target.id, TMUX_WORKSPACE_GROUP_OPTION, group])
+		// The space's own name, beside the group, because tmux's single `window_name` may now hold a
+		// display name composed out of it — see TMUX_TAB_NAME_OPTION. Only when the caller has one:
+		// nothing to store is not the same as an empty name, and no adapter invents one.
+		if (name !== undefined) exec('tmux', ['set-option', '-w', '-t', target.id, TMUX_TAB_NAME_OPTION, name])
 	},
 
 	sendText(exec, target, text) {
@@ -208,42 +241,131 @@ export const tmuxSessionAdapter: SessionAdapter = {
 	},
 
 	describeRegion(exec, target) {
-		// `-t <pane-id>` scopes `list-panes` to that pane's OWN window — the region tier, which is what
-		// export captures. Without `-a`, so this never reaches the panes of some other window.
-		//
-		// `#{pane_left}`/`#{pane_top}` are window-relative, and the widths exclude the divider column
-		// tmux draws between panes (a 200-wide window split side by side reports 119 + 80, not 200) —
-		// both are exactly what `RegionPane.rect` documents, so nothing is adjusted here.
-		//
-		// Tab-separated, not space: `pane_current_path` and `pane_title` can both contain spaces, and
-		// splitting a path on spaces is how a directory with one in it silently becomes the wrong pane.
+		return describeTmuxRegion(exec, target.id)
+	},
+
+	/**
+	 * tmux has NO workspace tier — `workspace` and `tab` both collapse onto a Window — so a workspace
+	 * is not a fact this backend holds. What it holds is the grouping TAG the walk wrote
+	 * (`SessionOpenOptions.workspaceGroup`, stored in a window user option), so the read here is
+	 * literally *"which windows carry this group id"*.
+	 *
+	 * The tag, never the label. `list-windows -a` spans SESSIONS, so a bare name match would
+	 * over-collect a same-named window from another session, and taking the workspace off a
+	 * `<workspace> - <tab>` label is unsound in the first place (`acme - beta - main` splits two ways,
+	 * both legal). `-f '#{==:#{@cm_ws},<id>}'` keys on what actually identifies the group, filtered
+	 * server-side — the tag survives a window rename, which a name-encoded grouping does not.
+	 *
+	 * A window with NO tag is a workspace of ONE: the honest answer for a window nobody grouped, and
+	 * it costs no further call — the caller's own window is the whole workspace.
+	 */
+	describeWorkspace(exec, target) {
+		// One call for both facts: the caller's window and that window's tag. `display-message -p`
+		// resolves the pane target and prints the format, so nothing has to be matched out of a
+		// server-wide listing. Tab-separated — an id and a tag cannot contain one; a window NAME can,
+		// but it is last, so a name with a tab in it cannot displace anything.
 		const out = exec('tmux', [
-			'list-panes',
+			'display-message',
+			'-p',
 			'-t',
 			target.id,
-			'-F',
-			'#{pane_id}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}\t#{pane_current_path}\t#{pane_title}\t#{host}',
+			`#{window_id}\t#{${TMUX_WORKSPACE_GROUP_OPTION}}\t#{${TMUX_TAB_NAME_OPTION}}\t#{window_name}`,
 		])
-		if (!out) throw new Error(withReason(exec, `tmux could not describe the region around pane ${target.id}`))
-		const panes: RegionPane[] = []
-		for (const line of out.split('\n').filter(Boolean)) {
-			const [id, left, top, width, height, cwd, title, host] = line.split('\t')
-			if (!id) continue
-			const pane: RegionPane = {
-				id,
-				rect: { x: Number(left), y: Number(top), width: Number(width), height: Number(height) },
-			}
-			if (cwd) pane.cwd = cwd
-			// tmux has no "unset title" — it defaults `pane_title` to the hostname, so every pane in an
-			// untouched window reports the same name. Exporting that would put `label: "zeta"` on all of
-			// them, which is not a label anyone chose. A title that differs from the host is one someone
-			// set (cyber-mux's own `select-pane -T` among them), so it is the author's and survives.
-			if (title && title !== host) pane.label = title
-			panes.push(pane)
-		}
-		if (panes.length === 0) throw new Error(`tmux reported no panes in the region around pane ${target.id}`)
-		return panes
+		if (!out) throw new Error(withReason(exec, `tmux could not resolve the workspace around pane ${target.id}`))
+		const [windowId, group, ownName, ...nameParts] = out.split('\n')[0]!.split('\t')
+		if (!windowId) throw new Error(`tmux did not report the window around pane ${target.id}`)
+		// Untagged: this window is a workspace of one. Not an error and not an empty list — nobody
+		// grouped it, and one window is exactly what that means.
+		if (!group) return [tmuxTab(exec, windowId, ownName, nameParts.join('\t'))]
+		const listed = exec('tmux', [
+			'list-windows',
+			'-a',
+			'-F',
+			`#{window_id}\t#{${TMUX_TAB_NAME_OPTION}}\t#{window_name}`,
+			'-f',
+			`#{==:#{${TMUX_WORKSPACE_GROUP_OPTION}},${group}}`,
+		])
+		if (!listed) throw new Error(withReason(exec, `tmux could not enumerate the windows grouped as ${group}`))
+		const tabs = listed
+			.split('\n')
+			.filter(Boolean)
+			.map((line) => line.split('\t'))
+			.filter(([id]) => Boolean(id))
+			// `window_name` is LAST and absorbs any tab it contains, which is why it is rejoined rather
+			// than destructured: a window name is a human's and may hold anything.
+			.map(([id, own, ...rest]) => tmuxTab(exec, id!, own, rest.join('\t')))
+		if (tabs.length === 0) throw new Error(`tmux reported no windows grouped as ${group}`)
+		return tabs
 	},
+}
+
+/**
+ * One window, read as a tab: its id, the tab's OWN name, and its region's geometry.
+ *
+ * `ownName` is what `group` stored (`TMUX_TAB_NAME_OPTION`) and it WINS, because `windowName` is the
+ * display name — on a grouped window that is the composed `pool - editor`, whose `editor` tmux's
+ * single name field no longer holds. Reporting the display name instead would compound the prefix on
+ * every capture/apply round trip (`pool - pool - editor`), and splitting it back apart is the unsound
+ * parse the option exists to refuse.
+ *
+ * The window name is the FALLBACK, not a second guess: a window carrying no stored name is one nobody
+ * composed a display name for, so its name already IS its own name. That covers the untagged window —
+ * a workspace of one — and any window a caller grouped without naming.
+ */
+function tmuxTab(
+	exec: Exec,
+	windowId: string,
+	ownName: string | undefined,
+	windowName: string | undefined,
+): WorkspaceTab {
+	const tab: WorkspaceTab = { id: windowId, panes: describeTmuxRegion(exec, windowId) }
+	const label = ownName || windowName
+	if (label) tab.label = label
+	return tab
+}
+
+/**
+ * Every pane of the region `id` names, with its rectangle. `id` is a pane id (that pane's own window)
+ * or a window id (that window) — `list-panes -t` resolves both, which is what lets the region read and
+ * the workspace read share one query instead of two that could drift apart.
+ *
+ * `-t` scopes `list-panes` to ONE window — the region tier, which is what capture captures. Without
+ * `-a`, so this never reaches the panes of some other window.
+ *
+ * `#{pane_left}`/`#{pane_top}` are window-relative, and the widths exclude the divider column tmux
+ * draws between panes (a 200-wide window split side by side reports 119 + 80, not 200) — both are
+ * exactly what `RegionPane.rect` documents, so nothing is adjusted here.
+ *
+ * Tab-separated, not space: `pane_current_path` and `pane_title` can both contain spaces, and
+ * splitting a path on spaces is how a directory with one in it silently becomes the wrong pane.
+ */
+function describeTmuxRegion(exec: Exec, id: string): RegionPane[] {
+	const out = exec('tmux', [
+		'list-panes',
+		'-t',
+		id,
+		'-F',
+		'#{pane_id}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}\t#{pane_current_path}\t#{pane_title}\t#{host}',
+	])
+	if (!out) throw new Error(withReason(exec, `tmux could not describe the region around pane ${id}`))
+	const panes: RegionPane[] = []
+	for (const line of out.split('\n').filter(Boolean)) {
+		const [paneId, left, top, width, height, cwd, title, host] = line.split('\t')
+		if (!paneId) continue
+		const pane: RegionPane = {
+			id: paneId,
+			rect: { x: Number(left), y: Number(top), width: Number(width), height: Number(height) },
+		}
+		if (cwd) pane.cwd = cwd
+		// tmux has no "unset title" — it defaults `pane_title` to the hostname, so every pane in an
+		// untouched window reports the same name. Exporting that would put `label: "zeta"` on all of
+		// them, which is not a label anyone chose. A title that differs from the host is one someone
+		// set (cyber-mux's own `select-pane -T` among them), so it is the author's and survives.
+		if (title && title !== host) pane.label = title
+		panes.push(pane)
+	}
+	if (panes.length === 0) throw new Error(`tmux reported no panes in the region around pane ${id}`)
+	return panes
 }
 
 /**

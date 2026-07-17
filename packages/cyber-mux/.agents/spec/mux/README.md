@@ -83,6 +83,22 @@ once opened:
   parsed to recover a grouping. What a *human* reads in a status bar is the label's job and belongs to
   the caller that composes it (layout's business); what a *machine* reads is this id.
 
+  **Grouping is a verb, not only an option on `open`.** `open` cannot be the only way in: a caller
+  that did not open the space still has to group it — the `worktree` route opens its region before any
+  pool is built — and it holds that space's own id the moment the open returns. So grouping is its own
+  member, acting on an already-open space exactly as the rename above does, and `open`'s option
+  **routes through it**, so there is one spelling per backend rather than two that can drift. It costs
+  nothing: tmux has no birth flag for a window option, so grouping was **already** a second call after
+  the window exists.
+
+  **A backend whose display name is composed also stores the space's own name.** This is the same rule
+  as the group id, one tier down, and it is not optional bookkeeping. tmux has **one** name field per
+  space, so a caller that composes a display name out of a tab's name *destroys the original* — and
+  recovering it would mean splitting on the separator already proven ambiguous. So the space's own
+  name is stored beside the group, and a reader takes it from there. The display name is a human's to
+  read; an opaque option carries what a machine reads back. A backend with a real workspace tier
+  stores **neither**: its tier is the group, and its tab label is the tab's own name, never composed.
+
   **A group id is not a workspace, and `open` never reports it as one.** A caller that asks for no
   grouping gets none — a window nobody grouped stays ungrouped and reads back as a group of one — and
   a backend carrying a tag still reports its workspace **absent**, because a tag cyber-mux wrote is its
@@ -332,7 +348,7 @@ Every scenario in [`mux.feature`](./mux.feature) maps to one of these behaviors:
 | **split options — which pane, how big, what environment** | `from` targets a `pane:*` split on both backends (tmux `-t`, herdr positional) and is ignored by `tab`/`workspace`; omitted, each backend takes its own default, which tracks the user's focus rather than the caller's. `ratio` is the fraction kept by the ORIGINAL pane and converts in opposite directions (herdr passes it through, tmux inverts to `1 - ratio`); omitted, each backend splits evenly; never passed to a tab or workspace. Each backend declares whether it can size a split at all. `env` is native at the birth of every tier on both backends, one repeated flag per variable, with or without a launch — except herdr's worktree verbs, which take no env param and drop it |
 | **open returns the pane's tab, and reports it** | the tab the new pane landed in, per placement on both backends (herdr: a new tab reports itself, a created workspace its root tab, a split the caller's; tmux: the Window the pane landed in); reported by every backend and absent on none, because every multiplexer has the Tab level; read from the output the pane id already comes from, so it costs no extra call; it is what addresses a rename at the tab tier, which a pane id cannot do portably |
 | **naming a space after its birth** | every backend renames every tier it can name at birth (tmux a window name or pane title; herdr a tab or pane rename); a new workspace's root tab is named this way because herdr offers no flag to name it at birth; a rename moves no focus and opens nothing |
-| **the workspace group — carrying a grouping a backend has no tier for** | the open contract carries an opaque group id, never parsed, split, or derived from the label; a backend with no workspace tier stores it natively (tmux: a window option it can filter on, surviving a rename); a backend with a real workspace tier ignores it, its tier being the group; no id is invented for a caller that did not ask; the id is not a workspace, so `open` still reports the workspace absent |
+| **the workspace group — carrying a grouping a backend has no tier for** | the open contract carries an opaque group id, never parsed, split, or derived from the label; a backend with no workspace tier stores it natively (tmux: a window option it can filter on, surviving a rename); a backend with a real workspace tier ignores it, its tier being the group; no id is invented for a caller that did not ask; the id is not a workspace, so `open` still reports the workspace absent; grouping is also a **verb** over an already-open space, which `open`'s own option routes through; a backend whose display name is composed stores the space's **own name** beside the group, since one name field means composing destroys the original |
 | **text and keys are separate; only submit presses Enter for you** | `send text` types literal characters and presses no Enter (a key-named word is typed, not interpreted; no text → rejected); `send keys` presses named keys in order and types nothing — core keys normalized onto each backend, a non-core token forwarded verbatim to the backend's own semantics (no tokens at all → rejected); `send keys Enter` presses Enter and takes the turn, because the caller wrote it; bare `send` is incomplete input — help to stderr, exit 1, stdout clean (an acknowledged amendment to axi #8, not an application of it); `submit` always presses Enter — with text it types it literally then Enters, with none (or empty text) it bare-Enter flushes without retyping; `open --launch` submits |
 | **multiplexer detection is two-mode** | `$CYBER_MUX` fast-path + override; ancestry walk; hint fallback; `doctor` hint |
 | **mux mode** | reports the detected session backend; "none" (exit 0) when no adapter is selectable |
