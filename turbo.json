@@ -6,6 +6,10 @@
 			"cache": false,
 			"outputs": []
 		},
+		"//#check:features": {
+			"cache": false,
+			"outputs": []
+		},
 		"build": {
 			"outputs": ["dist/**"],
 			"dependsOn": ["^build"]
@@ -22,7 +26,7 @@
 			"persistent": true
 		},
 		"verify": {
-			"dependsOn": ["//#check:ci", "build", "typecheck", "lint", "test"]
+			"dependsOn": ["//#check:ci", "//#check:features", "build", "typecheck", "lint", "test"]
 		}
 	}
 }
