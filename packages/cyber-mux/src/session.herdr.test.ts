@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Exec } from './exec.ts'
 import { herdrSessionAdapter } from './session.herdr.ts'
+import type { SessionPlacement } from './session.ts'
 
 function fakeExec(calls: string[][], responses: Record<string, string | null> = {}): Exec {
 	return (_cmd, args) => {
@@ -28,6 +29,26 @@ function worktreeOut() {
 	})
 }
 
+/** The real envelopes each placement's herdr call returns — the workspace_id rides in on all three. */
+const PANE_IN_WORKSPACE = (paneId: string, ws: string) =>
+	JSON.stringify({
+		id: 'cli:workspace:create',
+		result: { root_pane: { pane_id: paneId, tab_id: `${ws}:t1`, workspace_id: ws }, workspace: { workspace_id: ws } },
+	})
+const PANE_IN_TAB = (paneId: string, ws: string) =>
+	JSON.stringify({
+		result: {
+			root_pane: { pane_id: paneId, tab_id: `${ws}:t2`, workspace_id: ws },
+			tab: { tab_id: `${ws}:t2` },
+			type: 'tab_created',
+		},
+	})
+const PANE_IN_SPLIT = (paneId: string, ws: string) =>
+	JSON.stringify({
+		id: 'cli:pane:split',
+		result: { pane: { pane_id: paneId, tab_id: `${ws}:t1`, workspace_id: ws }, type: 'pane_info' },
+	})
+
 /**
  * `describeRegion` is OPTIONAL on the seam — a backend that cannot describe its own region omits
  * it entirely. The herdr adapter must implement it, so bind it once here: if it ever goes missing
@@ -38,6 +59,38 @@ if (!describeRegion) throw new Error('the herdr adapter must implement describeR
 
 describe('spec:cyber-mux/mux', () => {
 	describe('herdrSessionAdapter (mocked exec — herdr is not installed in this environment)', () => {
+		// The outline is ONE key, so every Examples row folds under this one static title. The
+		// placement-specific tests below each cover a single row and assert argv besides; this one
+		// exists to carry the outline's own claim — that whatever tier is opened, `open` returns the
+		// workspace the pane landed in — across all three rows at once.
+		it.each<{
+			at: SessionPlacement
+			response: Record<string, string | null>
+			expected: { id: string; workspace: string }
+		}>([
+			{
+				at: 'workspace',
+				response: { 'workspace create': PANE_IN_WORKSPACE('w7:p1', 'w7') },
+				// The workspace it created.
+				expected: { id: 'w7:p1', workspace: 'w7' },
+			},
+			{
+				at: 'tab',
+				response: { 'tab create': PANE_IN_TAB('w3:pT', 'w3') },
+				// The workspace the new tab was created in.
+				expected: { id: 'w3:pT', workspace: 'w3' },
+			},
+			{
+				at: 'pane:right',
+				response: { 'pane split': PANE_IN_SPLIT('w3:pB', 'w3') },
+				// The workspace the split landed in — the caller's own.
+				expected: { id: 'w3:pB', workspace: 'w3' },
+			},
+		])('open returns the workspace the new pane landed in', ({ at, response, expected }) => {
+			const target = herdrSessionAdapter.open(fakeExec([], response), { cwd: '/unit', at })
+			expect(target).toEqual(expected)
+		})
+
 		it('open() splits a pane at the given cwd, extracts the pane id from herdr JSON, and runs the launch command', () => {
 			const calls: string[][] = []
 			const splitOut = JSON.stringify({
