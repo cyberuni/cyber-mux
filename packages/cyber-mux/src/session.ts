@@ -171,6 +171,21 @@ export interface LivePane {
 	harness?: string
 	/** The pane's working directory, when the backend reports it. */
 	cwd?: string
+	/**
+	 * The human name a person gave this pane, when there is one — what lets a caller address the pane
+	 * by name instead of by id.
+	 *
+	 * **Absent means nobody named it**, and that is the whole point of the field being optional. A
+	 * backend never invents one: herdr omits the key until `pane rename`, and tmux — which has no
+	 * unset title and defaults `pane_title` to the hostname — reports a label only for a title that
+	 * differs from the host (`paneLabel` in `session.tmux.ts` carries the rule). Exporting tmux's
+	 * default would put the same label on every pane in the session, and that name would then resolve
+	 * to all of them: ambiguity manufactured out of a name nobody chose.
+	 *
+	 * **A name, not a key.** Neither backend requires one unique, so duplicates are ordinary and are
+	 * resolved where the caller is — at lookup — rather than refused at authoring time.
+	 */
+	label?: string
 }
 
 export interface SessionReadOptions {

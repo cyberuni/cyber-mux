@@ -237,15 +237,32 @@ export const tmuxSessionAdapter: SessionAdapter = {
 		return paneActive === '1' && windowActive === '1' && sessionAttached !== '0' && sessionAttached !== undefined
 	},
 
+	/**
+	 * Tab-separated, not space — the same rule `describeTmuxRegion` follows, and for the same reason:
+	 * `pane_current_path` and `pane_title` can both contain spaces. The old space-separated format
+	 * recovered the cwd by rejoining everything after the command, which works only while the cwd is
+	 * the LAST field. A label is a human's and may hold anything, so appending one to that format would
+	 * make both fields unrecoverable — `my worker` and `/repo/my dir` cannot be told apart by a space.
+	 * A tab can appear in neither id nor command, and the two free-text fields are separated by one.
+	 */
 	listPanes(exec): LivePane[] {
-		const out = exec('tmux', ['list-panes', '-a', '-F', '#{pane_id} #{pane_current_command} #{pane_current_path}'])
+		const out = exec('tmux', [
+			'list-panes',
+			'-a',
+			'-F',
+			'#{pane_id}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_title}\t#{host}',
+		])
 		if (!out) return []
 		return out
 			.split('\n')
 			.filter(Boolean)
 			.map((line) => {
-				const [id, , ...cwdParts] = line.split(' ')
-				return { id: id ?? '', mux: 'tmux' as const, cwd: cwdParts.length ? cwdParts.join(' ') : undefined }
+				const [id, , cwd, title, host] = line.split('\t')
+				const pane: LivePane = { id: id ?? '', mux: 'tmux' as const }
+				if (cwd) pane.cwd = cwd
+				const label = paneLabel(title, host)
+				if (label) pane.label = label
+				return pane
 			})
 			.filter((p) => p.id !== '')
 	},
@@ -367,15 +384,32 @@ function describeTmuxRegion(exec: Exec, id: string): RegionPane[] {
 			rect: { x: Number(left), y: Number(top), width: Number(width), height: Number(height) },
 		}
 		if (cwd) pane.cwd = cwd
-		// tmux has no "unset title" — it defaults `pane_title` to the hostname, so every pane in an
-		// untouched window reports the same name. Exporting that would put `label: "zeta"` on all of
-		// them, which is not a label anyone chose. A title that differs from the host is one someone
-		// set (cyber-mux's own `select-pane -T` among them), so it is the author's and survives.
-		if (title && title !== host) pane.label = title
+		const label = paneLabel(title, host)
+		if (label) pane.label = label
 		panes.push(pane)
 	}
 	if (panes.length === 0) throw new Error(`tmux reported no panes in the region around pane ${id}`)
 	return panes
+}
+
+/**
+ * A tmux pane's label — its title, unless that title is the hostname tmux handed it.
+ *
+ * **tmux has no "unset title"**: it defaults `pane_title` to the hostname, so a pane nobody ever named
+ * reports a name nobody chose, and every pane in an untouched session reports the SAME one. Exporting
+ * that would label them all `zeta`, and `zeta` would then resolve to every pane in the session —
+ * ambiguity manufactured out of nothing. A title that differs from the host is one someone set
+ * (cyber-mux's own `select-pane -T` among them), so it is the author's and survives.
+ *
+ * One home for the rule, called by BOTH reads — `listPanes` (which a name resolves against) and
+ * `describeTmuxRegion` (which a capture exports). Two spellings of a heuristic this load-bearing is
+ * how the listing and the capture come to disagree about which panes are named.
+ *
+ * The comparison is the workaround, not the shape of the thing: herdr has the honest primitive and
+ * omits the key outright until a pane is renamed, so it needs no rule at all.
+ */
+function paneLabel(title: string | undefined, host: string | undefined): string | undefined {
+	return title && title !== host ? title : undefined
 }
 
 /**

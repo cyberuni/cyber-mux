@@ -677,16 +677,60 @@ describe('spec:cyber-mux/mux', () => {
 
 		it('listPanes() reports every live pane with its id and cwd, no harness', () => {
 			const calls: string[][] = []
-			const exec = fakeExec(calls, { 'list-panes': '%1 claude /repo/a\n%3 zsh /repo/b' })
+			// Tab-separated, and `pane_title`/`host` ride along so a label can be told from the hostname
+			// tmux defaults an unnamed pane's title to. Both panes here are named, so both carry a label.
+			const exec = fakeExec(calls, {
+				'list-panes': '%1\tclaude\t/repo/a\tworker\tzeta\n%3\tzsh\t/repo/b\tsidebar\tzeta',
+			})
 			expect(tmuxSessionAdapter.listPanes(exec)).toEqual([
-				{ id: '%1', mux: 'tmux', cwd: '/repo/a' },
-				{ id: '%3', mux: 'tmux', cwd: '/repo/b' },
+				{ id: '%1', mux: 'tmux', cwd: '/repo/a', label: 'worker' },
+				{ id: '%3', mux: 'tmux', cwd: '/repo/b', label: 'sidebar' },
 			])
-			expect(calls[0]).toEqual(['list-panes', '-a', '-F', '#{pane_id} #{pane_current_command} #{pane_current_path}'])
+			expect(calls[0]).toEqual([
+				'list-panes',
+				'-a',
+				'-F',
+				'#{pane_id}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_title}\t#{host}',
+			])
 		})
 
 		it('listPanes() returns empty when tmux reports nothing', () => {
 			expect(tmuxSessionAdapter.listPanes(() => null)).toEqual([])
+		})
+
+		// The tmux half of the outline; the herdr row lives in session.herdr.test.ts.
+		it("the live pane listing carries each pane's label, so a name resolves from it", () => {
+			// A person named this pane `worker` — its title differs from the host, which is what makes it
+			// a name someone chose rather than the one tmux handed it.
+			const exec = fakeExec([], { 'list-panes': '%1\tclaude\t/repo/a\tworker\tzeta' })
+			expect(tmuxSessionAdapter.listPanes(exec)).toEqual([{ id: '%1', mux: 'tmux', cwd: '/repo/a', label: 'worker' }])
+		})
+
+		// tmux has no unset title — it defaults `pane_title` to the hostname. Exporting that would label
+		// EVERY untouched pane in the session `zeta`, and `zeta` would then resolve to all of them.
+		it('a tmux pane nobody named carries no label, so the hostname addresses no pane', () => {
+			// Three panes nobody ever named: tmux reports the host as each one's title.
+			const exec = fakeExec([], {
+				'list-panes': '%1\tzsh\t/repo/a\tzeta\tzeta\n%2\tzsh\t/repo/b\tzeta\tzeta\n%3\tzsh\t/repo/c\tzeta\tzeta',
+			})
+			const panes = tmuxSessionAdapter.listPanes(exec)
+			// That pane reports NO label — absent, not the hostname.
+			for (const pane of panes) expect(pane.label).toBeUndefined()
+			// So the hostname resolves to no pane, rather than colliding with every pane in the session.
+			expect(panes.filter((p) => p.label === 'zeta')).toEqual([])
+		})
+
+		it('a label containing spaces resolves, and never corrupts what is listed beside it', () => {
+			// A label with a space, and a cwd with one too — the pair the old space-separated format could
+			// not tell apart, and the reason this read is tab-separated.
+			const exec = fakeExec([], { 'list-panes': '%1\tzsh\t/repo/my dir\tmy worker\tzeta' })
+			const panes = tmuxSessionAdapter.listPanes(exec)
+			// The label and the working directory are each read WHOLE — neither truncated at its space,
+			// and neither bleeding into the other.
+			expect(panes).toEqual([{ id: '%1', mux: 'tmux', cwd: '/repo/my dir', label: 'my worker' }])
+			// And a caller naming `my worker` resolves that pane: the label matches in full, which is what
+			// the CLI's resolver compares against.
+			expect(panes.filter((p) => p.label === 'my worker').map((p) => p.id)).toEqual(['%1'])
 		})
 
 		it('binds no worktree to a workspace — tmux has no workspace tier to bind one to', () => {
