@@ -735,11 +735,11 @@ function listCommand(deps: Deps): Command {
 			output({ panes }, () =>
 				printTable(panes, [
 					{ label: 'pane', get: (p) => p.id },
-					{ label: 'mux', get: (p) => p.mux },
-					// No label column, though `listPanes` now carries one and a label is what a caller types
-					// instead of an id. This row is already at axi #2's 3–4 field ceiling, and which four
-					// earn the slots — or whether the label belongs behind `--full` — is a question for that
-					// contract rather than a rider on this change. A follow-up is filed.
+					// `label` takes the slot `mux` held. Every row of one listing reports the same mux — one
+					// adapter is selected per session, so the column is constant by construction and
+					// discriminates nothing. The label is what a caller now types INSTEAD of the id, so it is
+					// the fact this row exists to carry. `doctor` is where the backend is a live question.
+					{ label: 'label', get: (p) => p.label ?? '' },
 					{ label: 'harness', get: (p) => p.harness ?? '' },
 					{ label: 'cwd', get: (p) => p.cwd ?? '' },
 				]),

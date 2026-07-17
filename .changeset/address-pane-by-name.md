@@ -23,6 +23,7 @@ about. Exit `2` means ambiguous on every pane verb. Nothing that exits `0` or `1
 name could not be passed at all before this release, so exit `2` is only reachable through the new
 capability.
 
-`cyber-mux list` reports each pane's label internally but does not yet show it as a column — that row
-is already at the output contract's field ceiling, so which fields earn the slots is being decided
-separately.
+**`cyber-mux list` replaces its `mux` column with `label`.** The label is what you now type instead of
+an id, so it is the fact that row exists to carry; `mux` was constant on every row by construction —
+one adapter is selected per session — so the column discriminated nothing. `cyber-mux doctor` is where
+the backend is a live question, and it still reports it.

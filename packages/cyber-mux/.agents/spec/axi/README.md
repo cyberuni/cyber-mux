@@ -36,8 +36,16 @@ scenarios.
    prose is never the default for a structured result. `cyber-mux`'s current `--format text|json`
    (with `agent` reserved but unused) collapses toward TOON default + the `json` escape.
 2. **Minimal default schema (#2)** — a list/result row carries **3–4 fields**, not every field
-   (`list` → `pane, mux, harness`; `doctor` → `mux, via, pane, backend`). Full detail is reached
-   through `--full`, never dumped by default.
+   (`list` → `pane, label, harness, cwd`; `doctor` → `mux, via, pane, backend`). Full detail is
+   reached through `--full`, never dumped by default.
+
+   **A field earns its slot by discriminating, not by being known.** `list` reports no `mux`, though
+   it knows it: one adapter is selected per session, so every row of a listing carries the *same*
+   value and the column separates nothing — the ceiling is better spent on `label`, which is what a
+   caller types instead of an id ([`mux/`](../mux/README.md)'s pane addressing). The backend is a
+   live question for `doctor`, which is discovering it, and a settled one for `list`, which already
+   ran through it. This example previously read `pane, mux, harness` and was stale on two counts —
+   `cwd` had long been a fourth column, and `mux` was noise.
 3. **Truncation + `--full` (#3)** — a large text body (`read` with no `--lines` on a long-running
    pane) is truncated with a size hint (`… +240 lines — rerun with --full`) unless `--full` is
    passed. `--full` is the universal escape hatch that suppresses truncation; `--format json` is

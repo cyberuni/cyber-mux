@@ -272,6 +272,23 @@ describe('spec:cyber-mux/mux', () => {
 			expect(logs.some((l) => l.includes('w3:p2'))).toBe(true)
 		})
 
+		// Not bound to a scenario — no frozen scenario specifies which columns `list` prints; the field
+		// budget is axi #2's, a reference bar with no suite. This pins the swap anyway, because the
+		// column set is user-facing and nothing else fails when it changes.
+		it('list spends its field budget on the label a caller types, not the mux every row shares', async () => {
+			const listOut = JSON.stringify({
+				result: { panes: [{ pane_id: 'w3:p1', label: 'worker', agent: 'claude', cwd: '/repo/a' }] },
+			})
+			const exec = fakeHerdrExec([], { 'pane list': listOut })
+			const program = buildProgram({ env: { CYBER_MUX: 'herdr' }, exec })
+			await run(program, ['list'])
+			const out = logs.join('\n')
+			expect(out).toContain('worker')
+			// One adapter is selected per session, so every row reports the same mux: a column that
+			// discriminates nothing, spending a slot the label earns.
+			expect(out).not.toContain('herdr')
+		})
+
 		it('open with no --launch creates a blank pane', async () => {
 			const calls: string[][] = []
 			const exec = fakeTmuxExec(calls, { 'new-window': '%2\t@1' })
