@@ -266,6 +266,47 @@ Feature: mux — the pane abstraction
     # refuse the flag outright. Dropping it keeps the worktree route working; a caller that needs env
     # there carries it some other way.
 
+  # ── The workspace group: carrying a grouping a backend has no tier for ──
+  # A caller opening several tabs as one workspace needs them recognizable as a group afterwards. On a
+  # backend with a real workspace tier that is free — the tier IS the group. On one without, the seam
+  # carries an opaque group id the backend can store and be filtered by.
+
+  Scenario: the open contract carries an opaque workspace group id
+    Given a caller opening a tab with a workspace group id
+    When open runs
+    Then the id reaches the backend as an opaque value
+    And it is never parsed, split, or derived from the label
+    # the group id and the label are separate on purpose: a label is chosen by a human and may contain
+    # anything, so recovering a grouping by parsing one is unsound
+
+  Scenario: a backend with no workspace tier stores the group id natively
+    Given a caller opening a tab through the tmux adapter, with a workspace group id
+    When open runs
+    Then the window carries the id as a window option the backend can filter on
+    # tmux has no Workspace level, so the grouping has nowhere structural to live; a window option is
+    # tmux's own mechanism for exactly this and survives a window rename
+
+  Scenario: a backend with a real workspace tier ignores the group id
+    Given a caller opening a tab through the herdr adapter, with a workspace group id
+    When open runs
+    Then no grouping flag reaches herdr
+    # herdr's workspace IS the group and every pane and tab record already carries its workspace_id —
+    # a second grouping would be a duplicate the backend never reads
+
+  Scenario: a group id is never invented for a caller that did not ask for one
+    Given a caller opening a tab through the tmux adapter, with no workspace group id
+    When open runs
+    Then no window option is set
+    # a window nobody grouped stays ungrouped, and reads back as a workspace of one
+
+  Scenario: the group id is not a workspace, and open never reports it as one
+    Given a caller opening a tab through the tmux adapter, with a workspace group id
+    When open reports the pane
+    Then the reported workspace is absent
+    # absent rather than false, the same convention the focus probe's unknown follows: tmux has no
+    # workspace tier, and a tag cyber-mux wrote is its own bookkeeping rather than a tier the backend
+    # gained. Reporting it as a workspace would be a confident lie.
+
   Scenario Outline: a backend declares whether it can size a split
     Given a caller asking the <adapter> adapter whether it can size a split
     When it reads the declaration

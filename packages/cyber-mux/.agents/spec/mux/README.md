@@ -65,6 +65,30 @@ once opened:
   `0 < ratio < 1` bar belongs to the caller (layout's schema enforces it, and is where a degenerate
   ratio is refused). An adapter author owes the rendering, not the range check.
 
+- **A caller can group the spaces it opens, on a backend with no tier to group them in** — one more
+  option on the open contract, and the same shape as the three above: not a CLI flag, reached through
+  the adapter, with [`layout/`](../layout/README.md) as its caller. A caller opening several tabs as
+  one workspace needs them recognizable as a group afterwards. Where a real Workspace tier exists the
+  tier **is** the group and the option is **ignored** — herdr already stamps every pane and tab record
+  with its `workspace_id`, so a second grouping would duplicate a fact the backend never reads. Where
+  there is none, the backend stores an **opaque group id** in its own native mechanism: tmux has no
+  Workspace level, so the id goes in a **window option**, which the backend can filter on server-side
+  and which survives a window rename.
+
+  **The id and the label are separate, and that separation is the whole point.** The obvious cheaper
+  design — encode the group in the label and read it back — **does not work**, and not marginally: a
+  label is chosen by a human and may contain anything, so a window named `acme - beta - main` reads as
+  group `acme` with tab `beta - main` exactly as well as group `acme - beta` with tab `main`. No split
+  rule resolves it; each merely picks which legal label to silently mis-group. So a label is never
+  parsed to recover a grouping. What a *human* reads in a status bar is the label's job and belongs to
+  the caller that composes it (layout's business); what a *machine* reads is this id.
+
+  **A group id is not a workspace, and `open` never reports it as one.** A caller that asks for no
+  grouping gets none — a window nobody grouped stays ungrouped and reads back as a group of one — and
+  a backend carrying a tag still reports its workspace **absent**, because a tag cyber-mux wrote is its
+  own bookkeeping rather than a tier the backend gained. Same absent-rather-than-false convention the
+  focus probe's `unknown` follows; reporting it would be a confident lie about the backend's shape.
+
 - **Multiplexer detection is two-mode** — `probeMultiplexer` first trusts `$CYBER_MUX`
   (`tmux`|`herdr`|`screen`|`none`) outright — this doubles as an override (`=none` forces no-mux even
   inside a real multiplexer). Failing that it walks the process ancestry from `$$` looking for a
@@ -183,9 +207,19 @@ opened — those stayed behind in `cyberlegion`, this repo owns only backend sel
 multiplexer detection, per-pane send/read/focus/close, and the worktree surface above.
 
 Also a non-goal: **any worktree fact a backend reports of its own** — git answers those on every
-backend, so a multiplexer is never asked; see the use cases above. Naming a **tab inside** a
-workspace is likewise out: herdr labels a new workspace's root tab `1` with no flag to change it
-(only `tab rename` after the fact), and the workspace label is what its UI groups by.
+backend, so a multiplexer is never asked; see the use cases above.
+
+**Naming a tab inside a workspace was a non-goal here, and this CR reversed it — the constraint was
+real but the generalization was not.** The recorded reason was that herdr labels a new workspace's
+root tab `1` with no flag to change it (only `tab rename` after the fact), and that the workspace
+label is what its UI groups by. The first half holds and is unchanged; the second is beside the point
+once a template describes **several** tabs, where the whole question is telling them apart *inside*
+one group. What the premise never supported is the conclusion drawn from it: it is true of a new
+workspace's **root tab alone**. Every subsequent tab is named at birth on both backends — herdr
+`tab create --label`, tmux `new-window -n` — which `--label` above already specifies at every tier.
+So the cost is one `tab rename` on herdr's first tab, not a capability neither backend has. Multi-tab
+layouts ([`layout/`](../layout/README.md)) are the first real customer, and the non-goal is revisited
+here rather than silently contradicted.
 
 - **Typing text and pressing keys are separate verbs; only `submit` presses Enter *for you*** —
   driving a pane's input splits on whether Enter is **implied**. `send text` and `send keys` never add
@@ -268,6 +302,7 @@ Every scenario in [`mux.feature`](./mux.feature) maps to one of these behaviors:
 | **backend selected by environment** | tmux vs herdr selection; neither present errors |
 | **placement** | `--at` choices; tab honored per backend, never a split; `workspace` → each backend's own visible space (herdr `workspace create`, tmux window), never a detached tmux session; a workspace `open` makes is bound to no repo; omitted `--at` falls back to `tab` |
 | **split options — which pane, how big, what environment** | `from` targets a `pane:*` split on both backends (tmux `-t`, herdr positional) and is ignored by `tab`/`workspace`; omitted, each backend takes its own default, which tracks the user's focus rather than the caller's. `ratio` is the fraction kept by the ORIGINAL pane and converts in opposite directions (herdr passes it through, tmux inverts to `1 - ratio`); omitted, each backend splits evenly; never passed to a tab or workspace. Each backend declares whether it can size a split at all. `env` is native at the birth of every tier on both backends, one repeated flag per variable, with or without a launch — except herdr's worktree verbs, which take no env param and drop it |
+| **the workspace group — carrying a grouping a backend has no tier for** | the open contract carries an opaque group id, never parsed, split, or derived from the label; a backend with no workspace tier stores it natively (tmux: a window option it can filter on, surviving a rename); a backend with a real workspace tier ignores it, its tier being the group; no id is invented for a caller that did not ask; the id is not a workspace, so `open` still reports the workspace absent |
 | **text and keys are separate; only submit presses Enter for you** | `send text` types literal characters and presses no Enter (a key-named word is typed, not interpreted; no text → rejected); `send keys` presses named keys in order and types nothing — core keys normalized onto each backend, a non-core token forwarded verbatim to the backend's own semantics (no tokens at all → rejected); `send keys Enter` presses Enter and takes the turn, because the caller wrote it; bare `send` is incomplete input — help to stderr, exit 1, stdout clean (an acknowledged amendment to axi #8, not an application of it); `submit` always presses Enter — with text it types it literally then Enters, with none (or empty text) it bare-Enter flushes without retyping; `open --launch` submits |
 | **multiplexer detection is two-mode** | `$CYBER_MUX` fast-path + override; ancestry walk; hint fallback; `doctor` hint |
 | **mux mode** | reports the detected session backend; "none" (exit 0) when no adapter is selectable |

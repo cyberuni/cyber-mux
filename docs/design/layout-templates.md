@@ -303,6 +303,20 @@ matches §5.4's rule that v1 builds one region and splits inside it. `--from` de
 own pane via `callerPane` (`backend.ts`), so bare `layout export pool-4` captures the region you are
 sitting in. The name is positional, matching `show` / `validate`.
 
+> **Corrected by the tabs CR (issue #14).** Two claims above did not survive contact:
+>
+> - **herdr's `layout.export` is not reachable.** `layout` is **not a CLI verb** in herdr 0.7.4 —
+>   `layout.export`/`layout.apply` are socket-API-only, and `session.herdr.ts` speaks the CLI by
+>   design (so it composes with the synchronous `Exec` seam). So the `tab_id` route this passage
+>   leans on is closed, and a per-tab read goes through `pane layout --pane <any pane in that tab>`
+>   instead. That indirection is not a downgrade: an unfocused tab in *another* workspace reports
+>   live geometry, so the workspace-wide read needs nothing focused first.
+> - **The region tier was v1's rule, not a backend limit.** §5.4 deferred multi-tab layouts and the
+>   tabs CR took the deferral up. A workspace-wide capture is a **new optional seam member** beside
+>   the region read, and both backends answer it — herdr by enumerating a workspace's tabs natively,
+>   tmux by the group tag the walk writes (tmux has no workspace tier, so the grouping is not a fact
+>   it holds otherwise).
+
 **Three conversion rules, each load-bearing:**
 
 1. **n-ary → binary.** tmux's tree is n-ary — three panes side by side is *one* node with three
