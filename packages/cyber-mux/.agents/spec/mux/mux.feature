@@ -740,8 +740,8 @@ Feature: mux — the pane abstraction
   Scenario: bare send is incomplete input, so it fails loud with help rather than acting
     Given a caller running cyber-mux send naming neither text nor keys
     When the command is parsed
-    Then help naming text and keys as its subcommands is written to stderr
-    And it exits 1, leaving stdout empty
+    Then help naming text and keys as its subcommands is written to stdout
+    And it exits 2, the status that separates bad input from a failed operation
     And nothing is sent to any pane
 
   Scenario Outline: submit with text types the text and presses Enter, taking the pane's turn
@@ -894,7 +894,7 @@ Feature: mux — the pane abstraction
   Scenario Outline: an ambiguous name fails the same way on every pane verb
     Given three live panes all labeled worker
     When a caller runs <verb> naming worker
-    Then the candidates are reported on stderr under the code ambiguous-pane
+    Then the candidates are reported on stdout under the code ambiguous-pane
     And it exits 2, having acted on none of the three panes
 
     Examples:
@@ -952,24 +952,38 @@ Feature: mux — the pane abstraction
     Then each candidate is reported with its id, its label, and its working directory
     And each candidate's id is directly usable as the retry that resolves the ambiguity
 
-  Scenario: the ambiguity report is a structured error on stderr, leaving stdout clean
+  # The report goes to stdout because that is the stream AXI reserves for what the agent consumes —
+  # data, errors and suggestions alike — while stderr is defined as debug the agent does not read. A
+  # report whose whole purpose is handing a caller the candidates to retry with is the last thing that
+  # belongs on the ignored stream. This does not muddy the payload: a verb either succeeds and writes
+  # its result or fails and writes its error, never both, so the exit code tells the two apart before
+  # anything is parsed.
+  Scenario: the ambiguity report is a structured error on stdout, where the agent reads
     Given two live panes labeled worker
     When a caller names worker
-    Then the report is written to stderr under the stable code ambiguous-pane
-    And stdout is left clean
+    Then the report is written to stdout under the stable code ambiguous-pane
+    And stderr is left empty, carrying no part of the answer
     And it exits 2
 
   Scenario: --format json emits the ambiguity as a structured error carrying its candidates
     Given two live panes labeled worker
     When a caller names worker with --format json
     Then the error carries the code ambiguous-pane and the candidate entries as JSON
-    And it is written to stderr, so a redirected or discarded stdout never corrupts the result
+    And it is written to stdout, where a caller branching on exit 2 never mistakes it for a result
 
   # exists answers about a locator, and three panes named worker is not an answer to "is it live?" —
   # so the outcome rides the exit code rather than a word. The word-only alternative is what
   # systemctl is-active does, reporting `inactive` for both a stopped unit and a unit that does not
-  # exist: only its exit code tells them apart. An acknowledged amendment to axi #6's 0/1 code set,
-  # scoped and filed there.
+  # exist: only its exit code tells them apart.
+  #
+  # exists is a PREDICATE, and its `1` is a real divergence from axi #6 rather than an amendment to it.
+  # AXI reserves `1` for an error; exists spends it on `gone`, which is not an error but the answer to
+  # the question asked. That is the framing grep, POSIX test and systemctl is-active all take, it is
+  # deliberate, and it is kept — but it is NOT the code set AXI states, and the axi node used to call it
+  # "an amendment to the 0/1 set", which was wrong twice over: the set was always 0/1/2 (nothing was
+  # amended), and what exists actually diverges on is the MEANING of 1, which no amendment covered.
+  # Recorded here rather than mislabeled. Whether to keep it is its own question, not one the
+  # error-surface pass that corrected the text around it settles.
   Scenario Outline: exists distinguishes its three outcomes by exit code, not by prose
     Given <world>
     When a caller runs cyber-mux exists naming that locator
@@ -977,16 +991,18 @@ Feature: mux — the pane abstraction
     And it exits <code>
 
     Examples:
-      | world                                     | stdout  | code |
-      | exactly one live pane matches the locator | live    | 0    |
-      | no live pane matches the locator          | gone    | 1    |
-      | two or more live panes match the locator  | nothing | 2    |
+      | world                                     | stdout                        | code |
+      | exactly one live pane matches the locator | live                          | 0    |
+      | no live pane matches the locator          | gone                          | 1    |
+      | two or more live panes match the locator  | the ambiguous-pane error      | 2    |
 
   Scenario: an ambiguous exists reports its candidates rather than answering the question
     Given two live panes labeled worker
     When a caller runs cyber-mux exists naming worker
-    Then the candidates are reported on stderr under the code ambiguous-pane
+    Then the candidates are reported on stdout under the code ambiguous-pane
     And it answers neither live nor gone, because there is no single pane the question is about
+    # The report REPLACES the answer on stdout rather than joining it: exists either answers or errors,
+    # so a caller reading stdout after a nonzero exit is reading the error, never a word plus an error.
 
   Scenario Outline: the live pane listing carries each pane's label, so a name resolves from it
     Given a <backend> pane a person has labeled
@@ -1019,6 +1035,124 @@ Feature: mux — the pane abstraction
     When the live panes are listed
     Then the label and the working directory are each read whole
     And a caller naming my worker resolves that pane
+
+  # ── The error surface — structured, coded, and on the stream the agent actually reads ──
+  #
+  # These pin axi/'s #6 concretely, which is where that reference node's conformance is verified: it
+  # carries no suite of its own. One helper reaches every verb here, so these scenarios are about the
+  # surface rather than any one command — a verb-by-verb pin would freeze twenty copies of one rule.
+
+  # This surface rule holds for EVERY verb, layout included; the examples stay on the shared,
+  # non-layout surface so this node owns the shape, not any command's specifics. Each layout verb's
+  # own code, exit and message live in layout/'s suite (the Boundary rule: domain behavior belongs to
+  # its capability node), and they follow this same shape.
+  Scenario Outline: a failure is a structured error on stdout, under the code for THAT failure
+    Given <world>
+    When a caller runs <verb>
+    Then the report is written to stdout, never stderr
+    And it carries the stable code <code>
+    And it carries a help line naming the command that fixes it, never "see --help"
+    And it exits <exit>
+
+    Examples:
+      | world                                    | verb                  | code           | exit |
+      | no multiplexer this process is inside    | cyber-mux list        | no-mux         | 1    |
+      | a locator matching no live pane          | cyber-mux focus %99   | pane-not-found | 1    |
+      | two live panes labeled worker            | cyber-mux read worker | ambiguous-pane | 2    |
+
+  # The codes must DISCRIMINATE, which is the whole of the third divergence and the half a reader is
+  # most likely to skim past. A CLI that renamed fail()'s free text to `code: error` and moved it to
+  # stdout would satisfy "carries a stable code" on every row while leaving a caller exactly as unable
+  # to tell one failure from another as parsing prose left them — and that is the CHEAPEST edit at the
+  # one helper this pass touches, so it is the wrong impl most likely to be built.
+  Scenario: two different failures never share one code
+    Given a caller who hits an ambiguous locator and a caller who hits no multiplexer
+    When each failure is reported
+    Then the code ambiguous-pane and the code no-mux differ
+    And neither is a catch-all a third failure mode would also land under
+
+  # A usage error is a missing or malformed ARGUMENT — the fix is a different invocation, not a retry.
+  # A required argument the parser never received is exactly that. These ship at 1 today (commander's
+  # default), which #36 did not separately count, and they are the same family as the unknown flag.
+  Scenario Outline: a missing required argument is a usage error, not a failed operation
+    Given a caller running <verb> without the pane argument it requires
+    When the command is parsed
+    Then it exits 2 rather than 1, having called no backend
+    And the error names the argument that is missing
+
+    Examples:
+      | verb                |
+      | cyber-mux read      |
+      | cyber-mux focus     |
+      | cyber-mux send text |
+
+  Scenario: an unknown flag is a usage error, and says what the valid flags are
+    Given a caller running cyber-mux list with a flag that command does not define
+    When the command is parsed
+    Then it exits 2, having called no backend and listed nothing
+    And the error names the unrecognized flag
+    And it lists that command's valid flags, so the agent self-corrects without a second call
+    # AXI's own reasoning: the expensive cost is the follow-up round trip, and the agent's deterministic
+    # next move after an unknown flag is `--help`. Folding that answer into the error collapses a
+    # two-turn correction into one.
+
+  Scenario: an unknown flag is rejected against the SUBCOMMAND's flags, not the group's
+    Given a caller running cyber-mux layout list with --force, a flag only cyber-mux layout save defines
+    When the command is parsed
+    Then it exits 2 and names --force as unknown for layout list
+    And the valid flags it lists are layout list's own, never layout save's
+    # A group's subcommands do not share a flag set, and only the subcommand layer knows which is in
+    # play. Validating against the GROUP's union would accept --force here and then silently drop it —
+    # the exact failure fail-loud exists to prevent. layout is the pair that can carry this rule: save
+    # takes --from/--workspace/--description/--force and list takes none of them. send cannot — its
+    # text and keys subcommands define identical flag sets, so no flag exists that separates them.
+
+  Scenario: --help is never an unknown flag
+    Given a caller running any cyber-mux command with --help
+    When the command is parsed
+    Then help is written to stdout and it exits 0
+    And no flag validation rejects it, on any command
+
+  Scenario: a structured error honors --format json
+    Given a caller whose command fails with --format json
+    When the error is reported
+    Then it is emitted as JSON on stdout carrying the same stable code the readable form uses
+    And no free-text prose is written beside it
+
+  # This is what makes an error on stdout safe, and it is the premise the whole stream decision rests
+  # on — so it is contracted here rather than left as a property the current code happens to have.
+  # The invariant is not "no verb ever exits nonzero with output" — apply exits nonzero and still
+  # reports (below). It is narrower and exact: stdout carries exactly ONE payload. Either a RESULT —
+  # which may report a negative or partial outcome inside itself and carry a nonzero exit, as exists's
+  # `gone` and apply's partial manifest do — or a structured ERROR, when the operation produced no
+  # result at all. Never a result and a separate error object concatenated. A caller branches on the
+  # exit code, then parses one payload; it is never handed two.
+  Scenario: a failed verb's stdout is its structured error alone, with no result before it
+    Given a caller running cyber-mux read against a pane whose capture fails
+    When the failure is reported
+    Then the structured error is the whole of stdout
+    And no partial pane output precedes it
+    # read is the sharpest case, because its stdout is the pane's own raw byte stream rather than a
+    # structured payload — the one place a mixture would be genuinely unparseable, not merely untidy.
+    # It holds because a failed read captures nothing: there are no bytes for an error to land amid.
+
+  Scenario: a partially-applied layout is one result payload, not a result plus an error
+    Given a tabs template whose second tab fails to open
+    When cyber-mux applies it
+    Then stdout carries the manifest of the panes already built, and that manifest alone
+    And the tab that failed is named inside that manifest, never appended as a second structured error
+    And it exits nonzero to signal the apply was incomplete
+    # apply does not roll back (layout/), so a partial build is a real outcome with a real result — the
+    # one case that looks like "result AND error on stdout" and is not. The nonzero exit and the named
+    # failing tab live INSIDE the one manifest payload, which is what keeps the invariant true here.
+
+  Scenario: an error never leaks the multiplexer's own output
+    Given a caller running a verb whose backend command fails with a tmux or herdr diagnostic
+    When the failure is reported
+    Then the error is translated into this CLI's own code and help
+    And the backend's raw text is not passed through as the message
+    # AXI: never leak dependency names — a suggestion references THIS CLI's commands, not the tool it
+    # wraps. An agent handed a tmux error cannot act on it through cyber-mux.
 
   # ── git worktree helpers — the checkout itself, plain git, no legion/unit-registry concepts ──
 
