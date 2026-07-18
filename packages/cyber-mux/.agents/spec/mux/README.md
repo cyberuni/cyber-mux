@@ -438,6 +438,13 @@ here rather than silently contradicted.
     is a token argument: the
     agent's deterministic next move is `--help`, so folding that answer into the error collapses a
     two-turn correction into one. `--help` itself always passes, on every command.
+  - **The `worktree` verbs share one catch-all (`reportWorktreeFailure`), and it owes the same
+    translation as every other verb.** It sits downstream of two error sources with different safety:
+    this CLI's own worktree refusals (a dirty-checkout guard, a primary-checkout guard) are its own
+    text and are forwarded verbatim; a failure opening or binding the worktree's pane comes from the
+    multiplexer and is translated the same as any other verb's backend failure, its raw diagnostic
+    never reaching stdout. The two are told apart by a dedicated `WorktreeGitError` the worktree module
+    throws for its own refusals — anything else reaching the catch-all is backend-originated.
   - **`exists` is the deliberate exception, and it is a divergence rather than an amendment.** It
     spends `1` on `gone` — an answer, not an error — the predicate framing `grep`, POSIX `test` and
     `systemctl is-active` take. That is kept, but it is **not** AXI's code set, and calling it "an
