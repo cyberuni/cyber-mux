@@ -238,16 +238,17 @@ corruption — but a failed `read` captures nothing, so the bytes and the error 
     payload as `help[N]:` blocks (`{ message, command }`, rendered by `printHelp` in `output.ts`), each
     emitted only when there is a next move (#9's omit-when-self-contained rule). This CR moved them off
     stderr. See #9.
-  - **Backend text is mostly translated, with one residual.** The coded error sites carry
-    `cyber-mux`'s own text (the `layout-not-found` lookup names the directories it searched; the
-    `invalid-template` and `layout-apply-failed` messages are this CLI's own). The remaining leak is the
-    generic `worktree-failed` catch-all (`reportWorktreeFailure`, `src/cli.ts`), which still forwards
-    the underlying error verbatim when no more-specific coded surface caught it — a stable `code` around
-    still-untranslated backend text.
+  - **Backend text is translated everywhere, including the generic `worktree-failed` catch-all.** The
+    coded error sites carry `cyber-mux`'s own text (the `layout-not-found` lookup names the directories
+    it searched; the `invalid-template` and `layout-apply-failed` messages are this CLI's own). The
+    `worktree` verbs' catch-all (`reportWorktreeFailure`, `src/cli.ts`) used to forward whatever it
+    caught verbatim — safe for this module's own refusals, a leak for a multiplexer failure opening or
+    binding the worktree's pane. It now tells the two apart (`WorktreeGitError`, `src/worktree.ts`) and
+    translates the latter the same way every other verb's backend failure already was (#42).
 
-  **What still trails the contract:** the `worktree-failed` residual above; TOON as the default format
-  (#1) and `--fields` (#2), truncation with a size hint (#3), pre-computed aggregates (#4); any further
-  suggestion sites of #9 as commands gain them (the two that ship already sit on stdout under the omit
-  rule); and the home view (#8) with the tool identity #10 requires of it.
+  **What still trails the contract:** TOON as the default format (#1) and `--fields` (#2), truncation
+  with a size hint (#3), pre-computed aggregates (#4); any further suggestion sites of #9 as commands
+  gain them (the two that ship already sit on stdout under the omit rule); and the home view (#8) with
+  the tool identity #10 requires of it.
 - **Boundary** — this bar owns the *shared* output shape. Each command's *domain* behavior (what
   `open` places, what `list` enumerates) lives in [`mux/`](../mux/README.md).

@@ -52,6 +52,15 @@ interface WorktreeAdapter {
 	remove(exec: Exec, path: string, opts: WorktreeRemoveOptions): void
 }
 
+/**
+ * This module's own refusals and failures — plain cyber-mux prose, never a dependency's raw words.
+ * `reportWorktreeFailure` (`cli.ts`) forwards a `WorktreeGitError`'s message onto stdout verbatim
+ * because it is safe to: everything thrown here is this CLI's own text. Anything else that reaches
+ * that catch-all (a `session.tmux.ts`/`session.herdr.ts` throw, which embeds the backend's own name
+ * and its raw stderr via `withReason`) is a different case and is translated, not forwarded.
+ */
+export class WorktreeGitError extends Error {}
+
 /** The only worktree backend at MVP — plain `git worktree`. */
 export const gitWorktreeAdapter: WorktreeAdapter = {
 	add(exec, opts) {
@@ -59,13 +68,13 @@ export const gitWorktreeAdapter: WorktreeAdapter = {
 		// git takes the start-point as a trailing commit-ish, after the path.
 		if (opts.base) args.push(opts.base)
 		const out = exec('git', args)
-		if (out === null) throw new Error(`git worktree add failed for ${opts.path}`)
+		if (out === null) throw new WorktreeGitError(`git worktree add failed for ${opts.path}`)
 		return { root: resolve(opts.path), branch: opts.branch }
 	},
 
 	remove(exec, path, opts) {
 		const out = exec('git', ['-C', opts.primaryRoot, 'worktree', 'remove', path, '--force'])
-		if (out === null) throw new Error(`git worktree remove failed for ${path}`)
+		if (out === null) throw new WorktreeGitError(`git worktree remove failed for ${path}`)
 	},
 }
 
@@ -75,7 +84,7 @@ export const gitWorktreeAdapter: WorktreeAdapter = {
  */
 export function resolvePrimaryRoot(exec: Exec): string {
 	const commonDir = exec('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'])
-	if (!commonDir) throw new Error('cannot resolve the primary checkout — not inside a git repository')
+	if (!commonDir) throw new WorktreeGitError('cannot resolve the primary checkout — not inside a git repository')
 	return dirname(commonDir)
 }
 
@@ -131,7 +140,9 @@ export function listWorktreesFromGit(exec: Exec, primaryRoot: string): WorktreeE
  */
 export function assertDistinctFromPrimary(worktreeRoot: string, primaryRoot: string): void {
 	if (resolve(worktreeRoot) === resolve(primaryRoot)) {
-		throw new Error('refusing to run in the primary checkout — spawn a worktree distinct from the primary checkout')
+		throw new WorktreeGitError(
+			'refusing to run in the primary checkout — spawn a worktree distinct from the primary checkout',
+		)
 	}
 }
 
@@ -177,7 +188,7 @@ export function removeWorktreeSafely(
 		return
 	}
 	if (!opts.force && isDirty(exec, path)) {
-		throw new Error(`worktree "${path}" has uncommitted changes — pass --force to discard them`)
+		throw new WorktreeGitError(`worktree "${path}" has uncommitted changes — pass --force to discard them`)
 	}
 	opts.releaseBinding?.()
 	gitWorktreeAdapter.remove(exec, path, { primaryRoot: opts.primaryRoot })

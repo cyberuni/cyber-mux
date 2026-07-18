@@ -1154,6 +1154,17 @@ Feature: mux — the pane abstraction
     # AXI: never leak dependency names — a suggestion references THIS CLI's commands, not the tool it
     # wraps. An agent handed a tmux error cannot act on it through cyber-mux.
 
+  # The catch-all every worktree verb shares (`reportWorktreeFailure`) sits downstream of TWO error
+  # sources with different safety, and it is the one place that has to tell them apart: this CLI's own
+  # worktree refusals (a dirty-checkout guard, a primary-checkout guard) are safe to forward verbatim,
+  # while a failure from opening or binding the worktree's pane comes from the multiplexer and carries
+  # its raw diagnostic the same way the scenario above already forbids for every other verb.
+  Scenario: the worktree catch-all never forwards the multiplexer's raw diagnostic either
+    Given a caller running cyber-mux worktree add whose backend fails opening the worktree's pane
+    When the failure is reported
+    Then the error carries the worktree-failed code and this CLI's own message
+    And neither the backend's name nor its raw diagnostic appears on stdout
+
   # ── git worktree helpers — the checkout itself, plain git, no legion/unit-registry concepts ──
 
   Scenario: worktree add defaults the path to a sibling of the primary checkout

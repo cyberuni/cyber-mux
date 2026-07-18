@@ -31,7 +31,7 @@ import {
 import { currentPane, probeMultiplexer } from './mux-probe.ts'
 import { type HelpEntry, output, printFields, printHelp, printTable } from './output.ts'
 import type { LivePane, SessionAdapter, SessionPlacement, SessionTarget } from './session.ts'
-import { gitWorktreeAdapter, resolvePrimaryRoot, resolveWorktreePath } from './worktree.ts'
+import { gitWorktreeAdapter, resolvePrimaryRoot, resolveWorktreePath, WorktreeGitError } from './worktree.ts'
 import {
 	addAndOpenWorktree,
 	listWorktrees,
@@ -110,17 +110,26 @@ function invalidLayoutName(name: string): CliError {
 }
 
 /**
- * A git/worktree operation that refused or failed — exit 1. Its message is this CLI's own worktree
- * text (a refusal naming `--force`, a primary-checkout guard), which is kept because the frozen
- * worktree refusals are asserted on it; a coded surface on its way out (a `no-mux`, a resolved-template
- * error, an apply failure) passes through untouched rather than being flattened into this generic one.
+ * A git/worktree operation that refused or failed — exit 1. A coded surface already on its way out (a
+ * `no-mux`, a resolved-template error, an apply failure) passes through untouched rather than being
+ * flattened into this generic one. A `WorktreeGitError` is this CLI's own worktree text (a refusal
+ * naming `--force`, a primary-checkout guard), which is kept because the frozen worktree refusals are
+ * asserted on it. Anything else reaching here comes from the session adapter opening/binding the
+ * worktree's pane (`session.tmux.ts`/`session.herdr.ts`) and embeds the backend's own name plus its raw
+ * stderr (`withReason`, `exec.lastError`) — AXI #6 forbids leaking a dependency's name or text, so that
+ * detail is not load-bearing for the agent and goes to stderr as a diagnostic only; stdout carries this
+ * CLI's own coded, translated error.
  */
 function reportWorktreeFailure(err: unknown): never {
 	if (err instanceof CliError) reportError(err)
+	if (err instanceof WorktreeGitError) {
+		reportError(new CliError('worktree-failed', err.message, 'check the worktree path and its state, then re-run', 1))
+	}
+	if (err instanceof Error && err.message) process.stderr.write(`${err.message}\n`)
 	reportError(
 		new CliError(
 			'worktree-failed',
-			err instanceof Error ? err.message : String(err),
+			'the worktree operation failed',
 			'check the worktree path and its state, then re-run',
 			1,
 		),
