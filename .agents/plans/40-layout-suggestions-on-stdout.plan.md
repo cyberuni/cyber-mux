@@ -2,7 +2,7 @@
 cr: "40-layout-suggestions-on-stdout"
 source: "github#40"
 project: cyber-mux
-status: exploring
+status: approved
 todos:
   - content: "Explore grill: 4 decisions settled (axi sync-scope = Option A full re-sync)"
     status: completed
@@ -12,10 +12,10 @@ todos:
     status: completed
   - content: "Draft axi/ reference node #9 + 'what ships today' — Option A full re-sync (DONE, source-verified)"
     status: completed
-  - content: "Dispatch cold spec-judge over CR diff; run spec gate; freeze; self-assert/ratify"
+  - content: "Dispatch cold spec-judge over CR diff; run spec gate; freeze; self-assert/ratify (DONE: R2 all lenses PASS, ALIGNED true; self-asserted by agent — provisional, ratify-or-kick-back)"
+    status: completed
+  - content: "Deliver: printHelp renderer in output.ts; move cli.ts:252 + :588 into stdout help[] block; update cli.test.ts; rebase; impl gate"
     status: in_progress
-  - content: "Deliver: printHelp renderer in output.ts; move cli.ts:252 + :587 into stdout help[]; update cli.test.ts; rebase; impl gate"
-    status: pending
   - content: "Handoff: PR with Closes #40, changeset (user-facing CLI change), drain follow-ups"
     status: pending
 ---
@@ -55,9 +55,38 @@ Source: github#40 — https://github.com/cyberuni/cyber-mux/issues/40
 
 ## NEXT — resume here
 
-**Next action:** dispatch the cold `sdd:sdd-spec-judge` over the full CR diff (`main..HEAD` + the
-uncommitted axi draft, now committed), run `sdd:spec-gate`, freeze, self-assert/ratify. All three
-spec dirs are drafted: layout/ + mux/ in `0b14c95`, axi/ in this session's commit.
+**Spec gate LANDED (provisional, agent-asserted — ratify or kick back).** R2: oracle/builder/
+architect all PASS, ALIGNED true, no blocker, no open markers. Applied approve: both features stay
+`@frozen` at new content, `approval.spec` in spec.md overwritten with #40's block (`by: agent`,
+`cause: dimension`), project `status: implemented → approved`, ledger shard seq 2 gate line appended.
+The layout Clearance rests on prior-session Resolved decision #1 (composition change ratified with
+preview); this gate self-asserts the verdict on top of it and lands in the async review queue.
+
+**Next action — DELIVER (todo 6):** make the two re-tensed axi claims true in source.
+1. Add a `printHelp(entries)` renderer to `output.ts` — text `help[N]:` block (message line + indented
+   `-> <command>`); json emits `help: [{message, command}]`.
+2. `layout save` → `output({path, help}, () => { printFields({path}); printHelp(help) })`; `help` carries
+   the truncation-reveal entry (placeholder `<command>` for the workspace capture) only when tabs were
+   left out. This is the frozen layout.feature contract: bare-save reveal, path-on-stdout, `--format
+   json` `{path, help}` object.
+3. `reportOpenedWorktree` (cli.ts:252) → move the grouping hint off `process.stderr.write` into a `help`
+   field on the payload, populated only when `opened.degraded`. `noteTabsLeftOut` (cli.ts:588) → same,
+   off stderr into the save payload's help.
+4. Update `cli.test.ts` for the moved streams. Legit stderr writes that STAY: cli.ts:345 (apply-failure
+   diagnostic), :545 (capture dir-outside-root warnings, pinned by layout.feature as stderr warnings),
+   :1181 (commander).
+5. Rebase onto target tip, run `pnpm verify`, dispatch cold `sdd:sdd-impl-judge` at the impl gate.
+Then handoff (todo 7): PR `Closes #40`, changeset (user-facing CLI output change), drain follow-ups
+(the `worktree-failed` backend-text residual; the `worktree add --format json` scenario gap the
+spec-judge observed).
+
+**Spec-gate round 1 (this session):** structural checks all green. Edit-class: layout.feature MIXED
+(2 frozen re-opens → Clearance, pre-authorized per Resolved decision #1); mux.feature ADDITIVE
+(self-clears). Cold judge: oracle PASS, builder PASS, **architect FAIL / ALIGNED false** — caught a
+**false-tense** defect: my axi #9 re-sync wrote the two suggestions' stdout move as *delivered*, but
+source (`cli.ts:250` reportOpenedWorktree, `:586` noteTabsLeftOut) still writes **stderr** — deliver
+(todo 6) hasn't run. Fixed: re-tensed the 3 #9 spots to contract voice (built-on-stderr-today, this
+CR sets the contract, deliver performs the move). Amended into the axi commit; re-verify dispatched.
 
 **Blocking decision — RESOLVED (Option A, source-verified & ratified).** See `## Resolved decisions`
 #4. The axi node's "What ships today" + the #6 narrative + #9 paragraph were all re-synced to the
