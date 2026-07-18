@@ -16,8 +16,8 @@ todos:
     status: completed
   - content: "Deliver: printHelp renderer in output.ts; moved the two writes to stdout help[]; save gained --format json; rebased onto origin/main; impl gate PASS (DONE)"
     status: completed
-  - content: "Handoff: PR with Closes #40, changeset (user-facing CLI change), drain follow-ups"
-    status: in_progress
+  - content: "Handoff: PR #41 (Closes #40) opened + pushed; changeset present; follow-ups filed #42/#43/#44 (DONE)"
+    status: completed
 ---
 
 # CR: two layout suggestions to stdout (AXI #9)
@@ -71,9 +71,11 @@ Non-blocking observations carried to handoff follow-ups: (a) no `--format json` 
 worktree add/open case (symmetric trivial path); (b) recommend a live-herdr smoke pass in CI for the
 grouping-hint scenario.
 
-**Next action — HANDOFF (todo 7):** push the branch, open a PR with `Closes #40`, drain follow-ups.
-Branch was rebased onto `origin/main` (569b10b, the squashed #37 error surface) — a clean linear
-history of 4 #40 commits. Nothing pushed yet.
+**MISSION COMPLETE.** Branch pushed; **PR #41** opened (`Closes #40`), rebased onto `origin/main`
+(569b10b). Follow-ups filed and linked on the PR: **#42** (worktree-failed backend-text residual),
+**#43** (degraded worktree `--format json` test), **#44** (live-herdr CI smoke pass). Both gates
+provisional (agent-asserted) — the requester may ratify or kick back in the async review queue. The
+one item left for the maintainer: review/merge PR #41.
 
 **Historical: DELIVER (todo 6) — DONE:** made the two re-tensed axi claims true in source.
 1. Add a `printHelp(entries)` renderer to `output.ts` — text `help[N]:` block (message line + indented
