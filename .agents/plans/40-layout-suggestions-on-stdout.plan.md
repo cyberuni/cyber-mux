@@ -4,16 +4,16 @@ source: "github#40"
 project: cyber-mux
 status: exploring
 todos:
-  - content: "Explore grill: 3 decisions settled; axi 'what ships today' sync-scope still OPEN"
-    status: in_progress
+  - content: "Explore grill: 4 decisions settled (axi sync-scope = Option A full re-sync)"
+    status: completed
   - content: "Draft layout/: re-open 2 frozen layout.feature scenarios + add --format json scenario; 3 README prose edits"
     status: completed
   - content: "Draft mux/: additive worktree grouping-hint scenario + 1 README prose edit"
     status: completed
-  - content: "Draft axi/ reference node #9 + 'what ships today' — BLOCKED on sync-scope decision"
-    status: pending
+  - content: "Draft axi/ reference node #9 + 'what ships today' — Option A full re-sync (DONE, source-verified)"
+    status: completed
   - content: "Dispatch cold spec-judge over CR diff; run spec gate; freeze; self-assert/ratify"
-    status: pending
+    status: in_progress
   - content: "Deliver: printHelp renderer in output.ts; move cli.ts:252 + :587 into stdout help[]; update cli.test.ts; rebase; impl gate"
     status: pending
   - content: "Handoff: PR with Closes #40, changeset (user-facing CLI change), drain follow-ups"
@@ -34,6 +34,12 @@ Source: github#40 — https://github.com/cyberuni/cyber-mux/issues/40
 3. **help entry shape = `{ message, command }`.** json: `help: [{message, command}]`; text: a
    `help[N]:` block, message line + indented `-> <command>`. Dynamic values are placeholders, never
    guessed concrete ids (#9).
+4. **axi "What ships today" = Option A, full source-verified re-sync.** Fold the whole re-sync into
+   #40: errors→stdout, `fail()`→`CliError`, backend text translated, + the two #9 suggestions on
+   stdout. No `.feature`/behavior change (all error paths shipped in #36); pure doc-sync of the axi
+   reference node. Confirmed against source this session: `cli.ts` has zero `fail(`/`console.error`,
+   19 `reportError`/`throw new CliError`, `cli-error.ts:86 reportError` writes stdout via
+   `console.log`. Ratified by user (grill choice, shown with the source-verified preview).
 
 ## The two paths (NOT symmetric)
 
@@ -49,26 +55,21 @@ Source: github#40 — https://github.com/cyberuni/cyber-mux/issues/40
 
 ## NEXT — resume here
 
-**Next action:** resolve the ONE open blocking decision below, then write the `axi/README.md` edits
-(`#9` section ~L157-184 + "What ships today" ~L224-242), then dispatch the cold `sdd:sdd-spec-judge`
-over the CR diff and run `sdd:spec-gate`. Everything else in layout/ and mux/ is drafted already
-(see the diff / commit).
+**Next action:** dispatch the cold `sdd:sdd-spec-judge` over the full CR diff (`main..HEAD` + the
+uncommitted axi draft, now committed), run `sdd:spec-gate`, freeze, self-assert/ratify. All three
+spec dirs are drafted: layout/ + mux/ in `0b14c95`, axi/ in this session's commit.
 
-**Blocking decision (was mid-grill when paused):**
-- **axi "What ships today" sync scope.** That section is a **stale pre-#36-deliver snapshot** —
-  verified against source: `reportError` writes stdout (`cli-error.ts` `console.log`), `fail()` no
-  longer exists, backend text is translated; yet the node still says errors report "on stderr",
-  "every other failure is free text through one `fail()` helper", "raw backend text, leaked", under a
-  header claiming "verified against source." My #9 edit flips the "two #9 suggestions" line to stdout,
-  which makes the section internally inconsistent unless the siblings are synced too.
-  - **Option A (I recommended):** fold the full source-verified re-sync into this CR (errors→stdout,
-    `fail()`→`CliError`, backend text translated, + the two #9 suggestions). Same reference node,
-    **no behavior/.feature change** for the error paths (already shipped in #36) — pure doc-sync.
-    Bigger diff, touches #36's snapshot.
-  - **Option B:** edit only the two #9-suggestion facts; file a follow-up for the broader staleness.
-    Keeps #40 tight; leaves the section inconsistent + "verified against source" partly false until
-    the follow-up lands.
-  - User rejected the question to pause — **decision still owed before axi/ can be written.**
+**Blocking decision — RESOLVED (Option A, source-verified & ratified).** See `## Resolved decisions`
+#4. The axi node's "What ships today" + the #6 narrative + #9 paragraph were all re-synced to the
+post-#36 reality (errors→stdout via `reportError`, `fail()` gone, exit-2 usage split, two #9
+suggestions on stdout). One honesty residual recorded IN the node, not hidden: the generic
+`worktree-failed` catch-all (`reportWorktreeFailure`, cli.ts:125) still forwards raw backend text —
+listed under "what still trails the contract."
+
+**Source-verified code names cited in the axi node (checked this session):** `layout-not-found`,
+`invalid-template`, `layout-apply-failed`, `worktree-failed`, `unknown-flag`/`usage-error` (exit 2),
+`ambiguous-pane`. `cli.ts` has zero `fail(`/`console.error`; `reportError` (cli-error.ts:86) writes
+stdout.
 
 **Findings the diff won't show:**
 - The `--format json | jq -r .path` composition path assumes `save` honors `--format json` with a
