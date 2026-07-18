@@ -11,6 +11,27 @@ export function printFields(fields: Record<string, string | null | undefined>) {
 	}
 }
 
+/**
+ * A #9 contextual-disclosure suggestion: an obvious next move the caller can take, named as data
+ * rather than prose. `message` says what is worth doing; `command` is the concrete invocation that
+ * does it. Dynamic parts are the caller's OWN values (a name they passed, a branch they named), never
+ * a guessed id.
+ */
+export type HelpEntry = { message: string; command: string }
+
+/**
+ * Render #9 suggestions as a `help[N]:` block on stdout — inside the structured payload, the stream an
+ * agent reads, not stderr it never does. Each entry is a message line and its command, indented under
+ * it. Prints NOTHING for an empty list: a self-contained result owes no suggestion (#9's
+ * omit-when-self-contained rule), so the block never appears as noise.
+ */
+export function printHelp(entries: HelpEntry[]) {
+	entries.forEach((entry, i) => {
+		console.log(`help[${i}]: ${entry.message}`)
+		console.log(`  -> ${entry.command}`)
+	})
+}
+
 export function printTable<T>(items: T[], cols: { label: string; get: (item: T) => string }[]) {
 	if (items.length === 0) {
 		console.log('(none)')

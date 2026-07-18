@@ -404,7 +404,7 @@ describe('spec:cyber-mux/mux', () => {
 				expect(calls.some((c) => c[0] === 'herdr' && c[1] === 'pane' && c[2] === 'run')).toBe(true)
 			})
 
-			it('worktree add reports an ungrouped placement on stderr rather than failing', async () => {
+			it('the lost-grouping note is a help entry on stdout, not a line on stderr', async () => {
 				const stderr: string[] = []
 				vi.spyOn(process.stderr, 'write').mockImplementation((line) => {
 					stderr.push(String(line))
@@ -416,8 +416,11 @@ describe('spec:cyber-mux/mux', () => {
 				await run(program, ['worktree', 'add', '--branch', 'my-feature', '--at', 'pane:right'])
 				// It succeeded — a worktree in a split pane is a complete outcome...
 				expect(calls.some((c) => c[0] === 'git' && c.includes('add'))).toBe(true)
-				// ...and the caller is told what the placement cost.
-				expect(stderr.join('')).toContain('--at workspace')
+				// ...and the note that the placement cost the grouping rides in the payload on stdout, as a
+				// help entry naming --at workspace, per axi/'s #9 — never on stderr the agent does not read.
+				expect(logs.join('\n')).toContain('--at workspace')
+				expect(logs.join('\n')).toContain('cyber-mux worktree add --branch my-feature --at workspace')
+				expect(stderr.join('')).toBe('')
 			})
 
 			it('worktree open groups an existing checkout', async () => {
@@ -2235,13 +2238,15 @@ describe('spec:cyber-mux/layout', () => {
 
 		const SAVE_ENV = { ...XDG, CYBER_MUX: 'tmux', CYBER_MUX_PANE: '%0' }
 
-		it('save writes to the repo layouts directory and prints the path', async () => {
+		it('save writes to the repo layouts directory and reports the path on stdout', async () => {
 			const calls: string[][] = []
 			const store = fakeStore({})
 			const program = buildProgram({ env: SAVE_ENV, exec: saveExec(calls), store })
 			await run(program, ['layout', 'save', 'pool-3'])
-			// The path is stdout's whole content, so `$(cyber-mux layout save x)` composes.
-			expect(logs).toEqual([repo('pool-3')])
+			// stdout carries the written path as a structured payload — a `path` field, and NO help block,
+			// because the caller's region is the whole workspace so nothing was left out. Programmatic
+			// composition reads the path from `--format json | jq -r .path`, not this bare line.
+			expect(logs).toEqual([`path  ${repo('pool-3')}`])
 			const written = JSON.parse(store.writes[repo('pool-3')]!)
 			expect(written.name).toBe('pool-3')
 			// The geometry survives: a 0.6 split right, with a 0.7 split down inside it.
@@ -2378,8 +2383,9 @@ describe('spec:cyber-mux/layout', () => {
 			expect(stderr.join('')).toContain('not under the captured root')
 			// Still written, and that pane simply has no dir — the geometry is the verbose part.
 			expect(JSON.parse(store.writes[repo('pool-2')]!).root.second).toEqual({ type: 'pane' })
-			// The warning never reaches stdout: the path alone must stay there so `$(...)` composes.
-			expect(logs).toEqual([repo('pool-2')])
+			// The warning never reaches stdout: stdout carries only the structured payload (the `path`
+			// field), so a diagnostic stays on stderr where it cannot corrupt `--format json | jq`.
+			expect(logs).toEqual([`path  ${repo('pool-2')}`])
 		})
 
 		it('a label two panes share is captured onto both, because a human chose it', async () => {
@@ -2400,7 +2406,7 @@ describe('spec:cyber-mux/layout', () => {
 			expect(written.root.second).toEqual({ type: 'pane', label: 'worker' })
 			// And nothing is said about it: a shared name is not a problem to warn a caller about.
 			expect(stderr.join('')).toBe('')
-			expect(logs).toEqual([repo('pool-2')])
+			expect(logs).toEqual([`path  ${repo('pool-2')}`])
 		})
 
 		it('a region no sequence of splits could have produced is refused', async () => {
@@ -2560,17 +2566,37 @@ describe('spec:cyber-mux/layout', () => {
 			expect(written.tabs).toBeUndefined()
 		})
 
-		it('a bare save in a multi-tab workspace says what it left out', async () => {
+		it('a bare save in a multi-tab workspace says what it left out, in a help block on stdout', async () => {
 			const stderr = captureStderr()
 			const store = fakeStore({})
 			const program = buildProgram({ env: HERDR_ENV, exec: herdrWorkspaceExec([], WS_3), store })
 			await run(program, ['layout', 'save', 'pool'])
-			// The note names the scope it did NOT take, so a caller cannot believe a 3-tab workspace
-			// round-trips from the 1-tab template they just saved.
-			expect(stderr.join('')).toContain('3 tabs')
-			expect(stderr.join('')).toContain('--workspace')
-			// On stderr, never stdout: the path stays stdout's whole content so `$(...)` still composes.
-			expect(logs).toEqual([repo('pool')])
+			// stdout is a structured payload: the `path` field, then a help entry naming the tabs left out
+			// and the command that captures them. Per axi/'s #9 the reveal rides on STDOUT in the payload,
+			// not stderr the agent never reads — so a caller cannot believe a 3-tab workspace round-trips
+			// from the 1-tab template they just saved.
+			expect(logs[0]).toBe(`path  ${repo('pool')}`)
+			const out = logs.join('\n')
+			expect(out).toContain('3 tabs')
+			expect(out).toContain('help[0]:')
+			expect(out).toContain('cyber-mux layout save pool --workspace')
+			// Nothing on stderr — the note is load-bearing scope information, not a diagnostic.
+			expect(stderr.join('')).toBe('')
+		})
+
+		it('--format json reports the saved path and any help as one structured object', async () => {
+			const store = fakeStore({})
+			const program = buildProgram({ env: HERDR_ENV, exec: herdrWorkspaceExec([], WS_3), store })
+			await withArgv(['layout', 'save', 'pool', '--format', 'json'], () =>
+				run(program, ['layout', 'save', 'pool', '--format', 'json']),
+			)
+			// The machine-readable half of the same payload: one JSON object carrying the path and a help
+			// array, so a consumer reads `.path` and the next move from `.help` rather than parsing prose.
+			const payload = JSON.parse(logs.join('\n'))
+			expect(payload.path).toBe(repo('pool'))
+			expect(Array.isArray(payload.help)).toBe(true)
+			expect(payload.help[0].message).toContain('3 tabs')
+			expect(payload.help[0].command).toBe('cyber-mux layout save pool --workspace')
 		})
 
 		it('a captured tab keeps the label its tab carries', async () => {
