@@ -2,7 +2,7 @@
 cr: "40-layout-suggestions-on-stdout"
 source: "github#40"
 project: cyber-mux
-status: approved
+status: implemented
 todos:
   - content: "Explore grill: 4 decisions settled (axi sync-scope = Option A full re-sync)"
     status: completed
@@ -14,10 +14,10 @@ todos:
     status: completed
   - content: "Dispatch cold spec-judge over CR diff; run spec gate; freeze; self-assert/ratify (DONE: R2 all lenses PASS, ALIGNED true; self-asserted by agent — provisional, ratify-or-kick-back)"
     status: completed
-  - content: "Deliver: printHelp renderer in output.ts; move cli.ts:252 + :588 into stdout help[] block; update cli.test.ts; rebase; impl gate"
-    status: in_progress
+  - content: "Deliver: printHelp renderer in output.ts; moved the two writes to stdout help[]; save gained --format json; rebased onto origin/main; impl gate PASS (DONE)"
+    status: completed
   - content: "Handoff: PR with Closes #40, changeset (user-facing CLI change), drain follow-ups"
-    status: pending
+    status: in_progress
 ---
 
 # CR: two layout suggestions to stdout (AXI #9)
@@ -62,7 +62,20 @@ architect all PASS, ALIGNED true, no blocker, no open markers. Applied approve: 
 The layout Clearance rests on prior-session Resolved decision #1 (composition change ratified with
 preview); this gate self-asserts the verdict on top of it and lands in the async review queue.
 
-**Next action — DELIVER (todo 6):** make the two re-tensed axi claims true in source.
+**IMPL GATE LANDED (provisional, agent-asserted).** Cold sdd-impl-judge: IMPLEMENTATION_PASS true,
+all 4 frozen scenarios pass (3 layout driven on the REAL binary in a live tmux session; the herdr
+grouping-hint scenario via mutation-backstop since herdr wasn't available live), no blocker, no
+absorption findings, changeset confirmed, verify 7/7 · 601 tests. spec.md `approval.impl` overwritten
+with #40's block, project `status: approved → implemented`, ledger seq 3 impl gate line appended.
+Non-blocking observations carried to handoff follow-ups: (a) no `--format json` test for the degraded
+worktree add/open case (symmetric trivial path); (b) recommend a live-herdr smoke pass in CI for the
+grouping-hint scenario.
+
+**Next action — HANDOFF (todo 7):** push the branch, open a PR with `Closes #40`, drain follow-ups.
+Branch was rebased onto `origin/main` (569b10b, the squashed #37 error surface) — a clean linear
+history of 4 #40 commits. Nothing pushed yet.
+
+**Historical: DELIVER (todo 6) — DONE:** made the two re-tensed axi claims true in source.
 1. Add a `printHelp(entries)` renderer to `output.ts` — text `help[N]:` block (message line + indented
    `-> <command>`); json emits `help: [{message, command}]`.
 2. `layout save` → `output({path, help}, () => { printFields({path}); printHelp(help) })`; `help` carries
