@@ -29,7 +29,7 @@ import {
 	resolveLayout,
 } from './layout-store.ts'
 import { currentPane, probeMultiplexer } from './mux-probe.ts'
-import { output, printFields, printTable } from './output.ts'
+import { type HelpEntry, output, printFields, printHelp, printTable } from './output.ts'
 import type { LivePane, SessionAdapter, SessionPlacement, SessionTarget } from './session.ts'
 import { gitWorktreeAdapter, resolvePrimaryRoot, resolveWorktreePath } from './worktree.ts'
 import {
@@ -228,29 +228,36 @@ function optionalAdapter(deps: Deps): SessionAdapter | undefined {
 /**
  * One shape for every verb that opens a worktree. `printFields` drops nullish entries, so a bare
  * `worktree add` — which opens nothing — prints exactly what it always did.
+ *
+ * When the chosen placement cost the workspace grouping, the backend could have grouped this worktree
+ * and did not — worth saying out loud. Per axi/'s #9 that next move rides in the payload on STDOUT as
+ * a `help[N]:` block, not on stderr the agent never reads; `workspace: null` is the machine-readable
+ * half of the same report. `regroupCommand` is the caller's own verb re-stated with `--at workspace`,
+ * so the flag that would have grouped it is named as a concrete command. Emitted only when a grouping
+ * was actually lost (#9's omit-when-self-contained rule), so `help` never rides along otherwise.
  */
-function reportOpenedWorktree(opened: OpenedWorktree): void {
+function reportOpenedWorktree(opened: OpenedWorktree, regroupCommand: string): void {
+	const help: HelpEntry[] = opened.degraded
+		? [{ message: 'opened ungrouped — pass --at workspace to group it with the repo', command: regroupCommand }]
+		: []
 	output(
 		{
 			root: opened.worktree.root,
 			branch: opened.worktree.branch,
 			pane: opened.target.id,
 			workspace: opened.workspace ?? null,
+			...(help.length ? { help } : {}),
 		},
-		() =>
+		() => {
 			printFields({
 				root: opened.worktree.root,
 				branch: opened.worktree.branch,
 				pane: opened.target.id,
 				workspace: opened.workspace,
-			}),
+			})
+			printHelp(help)
+		},
 	)
-	// The backend could have grouped this worktree and the placement is what cost it — worth saying
-	// out loud, on stderr so `--format json` stays clean on stdout. `workspace: null` is the
-	// machine-readable half of the same report.
-	if (opened.degraded) {
-		process.stderr.write('opened ungrouped — pass --at workspace to group it with the repo\n')
-	}
 }
 
 /**
@@ -466,6 +473,7 @@ function layoutSaveCommand(deps: Deps): Command {
 			new Option('--to <source>', 'Which layouts directory to write to').choices(['repo', 'user']).default('repo'),
 		)
 		.option('--force', 'Overwrite an existing template of this name')
+		.addOption(FORMAT_OPTION)
 		.addHelpText(
 			'after',
 			'\nA capture recovers geometry, labels and dirs — NOT commands: no multiplexer can report the\n' +
@@ -541,10 +549,18 @@ function layoutSaveCommand(deps: Deps): Command {
 							? captureWorkspaceLayout(describeWorkspace!(deps.exec, target), captureOpts)
 							: captureLayout(describeRegion!(deps.exec, target), captureOpts)
 						deps.store.write(path, `${JSON.stringify(template, null, 2)}\n`)
-						// stderr, so stdout stays the path alone — `cyber-mux layout save x` composes into `$(...)`.
+						// A capture warning (a dir outside the repo root) is a diagnostic, not part of the answer —
+						// it stays on stderr, where `layout.feature` pins it. The PAYLOAD is stdout.
 						for (const warning of warnings) process.stderr.write(`${warning}\n`)
-						if (!opts.workspace) noteTabsLeftOut(deps, a, target)
-						console.log(path)
+						// save's stdout is a structured payload: a `path` field, plus a `help[N]:` block only when a
+						// bare save left tabs behind (#9's reveal-a-truncated-list, omitted otherwise). This replaces
+						// the bare path, so programmatic composition reads `--format json | jq -r .path` instead.
+						const entry = opts.workspace ? null : noteTabsLeftOut(deps, a, target, name)
+						const help: HelpEntry[] = entry ? [entry] : []
+						output({ path, ...(help.length ? { help } : {}) }, () => {
+							printFields({ path })
+							printHelp(help)
+						})
 					} catch (err) {
 						// A coded failure (the refusals above, an ambiguity, a no-mux) is already a surface and
 						// passes through to `guarded`. Anything else is a capture that could not produce a tree — a
@@ -564,30 +580,34 @@ function layoutSaveCommand(deps: Deps): Command {
 }
 
 /**
- * What a bare `save` left behind: a note on stderr when the caller's workspace holds tabs this
- * capture did not take. The capture is honest about its own scope rather than letting a caller
- * believe a 3-tab workspace round-trips from a 1-tab template.
+ * What a bare `save` left behind: a `help` entry when the caller's workspace holds tabs this capture
+ * did not take, so the capture is honest about its own scope rather than letting a caller believe a
+ * 3-tab workspace round-trips from a 1-tab template.
  *
- * stderr, never stdout — the path stays stdout's whole content so `$(cyber-mux layout save x)` still
- * composes — and a NOTE rather than a refusal: the template the caller asked for is correct and is
- * already written. Which is also why this is best-effort: a workspace read that fails or that the
- * backend cannot do at all costs the caller a courtesy, not their capture. An untagged window on a
- * backend with no workspace tier reports one tab and says nothing, which is right — a window nobody
- * grouped is a workspace of one, and nothing was left out.
+ * Per axi/'s #9 this reveal rides in `save`'s stdout payload as a `help[N]:` block, not on stderr the
+ * agent never reads — programmatic composition reads the path from `--format json`, not bare stdout.
+ * It is a NOTE rather than a refusal: the template the caller asked for is correct and is already
+ * written. Which is also why this is best-effort — a workspace read that fails or that the backend
+ * cannot do at all returns `null` (no entry), costing the caller a courtesy, not their capture. An
+ * untagged window on a backend with no workspace tier reports one tab and yields nothing, which is
+ * right — a window nobody grouped is a workspace of one, and nothing was left out. The `command`
+ * re-states the caller's own `name` with `--workspace`, the flag that captures every tab.
  */
-function noteTabsLeftOut(deps: Deps, adapter: SessionAdapter, target: SessionTarget): void {
-	if (!adapter.describeWorkspace) return
+function noteTabsLeftOut(deps: Deps, adapter: SessionAdapter, target: SessionTarget, name: string): HelpEntry | null {
+	if (!adapter.describeWorkspace) return null
 	let tabs: number
 	try {
 		tabs = adapter.describeWorkspace(deps.exec, target).length
 	} catch {
-		return
+		return null
 	}
-	if (tabs <= 1) return
-	process.stderr.write(
-		`this pane's workspace holds ${tabs} tabs — only the caller's own region was captured. ` +
-			'Pass --workspace to capture every tab of it\n',
-	)
+	if (tabs <= 1) return null
+	return {
+		message:
+			`this pane's workspace holds ${tabs} tabs — only the caller's own region was captured. ` +
+			'Pass --workspace to capture every tab of it',
+		command: `cyber-mux layout save ${name} --workspace`,
+	}
 }
 
 /**
@@ -973,6 +993,7 @@ function worktreeAddCommand(deps: Deps): Command {
 							label: opts.label,
 							from: callerPane(a, deps.env),
 						}),
+						`cyber-mux worktree add --branch ${opts.branch} --at workspace`,
 					)
 				} catch (err) {
 					reportWorktreeFailure(err)
@@ -1008,6 +1029,7 @@ function worktreeOpenCommand(deps: Deps): Command {
 							label: opts.label,
 							from: callerPane(a, deps.env),
 						}),
+						`cyber-mux worktree open ${path} --at workspace`,
 					)
 				} catch (err) {
 					reportWorktreeFailure(err)

@@ -174,16 +174,15 @@ scenarios.
    rather than as prose beside it. Neither half was ever argued; #6's inversion was simply restated
    here.
 
-   **#9 is not "unimplemented", as this node used to claim — it is built, on the wrong stream, and
-   this CR is the contract that moves it.** Two suggestion paths ship today, both on **stderr**:
-   `worktree add`/`open` names the flag that would have grouped what it just placed (`src/cli.ts`,
-   `reportOpenedWorktree`), and `layout save` reveals that a workspace holds more tabs than were
-   captured (`noteTabsLeftOut`). The second is AXI's *Reveal truncated lists* case verbatim — load-
-   bearing scope information sitting on the stream AXI defines as unread. This CR **sets the contract**
-   that moves them into the structured payload on **stdout** as `help[N]:` blocks — re-opening the
-   [`layout/`](../layout/README.md) frozen scenarios under a ratified Clearance for `save` and landing
-   the worktree hint additively (it was only pinned stream-agnostically); its deliver step performs the
-   move, and until it lands both still write stderr. Saying the principle was unbuilt would have hidden
+   **#9 is not "unimplemented", as this node used to claim — it is built, and now on the right stream.**
+   Two suggestion paths ship: `worktree add`/`open` names the flag that would have grouped what it just
+   placed (`src/cli.ts`, `reportOpenedWorktree`), and `layout save` reveals that a workspace holds more
+   tabs than were captured (`noteTabsLeftOut`). The second is AXI's *Reveal truncated lists* case
+   verbatim — load-bearing scope information. Both used to write to **stderr**, the stream AXI defines
+   as unread; this CR moved them into the structured payload on **stdout** as `help[N]:` blocks
+   (`{ message, command }`) — re-opening the [`layout/`](../layout/README.md) frozen scenarios under a
+   ratified Clearance for `save` and landing the worktree hint additively (it was only pinned
+   stream-agnostically). Saying the principle was unbuilt would have hidden
    two live counter-examples behind a word — the same move that let #6's dropped code and #8's widening
    survive this long.
 10. **Consistent help (#10)** — two halves, and this node used to state only one.
@@ -234,10 +233,11 @@ corruption — but a failed `read` captures nothing, so the bytes and the error 
     single `fail()` helper this node used to describe is **gone**; `src/cli.ts` has no `fail(` sites and
     writes no error to stderr. The `ambiguous-pane` report of [`mux/`](../mux/README.md)'s pane
     addressing (its `code`, candidates, and `--format` honoring) is the shape every site now uses.
-  - **The two #9 suggestions ship today, still on stderr** — `layout save`'s truncation reveal
-    (`noteTabsLeftOut`) and the `worktree` grouping hint (`reportOpenedWorktree`). This CR sets the
-    contract that moves them into the stdout payload as `help[N]:` blocks; its deliver step performs the
-    move, and until it lands they remain on stderr. See #9.
+  - **The two #9 suggestions now ship on stdout** — `layout save`'s truncation reveal
+    (`noteTabsLeftOut`) and the `worktree` grouping hint (`reportOpenedWorktree`) ride in the structured
+    payload as `help[N]:` blocks (`{ message, command }`, rendered by `printHelp` in `output.ts`), each
+    emitted only when there is a next move (#9's omit-when-self-contained rule). This CR moved them off
+    stderr. See #9.
   - **Backend text is mostly translated, with one residual.** The coded error sites carry
     `cyber-mux`'s own text (the `layout-not-found` lookup names the directories it searched; the
     `invalid-template` and `layout-apply-failed` messages are this CLI's own). The remaining leak is the
@@ -245,10 +245,9 @@ corruption — but a failed `read` captures nothing, so the bytes and the error 
     the underlying error verbatim when no more-specific coded surface caught it — a stable `code` around
     still-untranslated backend text.
 
-  **What still trails the contract:** the two #9 suggestions' move to stdout (this CR's own deliver
-  step — see above) and the `worktree-failed` residual; TOON as the default format (#1) and `--fields`
-  (#2), truncation with a size hint (#3), pre-computed aggregates (#4); the *omit rule* and any further
-  suggestion sites of #9 as commands gain them; and the home view (#8) with the tool identity #10
-  requires of it.
+  **What still trails the contract:** the `worktree-failed` residual above; TOON as the default format
+  (#1) and `--fields` (#2), truncation with a size hint (#3), pre-computed aggregates (#4); any further
+  suggestion sites of #9 as commands gain them (the two that ship already sit on stdout under the omit
+  rule); and the home view (#8) with the tool identity #10 requires of it.
 - **Boundary** — this bar owns the *shared* output shape. Each command's *domain* behavior (what
   `open` places, what `list` enumerates) lives in [`mux/`](../mux/README.md).
