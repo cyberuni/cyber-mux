@@ -729,13 +729,18 @@ Feature: layout — named, reusable pane layouts
     And it carries only the caller's own region
     # the default subject is unchanged — widening it silently would rewrite what save has always meant
 
-  Scenario: a bare save in a multi-tab workspace says what it left out
+  Scenario: a bare save in a multi-tab workspace says what it left out, in a help block on stdout
     Given a caller in a workspace of 3 tabs
     When cyber-mux layout save pool runs with no --workspace
-    Then the path is printed on stdout
-    And stderr notes that the workspace holds more tabs than were captured
+    Then the written path is reported on stdout as a structured payload
+    And that payload carries a help entry naming the tabs left out and the command that captures them
+    And the help entry's command is cyber-mux layout save pool --workspace
+    And stderr is empty
     # the capture is honest about its own scope rather than letting a caller believe a 3-tab workspace
-    # round-trips from a 1-tab template
+    # round-trips from a 1-tab template. Per axi/'s #9 the reveal-a-truncated-list note belongs on
+    # STDOUT inside the payload, not stderr the agent never reads — so save's stdout is a structured
+    # payload (path + a help[N]: block), not a bare path. Programmatic composition reads the path from
+    # --format json (below) rather than bare stdout.
 
   Scenario: a captured tab keeps the label its tab carries
     Given a workspace whose tabs are labeled editor and logs
@@ -785,12 +790,25 @@ Feature: layout — named, reusable pane layouts
 
   # ── save writes a file ──
 
-  Scenario: save writes to the repo layouts directory and prints the path
+  Scenario: save writes to the repo layouts directory and reports the path on stdout
     Given a caller running cyber-mux layout save pool-3
     When the command runs
     Then the template is written under the primary checkout's .cyber-mux/layouts as pool-3.json
-    And stdout carries that path and nothing else
-    # the path alone, so $(cyber-mux layout save pool-3) composes
+    And stdout carries the written path as a structured payload
+    And no help entry rides along, because the caller's region is the whole workspace
+    # save's stdout is a structured payload (a path field, plus a help[N]: block only when there is a
+    # next move — a multi-tab workspace a bare save only partly captured). Nothing is on stderr.
+    # Programmatic composition reads the path from --format json, not bare stdout:
+    #   cyber-mux layout save pool-3 --format json | jq -r .path
+
+  Scenario: --format json reports the saved path and any help as one structured object
+    Given a caller in a workspace of 3 tabs running cyber-mux layout save pool --format json
+    When the command runs
+    Then stdout is a JSON object carrying the path and a help array
+    And each help entry carries a message and the command that acts on it
+    And the help entry's command is cyber-mux layout save pool --workspace
+    # the machine-readable half of the same payload — path plus the same #9 reveal, so a consumer that
+    # branches on the help never has to parse a prose line off stderr
 
   Scenario: --to user writes to the user layouts directory instead
     Given a caller running cyber-mux layout save pool-3 --to user

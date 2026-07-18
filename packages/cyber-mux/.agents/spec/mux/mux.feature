@@ -1249,6 +1249,19 @@ Feature: mux — the pane abstraction
     Then it reports no workspace, and does not claim the placement cost anything
     And no grouping was ever on offer — there is nothing to report about a feature the backend lacks
 
+  Scenario: the lost-grouping note is a help entry on stdout, not a line on stderr
+    Given a caller running cyber-mux worktree add --branch my-feature --at pane:right on a backend that binds
+    When add runs and the chosen placement costs the workspace grouping
+    Then the worktree report on stdout carries a help entry
+    And the help entry names --at workspace as the flag that would have grouped what was opened
+    And stderr is empty
+    And it exits 0
+    # This is how "the caller is told the placement cost the grouping" (above) is realized. Per axi/'s
+    # #9 a next move belongs on STDOUT in the payload, not stderr the agent does not read — so the note
+    # rides in the worktree report's own help[N]: block ({ message, command }), naming the flag that
+    # would have grouped it. The exit stays 0: the worktree opened, just ungrouped. Only emitted when a
+    # grouping was actually lost, per #9's omit-when-self-contained rule.
+
   Scenario Outline: --label names whatever --at opened, on every backend
     Given a caller running cyber-mux with --at <placement> --label <name>
     When the command opens the space
