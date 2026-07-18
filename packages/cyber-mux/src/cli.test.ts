@@ -1699,6 +1699,27 @@ describe('spec:cyber-mux/mux', () => {
 				expect(out).not.toContain("can't find pane")
 				expect(out).not.toContain('tmux server error')
 			})
+
+			it('the worktree catch-all never forwards the multiplexer raw diagnostic either', async () => {
+				catchExit()
+				captureStderr()
+				const diagnostic = 'no server running on /tmp/tmux-501/default'
+				// git succeeds (the checkout is made); the plain `open()` that places its pane is what fails,
+				// the same shape `session.tmux.ts` throws for any backend command failure.
+				const exec: Exec = (cmd, args) => {
+					if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
+					exec.lastError = diagnostic
+					return null
+				}
+				await expect(
+					run(buildProgram({ env: TMUX, exec }), ['worktree', 'add', '--branch', 'my-feature', '--at', 'pane:right']),
+				).rejects.toThrow('exit:1')
+				const out = logs.join('\n')
+				expect(out).toContain('worktree-failed')
+				// Neither the backend's name nor its raw diagnostic reaches stdout.
+				expect(out).not.toContain('tmux')
+				expect(out).not.toContain(diagnostic)
+			})
 		})
 
 		describe('--env, the CLI surface for the seam’s env option', () => {
