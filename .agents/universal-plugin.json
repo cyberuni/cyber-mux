@@ -1,0 +1,27 @@
+{
+	"sdd-plugins": [
+		{
+			"name": "quill",
+			"version": "0.1.0",
+			"squads": [
+				{
+					"artifact-types": ["documentation", "guide", "tutorial", "article", "reference"],
+					"roles": {
+						"spec-producer": "quill-spec-writer",
+						"solution-producer": null,
+						"spec-judge": null,
+						"impl-producer": "quill-doc-writer",
+						"impl-judge": "quill-judge"
+					},
+					"governances": {
+						"oracle-spec": null,
+						"builder-spec": null,
+						"builder-impl": null,
+						"architect-spec": null,
+						"architect-impl": null
+					}
+				}
+			]
+		}
+	]
+}

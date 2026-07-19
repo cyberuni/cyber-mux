@@ -12,7 +12,7 @@ principles treat the agent's token budget as a first-class constraint. `cyber-mu
 entirely by AI agents orchestrating panes (open/send/read/focus/close), yet its output today
 (`packages/cyber-mux/src/output.ts`) is human-prose-first with `--format json` as the escape — the
 inverse of what an agent wants. This node states the cross-cutting conventions **once**; each
-behavioral node ([`mux/`](../mux/README.md)) references this contract for its own commands'
+behavioral node ([`mux/`](./mux/README.md)) references this contract for its own commands'
 scenarios.
 
 > `cyberplace` (`.agents/specs/cyberplace/axi/`) and `packages/universal-plugin` (its ADR-0003)
@@ -47,7 +47,7 @@ scenarios.
    **A field earns its slot by discriminating, not by being known.** `list` reports no `mux`, though
    it knows it: one adapter is selected per session, so every row of a listing carries the *same*
    value and the column separates nothing — the ceiling is better spent on `label`, which is what a
-   caller types instead of an id ([`mux/`](../mux/README.md)'s pane addressing). The backend is a
+   caller types instead of an id ([`mux/`](./mux/README.md)'s pane addressing). The backend is a
    live question for `doctor`, which is discovering it, and a settled one for `list`, which already
    ran through it. This example previously read `pane, mux, harness` and was stale on two counts —
    `cwd` had long been a fourth column, and `mux` was noise.
@@ -82,7 +82,7 @@ scenarios.
    attempted, and the fix is a different argument — the same shape as a missing required parameter,
    which AXI already puts here. It also lands in AXI's error form exactly, `error:` naming what went
    wrong plus an actionable `help:` — each candidate's id IS the retry
-   ([`mux/`](../mux/README.md)'s pane addressing, `ambiguous-pane`). A predicate framing (`grep`,
+   ([`mux/`](./mux/README.md)'s pane addressing, `ambiguous-pane`). A predicate framing (`grep`,
    POSIX `test`, `diff`, `pgrep` all reserve a code for *couldn't answer*) reaches the same code by a
    different road; where the two disagree, AXI wins here, because it is the contract this node
    adopts.
@@ -113,7 +113,7 @@ scenarios.
    **The one exception to the code set: `exists` spends `1` on `gone`.** `exists` is a predicate, and
    `gone` is the answer to the question rather than an error — so its `1` is not the `1` this set
    defines. That is the framing `grep`, POSIX `test` (normative) and `systemctl is-active` all take,
-   and [`mux/`](../mux/README.md) keeps it deliberately. It is a **genuine divergence from AXI**, named
+   and [`mux/`](./mux/README.md) keeps it deliberately. It is a **genuine divergence from AXI**, named
    here so the tiebreaker above ("where this node and a sibling disagree, AXI wins") does not silently
    overrule a decision this project means to keep. It is **not** an amendment, and this node used to
    call it one — wrongly twice over: the set was always `0`/`1`/`2`, so nothing was amended, and what
@@ -180,7 +180,7 @@ scenarios.
    tabs than were captured (`noteTabsLeftOut`). The second is AXI's *Reveal truncated lists* case
    verbatim — load-bearing scope information. Both used to write to **stderr**, the stream AXI defines
    as unread; this CR moved them into the structured payload on **stdout** as `help[N]:` blocks
-   (`{ message, command }`) — re-opening the [`template/`](../template/README.md) frozen scenarios under a
+   (`{ message, command }`) — re-opening the [`template/`](./template/README.md) frozen scenarios under a
    ratified Clearance for `save` and landing the worktree hint additively (it was only pinned
    stream-agnostically). Saying the principle was unbuilt would have hidden
    two live counter-examples behind a word — the same move that let #6's dropped code and #8's widening
@@ -216,7 +216,7 @@ or fails and writes its error (exit `1`/`2`). A caller branches on the status be
 same reason: its stdout is a raw passthrough, so an error mixing into captured bytes would be real
 corruption — but a failed `read` captures nothing, so the bytes and the error are never both there.
 
-- **Conformance** — verified through the consumer suite of the [`mux/`](../mux/README.md)
+- **Conformance** — verified through the consumer suite of the [`mux/`](./mux/README.md)
   behavioral node (asserts the contract concretely for its commands), never by this artifact itself.
   A reference artifact carries this `## Subject` in place of `## Use Cases` + a `.feature`.
 - **Impl trails the contract** — the shipped `cyber-mux` bin predates this adoption and most of it
@@ -231,7 +231,7 @@ corruption — but a failed `read` captures nothing, so the bytes and the error 
     `--format` — and the AXI exit split holds: a usage error (unknown flag, missing required argument, a
     malformed name, help-answered incomplete input) leaves `2`, an operation failure leaves `1`. The
     single `fail()` helper this node used to describe is **gone**; `src/cli.ts` has no `fail(` sites and
-    writes no error to stderr. The `ambiguous-pane` report of [`mux/`](../mux/README.md)'s pane
+    writes no error to stderr. The `ambiguous-pane` report of [`mux/`](./mux/README.md)'s pane
     addressing (its `code`, candidates, and `--format` honoring) is the shape every site now uses.
   - **The two #9 suggestions now ship on stdout** — `template save`'s truncation reveal
     (`noteTabsLeftOut`) and the `worktree` grouping hint (`reportOpenedWorktree`) ride in the structured
@@ -251,4 +251,4 @@ corruption — but a failed `read` captures nothing, so the bytes and the error 
   gain them (the two that ship already sit on stdout under the omit rule); and the home view (#8) with
   the tool identity #10 requires of it.
 - **Boundary** — this bar owns the *shared* output shape. Each command's *domain* behavior (what
-  `open` places, what `list` enumerates) lives in [`mux/`](../mux/README.md).
+  `open` places, what `list` enumerates) lives in [`mux/`](./mux/README.md).

@@ -5,6 +5,8 @@ concept: [cyber-mux]
 
 # mux — the pane abstraction
 
+## What
+
 The `cyber-mux` CLI's entire subject: which session backend (tmux, herdr, or wezterm) is available,
 where a new pane opens, and how a caller detects the multiplexer it is really running inside. Ported
 from
@@ -12,6 +14,29 @@ from
 mux seam was extracted into this standalone repo (scaffold commit `21557b4`) — adapted from
 `cyberlegion`'s command-group verbs (`unit spawn`, `cyberlegion mux doctor`) to this repo's flat
 verb surface (`open`, `doctor`, `mode`) and env names (`CYBERLEGION_MUX*` → `CYBER_MUX*`).
+
+### Non-goals
+
+**Non-goals** — the `nudge` (send-and-verify-turn-taken) helper (`nudge.ts`) — a provisional
+standalone concern per the `cli.ts` verb-surface note, not yet exposed as a CLI verb and not yet
+specced; the unit registry, mail, and doorbell that `cyberlegion` layers on top of a pane once
+opened — those stayed behind in `cyberlegion`, this repo owns only backend selection, placement,
+multiplexer detection, per-pane send/read/focus/close, and the worktree surface above.
+
+Also a non-goal: **any worktree fact a backend reports of its own** — git answers those on every
+backend, so a multiplexer is never asked; see the use cases above.
+
+**Naming a tab inside a workspace was a non-goal here, and this CR reversed it — the constraint was
+real but the generalization was not.** The recorded reason was that herdr labels a new workspace's
+root tab `1` with no flag to change it (only `tab rename` after the fact), and that the workspace
+label is what its UI groups by. The first half holds and is unchanged; the second is beside the point
+once a template describes **several** tabs, where the whole question is telling them apart *inside*
+one group. What the premise never supported is the conclusion drawn from it: it is true of a new
+workspace's **root tab alone**. Every subsequent tab is named at birth on both backends — herdr
+`tab create --label`, tmux `new-window -n` — which `--label` above already specifies at every tier.
+So the cost is one `tab rename` on herdr's first tab, not a capability neither backend has. Multi-tab
+templates ([`template/`](../template/README.md)) are the first real customer, and the non-goal is revisited
+here rather than silently contradicted.
 
 ## Use Cases
 
@@ -298,27 +323,6 @@ once opened:
   itself. So branch `feat/deep/name` defaults to a workspace labeled `name`. `--label` is the
   override.
 
-**Non-goals** — the `nudge` (send-and-verify-turn-taken) helper (`nudge.ts`) — a provisional
-standalone concern per the `cli.ts` verb-surface note, not yet exposed as a CLI verb and not yet
-specced; the unit registry, mail, and doorbell that `cyberlegion` layers on top of a pane once
-opened — those stayed behind in `cyberlegion`, this repo owns only backend selection, placement,
-multiplexer detection, per-pane send/read/focus/close, and the worktree surface above.
-
-Also a non-goal: **any worktree fact a backend reports of its own** — git answers those on every
-backend, so a multiplexer is never asked; see the use cases above.
-
-**Naming a tab inside a workspace was a non-goal here, and this CR reversed it — the constraint was
-real but the generalization was not.** The recorded reason was that herdr labels a new workspace's
-root tab `1` with no flag to change it (only `tab rename` after the fact), and that the workspace
-label is what its UI groups by. The first half holds and is unchanged; the second is beside the point
-once a template describes **several** tabs, where the whole question is telling them apart *inside*
-one group. What the premise never supported is the conclusion drawn from it: it is true of a new
-workspace's **root tab alone**. Every subsequent tab is named at birth on both backends — herdr
-`tab create --label`, tmux `new-window -n` — which `--label` above already specifies at every tier.
-So the cost is one `tab rename` on herdr's first tab, not a capability neither backend has. Multi-tab
-templates ([`template/`](../template/README.md)) are the first real customer, and the non-goal is revisited
-here rather than silently contradicted.
-
 - **Typing text and pressing keys are separate verbs; only `submit` presses Enter *for you*** —
   driving a pane's input splits on whether Enter is **implied**. `send text` and `send keys` never add
   an Enter the caller did not write; `submit` always adds one. Three verbs cover it:
@@ -353,7 +357,7 @@ here rather than silently contradicted.
   enumeration to `list`, the current pane to `doctor` — so rather than ship a second name for an
   existing verb, a bare `send` is treated as *incomplete input*: help to **stdout**, **exit 2**.
 
-  **That is [`axi/`](../axi/README.md)'s #6 deciding it, not #8, and the difference is not
+  **That is [`axi.md`](../axi.md)'s #6 deciding it, not #8, and the difference is not
   bookkeeping.** Bare `send` is a missing required parameter, which #6 already puts at `2` — the
   decision needs no content-first reasoning at all. It was previously called an "acknowledged
   amendment to #8", which conceded a divergence this repo never had to concede: AXI's #8 governs the
@@ -391,7 +395,7 @@ here rather than silently contradicted.
   - **Two or more matches fail and report the entries** — id, label, and working directory: the three
     that discriminate (a report listing `worker, worker` helps nobody), and within axi #2's 3–4-field
     default row. Each candidate's id is directly usable as the retry. The report is a **structured
-    error** under the stable code `ambiguous-pane`, on **stdout** per [`axi/`](../axi/README.md)'s
+    error** under the stable code `ambiguous-pane`, on **stdout** per [`axi.md`](../axi.md)'s
     stream discipline, honoring `--format`. Zero matches is the existing not-found path, not an
     ambiguity.
 
@@ -402,7 +406,7 @@ here rather than silently contradicted.
     belonged there. The clean-stdout worry does not survive: a verb writes its result or its error,
     never both, so exit `2` separates them before anything is parsed.
   - **The outcome rides the exit code: `0` one match, `1` zero, `2` ambiguous — and `2` is
-    [`axi/`](../axi/README.md)'s own `usage error` (#6), not a code this node invented.** An ambiguous
+    [`axi.md`](../axi.md)'s own `usage error` (#6), not a code this node invented.** An ambiguous
     locator is a usage error in the strict sense AXI means: the argument is underspecified, nothing
     was attempted, and the fix is a different argument — the same family as the missing required
     parameter AXI already puts at `2`. So this is an **application** of the contract, not an amendment
@@ -436,7 +440,7 @@ here rather than silently contradicted.
   would manufacture the same collision the hostname guard exists to prevent.
 
 - **Every failure is a structured error on stdout, coded, with the command that fixes it** — this
-  node is where [`axi/`](../axi/README.md)'s #6 is verified, because a reference node carries no suite
+  node is where [`axi.md`](../axi.md)'s #6 is verified, because a reference node carries no suite
   of its own. One `fail()` helper reaches all ~15 verbs, so the contract is pinned once at the surface
   rather than twenty times per verb: an error goes to **stdout** (AXI's stream for what the agent
   consumes), under a **stable `code`** a caller matches instead of parsing prose, with an actionable
@@ -472,29 +476,14 @@ here rather than silently contradicted.
     amendment to the `0`/`1` set" (as this corpus did) was wrong twice: the set was always `0`/`1`/`2`,
     and what `exists` actually diverges on is the *meaning* of `1`. Recorded, not settled here.
 
-**Non-goals** — the `nudge` (send-and-verify-turn-taken) and `worktree` (git-worktree) helpers
-(`nudge.ts`, `worktree.ts`) — provisional standalone concerns per the `cli.ts` verb-surface note,
-not yet exposed as CLI verbs and not yet specced; the unit registry, mail, and doorbell that
-`cyberlegion` layers on top of a pane once opened — those stayed behind in `cyberlegion`, this repo
-owns only backend selection, placement, multiplexer detection, and per-pane
-send/submit/read/focus/close.
-
 ## Multiplexer concept vocabulary
 
-`--at` names a **placement concept**, not a backend-specific command. Every multiplexer nests the
-same four levels — **Session › Workspace › Tab › Pane** — but each calls them something different
-(notably: a tmux/screen "Window" is the **Tab** level, not a workspace). The adapter maps the
-concept onto whatever the live backend calls it:
+The four placement tiers — **Session › Workspace › Tab › Pane** — and what each backend calls them
+are defined once in [`glossary.md`](../glossary.md). What follows is this node's *behavior* against
+that vocabulary, not a second definition of it.
 
-| Concept       | tmux    | screen | zellij  | cmux                          | Orca                  | herdr     | WezTerm |
-| ------------- | ------- | ------ | ------- | ----------------------------- | --------------------- | --------- | ------- |
-| **Session**   | Session | Session| Session | App (state saved on restart)  | ----                  | Session   | ----    |
-| **Workspace** | ----    | ----   | ----    | Window/Workspace              | Worktree (git branch) | Workspace (bindable to a git worktree) | Window (spawned into a fresh or named Workspace — see below) |
-| **Tab**       | Window  | Window | Tab     | Vertical Tab (w/ git status)  | Tab                   | Tab       | Tab     |
-| **Pane**      | Pane    | Region | Pane    | Split Pane                    | Pane                  | Pane      | Pane    |
-
-`cyber-mux` drives three of these backends (tmux, herdr, wezterm). `--at` exposes three of the levels
-— `pane:right`/`pane:down` (**Pane**), `tab` (**Tab**), `workspace` (**Workspace**). The property
+`--at` exposes three of the levels — `pane:right`/`pane:down` (**Pane**), `tab` (**Tab**),
+`workspace` (**Workspace**). The property
 `workspace` guarantees is **its own space, VISIBLE in the attached client and navigable** — not a
 structural tier. tmux, having no Workspace level, maps `workspace` onto the finest unit that keeps
 that property: a new **Window** (visible in the status bar, `select-window`-able) — the same unit
@@ -530,8 +519,481 @@ Every scenario in [`mux.feature`](./mux.feature) maps to one of these behaviors:
 | **pane focus reporting** | tri-state focused / not-focused / unknown per backend (tmux: pane+window active & session attached; herdr: pane record `focused`); a query that can't be answered → unknown so callers fail open |
 | **open returns the pane's workspace, and reports it** | the workspace the new pane landed in, per placement on herdr (a created workspace reports itself; a tab reports the workspace it was created in; a split reports the caller's); absent on a backend with no workspace tier; read from the output the pane id already comes from, so it costs no extra call; reported beside the pane by `open` itself and carried for a pool by the template manifest; occupancy is never a worktree binding |
 | **git worktree helpers** | `worktree add` defaults the path to a sibling of the primary checkout on every backend; `--base` sets the start-point; `worktree remove` refuses the primary checkout, tolerates an already-gone worktree, and refuses uncommitted changes unless `--force` |
-| **worktree/workspace binding** | a bare `add` — none of `--at`, `--launch` or `--env` — opens nothing and resolves no backend, which is what makes it the only route that works outside a multiplexer at all; `--launch` and `--env` each imply `--at workspace`, both being a request for something IN a pane; `--at workspace` groups where the backend binds and falls back where it does not; a pane/tab placement degrades (reports no workspace) rather than failing, and only where a grouping was on offer, the caller told through a stdout `help[N]:` entry naming `--at workspace` per [`axi/`](../axi/README.md)'s #9; `open` groups a checkout plain git made |
+| **worktree/workspace binding** | a bare `add` — none of `--at`, `--launch` or `--env` — opens nothing and resolves no backend, which is what makes it the only route that works outside a multiplexer at all; `--launch` and `--env` each imply `--at workspace`, both being a request for something IN a pane; `--at workspace` groups where the backend binds and falls back where it does not; a pane/tab placement degrades (reports no workspace) rather than failing, and only where a grouping was on offer, the caller told through a stdout `help[N]:` entry naming `--at workspace` per [`axi.md`](../axi.md)'s #9; `open` groups a checkout plain git made |
 | **`--env`, the CLI surface for the seam's env option** | repeatable `--env KEY=VALUE` on every verb that opens a pane (`open`, `worktree add`, `worktree open`) — the one split option with a flag, since a variable not set at birth cannot be set at all; it names the pane the verb opens, exactly one being opened on each route, **except** on herdr's worktree bind route, where it degrades to a prefix on `--launch` or a stderr warning with no command to ride — stated on BOTH worktree verbs, which are exposed identically; refused alongside `--template`, which owns its own panes' env; implies a placement; a missing `=` is rejected before anything opens, a trailing `=` sets the variable empty, and a value's own `=` survives by splitting on the first only |
 | **naming what was opened** | `--label` names the tier `--at` opened, on every backend (herdr workspace/tab/pane label; tmux window name or pane title); taken at birth where the backend's CLI allows, set immediately after where it does not; omitted leaves the backend's own default |
 | **worktree facts vs binding** | `list` reads path/branch/linked/prunable from git on every backend and reports only the binding from the backend; `list`/`remove` answer with no multiplexer |
 | **worktree removal ordering** | never delegated to a backend — cyber-mux's gates plus git, the backend only releasing its binding; gates run before the release (a refused removal has no side effect); the release runs before git's removal (no workspace on a dead directory), including for a checkout already gone |
+
+## Logic
+
+The use cases above run genuinely distinct decision logic — a pane-opening verb decides nothing a
+pane-addressing verb decides — so the graph is sectioned by sub-graph. Each use case enters the one
+named here.
+
+### Detection and backend selection
+
+Entered by `probeMultiplexer`, `doctor`, `mode`, and every verb that needs an adapter.
+
+```mermaid
+graph TD
+  P["probe runs"] -->|"$CYBER_MUX set"| PENV{"which value"}
+  PENV -->|"none"| PNONE["mux none"]
+  PENV -->|"a multiplexer name"| PFAST["mux from env, via=env"]
+  P -->|"no $CYBER_MUX"| PWALK["walk process ancestry from $$"]
+  PWALK -->|"mux ancestor found"| PANC["mux from ancestry, via=ancestry"]
+  PWALK -->|"walk inconclusive"| PHINT{"$TMUX or $HERDR_ENV set"}
+  PHINT -->|"yes, hint fallback"| PFALL["mux from the hint"]
+  PHINT -->|"no"| PNONE
+  PFAST --> SEL{"select the adapter"}
+  PANC --> SEL
+  PFALL --> SEL
+  SEL -->|"env names a backend"| AD["that backend's adapter"]
+  SEL -->|"none of the three"| ATHROW["throw naming the required backend"]
+  PFAST --> DOC["doctor prints the pin hint"]
+  PANC --> DOC
+  AD --> MODE["mode prints the backend"]
+  PNONE --> MODENONE["mode prints none, exit 0"]
+```
+
+### `open` — placement, launch, and what it reports back
+
+```mermaid
+graph TD
+  O["open runs"] --> AT{"--at"}
+  AT -->|"outside the four values"| REJ["rejected before any pane opens"]
+  AT -->|"omitted, at ?? tab fallback"| TAB
+  AT -->|"pane:right or pane:down"| SPLIT["split the target pane"]
+  AT -->|"tab"| TAB["the backend's native tab"]
+  AT -->|"workspace"| WS{"backend's own visible space"}
+  WS -->|"tmux"| WT["a visible window in the current session"]
+  WS -->|"herdr"| WH["a new workspace, bound to no repo"]
+  WS -->|"wezterm"| WW["a new window in a freshly named workspace"]
+  TAB --> BG["opened without stealing focus"]
+  SPLIT --> LAUNCH
+  BG --> LAUNCH
+  WT --> LAUNCH
+  WH --> LAUNCH
+  WW --> LAUNCH{"--launch"}
+  LAUNCH -->|"omitted"| BLANK["a blank pane"]
+  LAUNCH -->|"given"| SUB["the command is submitted"]
+  BLANK --> REP["report the opened pane"]
+  SUB --> REP
+  REP --> WSR{"backend has a workspace tier"}
+  WSR -->|"yes"| WSY["report the workspace the pane landed in"]
+  WSR -->|"no"| WSN["workspace absent, never a false none"]
+  REP --> TABR["report the tab the pane landed in, on every backend"]
+  TABR --> SRC{"is it in the open output"}
+  SRC -->|"yes, tmux and herdr"| FREE["read from the same output as the pane id, no extra call"]
+  SRC -->|"no, wezterm"| FOLLOW["one follow-up list call"]
+  WSY --> OCC["occupancy only, never a worktree binding"]
+  TABR --> RENAMEABLE["addresses a rename at the tab tier"]
+```
+
+### Split options — which pane, how big, what environment
+
+```mermaid
+graph TD
+  S["open contract"] --> F{"from"}
+  F -->|"given on a pane:* placement"| FT["backend told which pane to split"]
+  F -->|"omitted"| FD["backend's own default, tracking the user's focus"]
+  F -->|"given on tab or workspace"| FI["not passed at all"]
+  S --> R{"ratio"}
+  R -->|"given on a pane:* placement"| RC["converted per backend sign convention"]
+  R -->|"omitted"| RD["no sizing flag, the backend splits evenly"]
+  R -->|"given on tab or workspace"| RI["no sizing flag, a space is not sized against a pane"]
+  S --> CAN["backend declares whether it can size a split"]
+  S --> E{"env"}
+  E -->|"tier has a native flag"| EN["set natively at birth, one flag per variable, in order"]
+  E -->|"no native flag on this route"| ED["dropped rather than failing"]
+  EN --> RPT["the route reports env carried"]
+  ED --> RPT2["the route reports env NOT carried"]
+  RPT --> NOPRE["never prefixed on top"]
+  RPT2 --> C{"is there a command to run"}
+  C -->|"yes"| PRE["command prefixed with env KEY=VALUE, values quoted for a shell line"]
+  C -->|"no"| WARN["warning on stderr naming the variables"]
+```
+
+### `--env` — the CLI surface for the seam's env option
+
+```mermaid
+graph TD
+  V["a verb that opens a pane"] --> PARSE{"--env value"}
+  PARSE -->|"no ="| PREJ["rejected before the verb's own side effect"]
+  PARSE -->|"KEY= with nothing after"| PEMPTY["variable set empty"]
+  PARSE -->|"value containing ="| PSPLIT["split on the first = only"]
+  PARSE -->|"KEY=VALUE"| POK["accepted"]
+  POK --> TPL{"--template also passed"}
+  TPL -->|"yes"| TREJ["rejected before any pane opens, naming both flags"]
+  TPL -->|"no"| REPEAT["repeatable, one variable per flag"]
+  REPEAT --> ROUTE{"does this route carry env"}
+  ROUTE -->|"yes"| CARRY["the pane the verb opens carries it"]
+  ROUTE -->|"no, herdr's worktree bind"| L{"--launch given"}
+  L -->|"yes"| RIDE["rides in on the command"]
+  L -->|"no"| WARN2["warning names the variable that did not reach the pane"]
+```
+
+### The workspace group — carrying a grouping a backend has no tier for
+
+```mermaid
+graph TD
+  G["a space is opened or grouped"] --> ASK{"group id supplied"}
+  ASK -->|"no"| NONE["nothing stored, the space stays ungrouped"]
+  ASK -->|"yes"| OPA["the id reaches the backend opaque, never parsed or derived from the label"]
+  OPA --> TIER{"backend has a real workspace tier"}
+  TIER -->|"yes"| IGN["ignored, the tier IS the group"]
+  TIER -->|"no"| STORE["stored natively, a window option surviving a rename"]
+  IGN --> NAME1["no name flag either, its tab label is the tab's own name"]
+  STORE --> NAME2["the space's own name stored beside the group"]
+  STORE --> ABS["open still reports the workspace absent"]
+  G --> VERB["grouping is its own verb over an already-open space, which open routes through"]
+```
+
+### Naming a space after its birth
+
+```mermaid
+graph TD
+  N["a space needs a name"] --> BIRTH{"backend can name this tier at birth"}
+  BIRTH -->|"yes, --label"| ATB["passed in the opening call"]
+  BIRTH -->|"no"| AFTER{"backend has a rename route for this tier"}
+  AFTER -->|"yes"| REN["the backend's own rename command, after the space exists"]
+  AFTER -->|"no, wezterm pane"| THROW["throws rather than silently doing nothing"]
+  REN --> SIDE["no focus moved, no space created"]
+  N -->|"--label omitted"| DEF["the backend's own default label stands"]
+```
+
+### Driving a pane's turn
+
+```mermaid
+graph TD
+  D["a send or submit verb"] --> WHICH{"which verb"}
+  WHICH -->|"bare send"| HELP["help on stdout, exit 2"]
+  WHICH -->|"send text"| T{"text argument"}
+  T -->|"missing"| TREJ2["rejected before anything is sent"]
+  T -->|"given"| TLIT["typed as literal characters, no Enter appended"]
+  WHICH -->|"send keys"| K{"key tokens"}
+  K -->|"none"| KREJ["rejected before anything is sent"]
+  K -->|"core vocabulary token"| KCORE["normalized onto the backend's own name and pressed"]
+  K -->|"token outside the core"| KFWD["forwarded verbatim, the backend's own semantics decide"]
+  KCORE --> ENTER["Enter is a key like any other, so send keys Enter takes the turn"]
+  WHICH -->|"submit"| SP{"pane argument"}
+  SP -->|"missing"| SREJ["rejected, naming pane as missing"]
+  SP -->|"given"| STXT{"text argument"}
+  STXT -->|"text given"| STYPE["typed literally, then Enter, taking the turn"]
+  STXT -->|"none or empty"| SFLUSH["a bare Enter flushes the staged buffer, retyping nothing"]
+```
+
+### Reporting whether a pane is focused, and listing panes
+
+```mermaid
+graph TD
+  FQ["a focus query"] --> FB{"backend"}
+  FB -->|"tmux"| FT2{"active pane and current window and attached client"}
+  FT2 -->|"all three"| FOC["focused"]
+  FT2 -->|"any unset"| NFOC["not-focused"]
+  FB -->|"herdr"| FH{"pane record's focused flag"}
+  FH -->|"set"| FOC
+  FH -->|"unset"| NFOC
+  FB -->|"no primitive, unresolvable pane, or an erroring query"| UNK["unknown, so callers fail open"]
+  FB -->|"wezterm, always"| UNK
+  LS["list runs"] --> LALL["every live pane is reported, agent-bearing or not"]
+```
+
+### Addressing a pane, and the error surface
+
+```mermaid
+graph TD
+  A["a pane locator"] --> ID{"a live pane carries it as an id"}
+  ID -->|"yes"| IDW["that pane is addressed, no ambiguity, exit 0"]
+  ID -->|"no"| LBL{"how many live panes carry it as a label"}
+  LBL -->|"exactly one"| ONE["resolves, the command proceeds, exit 0"]
+  LBL -->|"zero"| ZERO["pane not found, exit 1"]
+  LBL -->|"two or more"| MANY["ambiguous-pane on stdout with id, label, and cwd per candidate, exit 2"]
+  LST["the live pane listing"] --> AUTH{"is the name one a person set"}
+  AUTH -->|"yes"| KEEP["reported beside the pane id, read whole"]
+  AUTH -->|"no, a backend default"| DROP["no label reported"]
+  FAIL["any verb fails"] --> ERR["structured error on stdout under its own discriminating code, with a help line naming this CLI's fixing command"]
+  ERR --> KIND{"what kind of failure"}
+  KIND -->|"bad or missing argument, unknown flag"| E2["exit 2, no backend called"]
+  KIND -->|"operation failed"| E1["exit 1"]
+  ERR --> FMT{"--format json"}
+  FMT -->|"yes"| JSON["the same code, emitted as JSON"]
+  ERR --> ONLY["the error is the whole of stdout, never a result plus an error"]
+  ERR --> TRANS["a backend diagnostic is translated, never passed through"]
+```
+
+### The worktree surface
+
+```mermaid
+graph TD
+  W["a worktree verb"] --> WV{"which verb"}
+  WV -->|"add"| PATH{"--path"}
+  PATH -->|"given"| PGIVEN["checked out there"]
+  PATH -->|"omitted"| PDEF["sibling of the primary checkout"]
+  PDEF --> OPENQ{"does anything ask for a space"}
+  PGIVEN --> OPENQ
+  OPENQ -->|"none of --at, --launch, --env"| BARE["plain git, opens nothing, resolves no backend"]
+  OPENQ -->|"--launch or --env, no --at"| IMPL["placement defaults to workspace"]
+  OPENQ -->|"--at given"| PLACE{"placement and binding"}
+  IMPL --> PLACE
+  PLACE -->|"workspace on a binding backend"| BOUND["the worktree is bound to the workspace"]
+  PLACE -->|"workspace on a backend that binds nothing"| UNB["plain git plus a plain open, ungrouped"]
+  PLACE -->|"pane or tab on a binding backend"| DEG["opens anyway, reports no workspace, help entry on stdout naming --at workspace, exit 0"]
+  PLACE -->|"pane or tab on a backend that binds nothing"| NOCLAIM["opens anyway, claims no lost grouping"]
+  WV -->|"open"| GROUPLATER["an existing checkout is opened and bound, no new checkout"]
+  WV -->|"list"| GITF["path, branch, linked, prunable from git; only the binding from the backend"]
+  WV -->|"remove"| GATES{"gates"}
+  GATES -->|"primary checkout"| RREJ["refused, even with --force"]
+  GATES -->|"dirty and no --force"| DREJ["refused, workspace still open"]
+  GATES -->|"dirty with --force"| PASS
+  GATES -->|"checkout already gone"| PASS
+  GATES -->|"clean"| PASS["gates pass"]
+  PASS --> REL["the backend releases its binding first"]
+  REL --> GITRM["only then does git remove the checkout, and never the backend"]
+  GITF --> NOMUX["list and remove answer with no multiplexer at all"]
+```
+
+## Scenario map
+
+Every scenario in [`mux.feature`](./mux.feature), one row each, grouped by use case.
+
+### The session backend is selected by environment
+
+| Edge | Path (Given) | Scenario |
+|---|---|---|
+| env names a backend → that adapter | `$TMUX`, `$HERDR_ENV` without `$TMUX`, or `$WEZTERM_PANE` set | `the session backend is selected by environment` |
+| none of the three → throw before opening | no `$TMUX`, `$HERDR_ENV`, or `$WEZTERM_PANE` | `no backend detected errors before opening anything` |
+
+### Placement
+
+| Edge | Path (Given) | Scenario |
+|---|---|---|
+| `--at` given → open at that placement | `open --at pane:down` | `--at chooses where the new pane opens` |
+| `--at` omitted → the adapter's `at ?? 'tab'` fallback | `open` with no `--at` | `--at omitted falls back to tab` |
+
+### workspace — its own visible space
+
+| Edge | Path (Given) | Scenario |
+|---|---|---|
+| `at=workspace` → the backend's own visible space | each of the three adapters | `--at workspace opens the pane's own VISIBLE space on each backend` |
+| `at=workspace` → the backend's own visible space | tmux | `tmux --at workspace opens a visible window in the current session, never a detached session` |
+| `at=workspace` → the backend's own visible space | herdr | `herdr --at workspace creates its own workspace, unattached to any repo` |
+| `at=workspace` → the backend's own visible space | wezterm | `wezterm --at workspace spawns a new window into a freshly named workspace` |
+| `at=tab` → the backend's native tab, never a split | each of the three adapters | `--at tab opens a new tab in the current window, never a split pane` |
+| tab opened → focus not stolen | any backend, `--at tab` | `the tab placement opens in the background without stealing focus` |
+
+### open reports the workspace the new pane landed in
+
+| Edge | Path (Given) | Scenario |
+|---|---|---|
+| open returns → the workspace the pane landed in | herdr, each placement | `open returns the workspace the new pane landed in` |
+| open returns → the workspace the pane landed in | wezterm, each placement | `wezterm reports the workspace on every placement, never absent` |
+| not in the open output → one follow-up list call | wezterm | `wezterm's workspace and tab cost a follow-up call, unlike herdr's free report` |
+| no workspace tier → workspace absent | tmux | `a backend with no workspace tier returns no workspace at all` |
+| in the open output → no extra call | herdr | `the workspace costs no extra backend call` |
+| CLI report → the workspace beside the pane | `--format json` on herdr, tmux, wezterm | `open reports the workspace alongside the pane it opened` |
+| occupancy → never a worktree binding | `worktree add --at pane:right` on a backend that binds | `the workspace a pane landed in is not a worktree binding` |
+| `--at` outside the four values → rejected before any pane opens | `open` with an unlisted `--at` value | `--at accepts only pane:right, pane:down, tab, and workspace` |
+
+### Split options — which pane, how big, what environment
+
+| Edge | Path (Given) | Scenario |
+|---|---|---|
+| `from` given on a `pane:*` placement → that pane is split | each of the three adapters | `from names the pane a pane:* split targets` |
+| `from` omitted → the backend's own default | each of the three adapters | `from omitted leaves each backend its own default, which tracks the USER's focus` |
+| `from` given on tab or workspace → not passed | tab and workspace on each adapter | `from is ignored by tab and workspace, which split nothing` |
+| `ratio` given on a `pane:*` placement → converted per backend | each of the three adapters, ratio 0.333 | `the ratio sign convention converts in opposite directions per backend` |
+| `ratio` omitted → no sizing flag, an even split | each of the three adapters | `ratio omitted leaves each backend its own even default` |
+| `ratio` given on tab or workspace → no sizing flag | tmux | `ratio is a split concept — a tab or workspace is never sized against a pane` |
+| `ratio` given on tab or workspace → no sizing flag | wezterm | `ratio is a split concept on wezterm too — a tab or workspace is never sized against a pane` |
+| tier has a native env flag → set at birth | every tier on tmux and herdr | `env is set natively at the birth of whatever tier is opened` |
+| no native env flag on this route → the fallback | every tier on wezterm | `env is native at NO tier on wezterm — every route takes the fallback, not just one` |
+| tier has a native env flag → one flag per variable, in order | tmux and herdr, two variables | `each env variable gets its own flag, in the order given` |
+| tier has a native env flag → set at birth | tmux and herdr, env with no launch | `env with no launch opens a blank shell carrying the env` |
+| no native env flag on this route → dropped rather than failing | herdr's worktree create/open | `herdr's worktree verbs cannot set env at birth, and drop it rather than failing` |
+| the route reports whether env was carried | each route, both directions | `whether a route carried env is reported by the route, because only it knows` |
+| env not carried and a command exists → `env KEY=VALUE` prefix | a region opened with env the route lost, command present | `env a route could not carry rides in on the command instead` |
+| env not carried and no command → warn on stderr | a region opened with env the route lost, no command | `env a route could not carry, with no command to ride, warns rather than vanishing` |
+| env carried natively → never prefixed on top | every tier on tmux and herdr | `a route that set env natively never prefixes it on top` |
+| the prefix is a shell line → values quoted | a value containing a space and a quote | `an env value carrying a space or a quote survives the prefix intact` |
+
+### --env, the CLI surface for the seam's env option
+
+| Edge | Path (Given) | Scenario |
+|---|---|---|
+| `KEY=VALUE` on a carrying route → the opened pane carries it | `open`, `worktree add`, `worktree open` | `--env sets the variable in the pane the verb opens, on every route that carries env` |
+| bind route with `--launch` → rides in on the command | herdr worktree verbs at workspace | `--env on the one route that cannot carry it rides in on --launch` |
+| bind route with no `--launch` → warn | herdr worktree verbs at workspace | `--env on the one route that cannot carry it, with no command to ride, warns` |
+| accepted → repeatable, one variable per flag | `open`, `worktree add`, `worktree open` | `--env is repeatable, one variable per flag, on every verb that has it` |
+| `--template` also passed → rejected before any pane opens | `open` and `worktree add`, the two verbs with `--template` | `--env is refused alongside --template, which owns its own panes' env` |
+| no `=` → rejected before the verb's own side effect | each verb, `ROLE` and `=worker` | `--env without a KEY=VALUE pair is rejected before any side effect` |
+| `KEY=` with nothing after → variable set empty | each verb, carrying route | `--env with an empty value sets the variable empty, rather than rejecting` |
+| value containing `=` → split on the first `=` only | each verb, carrying route | `an env value containing = splits on the first = only` |
+
+### The workspace group
+
+| Edge | Path (Given) | Scenario |
+|---|---|---|
+| group id supplied → reaches the backend opaque | opening a tab with a group id | `the open contract carries an opaque workspace group id` |
+| no workspace tier → stored natively | tmux | `a backend with no workspace tier stores the group id natively` |
+| real workspace tier → ignored | herdr | `a backend with a real workspace tier ignores the group id` |
+| real workspace tier → ignored | wezterm | `wezterm also ignores the group id, for the same reason herdr does` |
+| no group id supplied → nothing stored | tmux, no group id | `a group id is never invented for a caller that did not ask for one` |
+| grouping is its own verb → same command `open` routes through | tmux, a tab already open | `a space already open is grouped by the same verb open uses` |
+| no workspace tier → the space's own name stored beside the group | tmux, tab named editor | `a backend whose display name is composed stores the space's own name beside the group` |
+| real workspace tier → neither group nor name stored | herdr | `a backend with a real workspace tier stores neither` |
+| group id stored → `open` still reports the workspace absent | tmux, group id supplied | `the group id is not a workspace, and open never reports it as one` |
+
+### open reports the tab the pane landed in
+
+| Edge | Path (Given) | Scenario |
+|---|---|---|
+| open returns → the tab the pane landed in | every placement on herdr and tmux | `open reports the tab the new pane landed in` |
+| reported tab → addresses a rename at the tab tier | herdr, a new workspace's root tab | `the reported tab is what names a new workspace's root tab` |
+
+### Naming a space after its birth
+
+| Edge | Path (Given) | Scenario |
+|---|---|---|
+| backend has a rename route for the tier → its own rename command | tab and pane on tmux and herdr, tab on wezterm | `a space is named after birth on every backend` |
+| no rename route for the tier → throws | a wezterm pane | `wezterm cannot name a pane at any tier — rename throws rather than silently doing nothing` |
+| tier cannot be named at birth → named after birth | a wezterm tab with a label | `every new tab on wezterm is named after birth, not just a new workspace's root tab` |
+| tier cannot be named at birth → named after birth | herdr, a new workspace's root tab | `renaming is the only way to name a new workspace's root tab` |
+| rename → no focus moved, no space created | a tab the caller is not focused on | `a rename moves no focus and opens nothing` |
+| backend declares whether it can size a split | each of the three adapters | `a backend declares whether it can size a split` |
+
+### --launch is optional
+
+| Edge | Path (Given) | Scenario |
+|---|---|---|
+| `--launch` omitted → a blank pane | `open` with no `--launch` | `open with no --launch creates a blank pane` |
+| `--launch` given → the command is submitted | `open --launch` with a command line | `open --launch submits the command, so it actually runs` |
+
+### Driving a pane's turn
+
+| Edge | Path (Given) | Scenario |
+|---|---|---|
+| `send text` with text → literal characters, no Enter | a word that also names a key, each backend | `send text types literal text and presses no Enter` |
+| `send keys` core token → normalized and pressed | several core keys, each backend | `send keys presses core-vocabulary keys and types nothing` |
+| `send keys` core token → normalized and pressed | `Backspace` on tmux, the one renamed key | `Backspace is the core's one renamed key, and tmux gets tmux's name for it` |
+| `send keys` non-core token → forwarded verbatim | `Home` on tmux, which knows it | `a non-core key that the backend does know is pressed` |
+| `send keys` non-core token → forwarded verbatim | `Home` on herdr, which refuses it | `a non-core token that the backend does not know is refused where the backend refuses` |
+| `send keys` non-core token → forwarded verbatim | a token naming no key, on tmux, which cannot refuse | `a token no backend knows is not rescued by cyber-mux on a backend that cannot refuse it` |
+| `send keys` core token → normalized and pressed | `Up` on wezterm, which has no key-name primitive | `wezterm has no send-keys primitive at all — a key is its own raw terminal byte sequence` |
+| `send keys` non-core token → forwarded verbatim | `Home` on wezterm, which can encode it | `a non-core key wezterm also knows (by the same extras a backend "knowing" Home means) is pressed` |
+| `send keys` non-core token → forwarded verbatim | a token wezterm cannot encode | `a token wezterm cannot encode is typed as its own literal characters, unable to refuse it` |
+| `send keys Enter` → Enter pressed, the turn taken | text already staged, each backend | `send keys Enter presses Enter and takes the turn, because the caller asked for it` |
+| `send keys` with no tokens → rejected | a pane named, no key tokens | `send keys with no key tokens is rejected` |
+| `send text` with no text → rejected | a pane named, no text | `send text with no text argument is rejected` |
+| bare `send` → help on stdout, exit 2 | neither `text` nor `keys` named | `bare send is incomplete input, so it fails loud with help rather than acting` |
+| `submit` with text → typed then Enter | a message as the text argument, each backend | `submit with text types the text and presses Enter, taking the pane's turn` |
+| `submit` with text → typed then Enter | a message that also names a key, each backend | `submit types its text literally, never interpreting it as a key` |
+| `submit` with no text → a bare Enter flush | text already staged, each backend | `submit with no text presses a bare Enter and retypes nothing` |
+| `submit` with no pane → rejected | no pane argument | `submit with no pane is rejected` |
+| `submit` with empty text → a bare Enter flush | text already staged, tmux and herdr | `submit with empty text is the bare flush, not a second contract` |
+
+### Multiplexer detection is two-mode
+
+| Edge | Path (Given) | Scenario |
+|---|---|---|
+| `$CYBER_MUX` set → trusted outright | `$CYBER_MUX=tmux` with `$CYBER_MUX_PANE=%3` | `$CYBER_MUX is trusted outright as a fast-path` |
+| `$CYBER_MUX=none` → mux none | `$CYBER_MUX=none` while `$TMUX` is set | `$CYBER_MUX=none is an override even inside a real multiplexer` |
+| no `$CYBER_MUX` → walk the process ancestry | a tmux server is an ancestor | `absent the env fast-path, the probe walks the process ancestry from $$` |
+| walk inconclusive → fall back to the hint | `$TMUX` set, ancestry walk inconclusive | `$TMUX/$HERDR_ENV alone are not trusted — only a fast-positive hint the walk falls back to` |
+| probe result → `doctor` prints the pin hint | running behind a detected multiplexer | `doctor reports the detected mux and prints a pin hint` |
+
+### mode reports the selected backend
+
+| Edge | Path (Given) | Scenario |
+|---|---|---|
+| adapter selected → `mode` prints the backend | inside a detected multiplexer | `mode reports the detected session backend` |
+| no backend selectable → `mode` prints none, exit 0 | in no detectable multiplexer | `mode reports none when no backend is selectable` |
+
+### Reporting whether a pane is currently focused
+
+| Edge | Path (Given) | Scenario |
+|---|---|---|
+| tmux: active pane, current window, attached client → focused | a tmux pane meeting all three | `tmux reports a pane focused when an attached client is currently viewing it` |
+| tmux: any of the three unset → not-focused | a tmux pane failing one of the three | `tmux reports a pane not focused when no attached client is viewing it` |
+| herdr: pane record focused → focused | a herdr pane record reporting a viewing client | `herdr reports a pane focused when its pane record is focused` |
+| herdr: pane record not focused → not-focused | a herdr pane record reporting no viewing client | `herdr reports a pane not focused when its pane record is not focused` |
+| query cannot be answered → unknown | no primitive, an unresolvable pane, or an erroring query | `a focus query that cannot be answered is unknown, not a boolean` |
+| query cannot be answered → unknown | any wezterm pane, always | `wezterm always reports unknown — it has no focus primitive at all, not just a per-query gap` |
+
+### list enumerates every live pane
+
+| Edge | Path (Given) | Scenario |
+|---|---|---|
+| `list` → every live pane | a mix of agent-bearing and plain panes | `list enumerates every live pane, including one running no agent/harness` |
+
+### Addressing a pane
+
+| Edge | Path (Given) | Scenario |
+|---|---|---|
+| exactly one label match → resolves and the verb acts | three panes, one labeled worker, per pane verb | `every pane verb addresses a pane by name as readily as by id` |
+| zero matches → pane not found | a wezterm pane, which never carries a label | `a name never resolves a wezterm pane — only an id can` |
+| two or more label matches → ambiguous-pane, exit 2 | three panes all labeled worker, per pane verb | `an ambiguous name fails the same way on every pane verb` |
+| a live pane carries it as an id → that pane is addressed | one pane's id, another pane's label, the same string | `an id addresses the pane whose id it is, even when another pane is labeled with that id` |
+| no live pane carries it as an id → resolved as a name | an id-shaped string carried only as a label | `an id is recognized by matching a live pane, never by the shape of the string` |
+| exactly one label match → resolves and the verb acts | three panes, exactly one labeled worker | `a name matching exactly one live pane resolves to it and the command proceeds` |
+| zero matches → pane not found, exit 1 | no pane labeled or ided worker | `a name matching no live pane is not found, rather than ambiguous` |
+| two or more label matches → fail, acting on none | three panes all labeled worker | `a name matching two or more live panes fails rather than guessing which was meant` |
+| two or more label matches → candidates carry id, label, cwd | three worker panes in different working directories | `the ambiguity report carries what tells the candidates apart, and what retries them` |
+| two or more label matches → structured error on stdout, exit 2 | two panes labeled worker | `the ambiguity report is a structured error on stdout, where the agent reads` |
+| two or more label matches → the report honors `--format` | two panes labeled worker, `--format json` | `--format json emits the ambiguity as a structured error carrying its candidates` |
+| `exists` → live, gone, or ambiguous by exit code | one, zero, and two-or-more matches | `exists distinguishes its three outcomes by exit code, not by prose` |
+| two or more label matches → the report replaces the answer | `exists` against two panes labeled worker | `an ambiguous exists reports its candidates rather than answering the question` |
+| a name a person set → reported beside the pane id | a labeled tmux pane and a labeled herdr pane | `the live pane listing carries each pane's label, so a name resolves from it` |
+| a backend default name → no label reported | a tmux pane whose title was never set | `a tmux pane nobody named carries no label, so the hostname addresses no pane` |
+| a backend default name → no label reported | a herdr pane never renamed | `a herdr pane nobody named carries no label, with no comparison needed to tell` |
+| a backend default name → no label reported | any wezterm pane, which has no titling primitive | `a wezterm pane never carries a label, because nothing can ever set one` |
+| a name a person set → each field read whole | a tmux pane labeled `my worker`, cwd containing a space | `a label containing spaces resolves, and never corrupts what is listed beside it` |
+
+### The error surface
+
+| Edge | Path (Given) | Scenario |
+|---|---|---|
+| any verb fails → structured error on stdout under its own code | no-mux, pane-not-found, and ambiguous-pane failures | `a failure is a structured error on stdout, under the code for THAT failure` |
+| codes discriminate → no shared catch-all | an ambiguous locator and a missing multiplexer | `two different failures never share one code` |
+| missing required argument → exit 2, no backend called | `read`, `focus`, `send text` without the pane argument | `a missing required argument is a usage error, not a failed operation` |
+| unknown flag → exit 2 with the command's valid flags | `list` with a flag it does not define | `an unknown flag is a usage error, and says what the valid flags are` |
+| unknown flag → validated against the subcommand's set | `template list` with `--force`, a `template save` flag | `an unknown flag is rejected against the SUBCOMMAND's flags, not the group's` |
+| `--help` → passes on every command, exit 0 | any command with `--help` | `--help is never an unknown flag` |
+| error → honors `--format json` under the same code | a failing command with `--format json` | `a structured error honors --format json` |
+| error → the whole of stdout, never a result before it | `read` against a pane whose capture fails | `a failed verb's stdout is its structured error alone, with no result before it` |
+| partial outcome → one result payload, not result plus error | a tabs template whose second tab fails | `a partially-applied template is one result payload, not a result plus an error` |
+| backend diagnostic → translated into this CLI's code and help | a verb whose backend command fails with its own diagnostic | `an error never leaks the multiplexer's own output` |
+| backend diagnostic → translated into this CLI's code and help | `worktree add` whose backend fails opening the pane | `the worktree catch-all never forwards the multiplexer's raw diagnostic either` |
+
+### git worktree helpers
+
+| Edge | Path (Given) | Scenario |
+|---|---|---|
+| `--path` omitted → sibling of the primary checkout | `worktree add --branch` with no `--path` | `worktree add defaults the path to a sibling of the primary checkout` |
+| `--path` given → checked out there | `worktree add --branch --path` | `worktree add honors an explicit --path` |
+| gate: primary checkout → refused | `worktree remove` against the primary checkout's own path | `worktree remove refuses the primary checkout, even with --force` |
+| gate: checkout already gone → tolerated, no git removal | a path with nothing checked out there | `worktree remove tolerates a worktree already gone from disk` |
+| gate: dirty and no `--force` → refused | a worktree with uncommitted changes, no `--force` | `worktree remove refuses uncommitted changes unless --force` |
+| gate: dirty with `--force` → removed | a worktree with uncommitted changes, `--force` | `worktree remove --force discards uncommitted changes without the dirty check` |
+
+### worktree/workspace binding
+
+| Edge | Path (Given) | Scenario |
+|---|---|---|
+| nothing asks for a space → plain git, no backend resolved | `worktree add` with none of `--at`, `--launch`, `--env` | `a bare worktree add opens nothing, so there is nothing to group` |
+| `--launch` with no `--at` → placement defaults to workspace | `worktree add --launch` with no `--at` | `worktree add --launch defaults the placement to workspace` |
+| `--env` with no `--at` → placement defaults to workspace | `worktree add --env` with no `--at` and no `--launch` | `worktree add --env defaults the placement to workspace, for --launch's reason` |
+| `--at workspace` → bound where the backend binds, ungrouped where it does not | herdr, tmux, and wezterm | `worktree add --at workspace groups the worktree where the backend binds` |
+| pane or tab placement on a binding backend → opens ungrouped | `pane:right`, `pane:down`, and `tab` | `a placement the binding cannot serve falls back rather than failing` |
+| pane or tab placement on a backend that binds nothing → no lost-grouping claim | tmux, `--at pane:right` | `a backend that binds nothing falls back without reporting a lost grouping` |
+| pane or tab placement on a binding backend → help entry on stdout, exit 0 | a binding backend, `--at pane:right` | `the lost-grouping note is a help entry on stdout, not a line on stderr` |
+| `--label` given → names the tier `--at` opened | workspace, tab, and `pane:right` on herdr and tmux | `--label names whatever --at opened, on every backend` |
+| `--label` omitted → the backend's own default stands | `cyber-mux` with no `--label` | `--label omitted leaves each backend its own default` |
+| `worktree open` → an existing checkout is opened and bound | a checkout made by a bare `add`, open in no workspace | `worktree open groups a worktree that plain git created earlier` |
+| `list` → every worktree fact from git | a backend that also enumerates worktrees | `worktree list reads every worktree fact from git, whatever the backend` |
+| `list` → only the binding from the backend | worktrees open in workspaces on a backend that binds | `worktree list reports which workspace each worktree is open in` |
+| no multiplexer → `list` and `remove` still answer from git | no multiplexer to be inside of | `worktree list and remove answer outside a multiplexer` |
+| gates run before the release | a dirty worktree open in a workspace on a binding backend | `worktree remove refuses uncommitted changes BEFORE releasing the workspace` |
+| release runs before git removes the checkout | a worktree open in a workspace, every gate passing | `worktree remove releases the workspace before git removes the checkout` |
+| release runs before git removes the checkout | a path already gone, still open in a workspace | `worktree remove releases the workspace of a checkout already gone from disk` |
+| removal never delegated → this CLI's gates plus git | a backend with a worktree-removal primitive of its own | `worktree removal is never delegated to the backend` |
