@@ -2,7 +2,7 @@
 cr: rename-layout-to-template
 project: cyber-mux
 source: Council ruling (owner mail 1784487176382-a315de)
-status: in-progress
+status: done
 todos:
   - content: Ratify freeze re-open on layout.feature — wholesale rename is a rewrite class, not additive
     status: completed
@@ -25,9 +25,9 @@ todos:
   - content: Website docs — cli/template.md, concepts/templates.md (delegated, verified)
     status: completed
   - content: Impl gate — independent cold verifier over the frozen-suite rename + boundary
-    status: in_progress
-  - content: Handoff — push, PR, follow-ups
-    status: pending
+    status: completed
+  - content: Handoff — pushed, PR #54, operator reported, owner mail acked
+    status: completed
 ---
 
 # CR rename-layout-to-template
@@ -82,13 +82,14 @@ to preserve: **102 scenarios, 7 Scenario Outlines, 18 `# ── stage ──` se
 
 ## NEXT
 
-Rename committed (`c3c4482`), `pnpm verify` green (7/7, 638 tests). Freeze re-open ratified by owner
-in-session; spec gate self-asserted (ledger). Version bump settled at **minor → 0.1.0** by owner
-(Council's literal "major" overridden on the unpublished-package fact — record in handoff report to
-operator).
+Nothing — the mission landed. PR #54 carries the rename; both gates self-asserted (ledger),
+independently verified clean (byte-identical frozen-suite substitution, boundary respected, 638
+tests). Version settled at minor → 0.1.0 (owner override of Council's "major" on the unpublished
+fact). Operator reported (mail `1784491161964-44f463`); owner mail `1784487176382-a315de` acked.
 
-Awaiting the independent cold verifier's verdict on the frozen-suite rename + backend boundary. On a
-clean verdict: push the branch, open the PR (no `Closes #` — the source is an owner mail, not a forge
-issue), and file the one recorded follow-up (classify-edit-class treats a renamed frozen suite as
-additive — freeze-guard hole). Then reply to the operator on the mail thread and ack owner mail
-`1784487176382-a315de`.
+One follow-up outstanding, NOT filed here because it belongs to another repo: `classify-edit-class`
+(SDD plugin, cyberplace) reports a renamed frozen `.feature` as additive/self-clears — a freeze-guard
+hole. Recorded in the ledger and routed to the operator. Re-derive from the ledger if a later mission
+drains follow-ups against the SDD tooling repo.
+
+Keep this brief until PR #54 merges and is doctrine-distilled.
