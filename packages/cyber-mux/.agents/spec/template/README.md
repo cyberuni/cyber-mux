@@ -5,6 +5,8 @@ concept: [cyber-mux, template]
 
 # template — named, reusable workspace templates
 
+## What
+
 A **template** is a recipe for standing up a working workspace. It names three things at once, and
 re-targets all of them at a different directory on every apply:
 
@@ -34,6 +36,59 @@ carrying one fails validation. The target is injected at apply time and only the
 Designed in [`docs/design/layout-templates.md`](../../../../../docs/design/layout-templates.md) —
 which keeps its original name as a record of the design moment — against
 `.research/mux-workspace-layouts/` and `.research/mux-message-bus/`.
+
+### Non-goals
+
+**Non-goals** — **dispatch**, in all its forms: no message bus, no mailbox, no routing, no "give
+this work to an idle pane". A template is **write-only** — it takes a template and a cwd and produces
+running panes, and it ends there. Status is a *read* concern about panes that already exist, so the
+two never meet; this is why the largest capability gap between the backends (herdr has an agent-status
+feed, tmux has nothing) costs the template system exactly nothing. cyberlegion already has a working
+inter-agent mail system, and a second one here would be two competing message systems in one stack.
+
+**`template export` was here, and this CR reversed it.** It was recorded as *deferred, not rejected*,
+and the deferral's own reasoning is what expired: it read the seam's inability to report split
+structure as the backends' inability, and that premise was simply false — `listPanes` reports no
+geometry, but both backends do. What the deferral got right is the part that survived: the capture
+genuinely cannot recover `command`, and that is now a stated limit of a shipped verb rather than a
+reason not to ship one. Two things changed on the way in: the verb is **`save`**, not `export`,
+because it writes the file rather than printing it; and the honesty the original design bought by
+printing to stdout is bought instead by the draft note the file carries in its own `description`.
+
+Also out, each for its own reason:
+
+- **`--if-populated` and `--dry-run`** — cut. `--if-populated` is moot at the default `workspace`
+  placement (a fresh space is empty), and detecting "already populated" is only a heuristic — the
+  seam offers no "list panes in workspace X", so the check would be *does any live pane report a cwd
+  under the target?*, imprecise in both directions. `--dry-run` overlaps `show --desugar` and its
+  manifest is a half-truth: pane ids do not exist yet, so every `pane` field would be `null`.
+- **`wait_for` / sequencing** — a template that waits on output is a workflow, and a workflow belongs
+  to the caller.
+- **Focus** — apply never steals it, matching every existing spawn path. A caller who wants to land
+  somewhere calls `focus` with a pane id from the manifest. **This survived the tabs CR intact**,
+  which had every excuse to reopen it: a template naming the tab to focus is the obvious next field,
+  and it was declined rather than deferred. Apply's whole discipline is that it is side-effect-free
+  from the point of view of whoever is typing, and a multi-tab apply — which lands more spaces at once
+  — makes stealing focus worse, not more justified. The manifest already answers *"which pane"*, and
+  `focus` already takes it.
+
+**`Named windows/tabs inside a template` was here, and this CR reversed it.** It was recorded as an
+honest deferral rather than a rejection, with the door left open in the schema itself — *"the schema
+leaves room by keeping `root` a single node rather than a list"* — and that is the door `tabs` walks
+through. Nothing about the deferral's reasoning expired; it was simply time. The v1 note is the one
+piece of it that needed correcting rather than keeping: it read the constraint as *templates build one
+region*, when what the backends actually impose is narrower — see the tab-naming note in
+[`mux/`](../mux/README.md), whose premise turned out to bind only herdr's **root** tab rather than
+tabs in general.
+
+**Templates are an optional capability**, exactly as `worktree?` already is — present on a backend
+that can split a *named* pane, absent on one that cannot. The floor is real rather than hypothetical:
+screen fails it on three independent counts (its regions have no ids, `split` splits only the current
+region, and it has no per-pane env var, so a caller cannot name its own pane *or* the pane to split).
+The only way to split a chosen region there is focus-until-you-arrive-then-split — the racy,
+focus-stealing road `from` exists to reject. A screen adapter would be a genuinely different shape,
+not a degraded one. Finding the floor does not move the argument: the walk is the implementation
+everywhere it is possible at all.
 
 ## Use Cases
 
@@ -293,57 +348,6 @@ a target directory supplied at apply time:
   specified there ([`mux/`](../mux/README.md), "A split can be told which pane, how big, and what
   environment"). This node passes them down and owns what a template does with them.
 
-**Non-goals** — **dispatch**, in all its forms: no message bus, no mailbox, no routing, no "give
-this work to an idle pane". A template is **write-only** — it takes a template and a cwd and produces
-running panes, and it ends there. Status is a *read* concern about panes that already exist, so the
-two never meet; this is why the largest capability gap between the backends (herdr has an agent-status
-feed, tmux has nothing) costs the template system exactly nothing. cyberlegion already has a working
-inter-agent mail system, and a second one here would be two competing message systems in one stack.
-
-**`template export` was here, and this CR reversed it.** It was recorded as *deferred, not rejected*,
-and the deferral's own reasoning is what expired: it read the seam's inability to report split
-structure as the backends' inability, and that premise was simply false — `listPanes` reports no
-geometry, but both backends do. What the deferral got right is the part that survived: the capture
-genuinely cannot recover `command`, and that is now a stated limit of a shipped verb rather than a
-reason not to ship one. Two things changed on the way in: the verb is **`save`**, not `export`,
-because it writes the file rather than printing it; and the honesty the original design bought by
-printing to stdout is bought instead by the draft note the file carries in its own `description`.
-
-Also out, each for its own reason:
-
-- **`--if-populated` and `--dry-run`** — cut. `--if-populated` is moot at the default `workspace`
-  placement (a fresh space is empty), and detecting "already populated" is only a heuristic — the
-  seam offers no "list panes in workspace X", so the check would be *does any live pane report a cwd
-  under the target?*, imprecise in both directions. `--dry-run` overlaps `show --desugar` and its
-  manifest is a half-truth: pane ids do not exist yet, so every `pane` field would be `null`.
-- **`wait_for` / sequencing** — a template that waits on output is a workflow, and a workflow belongs
-  to the caller.
-- **Focus** — apply never steals it, matching every existing spawn path. A caller who wants to land
-  somewhere calls `focus` with a pane id from the manifest. **This survived the tabs CR intact**,
-  which had every excuse to reopen it: a template naming the tab to focus is the obvious next field,
-  and it was declined rather than deferred. Apply's whole discipline is that it is side-effect-free
-  from the point of view of whoever is typing, and a multi-tab apply — which lands more spaces at once
-  — makes stealing focus worse, not more justified. The manifest already answers *"which pane"*, and
-  `focus` already takes it.
-
-**`Named windows/tabs inside a template` was here, and this CR reversed it.** It was recorded as an
-honest deferral rather than a rejection, with the door left open in the schema itself — *"the schema
-leaves room by keeping `root` a single node rather than a list"* — and that is the door `tabs` walks
-through. Nothing about the deferral's reasoning expired; it was simply time. The v1 note is the one
-piece of it that needed correcting rather than keeping: it read the constraint as *templates build one
-region*, when what the backends actually impose is narrower — see the tab-naming note in
-[`mux/`](../mux/README.md), whose premise turned out to bind only herdr's **root** tab rather than
-tabs in general.
-
-**Templates are an optional capability**, exactly as `worktree?` already is — present on a backend
-that can split a *named* pane, absent on one that cannot. The floor is real rather than hypothetical:
-screen fails it on three independent counts (its regions have no ids, `split` splits only the current
-region, and it has no per-pane env var, so a caller cannot name its own pane *or* the pane to split).
-The only way to split a chosen region there is focus-until-you-arrive-then-split — the racy,
-focus-stealing road `from` exists to reject. A screen adapter would be a genuinely different shape,
-not a degraded one. Finding the floor does not move the argument: the walk is the implementation
-everywhere it is possible at all.
-
 Every scenario in [`template.feature`](./template.feature) maps to one of these behaviors:
 
 | Behavior | What it covers |
@@ -368,3 +372,350 @@ Every scenario in [`template.feature`](./template.feature) maps to one of these 
 | **labels are the author's, or absent** | a label someone set is captured; a backend's default pane title is not (tmux titles every pane with the hostname); a label two panes share is captured onto both, because a human chose it and no label needs to be unique |
 | **`save` writes a file** | the repo templates directory by default, `--to user` for the user's; the path on stdout as a structured payload, with a `help[N]:` block riding along only when a bare `save` left tabs uncaptured (composition reads the path from `--format json`); an existing template is never overwritten without `--force`, and the refusal reads no region |
 | **`save`'s refusals** | writing nothing in every case, but under two exit codes by kind: a malformed **name** and **no pane to capture around** (neither `--from` nor an ambient pane) are usage errors — the invocation is wrong, so they exit **2** per [`axi.md`](../axi.md)'s #6; a backend that cannot report geometry and a region no sequence of splits could have produced are genuine operation failures, so they exit **1** |
+
+## Logic
+
+Three sub-graphs. Every use case above enters one of them: the template verbs and both apply routes
+enter **resolve and validate** first; `open --template` and `worktree add --template` continue into
+**apply**; `template save` enters **capture**.
+
+### Resolve, validate, desugar
+
+```mermaid
+graph TD
+  IN["a template verb, or --template &lt;name&gt;"]
+  IN -->|"R1: --file given"| FILE["that path is read; neither templates directory is consulted"]
+  IN -->|"R2: the name is not a plain stem"| BADNAME["exit 2, no file read"]
+  IN --> SRC{"the name is a plain stem: which source has it?"}
+  SRC -->|"R3: the repo has it"| REPO["the repo template wins; the user copy is reported shadowed"]
+  SRC -->|"R4: only the user has it"| USER["the user template; source reported as user"]
+  SRC -->|"R5: the repo lookup runs through resolvePrimaryRoot"| PRIMARY["the primary checkout's answer, from every worktree"]
+  SRC -->|"R6: neither has it"| MISS["exit 1, naming both directories searched"]
+  FILE --> VAL
+  REPO --> VAL
+  USER --> VAL
+  PRIMARY --> VAL
+  VAL{"validate the template"}
+  VAL -->|"V1: name field disagrees with the filename stem"| EV1["exit 1, naming stem and name field"]
+  VAL -->|"V2: a cwd anywhere in the template"| EV2["exit 1, naming --cwd and dir"]
+  VAL -->|"V3: dir is absolute or escapes the target"| EV3["exit 1, naming that JSON path"]
+  VAL -->|"V4: dir is a relative subdirectory of the target"| OK
+  VAL -->|"V5: ratio is 0, 1, or outside them"| EV5["exit 1, naming that JSON path"]
+  VAL -->|"V6: a label repeats"| OK
+  VAL -->|"V7: a label is omitted"| OK
+  VAL -->|"V8: not exactly one of root, panes, tabs"| EV8["exit 1"]
+  VAL -->|"V9: a tab is not exactly one of root, panes"| EV9["exit 1, naming that tab's JSON path"]
+  VAL -->|"V10: tabs is an empty array"| EV10["exit 1"]
+  VAL -->|"V11: several errors at once"| EV11["every error, one per line, each with its own JSON path"]
+  VAL -->|"V12: valid"| OK["exit 0; the template proceeds"]
+  OK --> DES{"how is the pane pool spelled?"}
+  DES -->|"D1: panes plus arrange even-horizontal"| DR1["a right comb at 1/n then 1/(n-1)"]
+  DES -->|"D2: panes plus arrange even-vertical"| DR2["the same comb, direction down"]
+  DES -->|"D3: panes plus arrange tiled"| DR3["a columns-first grid"]
+  DES -->|"D4: arrange omitted"| DR3
+  DES -->|"D5: n = 1"| DR5["that pane alone, no split node"]
+  DES -->|"D6: the desugaring is cyber-mux's own"| DR6["the same tree on every backend; tmux select-template never invoked"]
+  DES -->|"D7: show --desugar"| DR7["the tree apply will build is printed"]
+  DES -->|"D8: the flat form sits inside a tab"| DR1
+  DES -->|"a nested tree was written out"| TREE["the tree as written"]
+  DR1 --> TREE
+  DR2 --> TREE
+  DR3 --> TREE
+  DR5 --> TREE
+  TREE --> APPLY["enter the walk"]
+```
+
+### Apply — the walk
+
+```mermaid
+graph TD
+  ENTER["open --template / worktree add --template"]
+  ENTER -->|"F1: --launch also given"| EF1["exit 2, rejecting the pair"]
+  ENTER -->|"F2: --at omitted"| EF2["the workspace placement"]
+  ENTER -->|"F3: --label omitted"| EF3["the region is labeled with the template name"]
+  ENTER -->|"F4: the verb is worktree add --template"| EF4["the walk's cwd is the worktree root; the manifest rides beside root and branch"]
+  ENTER -->|"F5: no multiplexer resolves"| EF5["throws, naming tmux/herdr as the required backend"]
+  ENTER --> GATE{"resolve and validate, before any side effect"}
+  GATE -->|"G1: the name resolves nowhere"| EG1["exit 1; nothing is opened and no worktree is created"]
+  GATE -->|"G2: the template is invalid"| EG2["exit 1 with the validation error; no worktree is created"]
+  GATE -->|"the template resolved and validated"| SHAPE{"one tree, or tabs?"}
+  SHAPE -->|"T1: tabs — first tab, then each later tab"| TABS["the first tab takes the workspace placement, every later tab the tab placement, never a split"]
+  TABS -->|"T2: a tab's tree is built"| W1
+  TABS -->|"T3: geometry across every tab precedes any submit"| WSUB
+  TABS -->|"T5: the region is already open"| TREUSE["the first tab builds into the workspace the worktree opened"]
+  TABS -->|"T6: whichever verb opened the workspace"| TGRP["every tab carries the same group, the first one included"]
+  TABS --> TIER{"does the backend have a workspace tier?"}
+  TIER -->|"C1: no tier"| TC1["the tab is labeled workspace - tab"]
+  TIER -->|"C2: the tier is real"| TC2["the tab carries its own label, unprefixed"]
+  TC1 -->|"C3: the workspace label is never shortened"| TC3["it appears in the tab label in full"]
+  TC1 -->|"C4: the workspace is read back"| TC4["the grouping tag identifies it; the label is never parsed back"]
+  TIER -->|"C5: the backend cannot name its root tab at birth"| TC5["the root tab is renamed after birth; every later tab is named at birth"]
+  SHAPE -->|"one tree"| W1
+  W1["the region is opened blank; its pane is the tree's root region"]
+  W1 -->|"W2: geometry precedes every submit"| WGEO["every split is issued before the first submit"]
+  WGEO -->|"W3: each split names its pane"| WFROM["from carries that pane's id; no backend default is relied on"]
+  WFROM --> WDIR{"does the pane node carry a dir?"}
+  WDIR -->|"W6: the dir exists under the target"| WD1["the pane opens at cwd joined with dir"]
+  WDIR -->|"W7: the dir is absent under the target"| WD2["exit 1, naming the pane and the resolved path"]
+  WFROM --> WENV{"ratio and env at the seam"}
+  WENV -->|"E1: a pane carries env and no command"| WE1["the pane is created with that env; no submit"]
+  WENV -->|"E2: the backend cannot size a split"| WE2["one stderr warning; the backend's own default; stdout stays machine-readable"]
+  WENV -->|"E3: the open route could not carry the root pane's env, and it has a command"| WE3["that command is prefixed; no other pane's is"]
+  WENV -->|"E4: the open route could not carry it, and there is no command"| WE4["exactly one stderr warning naming the variables"]
+  WGEO --> WSUB{"does the leaf carry a command?"}
+  WSUB -->|"W4: it does"| WS1["submit, last, in template order — tab by tab for a tabs template"]
+  WSUB -->|"W5: it does not"| WS2["a blank shell; no submit"]
+  WSUB -->|"W8: the walk throws part-way"| WS3["the panes already built stay open and are reported; exit 1; nothing is killed"]
+  WSUB -->|"T4: focus"| WS4["the caller's focus is untouched, and no field asks for it"]
+  WS1 --> MAN{"--format json"}
+  MAN -->|"M1: the manifest is reported"| M1["template, injected cwd, workspace, and one entry per pane carrying label, pane id, dir, command"]
+  M1 -->|"M2: the backend has a workspace tier"| M2["workspace carries the workspace the region opened in"]
+  M1 -->|"M3: the backend has no workspace tier"| M3["workspace is null"]
+  M1 -->|"M4: the template declared tabs"| M4["every pane carries its tab; the pane list stays one flat list"]
+  M1 -->|"M5: the template declared one tree"| M5["each pane's tab is null"]
+  ENTER -->|"N1: the verb is list, show or validate"| N1["answered with no session backend resolved"]
+```
+
+### Capture — `template save`
+
+```mermaid
+graph TD
+  SAVE["cyber-mux template save &lt;name&gt;"]
+  SAVE -->|"S6: the name is not a plain stem"| ES6["exit 2; no file written, no region read"]
+  SAVE --> SUBJ{"which region is the subject?"}
+  SUBJ -->|"P1: no --from"| P1["the caller's own region, not the focused one"]
+  SUBJ -->|"P2: --from names a pane"| P2["that pane's region"]
+  SUBJ -->|"P3: no --from and no ambient pane"| P3["exit 2 naming --from; nothing written"]
+  P1 --> SCOPE{"--workspace?"}
+  P2 --> SCOPE
+  SCOPE -->|"X1: --workspace given"| X1["one captured tab per live tab, each with its own tree"]
+  SCOPE -->|"X2: --workspace omitted"| X2["the caller's own region alone; the template declares root"]
+  X2 -->|"X3: the workspace has other tabs"| X3["a help entry on stdout naming what was left out and the --workspace command"]
+  X1 -->|"X4: the tab carries a label"| X4["the captured tab keeps it"]
+  X1 -->|"X5: the display name is composed"| X5["the captured label is the tab's own stored name, never the composed one"]
+  X1 -->|"X6: the region carries no grouping tag"| X6["exactly one captured tab"]
+  X1 -->|"X7: the backend cannot enumerate the workspace's tabs"| X7["exit 1 naming the backend; nothing written"]
+  X1 --> GEO
+  X2 --> GEO
+  GEO{"derive the tree from the seam"}
+  GEO -->|"Q1: the seam is asked for the region"| Q1["one rectangle per pane; no backend's native split-tree encoding is parsed"]
+  Q1 -->|"Q2: two panes with a divider between them"| Q2["the ratio is the complement, the one the split was made with"]
+  Q1 -->|"Q3: an n-ary row"| Q3["the right comb the flat sugar desugars to"]
+  Q1 -->|"Q4: an ambiguous grid"| Q4["broken columns-first, matching tiled"]
+  Q1 -->|"Q5: the capture is re-applied"| Q5["every pane, and every tab, matches its counterpart's size"]
+  Q1 -->|"Q6: no sequence of splits could have produced the region"| Q6["exit 1; nothing written"]
+  GEO -->|"Q7: the backend has no region-geometry primitive"| Q7["exit 1 naming the backend; nothing written"]
+  Q1 --> SUB{"subtract the target back out"}
+  SUB -->|"Z1: the pane runs under the captured root"| Z1["a relative dir; no cwd and no absolute path anywhere"]
+  SUB -->|"Z2: the pane runs outside the captured root"| Z2["no dir, a stderr warning naming its directory, and the template is still written"]
+  SUB -->|"Z4: a label a human chose, shared or not"| Z4["captured onto every pane carrying it, with no warning"]
+  SUB -->|"Z5: the label is the backend's default pane title"| Z5["no label is captured for that pane"]
+  SUB --> DRAFT{"the draft note"}
+  DRAFT -->|"Y1: the panes are running commands"| Y1["no pane node carries a command"]
+  DRAFT -->|"Y2: no --description"| Y2["the description says geometry only, and that a command must be added per pane"]
+  DRAFT -->|"Y3: --description given"| Y3["it replaces the draft note"]
+  DRAFT --> WRITE{"where does the file go?"}
+  WRITE -->|"S1: no --to"| S1["the primary checkout's .cyber-mux/templates; the path on stdout as a structured payload"]
+  WRITE -->|"S2: --format json"| S2["one JSON object carrying the path and a help array"]
+  WRITE -->|"S3: --to user"| S3["the user templates directory; nothing in the repo one"]
+  WRITE -->|"S4: the destination exists, no --force"| S4["exit 1 naming --force; the existing template unchanged; no region read"]
+  WRITE -->|"S5: --force"| S5["exit 0; the file is replaced by the capture"]
+```
+
+## Scenario map
+
+Grouped by use case, mirroring [`template.feature`](./template.feature)'s own sections. One row per
+scenario; the `Edge` column names the edge in `## Logic`, the `Path (Given)` column the path class
+reaching it.
+
+### Resolving a template by name
+
+| Edge | Path (Given) | Scenario |
+|---|---|---|
+| R1 `--file` given | a caller running `template show --file` | --file skips resolution entirely |
+| R3 the repo has it | both directories hold the name | a repo template shadows a user template of the same name |
+| R4 only the user has it | the repo has none of that name | a user template resolves when the repo has none of that name |
+| R5 repo lookup through `resolvePrimaryRoot` | a linked worktree whose branch predates the file | the repo templates directory resolves through the primary checkout, not the caller's cwd |
+| R6 neither has it | the name is in neither directory | a name that resolves nowhere lists the directories searched |
+| R2 the name is not a plain stem | traversal, uppercase, leading dash, underscore | a name that is not a plain stem is refused before any file is read |
+| V1 name field disagrees with the stem | a resolved repo template | a template whose name field disagrees with its filename stem fails validation |
+
+### The tree, and no `cwd` in it
+
+| Edge | Path (Given) | Scenario |
+|---|---|---|
+| V2 a `cwd` anywhere in the template | the `cwd` sits on a pane node | a template that sets cwd fails validation naming --cwd and dir |
+| V3 `dir` absolute or escaping | absolute, `..`, and an embedded escape | dir must be a relative subdirectory that cannot escape the target |
+| V4 `dir` relative under the target | a nested subdirectory | a relative dir under the target is accepted |
+| V5 `ratio` degenerate or out of range | 0, 1, negative, above 1 | a degenerate or out-of-range ratio is a mistake, not an intent |
+| V6 a label repeats | two pane nodes in one tree | two panes may share a label, because a label is a name rather than a key |
+| V8 not exactly one of `root`, `panes`, `tabs` | each pair, and none of the three | exactly one of root, panes and tabs |
+| V11 several errors at once | a template carrying three distinct faults | every validation error is reported at once, not first-only |
+
+### Tabs — a workspace is tabs of panes
+
+| Edge | Path (Given) | Scenario |
+|---|---|---|
+| V12 valid | a template declaring tabs | a tab carries its own tree, in the same shape a single-tab template uses |
+| D8 the flat form sits inside a tab | a tab declaring `panes` and `arrange` | a tab may use the flat sugar, desugared exactly as a single-tab template is |
+| V9 a tab is not exactly one of `root`, `panes` | both, and neither | a tab declares exactly one of root and panes, the same as the template itself |
+| V10 `tabs` is an empty array | `tabs: []` | an empty tabs array is refused, because a workspace of no tabs is not a workspace |
+| V6 a label repeats | two tabs, and panes across tabs | two tabs may share a label, and so may panes in different tabs |
+| V7 a label is omitted | two tabs carrying no label | a tab may leave its label to the backend |
+| V2 a `cwd` anywhere in the template | the `cwd` sits on a tab | a tab cannot carry a cwd any more than a pane can |
+
+### Flat-N sugar
+
+| Edge | Path (Given) | Scenario |
+|---|---|---|
+| D1 `panes` + `even-horizontal` | 3 panes | even-horizontal splits at 1/n then 1/(n-1) so every pane ends the same width |
+| D2 `panes` + `even-vertical` | 3 panes | even-vertical is the same comb, down |
+| D3 `panes` + `tiled` | 4 panes | tiled balances columns and rows |
+| D4 `arrange` omitted | 4 panes, no arrange | arrange omitted defaults to tiled |
+| D5 n = 1 | a single pane | n = 1 is legal and produces a single pane with no split |
+| D6 the desugaring is cyber-mux's own | the same flat template on both backends | the desugared tree is identical on every backend |
+| D7 `show --desugar` | a flat template | show --desugar prints exactly the tree apply will build |
+
+### The walk
+
+| Edge | Path (Given) | Scenario |
+|---|---|---|
+| W1 the region is opened blank | the first pane carries a command | the region is opened blank and its pane becomes the tree's root |
+| W2 geometry precedes every submit | 3 panes each carrying a command | geometry is built before any command is submitted |
+| W3 each split names its pane | a split of a pane created two steps earlier | each split names the pane it splits rather than relying on the backend's default |
+| W4 the leaf carries a command | three commands in template order | commands are submitted last, in template order |
+| W5 the leaf carries no command | a pane node with no command | a pane with no command opens a blank shell |
+| W6 the `dir` exists under the target | a nested `dir` and an apply-time `--cwd` | dir is joined onto the apply-time cwd |
+| W7 the `dir` is absent under the target | a labeled pane whose dir is missing | a dir absent from this worktree fails naming the pane and the resolved path |
+
+### The walk, across tabs
+
+| Edge | Path (Given) | Scenario |
+|---|---|---|
+| T1 tabs — first tab, then each later tab | 3 tabs on a backend with a real workspace tier | the first tab opens the workspace and every later tab opens inside it |
+| T2 a tab's tree is built | the second tab is a split of two panes | each tab's tree is built against that tab's own root pane |
+| T3 geometry across every tab precedes any submit | 2 tabs, each with a command | geometry is built across every tab before any command is submitted |
+| F2 `--at` omitted | a tabs template | a tabs template still defaults --at to workspace |
+| T4 focus | 3 tabs | apply never steals focus, and a tabs template cannot ask it to |
+| T5 the region is already open | `worktree add --template` with a tabs template | worktree add --template builds a tabs template into the worktree's own workspace |
+| T6 whichever verb opened the workspace | `worktree add --template` on tmux | a tabs template groups the same way whichever verb opened the workspace |
+| W8 the walk throws part-way | 3 tabs, the second failing to open | a throw part-way through a tabs walk reports the tabs already built and kills nothing |
+
+### Carrying the workspace where the backend has no tier
+
+| Edge | Path (Given) | Scenario |
+|---|---|---|
+| C1 no workspace tier | a labeled tab applied on tmux | on a backend with no workspace tier, a tab is labeled with its workspace and its own name |
+| C2 the tier is real | the same template applied on herdr | on a backend with a real workspace tier, a tab carries its own label unprefixed |
+| C3 the workspace label is never shortened | a long workspace label | the workspace label is never shortened, so two workspaces never collide by shortening |
+| C4 the workspace is read back | a workspace label that itself contains the separator | a tab's label is never parsed back to recover its workspace |
+| C5 the backend cannot name its root tab at birth | a first tab labeled on herdr | herdr's root tab is named after birth, because it is the one tab that cannot be named at birth |
+
+### Ratio and env — degrade, never reject
+
+| Edge | Path (Given) | Scenario |
+|---|---|---|
+| E1 a pane carries env and no command | one pane node | a pane with env and no command is valid and yields a blank shell with the env set |
+| E2 the backend cannot size a split | plural splits carrying ratios | a backend that cannot size a split warns once and takes its own default |
+| E3 the open route could not carry the root env, and it has a command | several panes, each with a command | a root pane whose env the region open could not carry has it prefixed onto its command |
+| E4 the open route could not carry it, and there is no command | several panes across several tabs, the root with no command | a root pane whose env could not be carried, with no command to prefix, warns once |
+
+### Resolution precedes side effects; apply does not roll back
+
+| Edge | Path (Given) | Scenario |
+|---|---|---|
+| G1 the name resolves nowhere | `worktree add --template` | a template name that resolves nowhere leaves no worktree behind |
+| G2 the template is invalid | `worktree add --template` with a template setting `cwd` | an invalid template leaves no worktree behind |
+| G1 the name resolves nowhere | `open --template` | open --template with an unresolvable name opens nothing |
+| W8 the walk throws part-way | a 4-pane single-tree template whose third split fails | a throw mid-walk reports what was built and kills nothing |
+
+### `--template`, the exact sibling of `--launch`
+
+| Edge | Path (Given) | Scenario |
+|---|---|---|
+| F1 `--launch` also given | `open --template … --launch …` | --template and --launch are mutually exclusive |
+| F2 `--at` omitted | `open --template` with a single-tree template | --at defaults to workspace when --template is given |
+| F3 `--label` omitted | `open --template` | --label defaults to the template name |
+| F4 the verb is `worktree add --template` | a branch and a template name | worktree add --template applies the template against the worktree root |
+
+### The manifest is the handoff
+
+| Edge | Path (Given) | Scenario |
+|---|---|---|
+| M1 the manifest is reported | `open --template --format json` | --format json reports every pane apply created |
+| M2 the backend has a workspace tier | `$HERDR_ENV` set and no `$TMUX` | the manifest carries the workspace the region opened in |
+| M3 the backend has no workspace tier | a single-tree apply with `$TMUX` set | the manifest's workspace is null on tmux |
+| M4 the template declared tabs | 2 tabs with `--format json` | the manifest reports which tab each pane landed in |
+| M5 the template declared one tree | a template declaring `root` | a pane from a single-tab template reports no tab |
+| M3 the backend has no workspace tier | a tabs template grouped on tmux | the manifest's workspace is still null on tmux even when tabs are grouped |
+
+### Managing templates needs no multiplexer
+
+| Edge | Path (Given) | Scenario |
+|---|---|---|
+| N1 the verb is `list`, `show` or `validate` | neither `$TMUX` nor `$HERDR_ENV` set | list, show and validate answer with no multiplexer at all |
+| V12 valid | a well-formed template | validate exits 0 on a valid template |
+| F5 no multiplexer resolves | `open --template` with neither variable set | applying with no multiplexer fails through the existing adapter path |
+
+### Capturing a live region — which region, and what tree
+
+| Edge | Path (Given) | Scenario |
+|---|---|---|
+| P1 no `--from` | the caller is not the focused pane | save captures the region around the calling pane, not the one the user is looking at |
+| P2 `--from` names a pane | the named pane is in another region | --from captures the region around a named pane |
+| Q1 the seam is asked for the region | a region on any backend | the geometry seam reports one rectangle per pane, not a backend's own tree |
+| Q2 two panes with a divider between them | a region split at 0.7 | a captured ratio is the one the split was made with, not the one the pane sizes imply |
+| Q5 the capture is re-applied | one region of 4 panes | re-applying a captured template reproduces the region it was captured from |
+| Q3 an n-ary row | 3 equal panes side by side | an n-ary row captures as the right-comb the flat sugar desugars to |
+| Q4 an ambiguous grid | 4 panes in a 2x2 | an ambiguous grid captures columns-first, matching tiled rather than its transpose |
+
+### The capture is a draft
+
+| Edge | Path (Given) | Scenario |
+|---|---|---|
+| Y1 the panes are running commands | a region on tmux, and one on herdr | no pane in a captured template carries a command, on either backend |
+| Y2 no `--description` | a bare `save` | a captured template records in its own description that it is geometry only |
+| Y3 `--description` given | `save --description` | --description replaces the draft note |
+
+### The capture subtracts the target back out
+
+| Edge | Path (Given) | Scenario |
+|---|---|---|
+| Z1 the pane runs under the captured root | a pane in the target's `services/api` | a pane under the captured root becomes a relative dir |
+| Z2 the pane runs outside the captured root | one pane outside the root | a pane outside the captured root loses its dir and says so |
+| V12 valid | a template captured from a live region | a captured template passes validate |
+| Z4 a label a human chose, shared or not | two panes both labeled `worker` | a label two panes share is captured onto both, because a human chose it |
+| Z5 the label is the backend's default pane title | one renamed pane among tmux defaults | a label the author set is captured, and a backend's default pane title is not |
+
+### Capturing a whole workspace
+
+| Edge | Path (Given) | Scenario |
+|---|---|---|
+| X1 `--workspace` given | a caller in a workspace of 3 tabs | save --workspace captures every tab of the caller's workspace |
+| X2 `--workspace` omitted | a caller in a workspace of 3 tabs | save without --workspace captures only the caller's own region |
+| X3 the workspace has other tabs | a bare `save` in a workspace of 3 tabs | a bare save in a multi-tab workspace says what it left out, in a help block on stdout |
+| X4 the tab carries a label | tabs labeled `editor` and `logs` | a captured tab keeps the label its tab carries |
+| X5 the display name is composed | a tmux tab displaying as `pool - editor` | a captured tab's label is the tab's own name, never the composed one |
+| Q5 the capture is re-applied | a workspace of 2 tabs of 2 panes | re-applying a captured workspace reproduces the tabs it was captured from |
+| Y1 the panes are running commands | a workspace of 2 tabs | a captured workspace is still a draft carrying no command |
+| X6 the region carries no grouping tag | a tmux window nobody grouped | on a backend with no workspace tier, an untagged region captures as a single-tab workspace |
+| X7 the backend cannot enumerate the workspace's tabs | `save --workspace` on that backend | a backend that cannot enumerate a workspace's tabs refuses save --workspace cleanly |
+
+### `save` writes a file
+
+| Edge | Path (Given) | Scenario |
+|---|---|---|
+| S1 no `--to` | a bare `save` whose region is the whole workspace | save writes to the repo templates directory and reports the path on stdout |
+| S2 `--format json` | a caller in a workspace of 3 tabs | --format json reports the saved path and any help as one structured object |
+| S3 `--to user` | a bare `save --to user` | --to user writes to the user templates directory instead |
+| S4 the destination exists, no `--force` | the repo directory already holds that name | save refuses to overwrite an existing template, and reads no region finding out |
+| S5 `--force` | the repo directory already holds that name | --force overwrites an existing template |
+
+### `save`'s refusals
+
+| Edge | Path (Given) | Scenario |
+|---|---|---|
+| S6 the name is not a plain stem | `save "../escape"` | save validates the name before touching the filesystem or the multiplexer |
+| P3 no `--from` and no ambient pane | a caller in no pane at all | save with no pane to capture around refuses rather than guessing |
+| Q7 the backend has no region-geometry primitive | a bare `save` on that backend | a backend that cannot report its region's geometry refuses save cleanly |
+| Q6 no sequence of splits could have produced the region | a region no straight cut separates | a region no sequence of splits could have produced is refused |
