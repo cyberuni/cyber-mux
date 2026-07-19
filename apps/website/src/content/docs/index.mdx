@@ -14,6 +14,71 @@ hero:
       variant: minimal
 ---
 
+import { CardGrid, LinkCard } from '@astrojs/starlight/components'
+
 `cyber-mux` is a CLI for cross-multiplexer pane control. Open, send, submit, read, focus, and close
 panes — plus git worktrees and named templates — the same way whether you are running under **tmux**,
 **herdr**, or **WezTerm** (alpha).
+
+## One command surface
+
+<CardGrid>
+	<LinkCard title="open" href="/cyber-mux/cli/open/" description="Open a new pane, tab, or workspace and launch a command in it." />
+	<LinkCard title="send" href="/cyber-mux/cli/send/" description="Send keystrokes to a pane without submitting them." />
+	<LinkCard title="submit" href="/cyber-mux/cli/submit/" description="Send a line and press Enter — the turn-taking nudge." />
+	<LinkCard title="read" href="/cyber-mux/cli/read/" description="Capture a pane's visible output." />
+	<LinkCard title="focus" href="/cyber-mux/cli/focus/" description="Beam the attached client to a pane, across workspace and tab." />
+	<LinkCard title="close" href="/cyber-mux/cli/close/" description="Close a pane by id or label." />
+	<LinkCard title="worktree" href="/cyber-mux/cli/worktree/" description="Add, open, list, and remove git worktrees — bound to a workspace where the backend can." />
+	<LinkCard title="template" href="/cyber-mux/cli/template/" description="Capture and replay named pane pools." />
+</CardGrid>
+
+## One contract, three multiplexers
+
+The same verbs mean the same thing on every backend; where a multiplexer lacks a tier or feature,
+cyber-mux maps onto the closest thing it has and reports honestly what it could not do.
+
+<table>
+	<thead>
+		<tr>
+			<th>Capability</th>
+			<th>tmux</th>
+			<th>herdr</th>
+			<th>WezTerm (alpha)</th>
+		</tr>
+	</thead>
+	<tbody>
+		<tr>
+			<td>Workspace tier</td>
+			<td>✗ (collapses to window)</td>
+			<td>✓</td>
+			<td>✓</td>
+		</tr>
+		<tr>
+			<td>Worktree binding</td>
+			<td>✗</td>
+			<td>✓</td>
+			<td>✗</td>
+		</tr>
+		<tr>
+			<td>Name a pane</td>
+			<td>—</td>
+			<td>✓</td>
+			<td>✗</td>
+		</tr>
+		<tr>
+			<td>Report focused pane</td>
+			<td>best-effort</td>
+			<td>best-effort</td>
+			<td>✗ (always unknown)</td>
+		</tr>
+		<tr>
+			<td>Knows the running harness</td>
+			<td>✗</td>
+			<td>✓</td>
+			<td>✗</td>
+		</tr>
+	</tbody>
+</table>
+
+See [Multiplexers](/cyber-mux/multiplexers/) for what each backend does — and does not — support.
