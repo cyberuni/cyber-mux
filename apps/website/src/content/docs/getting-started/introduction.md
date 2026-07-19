@@ -10,15 +10,14 @@ named **template** of panes in one call.
 
 Today it supports three backends:
 
-- **tmux** — the ubiquitous terminal multiplexer.
+- **tmux** — the ubiquitous terminal multiplexer ([tmux](https://github.com/tmux/tmux)).
 - **herdr** — an agent-aware multiplexer ([herdr.dev](https://herdr.dev)).
-- **WezTerm** (alpha) — a GUI terminal with a built-in multiplexer, driven through `wezterm cli`.
+- **WezTerm** (alpha) — a GUI terminal with a built-in multiplexer ([wezterm.org](https://wezterm.org)), driven through `wezterm cli`.
   Built against `wezterm cli --help`/the CLI reference rather than a live GUI — treat it as
   unverified until confirmed against a real WezTerm session.
 
-It is extracted from [`cyberlegion`](https://github.com/cyberuni/cyberplace), kept deliberately
-narrow: it drives panes and nothing else. No mail, no dispatch, no agent registry — those live in
-the tools that build *on top of* it.
+It is kept deliberately narrow: it drives panes and nothing else. No mail, no dispatch, no agent
+registry — those live in the tools that build *on top of* it.
 
 ## Try it
 
@@ -35,8 +34,8 @@ skip detection entirely.
 
 ## Where next
 
-- [Adapters](/cyber-mux/concepts/adapters/) — how tmux, herdr, and WezTerm each implement the
-  common contract.
+- [Multiplexers](/cyber-mux/multiplexers/) — the tmux, herdr, and WezTerm backends and how their
+  feature sets differ.
 - [Detection](/cyber-mux/concepts/detection/) — how cyber-mux figures out where it is running.
 - [Templates](/cyber-mux/concepts/templates/) — named, reusable pane pools.
 - [Worktrees](/cyber-mux/concepts/worktrees/) — git worktrees bound to a workspace.
