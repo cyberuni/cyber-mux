@@ -51,5 +51,5 @@ checkout, so no workspace is ever left pointing at a directory that no longer ex
 
 ## See also
 
-- [CLI reference — Worktrees](/cyber-mux/cli/commands/#worktrees) — the concrete `worktree add/open/list/remove` verbs.
+- [CLI reference — worktree](/cyber-mux/cli/worktree/) — the concrete `worktree add/open/list/remove` verbs.
 - [Adapters](/cyber-mux/concepts/adapters/) — how herdr's binding and tmux's absence of one are each implemented.

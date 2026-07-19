@@ -57,4 +57,4 @@ backend-failure text are shipped.
 
 ## See also
 
-- [CLI reference](/cyber-mux/cli/commands/) — the concrete verbs this contract governs.
+- [CLI reference](/cyber-mux/cli/) — the concrete verbs this contract governs.

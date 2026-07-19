@@ -12,11 +12,13 @@ Today it supports three backends:
 
 - **tmux** — the ubiquitous terminal multiplexer.
 - **herdr** — an agent-aware multiplexer ([herdr.dev](https://herdr.dev)).
-- **WezTerm** — a GUI terminal with a built-in multiplexer, driven through `wezterm cli`.
+- **WezTerm** (alpha) — a GUI terminal with a built-in multiplexer, driven through `wezterm cli`.
+  Built against `wezterm cli --help`/the CLI reference rather than a live GUI — treat it as
+  unverified until confirmed against a real WezTerm session.
 
-It is the mux seam extracted from [`cyberlegion`](https://github.com/cyberuni/cyberplace), kept
-deliberately narrow: it drives panes and nothing else. No mail, no dispatch, no agent registry —
-those live in the tools that build *on top of* this seam.
+It is extracted from [`cyberlegion`](https://github.com/cyberuni/cyberplace), kept deliberately
+narrow: it drives panes and nothing else. No mail, no dispatch, no agent registry — those live in
+the tools that build *on top of* it.
 
 ## Try it
 
@@ -33,10 +35,10 @@ skip detection entirely.
 
 ## Where next
 
-- [The mux seam](/cyber-mux/concepts/mux-seam/) — the one contract every backend implements.
-- [Adapters](/cyber-mux/concepts/adapters/) — how tmux, herdr, and WezTerm each fulfill it.
+- [Adapters](/cyber-mux/concepts/adapters/) — how tmux, herdr, and WezTerm each implement the
+  common contract.
 - [Detection](/cyber-mux/concepts/detection/) — how cyber-mux figures out where it is running.
 - [Layouts](/cyber-mux/concepts/layouts/) — named, reusable pane pools.
 - [Worktrees](/cyber-mux/concepts/worktrees/) — git worktrees bound to a workspace.
 - [AXI](/cyber-mux/concepts/axi/) — the agent-facing output contract every command follows.
-- [CLI commands](/cyber-mux/cli/commands/) — the full verb surface.
+- [CLI Reference](/cyber-mux/cli/) — the full verb surface, one page per command.

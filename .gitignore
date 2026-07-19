@@ -1,5 +1,6 @@
 .local/
 .turbo/
+.astro/
 node_modules/
 dist
 .env
