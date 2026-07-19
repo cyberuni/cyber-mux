@@ -532,190 +532,190 @@ reaching it.
 
 | Edge | Path (Given) | Scenario |
 |---|---|---|
-| R1 `--file` given | a caller running `template show --file` | --file skips resolution entirely |
-| R3 the repo has it | both directories hold the name | a repo template shadows a user template of the same name |
-| R4 only the user has it | the repo has none of that name | a user template resolves when the repo has none of that name |
-| R5 repo lookup through `resolvePrimaryRoot` | a linked worktree whose branch predates the file | the repo templates directory resolves through the primary checkout, not the caller's cwd |
-| R6 neither has it | the name is in neither directory | a name that resolves nowhere lists the directories searched |
-| R2 the name is not a plain stem | traversal, uppercase, leading dash, underscore | a name that is not a plain stem is refused before any file is read |
-| V1 name field disagrees with the stem | a resolved repo template | a template whose name field disagrees with its filename stem fails validation |
+| R1 `--file` given | a caller running `template show --file` | `--file skips resolution entirely` |
+| R3 the repo has it | both directories hold the name | `a repo template shadows a user template of the same name` |
+| R4 only the user has it | the repo has none of that name | `a user template resolves when the repo has none of that name` |
+| R5 repo lookup through `resolvePrimaryRoot` | a linked worktree whose branch predates the file | `the repo templates directory resolves through the primary checkout, not the caller's cwd` |
+| R6 neither has it | the name is in neither directory | `a name that resolves nowhere lists the directories searched` |
+| R2 the name is not a plain stem | traversal, uppercase, leading dash, underscore | `a name that is not a plain stem is refused before any file is read` |
+| V1 name field disagrees with the stem | a resolved repo template | `a template whose name field disagrees with its filename stem fails validation` |
 
 ### The tree, and no `cwd` in it
 
 | Edge | Path (Given) | Scenario |
 |---|---|---|
-| V2 a `cwd` anywhere in the template | the `cwd` sits on a pane node | a template that sets cwd fails validation naming --cwd and dir |
-| V3 `dir` absolute or escaping | absolute, `..`, and an embedded escape | dir must be a relative subdirectory that cannot escape the target |
-| V4 `dir` relative under the target | a nested subdirectory | a relative dir under the target is accepted |
-| V5 `ratio` degenerate or out of range | 0, 1, negative, above 1 | a degenerate or out-of-range ratio is a mistake, not an intent |
-| V6 a label repeats | two pane nodes in one tree | two panes may share a label, because a label is a name rather than a key |
-| V8 not exactly one of `root`, `panes`, `tabs` | each pair, and none of the three | exactly one of root, panes and tabs |
-| V11 several errors at once | a template carrying three distinct faults | every validation error is reported at once, not first-only |
+| V2 a `cwd` anywhere in the template | the `cwd` sits on a pane node | `a template that sets cwd fails validation naming --cwd and dir` |
+| V3 `dir` absolute or escaping | absolute, `..`, and an embedded escape | `dir must be a relative subdirectory that cannot escape the target` |
+| V4 `dir` relative under the target | a nested subdirectory | `a relative dir under the target is accepted` |
+| V5 `ratio` degenerate or out of range | 0, 1, negative, above 1 | `a degenerate or out-of-range ratio is a mistake, not an intent` |
+| V6 a label repeats | two pane nodes in one tree | `two panes may share a label, because a label is a name rather than a key` |
+| V8 not exactly one of `root`, `panes`, `tabs` | each pair, and none of the three | `exactly one of root, panes and tabs` |
+| V11 several errors at once | a template carrying three distinct faults | `every validation error is reported at once, not first-only` |
 
 ### Tabs — a workspace is tabs of panes
 
 | Edge | Path (Given) | Scenario |
 |---|---|---|
-| V12 valid | a template declaring tabs | a tab carries its own tree, in the same shape a single-tab template uses |
-| D8 the flat form sits inside a tab | a tab declaring `panes` and `arrange` | a tab may use the flat sugar, desugared exactly as a single-tab template is |
-| V9 a tab is not exactly one of `root`, `panes` | both, and neither | a tab declares exactly one of root and panes, the same as the template itself |
-| V10 `tabs` is an empty array | `tabs: []` | an empty tabs array is refused, because a workspace of no tabs is not a workspace |
-| V6 a label repeats | two tabs, and panes across tabs | two tabs may share a label, and so may panes in different tabs |
-| V7 a label is omitted | two tabs carrying no label | a tab may leave its label to the backend |
-| V2 a `cwd` anywhere in the template | the `cwd` sits on a tab | a tab cannot carry a cwd any more than a pane can |
+| V12 valid | a template declaring tabs | `a tab carries its own tree, in the same shape a single-tab template uses` |
+| D8 the flat form sits inside a tab | a tab declaring `panes` and `arrange` | `a tab may use the flat sugar, desugared exactly as a single-tab template is` |
+| V9 a tab is not exactly one of `root`, `panes` | both, and neither | `a tab declares exactly one of root and panes, the same as the template itself` |
+| V10 `tabs` is an empty array | `tabs: []` | `an empty tabs array is refused, because a workspace of no tabs is not a workspace` |
+| V6 a label repeats | two tabs, and panes across tabs | `two tabs may share a label, and so may panes in different tabs` |
+| V7 a label is omitted | two tabs carrying no label | `a tab may leave its label to the backend` |
+| V2 a `cwd` anywhere in the template | the `cwd` sits on a tab | `a tab cannot carry a cwd any more than a pane can` |
 
 ### Flat-N sugar
 
 | Edge | Path (Given) | Scenario |
 |---|---|---|
-| D1 `panes` + `even-horizontal` | 3 panes | even-horizontal splits at 1/n then 1/(n-1) so every pane ends the same width |
-| D2 `panes` + `even-vertical` | 3 panes | even-vertical is the same comb, down |
-| D3 `panes` + `tiled` | 4 panes | tiled balances columns and rows |
-| D4 `arrange` omitted | 4 panes, no arrange | arrange omitted defaults to tiled |
-| D5 n = 1 | a single pane | n = 1 is legal and produces a single pane with no split |
-| D6 the desugaring is cyber-mux's own | the same flat template on both backends | the desugared tree is identical on every backend |
-| D7 `show --desugar` | a flat template | show --desugar prints exactly the tree apply will build |
+| D1 `panes` + `even-horizontal` | 3 panes | `even-horizontal splits at 1/n then 1/(n-1) so every pane ends the same width` |
+| D2 `panes` + `even-vertical` | 3 panes | `even-vertical is the same comb, down` |
+| D3 `panes` + `tiled` | 4 panes | `tiled balances columns and rows` |
+| D4 `arrange` omitted | 4 panes, no arrange | `arrange omitted defaults to tiled` |
+| D5 n = 1 | a single pane | `n = 1 is legal and produces a single pane with no split` |
+| D6 the desugaring is cyber-mux's own | the same flat template on both backends | `the desugared tree is identical on every backend` |
+| D7 `show --desugar` | a flat template | `show --desugar prints exactly the tree apply will build` |
 
 ### The walk
 
 | Edge | Path (Given) | Scenario |
 |---|---|---|
-| W1 the region is opened blank | the first pane carries a command | the region is opened blank and its pane becomes the tree's root |
-| W2 geometry precedes every submit | 3 panes each carrying a command | geometry is built before any command is submitted |
-| W3 each split names its pane | a split of a pane created two steps earlier | each split names the pane it splits rather than relying on the backend's default |
-| W4 the leaf carries a command | three commands in template order | commands are submitted last, in template order |
-| W5 the leaf carries no command | a pane node with no command | a pane with no command opens a blank shell |
-| W6 the `dir` exists under the target | a nested `dir` and an apply-time `--cwd` | dir is joined onto the apply-time cwd |
-| W7 the `dir` is absent under the target | a labeled pane whose dir is missing | a dir absent from this worktree fails naming the pane and the resolved path |
+| W1 the region is opened blank | the first pane carries a command | `the region is opened blank and its pane becomes the tree's root` |
+| W2 geometry precedes every submit | 3 panes each carrying a command | `geometry is built before any command is submitted` |
+| W3 each split names its pane | a split of a pane created two steps earlier | `each split names the pane it splits rather than relying on the backend's default` |
+| W4 the leaf carries a command | three commands in template order | `commands are submitted last, in template order` |
+| W5 the leaf carries no command | a pane node with no command | `a pane with no command opens a blank shell` |
+| W6 the `dir` exists under the target | a nested `dir` and an apply-time `--cwd` | `dir is joined onto the apply-time cwd` |
+| W7 the `dir` is absent under the target | a labeled pane whose dir is missing | `a dir absent from this worktree fails naming the pane and the resolved path` |
 
 ### The walk, across tabs
 
 | Edge | Path (Given) | Scenario |
 |---|---|---|
-| T1 tabs — first tab, then each later tab | 3 tabs on a backend with a real workspace tier | the first tab opens the workspace and every later tab opens inside it |
-| T2 a tab's tree is built | the second tab is a split of two panes | each tab's tree is built against that tab's own root pane |
-| T3 geometry across every tab precedes any submit | 2 tabs, each with a command | geometry is built across every tab before any command is submitted |
-| F2 `--at` omitted | a tabs template | a tabs template still defaults --at to workspace |
-| T4 focus | 3 tabs | apply never steals focus, and a tabs template cannot ask it to |
-| T5 the region is already open | `worktree add --template` with a tabs template | worktree add --template builds a tabs template into the worktree's own workspace |
-| T6 whichever verb opened the workspace | `worktree add --template` on tmux | a tabs template groups the same way whichever verb opened the workspace |
-| W8 the walk throws part-way | 3 tabs, the second failing to open | a throw part-way through a tabs walk reports the tabs already built and kills nothing |
+| T1 tabs — first tab, then each later tab | 3 tabs on a backend with a real workspace tier | `the first tab opens the workspace and every later tab opens inside it` |
+| T2 a tab's tree is built | the second tab is a split of two panes | `each tab's tree is built against that tab's own root pane` |
+| T3 geometry across every tab precedes any submit | 2 tabs, each with a command | `geometry is built across every tab before any command is submitted` |
+| F2 `--at` omitted | a tabs template | `a tabs template still defaults --at to workspace` |
+| T4 focus | 3 tabs | `apply never steals focus, and a tabs template cannot ask it to` |
+| T5 the region is already open | `worktree add --template` with a tabs template | `worktree add --template builds a tabs template into the worktree's own workspace` |
+| T6 whichever verb opened the workspace | `worktree add --template` on tmux | `a tabs template groups the same way whichever verb opened the workspace` |
+| W8 the walk throws part-way | 3 tabs, the second failing to open | `a throw part-way through a tabs walk reports the tabs already built and kills nothing` |
 
 ### Carrying the workspace where the backend has no tier
 
 | Edge | Path (Given) | Scenario |
 |---|---|---|
-| C1 no workspace tier | a labeled tab applied on tmux | on a backend with no workspace tier, a tab is labeled with its workspace and its own name |
-| C2 the tier is real | the same template applied on herdr | on a backend with a real workspace tier, a tab carries its own label unprefixed |
-| C3 the workspace label is never shortened | a long workspace label | the workspace label is never shortened, so two workspaces never collide by shortening |
-| C4 the workspace is read back | a workspace label that itself contains the separator | a tab's label is never parsed back to recover its workspace |
-| C5 the backend cannot name its root tab at birth | a first tab labeled on herdr | herdr's root tab is named after birth, because it is the one tab that cannot be named at birth |
+| C1 no workspace tier | a labeled tab applied on tmux | `on a backend with no workspace tier, a tab is labeled with its workspace and its own name` |
+| C2 the tier is real | the same template applied on herdr | `on a backend with a real workspace tier, a tab carries its own label unprefixed` |
+| C3 the workspace label is never shortened | a long workspace label | `the workspace label is never shortened, so two workspaces never collide by shortening` |
+| C4 the workspace is read back | a workspace label that itself contains the separator | `a tab's label is never parsed back to recover its workspace` |
+| C5 the backend cannot name its root tab at birth | a first tab labeled on herdr | `herdr's root tab is named after birth, because it is the one tab that cannot be named at birth` |
 
 ### Ratio and env — degrade, never reject
 
 | Edge | Path (Given) | Scenario |
 |---|---|---|
-| E1 a pane carries env and no command | one pane node | a pane with env and no command is valid and yields a blank shell with the env set |
-| E2 the backend cannot size a split | plural splits carrying ratios | a backend that cannot size a split warns once and takes its own default |
-| E3 the open route could not carry the root env, and it has a command | several panes, each with a command | a root pane whose env the region open could not carry has it prefixed onto its command |
-| E4 the open route could not carry it, and there is no command | several panes across several tabs, the root with no command | a root pane whose env could not be carried, with no command to prefix, warns once |
+| E1 a pane carries env and no command | one pane node | `a pane with env and no command is valid and yields a blank shell with the env set` |
+| E2 the backend cannot size a split | plural splits carrying ratios | `a backend that cannot size a split warns once and takes its own default` |
+| E3 the open route could not carry the root env, and it has a command | several panes, each with a command | `a root pane whose env the region open could not carry has it prefixed onto its command` |
+| E4 the open route could not carry it, and there is no command | several panes across several tabs, the root with no command | `a root pane whose env could not be carried, with no command to prefix, warns once` |
 
 ### Resolution precedes side effects; apply does not roll back
 
 | Edge | Path (Given) | Scenario |
 |---|---|---|
-| G1 the name resolves nowhere | `worktree add --template` | a template name that resolves nowhere leaves no worktree behind |
-| G2 the template is invalid | `worktree add --template` with a template setting `cwd` | an invalid template leaves no worktree behind |
-| G1 the name resolves nowhere | `open --template` | open --template with an unresolvable name opens nothing |
-| W8 the walk throws part-way | a 4-pane single-tree template whose third split fails | a throw mid-walk reports what was built and kills nothing |
+| G1 the name resolves nowhere | `worktree add --template` | `a template name that resolves nowhere leaves no worktree behind` |
+| G2 the template is invalid | `worktree add --template` with a template setting `cwd` | `an invalid template leaves no worktree behind` |
+| G1 the name resolves nowhere | `open --template` | `open --template with an unresolvable name opens nothing` |
+| W8 the walk throws part-way | a 4-pane single-tree template whose third split fails | `a throw mid-walk reports what was built and kills nothing` |
 
 ### `--template`, the exact sibling of `--launch`
 
 | Edge | Path (Given) | Scenario |
 |---|---|---|
-| F1 `--launch` also given | `open --template … --launch …` | --template and --launch are mutually exclusive |
-| F2 `--at` omitted | `open --template` with a single-tree template | --at defaults to workspace when --template is given |
-| F3 `--label` omitted | `open --template` | --label defaults to the template name |
-| F4 the verb is `worktree add --template` | a branch and a template name | worktree add --template applies the template against the worktree root |
+| F1 `--launch` also given | `open --template … --launch …` | `--template and --launch are mutually exclusive` |
+| F2 `--at` omitted | `open --template` with a single-tree template | `--at defaults to workspace when --template is given` |
+| F3 `--label` omitted | `open --template` | `--label defaults to the template name` |
+| F4 the verb is `worktree add --template` | a branch and a template name | `worktree add --template applies the template against the worktree root` |
 
 ### The manifest is the handoff
 
 | Edge | Path (Given) | Scenario |
 |---|---|---|
-| M1 the manifest is reported | `open --template --format json` | --format json reports every pane apply created |
-| M2 the backend has a workspace tier | `$HERDR_ENV` set and no `$TMUX` | the manifest carries the workspace the region opened in |
-| M3 the backend has no workspace tier | a single-tree apply with `$TMUX` set | the manifest's workspace is null on tmux |
-| M4 the template declared tabs | 2 tabs with `--format json` | the manifest reports which tab each pane landed in |
-| M5 the template declared one tree | a template declaring `root` | a pane from a single-tab template reports no tab |
-| M3 the backend has no workspace tier | a tabs template grouped on tmux | the manifest's workspace is still null on tmux even when tabs are grouped |
+| M1 the manifest is reported | `open --template --format json` | `--format json reports every pane apply created` |
+| M2 the backend has a workspace tier | `$HERDR_ENV` set and no `$TMUX` | `the manifest carries the workspace the region opened in` |
+| M3 the backend has no workspace tier | a single-tree apply with `$TMUX` set | `the manifest's workspace is null on tmux` |
+| M4 the template declared tabs | 2 tabs with `--format json` | `the manifest reports which tab each pane landed in` |
+| M5 the template declared one tree | a template declaring `root` | `a pane from a single-tab template reports no tab` |
+| M3 the backend has no workspace tier | a tabs template grouped on tmux | `the manifest's workspace is still null on tmux even when tabs are grouped` |
 
 ### Managing templates needs no multiplexer
 
 | Edge | Path (Given) | Scenario |
 |---|---|---|
-| N1 the verb is `list`, `show` or `validate` | neither `$TMUX` nor `$HERDR_ENV` set | list, show and validate answer with no multiplexer at all |
-| V12 valid | a well-formed template | validate exits 0 on a valid template |
-| F5 no multiplexer resolves | `open --template` with neither variable set | applying with no multiplexer fails through the existing adapter path |
+| N1 the verb is `list`, `show` or `validate` | neither `$TMUX` nor `$HERDR_ENV` set | `list, show and validate answer with no multiplexer at all` |
+| V12 valid | a well-formed template | `validate exits 0 on a valid template` |
+| F5 no multiplexer resolves | `open --template` with neither variable set | `applying with no multiplexer fails through the existing adapter path` |
 
 ### Capturing a live region — which region, and what tree
 
 | Edge | Path (Given) | Scenario |
 |---|---|---|
-| P1 no `--from` | the caller is not the focused pane | save captures the region around the calling pane, not the one the user is looking at |
-| P2 `--from` names a pane | the named pane is in another region | --from captures the region around a named pane |
-| Q1 the seam is asked for the region | a region on any backend | the geometry seam reports one rectangle per pane, not a backend's own tree |
-| Q2 two panes with a divider between them | a region split at 0.7 | a captured ratio is the one the split was made with, not the one the pane sizes imply |
-| Q5 the capture is re-applied | one region of 4 panes | re-applying a captured template reproduces the region it was captured from |
-| Q3 an n-ary row | 3 equal panes side by side | an n-ary row captures as the right-comb the flat sugar desugars to |
-| Q4 an ambiguous grid | 4 panes in a 2x2 | an ambiguous grid captures columns-first, matching tiled rather than its transpose |
+| P1 no `--from` | the caller is not the focused pane | `save captures the region around the calling pane, not the one the user is looking at` |
+| P2 `--from` names a pane | the named pane is in another region | `--from captures the region around a named pane` |
+| Q1 the seam is asked for the region | a region on any backend | `the geometry seam reports one rectangle per pane, not a backend's own tree` |
+| Q2 two panes with a divider between them | a region split at 0.7 | `a captured ratio is the one the split was made with, not the one the pane sizes imply` |
+| Q5 the capture is re-applied | one region of 4 panes | `re-applying a captured template reproduces the region it was captured from` |
+| Q3 an n-ary row | 3 equal panes side by side | `an n-ary row captures as the right-comb the flat sugar desugars to` |
+| Q4 an ambiguous grid | 4 panes in a 2x2 | `an ambiguous grid captures columns-first, matching tiled rather than its transpose` |
 
 ### The capture is a draft
 
 | Edge | Path (Given) | Scenario |
 |---|---|---|
-| Y1 the panes are running commands | a region on tmux, and one on herdr | no pane in a captured template carries a command, on either backend |
-| Y2 no `--description` | a bare `save` | a captured template records in its own description that it is geometry only |
-| Y3 `--description` given | `save --description` | --description replaces the draft note |
+| Y1 the panes are running commands | a region on tmux, and one on herdr | `no pane in a captured template carries a command, on either backend` |
+| Y2 no `--description` | a bare `save` | `a captured template records in its own description that it is geometry only` |
+| Y3 `--description` given | `save --description` | `--description replaces the draft note` |
 
 ### The capture subtracts the target back out
 
 | Edge | Path (Given) | Scenario |
 |---|---|---|
-| Z1 the pane runs under the captured root | a pane in the target's `services/api` | a pane under the captured root becomes a relative dir |
-| Z2 the pane runs outside the captured root | one pane outside the root | a pane outside the captured root loses its dir and says so |
-| V12 valid | a template captured from a live region | a captured template passes validate |
-| Z4 a label a human chose, shared or not | two panes both labeled `worker` | a label two panes share is captured onto both, because a human chose it |
-| Z5 the label is the backend's default pane title | one renamed pane among tmux defaults | a label the author set is captured, and a backend's default pane title is not |
+| Z1 the pane runs under the captured root | a pane in the target's `services/api` | `a pane under the captured root becomes a relative dir` |
+| Z2 the pane runs outside the captured root | one pane outside the root | `a pane outside the captured root loses its dir and says so` |
+| V12 valid | a template captured from a live region | `a captured template passes validate` |
+| Z4 a label a human chose, shared or not | two panes both labeled `worker` | `a label two panes share is captured onto both, because a human chose it` |
+| Z5 the label is the backend's default pane title | one renamed pane among tmux defaults | `a label the author set is captured, and a backend's default pane title is not` |
 
 ### Capturing a whole workspace
 
 | Edge | Path (Given) | Scenario |
 |---|---|---|
-| X1 `--workspace` given | a caller in a workspace of 3 tabs | save --workspace captures every tab of the caller's workspace |
-| X2 `--workspace` omitted | a caller in a workspace of 3 tabs | save without --workspace captures only the caller's own region |
-| X3 the workspace has other tabs | a bare `save` in a workspace of 3 tabs | a bare save in a multi-tab workspace says what it left out, in a help block on stdout |
-| X4 the tab carries a label | tabs labeled `editor` and `logs` | a captured tab keeps the label its tab carries |
-| X5 the display name is composed | a tmux tab displaying as `pool - editor` | a captured tab's label is the tab's own name, never the composed one |
-| Q5 the capture is re-applied | a workspace of 2 tabs of 2 panes | re-applying a captured workspace reproduces the tabs it was captured from |
-| Y1 the panes are running commands | a workspace of 2 tabs | a captured workspace is still a draft carrying no command |
-| X6 the region carries no grouping tag | a tmux window nobody grouped | on a backend with no workspace tier, an untagged region captures as a single-tab workspace |
-| X7 the backend cannot enumerate the workspace's tabs | `save --workspace` on that backend | a backend that cannot enumerate a workspace's tabs refuses save --workspace cleanly |
+| X1 `--workspace` given | a caller in a workspace of 3 tabs | `save --workspace captures every tab of the caller's workspace` |
+| X2 `--workspace` omitted | a caller in a workspace of 3 tabs | `save without --workspace captures only the caller's own region` |
+| X3 the workspace has other tabs | a bare `save` in a workspace of 3 tabs | `a bare save in a multi-tab workspace says what it left out, in a help block on stdout` |
+| X4 the tab carries a label | tabs labeled `editor` and `logs` | `a captured tab keeps the label its tab carries` |
+| X5 the display name is composed | a tmux tab displaying as `pool - editor` | `a captured tab's label is the tab's own name, never the composed one` |
+| Q5 the capture is re-applied | a workspace of 2 tabs of 2 panes | `re-applying a captured workspace reproduces the tabs it was captured from` |
+| Y1 the panes are running commands | a workspace of 2 tabs | `a captured workspace is still a draft carrying no command` |
+| X6 the region carries no grouping tag | a tmux window nobody grouped | `on a backend with no workspace tier, an untagged region captures as a single-tab workspace` |
+| X7 the backend cannot enumerate the workspace's tabs | `save --workspace` on that backend | `a backend that cannot enumerate a workspace's tabs refuses save --workspace cleanly` |
 
 ### `save` writes a file
 
 | Edge | Path (Given) | Scenario |
 |---|---|---|
-| S1 no `--to` | a bare `save` whose region is the whole workspace | save writes to the repo templates directory and reports the path on stdout |
-| S2 `--format json` | a caller in a workspace of 3 tabs | --format json reports the saved path and any help as one structured object |
-| S3 `--to user` | a bare `save --to user` | --to user writes to the user templates directory instead |
-| S4 the destination exists, no `--force` | the repo directory already holds that name | save refuses to overwrite an existing template, and reads no region finding out |
-| S5 `--force` | the repo directory already holds that name | --force overwrites an existing template |
+| S1 no `--to` | a bare `save` whose region is the whole workspace | `save writes to the repo templates directory and reports the path on stdout` |
+| S2 `--format json` | a caller in a workspace of 3 tabs | `--format json reports the saved path and any help as one structured object` |
+| S3 `--to user` | a bare `save --to user` | `--to user writes to the user templates directory instead` |
+| S4 the destination exists, no `--force` | the repo directory already holds that name | `save refuses to overwrite an existing template, and reads no region finding out` |
+| S5 `--force` | the repo directory already holds that name | `--force overwrites an existing template` |
 
 ### `save`'s refusals
 
 | Edge | Path (Given) | Scenario |
 |---|---|---|
-| S6 the name is not a plain stem | `save "../escape"` | save validates the name before touching the filesystem or the multiplexer |
-| P3 no `--from` and no ambient pane | a caller in no pane at all | save with no pane to capture around refuses rather than guessing |
-| Q7 the backend has no region-geometry primitive | a bare `save` on that backend | a backend that cannot report its region's geometry refuses save cleanly |
-| Q6 no sequence of splits could have produced the region | a region no straight cut separates | a region no sequence of splits could have produced is refused |
+| S6 the name is not a plain stem | `save "../escape"` | `save validates the name before touching the filesystem or the multiplexer` |
+| P3 no `--from` and no ambient pane | a caller in no pane at all | `save with no pane to capture around refuses rather than guessing` |
+| Q7 the backend has no region-geometry primitive | a bare `save` on that backend | `a backend that cannot report its region's geometry refuses save cleanly` |
+| Q6 no sequence of splits could have produced the region | a region no straight cut separates | `a region no sequence of splits could have produced is refused` |
