@@ -423,6 +423,19 @@ describe('spec:cyber-mux/mux', () => {
 				expect(stderr.join('')).toBe('')
 			})
 
+			it('--format json carries the lost-grouping note as a help entry, not just prose', async () => {
+				const calls: string[][] = []
+				const exec = fakeRepoExec(calls, { 'pane split': '{"result":{"pane":{"pane_id":"w3:pB","tab_id":"w3:t1"}}}' })
+				const program = buildProgram({ env: { CYBER_MUX: 'herdr' }, exec })
+				await withArgv(['worktree', 'add', '--branch', 'my-feature', '--at', 'pane:right', '--format', 'json'], () =>
+					run(program, ['worktree', 'add', '--branch', 'my-feature', '--at', 'pane:right', '--format', 'json']),
+				)
+				const payload = JSON.parse(logs.join('\n'))
+				expect(Array.isArray(payload.help)).toBe(true)
+				expect(payload.help[0].message).toContain('--at workspace')
+				expect(payload.help[0].command).toBe('cyber-mux worktree add --branch my-feature --at workspace')
+			})
+
 			it('worktree open groups an existing checkout', async () => {
 				const calls: string[][] = []
 				const exec = fakeRepoExec(calls, { 'worktree open': worktreeOut })
