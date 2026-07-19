@@ -16,8 +16,6 @@ todos:
     status: completed
   - content: cli.ts — template command group, --template flag, NO layout alias (clean break)
     status: completed
-  - content: Website docs — cli/template.md, concepts/templates.md (delegated)
-    status: in_progress
   - content: Changesets — edited 8 pending changesets to speak template; bump kept minor (owner call, 0.1.0)
     status: completed
   - content: pnpm verify — full build/typecheck/lint/test/biome
