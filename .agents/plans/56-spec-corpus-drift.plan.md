@@ -2,36 +2,46 @@
 cr: 56-spec-corpus-drift
 project: cyber-mux
 source: https://github.com/cyberuni/cyber-mux/issues/56
-status: in-progress
+status: implemented
 todos:
   - content: "Audit corpus against structure/format/lifecycle/suite/combat-log governances"
     status: completed
   - content: "Open the CR issue with the audit findings"
     status: completed
   - content: "Report findings at the spec gate; get Council rulings on the open questions"
-    status: in_progress
+    status: completed
   - content: "Register the SDD plugin role-map in .agents/universal-plugin.json"
-    status: pending
+    status: completed
   - content: "Declare the placement strategy + routing table in the root spec"
-    status: pending
+    status: completed
   - content: "Add the root glossary; hoist inline term definitions into it"
-    status: pending
+    status: completed
   - content: "Add the missing required sections to both behavioral nodes"
-    status: pending
+    status: completed
   - content: "Fix root spec frontmatter: add producer attribution, drop the off-schema key"
-    status: pending
+    status: completed
   - content: "Resolve the top-level single-document reference node home"
-    status: pending
+    status: completed
 ---
 
 ## NEXT
 
-Audit is done and filed as the CR. Holding at the spec gate to report drift before
-repairing it, per the mission brief. Three rulings are needed before the repair
-todos start: whether to register the agent-config production chain alongside the
-documentation one; the correction-cause decision already pending as unratified
-strategy; and whether the root spec's provisional impl approval is ratified or
-reopened.
+Repairs landed. Structure audit reports zero blocking findings and the suite check
+reports OK on both suites, where it previously skipped them for want of a scenario
+map. Both frozen suites are byte-for-byte untouched.
+
+Left standing for the Council, deliberately:
+
+- the root spec's approval block still records the PREVIOUS change's verdicts,
+  including an impl self-assertion whose own text says it lands provisionally
+  pending review. Ruled: leave it, flag it. This change recorded its own spec gate
+  on the ledger rather than overwriting that block, so nothing was destroyed.
+- provenance format drift is reported on the CR and in no way retrofitted.
+- four unratified Scanner strategy entries sit in an uncommitted ledger shard in
+  the PRIMARY CHECKOUT, not this worktree. Untouched. They include the
+  correction-cause decision, which is the Council's to rule on.
+
+Follow-ups are recorded on this change's ledger shard and filed as issues.
 
 ## CR
 
