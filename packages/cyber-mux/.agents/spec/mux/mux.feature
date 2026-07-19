@@ -15,11 +15,16 @@ Feature: mux — the pane abstraction
       | env                         | adapter |
       | $TMUX set                   | tmux    |
       | $HERDR_ENV set and no $TMUX | herdr   |
+      | $WEZTERM_PANE set           | wezterm |
 
-  Scenario: neither tmux nor herdr detected errors before opening anything
-    Given a caller with neither $TMUX nor $HERDR_ENV set
+  Scenario: no backend detected errors before opening anything
+    Given a caller with none of $TMUX, $HERDR_ENV, or $WEZTERM_PANE set
     When cyber-mux open runs
-    Then it throws naming tmux/herdr as the required backend
+    Then it throws naming tmux/herdr/wezterm as the required backend
+    # A stale-mistake fix, not a narrowing: this scenario always meant "no multiplexer this process
+    # can drive is detected", which a two-env Given happened to fully express before a third backend
+    # existed. Widening the Given/Then to name all three keeps the SAME coverage — a caller with none
+    # of the three still throws — rather than changing what is asserted.
 
   # ── Placement ──
 
@@ -44,6 +49,7 @@ Feature: mux — the pane abstraction
       | env                         | adapter |
       | $TMUX set                   | tmux    |
       | $HERDR_ENV set and no $TMUX | herdr   |
+      | $WEZTERM_PANE set           | wezterm |
 
   Scenario: tmux --at workspace opens a visible window in the current session, never a detached session
     Given a caller running cyber-mux open --at workspace with $TMUX set
@@ -60,6 +66,16 @@ Feature: mux — the pane abstraction
     # verbs' job — see the worktree/workspace binding section below.
     And the workspace is not bound to any repo, even when its cwd is a worktree checkout
 
+  Scenario: wezterm --at workspace spawns a new window into a freshly named workspace
+    Given a caller running cyber-mux open --at workspace with $WEZTERM_PANE set
+    When open runs
+    Then the wezterm adapter spawns a new window with --new-window and a fresh --workspace name
+    # WezTerm's --workspace both selects AND creates: reusing "default" (the CLI's own default when
+    # the flag is omitted) would join whatever the caller was already in rather than opening the
+    # pane's OWN space, so a name is always minted here, using --label as the name when the caller
+    # gave one.
+    And the new window does not join the caller's current workspace
+
   Scenario Outline: --at tab opens a new tab in the current window, never a split pane
     Given a caller running cyber-mux open --at tab with <env>
     When open runs
@@ -70,6 +86,7 @@ Feature: mux — the pane abstraction
       | env                         | adapter |
       | $TMUX set                   | tmux    |
       | $HERDR_ENV set and no $TMUX | herdr   |
+      | $WEZTERM_PANE set           | wezterm |
 
   Scenario: the tab placement opens in the background without stealing focus
     Given a caller running cyber-mux open --at tab
@@ -95,6 +112,27 @@ Feature: mux — the pane abstraction
       | workspace  | the workspace it created                                   |
       | tab        | the workspace the new tab was created in                   |
       | pane:right | the workspace the split landed in — the caller's own       |
+
+  Scenario Outline: wezterm reports the workspace on every placement, never absent
+    Given a caller running cyber-mux open --at <placement> with $WEZTERM_PANE set
+    When open runs
+    Then the adapter's open returns the new pane carrying <workspace>
+    # Every WezTerm pane belongs to SOME workspace, even the implicit "default" one — unlike tmux,
+    # which has no tier at all to report, this is never absent on any placement.
+
+    Examples:
+      | placement  | workspace                                                  |
+      | workspace  | the workspace it created                                   |
+      | tab        | the workspace of the window the tab was created in        |
+      | pane:right | the workspace the split landed in — the caller's own       |
+
+  Scenario: wezterm's workspace and tab cost a follow-up call, unlike herdr's free report
+    Given a caller running cyber-mux open with $WEZTERM_PANE set
+    When open runs
+    Then the tab, and on a tab or pane:* placement the workspace, are read from a separate wezterm cli list call
+    # spawn/split-pane report ONLY the new pane's bare id — neither embeds the tab or workspace the
+    # way tmux's -F format or herdr's JSON envelope does. The `workspace` placement is the one
+    # exception: the workspace name is what open() itself picked, so reporting it costs nothing.
 
   Scenario: a backend with no workspace tier returns no workspace at all
     Given a caller running cyber-mux open with $TMUX set
@@ -123,6 +161,7 @@ Feature: mux — the pane abstraction
       | env                         | workspace                                          |
       | $HERDR_ENV set and no $TMUX | the workspace it landed in                         |
       | $TMUX set                   | a null workspace — no workspace tier to report from |
+      | $WEZTERM_PANE set           | the workspace it landed in                         |
 
   Scenario: the workspace a pane landed in is not a worktree binding
     Given a caller running cyber-mux worktree add --branch my-feature --at pane:right on a backend that binds
@@ -155,6 +194,7 @@ Feature: mux — the pane abstraction
       | adapter | how                                        |
       | tmux    | -t and the pane id                         |
       | herdr   | the pane id passed positionally, no --from |
+      | wezterm | --pane-id and the pane id                  |
 
   Scenario Outline: from omitted leaves each backend its own default, which tracks the USER's focus
     Given a caller opening at pane:right through the <adapter> adapter, with no from
@@ -162,9 +202,10 @@ Feature: mux — the pane abstraction
     Then the backend is left to choose the pane itself, receiving <marker>
 
     Examples:
-      | adapter | marker                          |
-      | tmux    | no pane-targeting flag at all   |
-      | herdr   | its own --current placeholder   |
+      | adapter | marker                                          |
+      | tmux    | no pane-targeting flag at all                   |
+      | herdr   | its own --current placeholder                   |
+      | wezterm | no --pane-id, defaulting to $WEZTERM_PANE itself |
 
     # This is why `from` exists and why a caller should pass it. The two defaults disagree, and both
     # track the pane the USER is looking at: tmux always splits the session's ACTIVE pane and
@@ -184,6 +225,8 @@ Feature: mux — the pane abstraction
       | workspace | tmux    |
       | tab       | herdr   |
       | workspace | herdr   |
+      | tab       | wezterm |
+      | workspace | wezterm |
 
   Scenario Outline: the ratio sign convention converts in opposite directions per backend
     Given a caller opening at pane:right through the <adapter> adapter, with ratio 0.333
@@ -194,6 +237,7 @@ Feature: mux — the pane abstraction
       | adapter | flag          |
       | herdr   | --ratio 0.333 |
       | tmux    | -l 67%        |
+      | wezterm | --percent 67  |
 
     # ratio is the fraction kept by `first` — the ORIGINAL pane, not the new one. herdr's --ratio
     # sizes the original, so it passes through unconverted; tmux's -l sizes the NEW pane, so it takes
@@ -209,11 +253,22 @@ Feature: mux — the pane abstraction
       | adapter |
       | tmux    |
       | herdr   |
+      | wezterm |
 
   Scenario Outline: ratio is a split concept — a tab or workspace is never sized against a pane
     Given a caller opening at <at> through the tmux adapter, with a ratio
     When open runs
     Then no sizing flag reaches the backend, because a window is not sized against a pane
+
+    Examples:
+      | at        |
+      | tab       |
+      | workspace |
+
+  Scenario Outline: ratio is a split concept on wezterm too — a tab or workspace is never sized against a pane
+    Given a caller opening at <at> through the wezterm adapter, with a ratio
+    When open runs
+    Then no --percent flag reaches wezterm, because a window is not sized against a pane
 
     Examples:
       | at        |
@@ -237,6 +292,21 @@ Feature: mux — the pane abstraction
     # env reaches EVERY tier, not just a split, and that is load-bearing rather than incidental: a
     # pane pool's root pane is born by the region open and never by a split, so a seam that scoped
     # env to pane:* would drop it silently exactly where a caller needs it.
+
+  Scenario Outline: env is native at NO tier on wezterm — every route takes the fallback, not just one
+    Given a caller opening at <at> through the wezterm adapter, with env ROLE=worker
+    When open runs
+    Then no --env flag reaches wezterm on any tier
+    And the env rides the same command-prefix-or-warn fallback herdr's worktree route alone uses
+
+    Examples:
+      | at         |
+      | pane:right |
+      | tab        |
+      | workspace  |
+
+    # Unlike herdr, which is native everywhere but ONE route, wezterm's CLI has no --env flag on
+    # spawn or split-pane at all — every route is the exception here, not just the worktree one.
 
   Scenario Outline: each env variable gets its own flag, in the order given
     Given a caller opening through the <adapter> adapter, with env ROLE=worker and TIER=gpu
@@ -289,6 +359,7 @@ Feature: mux — the pane abstraction
       | the plain git worktree fallback  | carried     |
       | a direct open on herdr           | carried     |
       | a direct open on tmux            | carried     |
+      | a direct open on wezterm, any tier | not carried |
 
     # The report is the SEAM's answer to its caller, not a message to a human — it is what makes the
     # compensation below possible, and a caller cannot see which route ran to work it out. Reported
@@ -523,6 +594,14 @@ Feature: mux — the pane abstraction
     # herdr's workspace IS the group and every pane and tab record already carries its workspace_id —
     # a second grouping would be a duplicate the backend never reads
 
+  Scenario: wezterm also ignores the group id, for the same reason herdr does
+    Given a caller opening a tab through the wezterm adapter, with a workspace group id
+    When open runs
+    Then no grouping call reaches wezterm
+    # wezterm's workspace IS also a real tier — every window belongs to one — so there is nothing
+    # left for a tag to add. Coarser than herdr's (per-WINDOW, since every tab in a window already
+    # shares its workspace, and there is no move-tab-to-workspace primitive), but the same answer.
+
   Scenario: a group id is never invented for a caller that did not ask for one
     Given a caller opening a tab through the tmux adapter, with no workspace group id
     When open runs
@@ -614,10 +693,27 @@ Feature: mux — the pane abstraction
       | tab       | herdr   |
       | pane      | tmux    |
       | pane      | herdr   |
+      | tab       | wezterm |
 
     # Every backend can name every tier — the same breadth --label relies on at birth. tmux names a
     # window and a pane title; herdr renames a tab and a pane. This is the naming route for the one
-    # case birth cannot serve, not a second way to do what --label already does.
+    # case birth cannot serve, not a second way to do what --label already does. wezterm has no
+    # `pane` row: unlike the other two, it cannot name a pane at all — see the dedicated scenario
+    # below rather than a silent gap in this table.
+
+  Scenario: wezterm cannot name a pane at any tier — rename throws rather than silently doing nothing
+    Given a caller renaming an already-open pane through the wezterm adapter
+    When the rename runs
+    Then it throws, naming that wezterm has no way to title a pane
+    # set-tab-title/set-window-title exist; there is no pane equivalent in the CLI at all. Throwing is
+    # the honest answer — a silent no-op would report a rename that never happened as if it had.
+
+  Scenario: every new tab on wezterm is named after birth, not just a new workspace's root tab
+    Given a caller opening a tab through the wezterm adapter, with a label
+    When open runs
+    Then the tab is named by a set-tab-title call after the tab exists
+    # spawn has no title flag at all (unlike tmux's -n or herdr's --label), so EVERY new tab takes
+    # this route — not just the one root-tab case herdr has.
 
   Scenario: renaming is the only way to name a new workspace's root tab
     Given a caller creating a workspace through the herdr adapter
@@ -643,6 +739,7 @@ Feature: mux — the pane abstraction
       | adapter |
       | tmux    |
       | herdr   |
+      | wezterm |
 
     # The declaration is what lets a caller DEGRADE a ratio instead of failing when a backend cannot
     # honor one. Both real backends can size, so both say yes; an adapter that stays silent is taken
@@ -679,6 +776,7 @@ Feature: mux — the pane abstraction
       | env                         |
       | $TMUX set                   |
       | $HERDR_ENV set and no $TMUX |
+      | $WEZTERM_PANE set           |
 
   Scenario Outline: send keys presses core-vocabulary keys and types nothing
     Given a caller running cyber-mux send keys against a pane with <env>
@@ -690,6 +788,7 @@ Feature: mux — the pane abstraction
       | env                         |
       | $TMUX set                   |
       | $HERDR_ENV set and no $TMUX |
+      | $WEZTERM_PANE set           |
 
   Scenario: Backspace is the core's one renamed key, and tmux gets tmux's name for it
     Given a caller running cyber-mux send keys Backspace against a pane with $TMUX set
@@ -715,6 +814,25 @@ Feature: mux — the pane abstraction
     Then the token reaches tmux unchanged
     And tmux types it as literal characters, because tmux has no way to refuse a key name
 
+  Scenario: wezterm has no send-keys primitive at all — a key is its own raw terminal byte sequence
+    Given a caller running cyber-mux send keys Up against a pane with $WEZTERM_PANE set
+    When send keys runs
+    Then the key is typed as its ANSI cursor-key escape sequence via send-text --no-paste
+    # There is no key-name-taking verb in wezterm's CLI to forward a name TO — only send-text. The
+    # core vocabulary is realized client-side as bytes rather than backend-side as a name.
+
+  Scenario: a non-core key wezterm also knows (by the same extras a backend "knowing" Home means) is pressed
+    Given a caller running cyber-mux send keys Home against a pane with $WEZTERM_PANE set
+    When send keys runs
+    Then Home is typed as its own escape sequence, not as the literal word "Home"
+
+  Scenario: a token wezterm cannot encode is typed as its own literal characters, unable to refuse it
+    Given a caller running cyber-mux send keys with a token that names no key at all, with $WEZTERM_PANE set
+    When send keys runs
+    Then the token is typed as literal characters via send-text
+    # Nothing here ASKS wezterm anything — there is no backend to refuse a name, so an unencodable
+    # token can only ever be typed, the same terminal case tmux's own key lookup falls back to.
+
   Scenario Outline: send keys Enter presses Enter and takes the turn, because the caller asked for it
     Given a pane with text already staged unsent in its input box, with <env>
     When cyber-mux send keys runs against it passing Enter
@@ -726,6 +844,7 @@ Feature: mux — the pane abstraction
       | env                         |
       | $TMUX set                   |
       | $HERDR_ENV set and no $TMUX |
+      | $WEZTERM_PANE set           |
 
   Scenario: send keys with no key tokens is rejected
     Given a caller running cyber-mux send keys naming a pane but no key tokens
@@ -753,6 +872,7 @@ Feature: mux — the pane abstraction
       | env                         |
       | $TMUX set                   |
       | $HERDR_ENV set and no $TMUX |
+      | $WEZTERM_PANE set           |
 
   Scenario Outline: submit types its text literally, never interpreting it as a key
     Given a caller running cyber-mux submit against a pane with <env>
@@ -764,6 +884,7 @@ Feature: mux — the pane abstraction
       | env                         |
       | $TMUX set                   |
       | $HERDR_ENV set and no $TMUX |
+      | $WEZTERM_PANE set           |
 
   Scenario Outline: submit with no text presses a bare Enter and retypes nothing
     Given a pane with text already staged unsent in its input box, with <env>
@@ -775,6 +896,7 @@ Feature: mux — the pane abstraction
       | env                         | adapter |
       | $TMUX set                   | tmux    |
       | $HERDR_ENV set and no $TMUX | herdr   |
+      | $WEZTERM_PANE set           | wezterm |
 
   Scenario: submit with no pane is rejected
     Given a caller running cyber-mux submit naming no pane
@@ -860,6 +982,14 @@ Feature: mux — the pane abstraction
     When it is asked whether a pane is focused
     Then it answers unknown rather than a boolean, so callers fail open instead of treating the pane as absent
 
+  Scenario: wezterm always reports unknown — it has no focus primitive at all, not just a per-query gap
+    Given a wezterm pane, any pane
+    When the backend is asked whether that pane is focused
+    Then it reports unknown
+    # `wezterm cli list --format json`'s documented fields carry no active/focused indicator for a
+    # pane, tab, or window — unlike tmux/herdr, where unknown is a per-query FALLBACK, this is the
+    # WHOLE backend's answer, every time, by the same honest convention.
+
   # ── list enumerates every live pane, not just agent-bearing ones ──
 
   Scenario: list enumerates every live pane, including one running no agent/harness
@@ -890,6 +1020,14 @@ Feature: mux — the pane abstraction
       | cyber-mux send text          |
       | cyber-mux send keys          |
       | cyber-mux layout save --from |
+
+  Scenario: a name never resolves a wezterm pane — only an id can
+    Given a live wezterm pane and a caller naming some word as if it were a label
+    When a caller runs any pane verb naming that word
+    Then it fails as a pane that could not be resolved, the same as any name matching no live pane
+    # Not a gap in the resolution ladder — a direct consequence of wezterm never carrying a label at
+    # all (see the live-pane-listing scenario below): with no pane ever reporting one, a name can
+    # never match, so every pane verb on wezterm is reachable by id alone.
 
   Scenario Outline: an ambiguous name fails the same way on every pane verb
     Given three live panes all labeled worker
@@ -1029,6 +1167,16 @@ Feature: mux — the pane abstraction
     Given a herdr pane that has never been renamed
     When the live panes are listed
     Then that pane reports no label, because herdr omits the name outright until one is set
+
+  Scenario: a wezterm pane never carries a label, because nothing can ever set one
+    Given a wezterm pane, any pane
+    When the live panes are listed
+    Then that pane reports no label
+    # Not a filtering rule like tmux's hostname guard — there is no primitive at all to title a pane
+    # on this backend (see rename), so `title` is always the ambient running-program name, never
+    # something a human or cyber-mux chose. Reporting it as a label would manufacture the exact
+    # collision (every shell pane named the same thing) the hostname guard exists to prevent, with no
+    # way for an author to ever override it here.
 
   Scenario: a label containing spaces resolves, and never corrupts what is listed beside it
     Given a tmux pane labeled my worker, whose working directory path also contains a space
@@ -1237,6 +1385,7 @@ Feature: mux — the pane abstraction
       | branch     | env                         | adapter | grouping                                      |
       | my-feature | $HERDR_ENV set and no $TMUX | herdr   | bound to a workspace — one call creates both  |
       | my-feature | $TMUX set                   | tmux    | ungrouped — tmux binds nothing, plain git plus a plain open |
+      | my-feature | $WEZTERM_PANE set           | wezterm | ungrouped — wezterm has no worktree concept in its CLI at all, plain git plus a plain open |
 
   Scenario Outline: a placement the binding cannot serve falls back rather than failing
     Given a caller running cyber-mux worktree add --branch <branch> --at <placement> on a backend that binds

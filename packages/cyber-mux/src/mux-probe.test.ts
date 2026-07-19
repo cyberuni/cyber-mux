@@ -57,6 +57,21 @@ describe('spec:cyber-mux/mux', () => {
 			expect(probeMultiplexer(exec, { HERDR_PANE_ID: 'p1' })).toEqual({ mux: 'herdr', pane: 'p1', via: 'ancestry' })
 		})
 
+		it('detects a wezterm-gui ancestor', () => {
+			const pid = process.pid
+			const exec = psChain({
+				[pid]: [pid + 1, 'node'],
+				[pid + 1]: [1, 'wezterm-gui'],
+			})
+			expect(probeMultiplexer(exec, { WEZTERM_PANE: '9' })).toEqual({ mux: 'wezterm', pane: '9', via: 'ancestry' })
+		})
+
+		it('detects a wezterm-mux-server ancestor', () => {
+			const pid = process.pid
+			const exec = psChain({ [pid]: [1, 'wezterm-mux-server'] })
+			expect(probeMultiplexer(exec, {}).mux).toBe('wezterm')
+		})
+
 		it('detects a screen ancestor', () => {
 			const pid = process.pid
 			const exec = psChain({ [pid]: [1, 'screen'] })
@@ -80,6 +95,11 @@ describe('spec:cyber-mux/mux', () => {
 				pane: '%2',
 				via: 'ancestry',
 			})
+		})
+
+		it('$WEZTERM_PANE alone is a fast-positive hint the walk falls back to, same as $TMUX/$HERDR_ENV', () => {
+			const noPs: Exec = () => null
+			expect(probeMultiplexer(noPs, { WEZTERM_PANE: '9' })).toEqual({ mux: 'wezterm', pane: '9', via: 'ancestry' })
 		})
 
 		it('reports none when neither ancestry nor an env hint finds a multiplexer', () => {
@@ -106,6 +126,17 @@ describe('spec:cyber-mux/mux', () => {
 
 		it('defaults the fast-path mux to tmux when $CYBER_MUX is absent', () => {
 			expect(currentPane({ CYBER_MUX_PANE: '%9' })).toEqual({ mux: 'tmux', pane: '%9' })
+		})
+
+		it('reads $WEZTERM_PANE as a wezterm pane', () => {
+			expect(currentPane({ WEZTERM_PANE: '9' })).toEqual({ mux: 'wezterm', pane: '9' })
+		})
+
+		it('tags the $CYBER_MUX_PANE fast-path wezterm when $CYBER_MUX=wezterm', () => {
+			expect(currentPane({ CYBER_MUX: 'wezterm', CYBER_MUX_PANE: '9', TMUX_PANE: '%3' })).toEqual({
+				mux: 'wezterm',
+				pane: '9',
+			})
 		})
 
 		it('prefers $TMUX_PANE over $HERDR_PANE_ID when both are present', () => {

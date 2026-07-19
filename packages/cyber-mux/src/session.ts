@@ -63,9 +63,11 @@ export interface SessionOpenOptions {
 	 * caller needs it. Valid with or without `launch` — a pane with env and no command is a blank
 	 * shell with that env set.
 	 *
-	 * The one exception is herdr's WORKTREE route: `worktree create`/`worktree open` take no env
-	 * param (0.7.4 answers `--env` with `unknown option`), so env is dropped there rather than
-	 * failing the checkout — see `WorktreeWorkspaceCapability`.
+	 * The one exception among herdr's own routes is its WORKTREE one: `worktree create`/`worktree
+	 * open` take no env param (0.7.4 answers `--env` with `unknown option`), so env is dropped there
+	 * rather than failing the checkout — see `WorktreeWorkspaceCapability`. WezTerm has no `--env` on
+	 * ANY route at all (`session.wezterm.ts`), so every one of its opens takes this same fallback path
+	 * rather than just the one.
 	 */
 	env?: Record<string, string>
 	/**
@@ -166,7 +168,7 @@ export interface LivePane {
 	/** Backend-native pane id. */
 	id: string
 	/** Which multiplexer this pane belongs to. */
-	mux: 'tmux' | 'herdr'
+	mux: 'tmux' | 'herdr' | 'wezterm'
 	/** The harness running in this pane, when the backend can report it (herdr only). */
 	harness?: string
 	/** The pane's working directory, when the backend reports it. */
