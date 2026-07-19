@@ -21,8 +21,12 @@ todos:
   - content: Changesets — edited 8 pending changesets to speak template; bump kept minor (owner call, 0.1.0)
     status: completed
   - content: pnpm verify — full build/typecheck/lint/test/biome
-    status: pending
-  - content: Impl gate + Handoff — PR, follow-ups
+    status: completed
+  - content: Website docs — cli/template.md, concepts/templates.md (delegated, verified)
+    status: completed
+  - content: Impl gate — independent cold verifier over the frozen-suite rename + boundary
+    status: in_progress
+  - content: Handoff — push, PR, follow-ups
     status: pending
 ---
 
@@ -78,6 +82,13 @@ to preserve: **102 scenarios, 7 Scenario Outlines, 18 `# ── stage ──` se
 
 ## NEXT
 
-Awaiting owner ratification of the freeze re-open (todo 1). The wholesale rename rewrites frozen
-scenario text across ~all 102 scenarios — a rewrite edit class, not additive, so it is a freeze
-transition and a `status` write the conductor does not own.
+Rename committed (`c3c4482`), `pnpm verify` green (7/7, 638 tests). Freeze re-open ratified by owner
+in-session; spec gate self-asserted (ledger). Version bump settled at **minor → 0.1.0** by owner
+(Council's literal "major" overridden on the unpublished-package fact — record in handoff report to
+operator).
+
+Awaiting the independent cold verifier's verdict on the frozen-suite rename + backend boundary. On a
+clean verdict: push the branch, open the PR (no `Closes #` — the source is an owner mail, not a forge
+issue), and file the one recorded follow-up (classify-edit-class treats a renamed frozen suite as
+additive — freeze-guard hole). Then reply to the operator on the mail thread and ack owner mail
+`1784487176382-a315de`.
