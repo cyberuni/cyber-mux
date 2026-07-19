@@ -13,7 +13,7 @@ import { herdrSessionAdapter } from './session.herdr.ts'
  * frozen scenario it exists for is about the CLI's own output surface — which stream a help entry
  * lands on — and an adapter test cannot see a stream it never writes to.
  *
- * Pins `mux.feature`'s "the lost-grouping note is a help entry on stdout, not a line on stderr".
+ * Pins `worktree.feature`'s "the lost-grouping note is a help entry on stdout, not a line on stderr".
  * At #40's impl gate (PR #41) that scenario could not be stood up live and was verified by source
  * re-derivation plus a mutation backstop against the mocked-Exec CLI test; #44 asked for the live
  * pass. This is it.
