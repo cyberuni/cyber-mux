@@ -1,10 +1,11 @@
 ---
 title: Adapters
-description: How the tmux, herdr, and WezTerm backends fulfill the mux seam.
+description: How the tmux, herdr, and WezTerm backends fulfill the common SessionAdapter contract.
 ---
 
-An **adapter** is a concrete implementation of the [mux seam](/cyber-mux/concepts/mux-seam/) for one
-multiplexer. `cyber-mux` ships three.
+An **adapter** is a concrete implementation of the shared `SessionAdapter` contract for one
+multiplexer — the interface every backend implements so callers never see host-specific concepts.
+`cyber-mux` ships three.
 
 ## tmux
 
@@ -38,7 +39,7 @@ parses defensively.
 - `listPanes` reports each pane's running harness (herdr knows which agent is in each pane); tmux
   cannot, so it leaves `harness` unset.
 
-## WezTerm
+## WezTerm (alpha)
 
 Drives [WezTerm](https://wezterm.org)'s built-in multiplexer via `wezterm cli` (`spawn`,
 `split-pane`, `list --format json`, `send-text`, `activate-pane`, …). Built from `wezterm cli

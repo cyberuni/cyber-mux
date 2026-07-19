@@ -4,7 +4,7 @@ description: Named, reusable pane pools — build several panes from one templat
 ---
 
 A **layout** is a named, reusable template that builds a whole pool of panes in one call, instead of
-one [`open`](/cyber-mux/cli/commands/#layout) at a time. Apply one with `open --layout <name>` or
+one [`open`](/cyber-mux/cli/open/) at a time. Apply one with `open --layout <name>` or
 `worktree add --layout <name>`, or manage templates directly with `cyber-mux layout`.
 
 ## Resolution
@@ -52,5 +52,4 @@ disclosure — rather than silently dropping them.
 
 ## See also
 
-- [CLI reference — Layout](/cyber-mux/cli/commands/#layout) — the concrete `layout list/show/validate/save` verbs and `--layout` flag.
-- [The mux seam](/cyber-mux/concepts/mux-seam/) — `from`, `ratio`, `env`, and `workspaceGroup`, the seam options a layout walk drives.
+- [CLI reference — layout](/cyber-mux/cli/layout/) — the concrete `layout list/show/validate/save` verbs and `--layout` flag.

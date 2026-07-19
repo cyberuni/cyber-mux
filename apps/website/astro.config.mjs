@@ -23,7 +23,7 @@ export default defineConfig({
 				{
 					label: 'Concepts',
 					items: [
-						{ label: 'The mux seam', slug: 'concepts/mux-seam' },
+						{ label: 'Pane', slug: 'concepts/pane' },
 						{ label: 'Adapters', slug: 'concepts/adapters' },
 						{ label: 'Detection', slug: 'concepts/detection' },
 						{ label: 'Layouts', slug: 'concepts/layouts' },
@@ -33,7 +33,21 @@ export default defineConfig({
 				},
 				{
 					label: 'CLI Reference',
-					items: [{ label: 'Commands', slug: 'cli/commands' }],
+					items: [
+						{ label: 'Overview', slug: 'cli' },
+						{ label: 'doctor', slug: 'cli/doctor' },
+						{ label: 'mode', slug: 'cli/mode' },
+						{ label: 'open', slug: 'cli/open' },
+						{ label: 'send', slug: 'cli/send' },
+						{ label: 'submit', slug: 'cli/submit' },
+						{ label: 'read', slug: 'cli/read' },
+						{ label: 'focus', slug: 'cli/focus' },
+						{ label: 'close', slug: 'cli/close' },
+						{ label: 'list', slug: 'cli/list' },
+						{ label: 'exists', slug: 'cli/exists' },
+						{ label: 'worktree', slug: 'cli/worktree' },
+						{ label: 'layout', slug: 'cli/layout' },
+					],
 				},
 			],
 		}),
