@@ -489,9 +489,9 @@ concept onto whatever the live backend calls it:
 | Concept       | tmux    | screen | zellij  | cmux                          | Orca                  | herdr     | WezTerm |
 | ------------- | ------- | ------ | ------- | ----------------------------- | --------------------- | --------- | ------- |
 | **Session**   | Session | Session| Session | App (state saved on restart)  | ----                  | Session   | ----    |
-| **Workspace** | ----    | ----   | ----    | Window/Workspace              | Worktree (git branch) | Workspace (bindable to a git worktree) | Workspace (state saved on restart) |
-| **Tab**       | Window  | Window | Tab     | Vertical Tab (w/ git status)  | Tab                   | Tab       | Window (a real, separate tier from Tab — see below) |
-| **Pane**      | Pane    | Region | Pane    | Split Pane                    | Pane                  | Pane      | Pane / Tab |
+| **Workspace** | ----    | ----   | ----    | Window/Workspace              | Worktree (git branch) | Workspace (bindable to a git worktree) | Window (spawned into a fresh or named Workspace — see below) |
+| **Tab**       | Window  | Window | Tab     | Vertical Tab (w/ git status)  | Tab                   | Tab       | Tab     |
+| **Pane**      | Pane    | Region | Pane    | Split Pane                    | Pane                  | Pane      | Pane    |
 
 `cyber-mux` drives three of these backends (tmux, herdr, wezterm). `--at` exposes three of the levels
 — `pane:right`/`pane:down` (**Pane**), `tab` (**Tab**), `workspace` (**Workspace**). The property

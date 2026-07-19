@@ -17,10 +17,14 @@ Feature: mux — the pane abstraction
       | $HERDR_ENV set and no $TMUX | herdr   |
       | $WEZTERM_PANE set           | wezterm |
 
-  Scenario: neither tmux nor herdr detected errors before opening anything
-    Given a caller with neither $TMUX nor $HERDR_ENV set
+  Scenario: no backend detected errors before opening anything
+    Given a caller with none of $TMUX, $HERDR_ENV, or $WEZTERM_PANE set
     When cyber-mux open runs
-    Then it throws naming tmux/herdr as the required backend
+    Then it throws naming tmux/herdr/wezterm as the required backend
+    # A stale-mistake fix, not a narrowing: this scenario always meant "no multiplexer this process
+    # can drive is detected", which a two-env Given happened to fully express before a third backend
+    # existed. Widening the Given/Then to name all three keeps the SAME coverage — a caller with none
+    # of the three still throws — rather than changing what is asserted.
 
   # ── Placement ──
 
@@ -1016,6 +1020,14 @@ Feature: mux — the pane abstraction
       | cyber-mux send text          |
       | cyber-mux send keys          |
       | cyber-mux layout save --from |
+
+  Scenario: a name never resolves a wezterm pane — only an id can
+    Given a live wezterm pane and a caller naming some word as if it were a label
+    When a caller runs any pane verb naming that word
+    Then it fails as a pane that could not be resolved, the same as any name matching no live pane
+    # Not a gap in the resolution ladder — a direct consequence of wezterm never carrying a label at
+    # all (see the live-pane-listing scenario below): with no pane ever reporting one, a name can
+    # never match, so every pane verb on wezterm is reachable by id alone.
 
   Scenario Outline: an ambiguous name fails the same way on every pane verb
     Given three live panes all labeled worker
