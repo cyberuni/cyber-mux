@@ -26,6 +26,9 @@ export default defineConfig({
 						{ label: 'The mux seam', slug: 'concepts/mux-seam' },
 						{ label: 'Adapters', slug: 'concepts/adapters' },
 						{ label: 'Detection', slug: 'concepts/detection' },
+						{ label: 'Layouts', slug: 'concepts/layouts' },
+						{ label: 'Worktrees', slug: 'concepts/worktrees' },
+						{ label: 'AXI', slug: 'concepts/axi' },
 					],
 				},
 				{
