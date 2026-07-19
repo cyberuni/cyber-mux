@@ -92,6 +92,9 @@ html {
 }
 
 .hero .actions a.minimal {
+	/* Starlight's minimal variant ships with padding: 0 (it is meant to read as a bare text link).
+	   We restyle it into a pill, so restore the primary button's inline padding to match. */
+	padding: 0.4375rem 1.125rem;
 	background: rgba(255, 255, 255, 0.03);
 	border: 1px solid var(--linear-border-strong);
 	color: var(--sl-color-white);
