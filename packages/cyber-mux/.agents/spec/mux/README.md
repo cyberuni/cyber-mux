@@ -353,7 +353,7 @@ here rather than silently contradicted.
   enumeration to `list`, the current pane to `doctor` — so rather than ship a second name for an
   existing verb, a bare `send` is treated as *incomplete input*: help to **stdout**, **exit 2**.
 
-  **That is [`axi/`](../axi/README.md)'s #6 deciding it, not #8, and the difference is not
+  **That is [`axi.md`](../axi.md)'s #6 deciding it, not #8, and the difference is not
   bookkeeping.** Bare `send` is a missing required parameter, which #6 already puts at `2` — the
   decision needs no content-first reasoning at all. It was previously called an "acknowledged
   amendment to #8", which conceded a divergence this repo never had to concede: AXI's #8 governs the
@@ -391,7 +391,7 @@ here rather than silently contradicted.
   - **Two or more matches fail and report the entries** — id, label, and working directory: the three
     that discriminate (a report listing `worker, worker` helps nobody), and within axi #2's 3–4-field
     default row. Each candidate's id is directly usable as the retry. The report is a **structured
-    error** under the stable code `ambiguous-pane`, on **stdout** per [`axi/`](../axi/README.md)'s
+    error** under the stable code `ambiguous-pane`, on **stdout** per [`axi.md`](../axi.md)'s
     stream discipline, honoring `--format`. Zero matches is the existing not-found path, not an
     ambiguity.
 
@@ -402,7 +402,7 @@ here rather than silently contradicted.
     belonged there. The clean-stdout worry does not survive: a verb writes its result or its error,
     never both, so exit `2` separates them before anything is parsed.
   - **The outcome rides the exit code: `0` one match, `1` zero, `2` ambiguous — and `2` is
-    [`axi/`](../axi/README.md)'s own `usage error` (#6), not a code this node invented.** An ambiguous
+    [`axi.md`](../axi.md)'s own `usage error` (#6), not a code this node invented.** An ambiguous
     locator is a usage error in the strict sense AXI means: the argument is underspecified, nothing
     was attempted, and the fix is a different argument — the same family as the missing required
     parameter AXI already puts at `2`. So this is an **application** of the contract, not an amendment
@@ -436,7 +436,7 @@ here rather than silently contradicted.
   would manufacture the same collision the hostname guard exists to prevent.
 
 - **Every failure is a structured error on stdout, coded, with the command that fixes it** — this
-  node is where [`axi/`](../axi/README.md)'s #6 is verified, because a reference node carries no suite
+  node is where [`axi.md`](../axi.md)'s #6 is verified, because a reference node carries no suite
   of its own. One `fail()` helper reaches all ~15 verbs, so the contract is pinned once at the surface
   rather than twenty times per verb: an error goes to **stdout** (AXI's stream for what the agent
   consumes), under a **stable `code`** a caller matches instead of parsing prose, with an actionable
@@ -481,20 +481,12 @@ send/submit/read/focus/close.
 
 ## Multiplexer concept vocabulary
 
-`--at` names a **placement concept**, not a backend-specific command. Every multiplexer nests the
-same four levels — **Session › Workspace › Tab › Pane** — but each calls them something different
-(notably: a tmux/screen "Window" is the **Tab** level, not a workspace). The adapter maps the
-concept onto whatever the live backend calls it:
+The four placement tiers — **Session › Workspace › Tab › Pane** — and what each backend calls them
+are defined once in [`glossary.md`](../glossary.md). What follows is this node's *behavior* against
+that vocabulary, not a second definition of it.
 
-| Concept       | tmux    | screen | zellij  | cmux                          | Orca                  | herdr     | WezTerm |
-| ------------- | ------- | ------ | ------- | ----------------------------- | --------------------- | --------- | ------- |
-| **Session**   | Session | Session| Session | App (state saved on restart)  | ----                  | Session   | ----    |
-| **Workspace** | ----    | ----   | ----    | Window/Workspace              | Worktree (git branch) | Workspace (bindable to a git worktree) | Window (spawned into a fresh or named Workspace — see below) |
-| **Tab**       | Window  | Window | Tab     | Vertical Tab (w/ git status)  | Tab                   | Tab       | Tab     |
-| **Pane**      | Pane    | Region | Pane    | Split Pane                    | Pane                  | Pane      | Pane    |
-
-`cyber-mux` drives three of these backends (tmux, herdr, wezterm). `--at` exposes three of the levels
-— `pane:right`/`pane:down` (**Pane**), `tab` (**Tab**), `workspace` (**Workspace**). The property
+`--at` exposes three of the levels — `pane:right`/`pane:down` (**Pane**), `tab` (**Tab**),
+`workspace` (**Workspace**). The property
 `workspace` guarantees is **its own space, VISIBLE in the attached client and navigable** — not a
 structural tier. tmux, having no Workspace level, maps `workspace` onto the finest unit that keeps
 that property: a new **Window** (visible in the status bar, `select-window`-able) — the same unit
@@ -530,7 +522,7 @@ Every scenario in [`mux.feature`](./mux.feature) maps to one of these behaviors:
 | **pane focus reporting** | tri-state focused / not-focused / unknown per backend (tmux: pane+window active & session attached; herdr: pane record `focused`); a query that can't be answered → unknown so callers fail open |
 | **open returns the pane's workspace, and reports it** | the workspace the new pane landed in, per placement on herdr (a created workspace reports itself; a tab reports the workspace it was created in; a split reports the caller's); absent on a backend with no workspace tier; read from the output the pane id already comes from, so it costs no extra call; reported beside the pane by `open` itself and carried for a pool by the template manifest; occupancy is never a worktree binding |
 | **git worktree helpers** | `worktree add` defaults the path to a sibling of the primary checkout on every backend; `--base` sets the start-point; `worktree remove` refuses the primary checkout, tolerates an already-gone worktree, and refuses uncommitted changes unless `--force` |
-| **worktree/workspace binding** | a bare `add` — none of `--at`, `--launch` or `--env` — opens nothing and resolves no backend, which is what makes it the only route that works outside a multiplexer at all; `--launch` and `--env` each imply `--at workspace`, both being a request for something IN a pane; `--at workspace` groups where the backend binds and falls back where it does not; a pane/tab placement degrades (reports no workspace) rather than failing, and only where a grouping was on offer, the caller told through a stdout `help[N]:` entry naming `--at workspace` per [`axi/`](../axi/README.md)'s #9; `open` groups a checkout plain git made |
+| **worktree/workspace binding** | a bare `add` — none of `--at`, `--launch` or `--env` — opens nothing and resolves no backend, which is what makes it the only route that works outside a multiplexer at all; `--launch` and `--env` each imply `--at workspace`, both being a request for something IN a pane; `--at workspace` groups where the backend binds and falls back where it does not; a pane/tab placement degrades (reports no workspace) rather than failing, and only where a grouping was on offer, the caller told through a stdout `help[N]:` entry naming `--at workspace` per [`axi.md`](../axi.md)'s #9; `open` groups a checkout plain git made |
 | **`--env`, the CLI surface for the seam's env option** | repeatable `--env KEY=VALUE` on every verb that opens a pane (`open`, `worktree add`, `worktree open`) — the one split option with a flag, since a variable not set at birth cannot be set at all; it names the pane the verb opens, exactly one being opened on each route, **except** on herdr's worktree bind route, where it degrades to a prefix on `--launch` or a stderr warning with no command to ride — stated on BOTH worktree verbs, which are exposed identically; refused alongside `--template`, which owns its own panes' env; implies a placement; a missing `=` is rejected before anything opens, a trailing `=` sets the variable empty, and a value's own `=` survives by splitting on the first only |
 | **naming what was opened** | `--label` names the tier `--at` opened, on every backend (herdr workspace/tab/pane label; tmux window name or pane title); taken at birth where the backend's CLI allows, set immediately after where it does not; omitted leaves the backend's own default |
 | **worktree facts vs binding** | `list` reads path/branch/linked/prunable from git on every backend and reports only the binding from the backend; `list`/`remove` answer with no multiplexer |

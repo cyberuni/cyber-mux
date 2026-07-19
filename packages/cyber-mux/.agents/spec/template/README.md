@@ -251,7 +251,7 @@ a target directory supplied at apply time:
   form does not stay quiet about it: capturing one tab of three reports, in a `help[N]:` block **on
   stdout inside the payload**, what it left out and the `--workspace` invocation that captures it,
   rather than letting a caller believe a 3-tab workspace round-trips from a 1-tab template. That
-  reveal is [`axi/`](../axi/README.md)'s #9 *reveal a truncated list* case verbatim, which puts the
+  reveal is [`axi.md`](../axi.md)'s #9 *reveal a truncated list* case verbatim, which puts the
   note on stdout, not stderr — so `save`'s stdout is a structured payload (a `path` field plus that
   optional `help[N]:` block), the note present only when there is a next move. The
   bare-path-for-`$(...)` ergonomic yields to it: a programmatic caller reads the path from
@@ -367,4 +367,4 @@ Every scenario in [`template.feature`](./template.feature) maps to one of these 
 | **the capture subtracts the target back out** | a pane under the captured root becomes a relative `dir`; no `cwd` and no absolute path ever reaches the template; a pane outside the root loses its dir and warns; a capture passes `validate` |
 | **labels are the author's, or absent** | a label someone set is captured; a backend's default pane title is not (tmux titles every pane with the hostname); a label two panes share is captured onto both, because a human chose it and no label needs to be unique |
 | **`save` writes a file** | the repo templates directory by default, `--to user` for the user's; the path on stdout as a structured payload, with a `help[N]:` block riding along only when a bare `save` left tabs uncaptured (composition reads the path from `--format json`); an existing template is never overwritten without `--force`, and the refusal reads no region |
-| **`save`'s refusals** | writing nothing in every case, but under two exit codes by kind: a malformed **name** and **no pane to capture around** (neither `--from` nor an ambient pane) are usage errors — the invocation is wrong, so they exit **2** per [`axi/`](../axi/README.md)'s #6; a backend that cannot report geometry and a region no sequence of splits could have produced are genuine operation failures, so they exit **1** |
+| **`save`'s refusals** | writing nothing in every case, but under two exit codes by kind: a malformed **name** and **no pane to capture around** (neither `--from` nor an ambient pane) are usage errors — the invocation is wrong, so they exit **2** per [`axi.md`](../axi.md)'s #6; a backend that cannot report geometry and a region no sequence of splits could have produced are genuine operation failures, so they exit **1** |

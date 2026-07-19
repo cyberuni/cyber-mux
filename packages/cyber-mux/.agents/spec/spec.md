@@ -34,11 +34,46 @@ produced-by:
 pane identity, placement, git worktree, and turn-taking (nudge) helpers — decoupled from legion
 (no store/identity/doorbell). Env namespace is `CYBER_MUX` / `CYBER_MUX_PANE`.
 
-## Capabilities
+## Capability map
 
-| Node | Concern |
+The placement map — the declared organization. `cyber-mux` is organized **capability-first**:
+top-level folders name what the CLI *does*. A new concept routes to the folder whose capability it
+serves; rules go to [`design/`](./design/README.md), and a concept enacted across capabilities is
+declared in `concept:` frontmatter rather than given a folder of its own.
+
+| Node | Owns |
 |---|---|
 | [`mux/`](./mux/README.md) | the pane abstraction — backend selection, placement, multiplexer detection, focus reporting |
 | [`template/`](./template/README.md) | named, reusable workspace templates — the arrangement, environment and launch commands a workspace is rebuilt from, plus resolution, the schema, and the walk that builds a pool against a target cwd |
-| [`axi/`](./axi/README.md) | the Agent Experience Interface output contract every CLI command follows |
-| [`design/`](./design/README.md) | cross-cutting rules/models and the decisions log (append-only, descriptive, ungated) |
+| [`axi.md`](./axi.md) | the Agent Experience Interface output contract every CLI command follows |
+| [`glossary.md`](./glossary.md) | the ubiquitous language — every load-bearing term defined once |
+| [`design/`](./design/README.md) | the rules & model, and the decisions log (append-only, descriptive, ungated) |
+| `ledger/` | the provenance — durable audit records; data, outside the node taxonomy |
+
+### Routing table
+
+Where a concept of a given kind goes, plus the tie-break rows for the overlaps the strategy alone
+does not settle.
+
+| Concept kind | Home |
+|---|---|
+| a thing the CLI does, with a testable surface | its own capability folder, `spec-type: behavioral`, suite colocated |
+| a cross-cutting rule or model no single capability owns | [`design/`](./design/README.md), descriptive |
+| a project-scope decision and its why | [`design/decisions/`](./design/decisions/README.md), append-only |
+| a load-bearing term | [`glossary.md`](./glossary.md) — defined once there, referenced everywhere else |
+| a shipped artifact with no testable surface of its own, spanning every command | a root file beside this spec, `spec-type: reference` |
+| a sub-grouping inside a capability | a `concept:` tag, never a third folder level |
+
+**Tie-breaks.**
+
+- **The output contract is a root file, not a capability folder.** `axi.md` is one document
+  describing a convention every command follows, so it owns no capability and gets no folder. It
+  keeps `spec-type: reference` and stays verified through the consuming capability's suite, since a
+  reference node carries no suite of its own.
+- **Backend adapters are not capabilities.** A per-multiplexer adapter (tmux, herdr, wezterm, and
+  any future one) is an implementation of the pane abstraction, not a thing the CLI does. It routes
+  to [`mux/`](./mux/README.md), never to a folder of its own — one adapter per folder would smear
+  the one pane capability across as many folders as there are backends.
+- **Worktree behavior routes by what it is about.** The git-facts half is plain repository work and
+  lives with the capability that surfaces it; the binding half — what opens, and where — is pane
+  placement, so it belongs to [`mux/`](./mux/README.md).
