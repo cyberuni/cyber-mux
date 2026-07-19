@@ -6,6 +6,12 @@
 @import 'tailwindcss/theme.css' layer(theme);
 @import 'tailwindcss/utilities.css' layer(utilities);
 
+/* Reserve the scrollbar gutter on every page, scrolling or not, so the content column doesn't
+   shift width when navigating between a short page (no scrollbar) and a long one (scrollbar). */
+html {
+	scrollbar-gutter: stable;
+}
+
 /* Linear design tokens — dark (default) */
 :root {
 	--sl-color-accent-low: #21243f;
