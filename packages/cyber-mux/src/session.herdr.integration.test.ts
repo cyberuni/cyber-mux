@@ -35,6 +35,23 @@ function hasHerdr(): boolean {
  */
 const insideHerdrPane = Boolean(process.env.HERDR_PANE_ID)
 
+/**
+ * Whether herdr can resolve a CURRENT pane at all. Being outside a herdr pane is not enough to make
+ * the current-pane block below safe to run — it also has to be *possible*. With `HERDR_PANE_ID`
+ * unset, herdr falls back to the UI-FOCUSED pane, and where no client is attached there is no such
+ * pane and every current-relative verb fails ("herdr tab create failed", "herdr pane split failed").
+ * That is exactly a CI runner, which is how this surfaced. Skipping there is honest: the block's
+ * whole subject is how `--current` resolves, so pinning an explicit pane would delete what it tests.
+ */
+function hasCurrentPane(): boolean {
+	try {
+		execFileSync('herdr', ['pane', 'current', '--current'], { stdio: 'ignore' })
+		return true
+	} catch {
+		return false
+	}
+}
+
 const realExec: Exec = (cmd, args) => {
 	try {
 		return execFileSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
@@ -117,7 +134,7 @@ describe.skipIf(!hasHerdr())('spec:cyber-mux/mux', () => {
 		})
 	})
 
-	describe.skipIf(insideHerdrPane)(
+	describe.skipIf(insideHerdrPane || !hasCurrentPane())(
 		'herdrSessionAdapter — real herdr boundary (current-pane context, run outside a herdr pane only)',
 		() => {
 			let cwd: string

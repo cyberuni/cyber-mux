@@ -39,13 +39,6 @@ function hasHerdr(): boolean {
  */
 const runnable = hasHerdr() && existsSync(cliBundle)
 
-/**
- * `--at pane:right` splits whatever pane herdr considers current — the CALLER's own when this runs
- * from inside a herdr pane. Gated exactly like the adapter suite's `pane:right` block: it executes
- * only from a plain shell outside any herdr pane (`HERDR_PANE_ID` unset), which is what CI is.
- */
-const insideHerdrPane = Boolean(process.env.HERDR_PANE_ID)
-
 const realExec: Exec = (cmd, args) => {
 	try {
 		return execFileSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
@@ -79,7 +72,7 @@ function paneIdFrom(stdout: string): string | undefined {
 }
 
 describe.skipIf(!runnable)('spec:cyber-mux/mux', () => {
-	describe.skipIf(insideHerdrPane)('cyber-mux worktree add — real herdr boundary, real binary', () => {
+	describe('cyber-mux worktree add — real herdr boundary, real binary', () => {
 		const opened: string[] = []
 		const scratch: string[] = []
 
@@ -98,12 +91,25 @@ describe.skipIf(!runnable)('spec:cyber-mux/mux', () => {
 			const repoRoot = scratchRepo()
 			scratch.push(repoRoot)
 
-			// `CYBER_MUX=herdr` is the documented fast-path override — it pins the backend rather than
-			// letting detection walk an ancestry that, outside a herdr pane, would not find one.
+			// The pane the split lands on, opened in a workspace of this suite's own. `pane:right`
+			// otherwise means "split whatever herdr considers CURRENT", which is either the caller's own
+			// pane (running from inside herdr) or the UI-focused one — someone else's work in both
+			// readings — and is nothing at all with no client attached, which is why this failed in CI
+			// as `herdr pane split failed`.
+			const host = herdrSessionAdapter.open(realExec, { cwd: repoRoot, launch: 'sh', at: 'workspace' })
+			opened.push(host.id)
+
+			// `CYBER_MUX` + `CYBER_MUX_PANE` is the documented fast-path: it pins the backend AND this
+			// process's own pane identity, which `callerPane` turns into the split's explicit `from`.
+			// So the split targets `host` by id, needing neither an ancestry walk nor a focused pane.
 			const run = spawnSync(
 				process.execPath,
 				[cliEntry, 'worktree', 'add', '--branch', 'cyber-mux-itest-grouping', '--at', 'pane:right'],
-				{ cwd: repoRoot, encoding: 'utf8', env: { ...process.env, CYBER_MUX: 'herdr' } },
+				{
+					cwd: repoRoot,
+					encoding: 'utf8',
+					env: { ...process.env, CYBER_MUX: 'herdr', CYBER_MUX_PANE: host.id },
+				},
 			)
 
 			const paneId = paneIdFrom(run.stdout ?? '')
