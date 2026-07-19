@@ -1,7 +1,7 @@
 import { isAbsolute, normalize } from 'node:path'
 
 /**
- * The layout schema, its parser, its validator, and the flat-N desugarer — PURE. No `Exec`, no
+ * The template schema, its parser, its validator, and the flat-N desugarer — PURE. No `Exec`, no
  * filesystem, no multiplexer, by design: keeping this module free of every seam is what makes the
  * schema, the desugaring, and every validation rule testable with no mock at all.
  *
@@ -40,12 +40,12 @@ export interface SplitNode {
 	/** Fraction kept by `first` — the ORIGINAL pane. `0 < ratio < 1`; omitted means an even split. */
 	ratio?: number
 	/** Keeps the region's existing pane. */
-	first: LayoutNode
+	first: TemplateNode
 	/** Gets the newly split-off pane. */
-	second: LayoutNode
+	second: TemplateNode
 }
 
-export type LayoutNode = PaneNode | SplitNode
+export type TemplateNode = PaneNode | SplitNode
 
 /** Names borrowed from tmux's built-ins, because they are the names people already know. */
 export type Arrange = 'tiled' | 'even-horizontal' | 'even-vertical'
@@ -61,9 +61,9 @@ export type FlatPane = Omit<PaneNode, 'type'>
  * introducing a second vocabulary: a tab is a tree plus a name. `resolveTree` takes this, so the tab
  * tier and the template tier resolve through the very same desugarer and cannot drift apart.
  */
-export interface LayoutTree {
+export interface TemplateTree {
 	/** The split tree. Exactly one of `root` / `panes`. */
-	root?: LayoutNode
+	root?: TemplateNode
 	/** The flat sugar's pane pool. Exactly one of `root` / `panes`. */
 	panes?: FlatPane[]
 	/** How `panes` is arranged; defaults to `tiled`. Ignored (and invalid) alongside `root`. */
@@ -71,10 +71,10 @@ export interface LayoutTree {
 }
 
 /**
- * One tab of a workspace: a `LayoutTree` plus a name. `cwd` is no more permitted here than on a pane —
+ * One tab of a workspace: a `TemplateTree` plus a name. `cwd` is no more permitted here than on a pane —
  * the rule the whole capability exists to enforce does not weaken because a level was added.
  */
-export interface TabNode extends LayoutTree {
+export interface TabNode extends TemplateTree {
 	/**
 	 * Names the tab. A name rather than a key, exactly as a pane's label is: a tab is addressed by its
 	 * own id at the seam and the manifest reports a pane's tab by INDEX, so two tabs may share a label.
@@ -83,7 +83,7 @@ export interface TabNode extends LayoutTree {
 	label?: string
 }
 
-export interface LayoutTemplate extends LayoutTree {
+export interface Template extends TemplateTree {
 	name: string
 	description?: string
 	/**
@@ -95,17 +95,17 @@ export interface LayoutTemplate extends LayoutTree {
 
 /**
  * A template name is `[a-z0-9][a-z0-9-]*` and must equal its file's stem, so a name can never
- * traverse out of the layouts directory. Checked BEFORE any file is read — a name is a lookup key,
+ * traverse out of the templates directory. Checked BEFORE any file is read — a name is a lookup key,
  * not a path, and treating it as one is how `../../../etc/pwd` becomes a read.
  */
-const LAYOUT_NAME = /^[a-z0-9][a-z0-9-]*$/
+const TEMPLATE_NAME = /^[a-z0-9][a-z0-9-]*$/
 
-export function isValidLayoutName(name: string): boolean {
-	return LAYOUT_NAME.test(name)
+export function isValidTemplateName(name: string): boolean {
+	return TEMPLATE_NAME.test(name)
 }
 
-/** Parse a template's bytes. Throws on malformed JSON; SCHEMA validity is `validateLayout`'s job. */
-export function parseLayout(raw: string): unknown {
+/** Parse a template's bytes. Throws on malformed JSON; SCHEMA validity is `validateTemplate`'s job. */
+export function parseTemplate(raw: string): unknown {
 	try {
 		return JSON.parse(raw)
 	} catch (err) {
@@ -121,7 +121,7 @@ export function parseLayout(raw: string): unknown {
  * `stem` is the filename's stem when there is a file to compare against; the `name` field must equal
  * it. The redundancy is the point: a copied template that kept its old name fails loudly.
  */
-export function validateLayout(template: unknown, stem?: string): string[] {
+export function validateTemplate(template: unknown, stem?: string): string[] {
 	const errors: string[] = []
 	if (typeof template !== 'object' || template === null || Array.isArray(template)) {
 		return ['template: must be a JSON object']
@@ -315,16 +315,16 @@ function dirEscapes(dir: string): boolean {
 }
 
 /**
- * The tree a `LayoutTree` describes, whichever form it was written in — the ONE place `panes`/`arrange`
- * becomes a tree, so `layout show --desugar` and the apply walk can never disagree about what a flat
+ * The tree a `TemplateTree` describes, whichever form it was written in — the ONE place `panes`/`arrange`
+ * becomes a tree, so `template show --desugar` and the apply walk can never disagree about what a flat
  * template means.
  *
- * It takes either carrier of a `LayoutTree`, so a `TabNode` and a single-tab `LayoutTemplate` resolve
+ * It takes either carrier of a `TemplateTree`, so a `TabNode` and a single-tab `Template` resolve
  * through THIS function rather than through two that happen to agree today: the sugar is a property of
  * a pane pool, not of where the pool sits, so a tab of 3 panes means what a top-level pool of 3 panes
  * means. One desugarer, one answer.
  */
-export function resolveTree(tree: LayoutTemplate | TabNode): LayoutNode {
+export function resolveTree(tree: Template | TabNode): TemplateNode {
 	if (tree.root) return tree.root
 	return desugar(tree.panes ?? [], tree.arrange ?? 'tiled')
 }
@@ -334,13 +334,13 @@ export function resolveTree(tree: LayoutTemplate | TabNode): LayoutNode {
  * ALONE — no backend, no region size — which is exactly what lets `show --desugar` print the tree
  * apply will build, and what makes one template mean one geometry everywhere.
  *
- * tmux's native `select-layout tiled` is deliberately NOT used even though it exists and would be one
+ * tmux's native `select-template tiled` is deliberately NOT used even though it exists and would be one
  * call: it implements tmux's own grid algorithm, herdr has no equivalent, and reaching for it would
  * mean the same template producing a visibly different geometry per backend — and a third on
  * whatever backend comes next. Owning the desugaring is what makes a backend-agnostic schema worth
  * having, and it costs exactly one saved call.
  */
-export function desugar(panes: FlatPane[], arrange: Arrange): LayoutNode {
+export function desugar(panes: FlatPane[], arrange: Arrange): TemplateNode {
 	if (panes.length === 0) throw new Error('a flat template must name at least one pane')
 	const leaves = panes.map(toPaneNode)
 	if (arrange === 'even-horizontal') return comb(leaves, 'right')
@@ -364,7 +364,7 @@ function toPaneNode(pane: FlatPane): PaneNode {
  * would yield 1/2, 1/4, 1/4 — a comb that looks like a row and is not one. Peeling `1/n` off the
  * front leaves `(n-1)/n` for the rest, which the next `1/(n-1)` divides into another exact `1/n`.
  */
-function comb(nodes: LayoutNode[], direction: 'right' | 'down'): LayoutNode {
+function comb(nodes: TemplateNode[], direction: 'right' | 'down'): TemplateNode {
 	const [head, ...rest] = nodes
 	if (rest.length === 0) return head!
 	return { type: 'split', direction, ratio: 1 / nodes.length, first: head!, second: comb(rest, direction) }
@@ -377,7 +377,7 @@ function comb(nodes: LayoutNode[], direction: 'right' | 'down'): LayoutNode {
  * For `n = 4` this is one `right` at `0.5` with a `down` at `0.5` in each half — a true 2x2. `n = 1`
  * falls out as the bare pane with no split at all, rather than being special-cased.
  */
-function tiled(leaves: LayoutNode[]): LayoutNode {
+function tiled(leaves: TemplateNode[]): TemplateNode {
 	if (leaves.length === 1) return leaves[0]!
 	const columns = distribute(leaves, Math.ceil(Math.sqrt(leaves.length)))
 	return comb(
@@ -402,7 +402,7 @@ function distribute<T>(items: T[], groups: number): T[][] {
 }
 
 /** Every pane in the tree, in template order — a depth-first walk taking `first` before `second`. */
-export function collectPanes(node: LayoutNode, acc: PaneNode[] = []): PaneNode[] {
+export function collectPanes(node: TemplateNode, acc: PaneNode[] = []): PaneNode[] {
 	if (node.type === 'pane') acc.push(node)
 	else {
 		collectPanes(node.first, acc)
@@ -417,6 +417,6 @@ export function collectPanes(node: LayoutNode, acc: PaneNode[] = []): PaneNode[]
  * a split must carry: the new pane a split creates is the region for `second`, and the leaf that
  * ultimately sits on it is `firstPane(second)`.
  */
-export function firstPane(node: LayoutNode): PaneNode {
+export function firstPane(node: TemplateNode): PaneNode {
 	return node.type === 'pane' ? node : firstPane(node.first)
 }

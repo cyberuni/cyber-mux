@@ -3,14 +3,14 @@ title: open
 description: Open a new pane/tab/workspace, optionally launching a command in it.
 ---
 
-### `cyber-mux open [--launch <cmd>] [--layout <name>] [--cwd <path>] [--at <placement>] [--env <KEY=VALUE>...] [--label <name>]`
+### `cyber-mux open [--launch <cmd>] [--template <name>] [--cwd <path>] [--at <placement>] [--env <KEY=VALUE>...] [--label <name>]`
 
 Open a new pane and launch a command in it. Prints the new pane's `id`, and its `workspace` when the
 backend bound one (`null` otherwise).
 
 - `--launch <cmd>` — command line to run in the new pane; omit for a blank pane.
-- `--layout <name>` — build a whole named pool in the opened space instead of a single pane, from a
-  resolvable [layout](/cyber-mux/concepts/layouts/) template. Resolved and validated **before**
+- `--template <name>` — build a whole named pool in the opened space instead of a single pane, from a
+  resolvable [template](/cyber-mux/concepts/templates/). Resolved and validated **before**
   anything opens, so a typo in the name leaves nothing behind. Conflicts with both `--launch` and
   `--env` (a template owns everything in the panes it declares); rejected by commander (exit 2) if
   combined with either.
@@ -30,7 +30,7 @@ backend bound one (`null` otherwise).
   Omit it and each backend keeps its own default.
 
 See also [`worktree add`](/cyber-mux/cli/worktree/#cyber-mux-worktree-add) and
-[`layout`](/cyber-mux/cli/layout/), which share `--layout`/`--at`/`--env`/`--label`.
+[`template`](/cyber-mux/cli/template/), which share `--template`/`--at`/`--env`/`--label`.
 
 ## Examples
 
@@ -50,6 +50,6 @@ cyber-mux open --at workspace --label logs --env LOG_LEVEL=debug --launch "tail 
 ```
 
 ```bash
-# Build a whole pane pool from a layout template
-cyber-mux open --layout pool-4 --cwd ~/code/my-app
+# Build a whole pane pool from a template
+cyber-mux open --template pool-4 --cwd ~/code/my-app
 ```

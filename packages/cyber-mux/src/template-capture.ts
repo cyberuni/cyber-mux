@@ -1,9 +1,9 @@
 import { relative, sep } from 'node:path'
-import type { LayoutNode, LayoutTemplate, PaneNode, SplitNode, TabNode } from './layout.ts'
 import type { PaneRect, RegionPane, WorkspaceTab } from './session.ts'
+import type { PaneNode, SplitNode, TabNode, Template, TemplateNode } from './template.ts'
 
 /**
- * A live region, run backwards into a template — `layout save`. PURE, like `layout.ts` and for the
+ * A live region, run backwards into a template — `template save`. PURE, like `template.ts` and for the
  * same reason: the hard part here is geometry, not I/O, and keeping every seam out means the n-ary
  * lowering, the ratio arithmetic and the ambiguous-grid rule are all testable with plain numbers and
  * no multiplexer at all.
@@ -19,7 +19,7 @@ import type { PaneRect, RegionPane, WorkspaceTab } from './session.ts'
  * `claude --foo`. A template out of this module is a DRAFT with `command` left for the author.
  */
 
-/** A partition of the region — the same shape as `LayoutNode`, before panes become `PaneNode`s. */
+/** A partition of the region — the same shape as `TemplateNode`, before panes become `PaneNode`s. */
 type RegionTree = RegionLeaf | RegionSplit
 
 interface RegionLeaf {
@@ -35,8 +35,8 @@ interface RegionSplit {
 	second: RegionTree
 }
 
-export interface LayoutCapture {
-	template: LayoutTemplate
+export interface TemplateCapture {
+	template: Template
 	/**
 	 * What the capture could not express, for the caller to print. Returned rather than written to
 	 * stderr so this module stays pure and the rules stay testable without capturing output.
@@ -163,7 +163,7 @@ function partition(panes: RegionPane[]): RegionTree {
  *
  * Two because the emitted template is meant to be READ and edited: a 3-pane row wants `0.33`, not
  * `0.33167`, and the cell it costs is invisible. The clamp is the guard on a degenerate capture — a
- * pane one cell wide in a wide region rounds to `0`, which `validateLayout` rejects outright, so an
+ * pane one cell wide in a wide region rounds to `0`, which `validateTemplate` rejects outright, so an
  * export of a real screen would emit a template that fails its own validator.
  */
 function roundRatio(ratio: number): number {
@@ -193,7 +193,7 @@ function rootOf(tree: RegionTree): RegionPane {
 	return tree.type === 'pane' ? tree.pane : rootOf(tree.first)
 }
 
-export interface CaptureLayoutOptions {
+export interface CaptureTemplateOptions {
 	/** The template's `name` — validated by the caller, since a name is also a lookup key. */
 	name: string
 	description?: string
@@ -206,7 +206,7 @@ export interface CaptureLayoutOptions {
  * from it — because that is precisely what apply injects `--cwd` as. A pane elsewhere on the disk
  * cannot be expressed and says so in `warnings`.
  */
-export function captureLayout(panes: RegionPane[], opts: CaptureLayoutOptions): LayoutCapture {
+export function captureTemplate(panes: RegionPane[], opts: CaptureTemplateOptions): TemplateCapture {
 	if (panes.length === 0) throw new Error('a capture needs at least one pane — this region reported none')
 	const tree = partition(panes)
 	const ctx = context(rootOf(tree).cwd)
@@ -217,7 +217,7 @@ export function captureLayout(panes: RegionPane[], opts: CaptureLayoutOptions): 
 
 /**
  * Capture a whole workspace into a `tabs` template — the exact inverse of the tabs walk, and
- * `captureLayout` one level up rather than a second derivation: each tab's tree comes off the SAME
+ * `captureTemplate` one level up rather than a second derivation: each tab's tree comes off the SAME
  * `partition`, because a tab is a region and the geometry rules cannot depend on how many of them
  * there are.
  *
@@ -225,7 +225,7 @@ export function captureLayout(panes: RegionPane[], opts: CaptureLayoutOptions): 
  * the target is the FIRST tab's root pane, because that is the pane apply's `--cwd` opens the
  * workspace at, so every tab's `dir` is measured from that one root.
  */
-export function captureWorkspaceLayout(tabs: WorkspaceTab[], opts: CaptureLayoutOptions): LayoutCapture {
+export function captureWorkspaceTemplate(tabs: WorkspaceTab[], opts: CaptureTemplateOptions): TemplateCapture {
 	if (tabs.length === 0) throw new Error('a workspace capture needs at least one tab — this workspace reported none')
 	const trees = tabs.map((tab) => {
 		if (tab.panes.length === 0) {
@@ -249,8 +249,8 @@ export function captureWorkspaceLayout(tabs: WorkspaceTab[], opts: CaptureLayout
 }
 
 /** The template every capture starts from — the fields that owe nothing to the geometry. */
-function shell(opts: CaptureLayoutOptions): LayoutTemplate {
-	const template: LayoutTemplate = { name: opts.name }
+function shell(opts: CaptureTemplateOptions): Template {
+	const template: Template = { name: opts.name }
 	if (opts.description) template.description = opts.description
 	return template
 }
@@ -294,7 +294,7 @@ function toPaneNode(pane: RegionPane, ctx: CaptureContext): PaneNode {
  * emit one: no multiplexer reports the command a pane was launched with, so a capture at any tier is
  * a DRAFT with `command` left for the author.
  */
-function convert(node: RegionTree, ctx: CaptureContext): LayoutNode {
+function convert(node: RegionTree, ctx: CaptureContext): TemplateNode {
 	if (node.type === 'pane') return toPaneNode(node.pane, ctx)
 	const split: SplitNode = {
 		type: 'split',

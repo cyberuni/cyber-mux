@@ -125,7 +125,7 @@ export interface SessionTarget {
  * as evidence that a worktree was grouped — that fact is `WorktreeWorkspaceCapability`'s alone.
  *
  * Widened from a bare `SessionTarget` because `open` returning only a pane id left nothing
- * downstream able to report a workspace: the layout manifest is framed as the complete
+ * downstream able to report a workspace: the template manifest is framed as the complete
  * machine-readable answer to "which panes exist and what are they for", and a consumer grouping
  * panes by workspace had nothing to group on.
  */
@@ -393,7 +393,7 @@ export interface SessionAdapter {
 	 * having no `workspace` member.
 	 *
 	 * **`open` cannot be the only way in.** A caller that did not open the space still has to group it
-	 * — `worktree add --layout` has its region opened by the worktree verbs before the walk ever runs
+	 * — `worktree add --template` has its region opened by the worktree verbs before the walk ever runs
 	 * — and it holds that space's own id the moment the open returns. So this is its own member acting
 	 * on an already-open space, exactly as `rename` does, and `SessionOpenOptions.workspaceGroup`
 	 * ROUTES THROUGH it, so there is one spelling per backend rather than two that can drift. Routing
@@ -425,7 +425,7 @@ export interface SessionAdapter {
 	 * Whether this backend can size a split — i.e. whether it honors `SessionOpenOptions.ratio`. Both
 	 * real backends can (herdr `--ratio`, tmux `-l`), so both declare it. Absent/`false` means a
 	 * caller asking for a ratio gets the backend's own even default instead, which callers DEGRADE to
-	 * (with one warning) rather than reject: the layout schema is backend-agnostic, so a template's
+	 * (with one warning) rather than reject: the template schema is backend-agnostic, so a template's
 	 * validity must never depend on which multiplexer happens to be running.
 	 */
 	readonly canSizeSplits?: boolean
@@ -501,11 +501,11 @@ export interface SessionAdapter {
 	listPanes(exec: Exec): LivePane[]
 	/**
 	 * Report the geometry of the region (tab/window) the target pane sits in — every pane in it, with
-	 * its rectangle. `layout save` runs this backwards into a template.
+	 * its rectangle. `template save` runs this backwards into a template.
 	 *
 	 * **Optional, exactly as `worktree` is** — present on a backend that can describe its own region,
 	 * absent on one that cannot. Both real backends can, so both declare it; a caller that finds it
-	 * missing refuses (`layout save` exits naming the backend) rather than degrading, because there is
+	 * missing refuses (`template save` exits naming the backend) rather than degrading, because there is
 	 * nothing to degrade to: no geometry, no capture.
 	 *
 	 * **Rects, not a tree, and that is the whole design of this verb.** Both backends can answer
@@ -518,7 +518,7 @@ export interface SessionAdapter {
 	 * tmux does not promise to keep, and the other needs cyber-mux to bet on herdr's id spelling.
 	 *
 	 * Rects are the fact both report exactly and neither can spell differently. The tree is then
-	 * *derived* from them by recursive guillotine cuts (`layout-capture.ts`), which is sound because a
+	 * *derived* from them by recursive guillotine cuts (`template-capture.ts`), which is sound because a
 	 * multiplexer region is built by splitting and therefore always guillotine-cuttable. That buys
 	 * two things: the tricky half — n-ary rows, ratios, ambiguous grids — is a PURE function testable
 	 * with no multiplexer at all, and a third backend owes this verb four numbers per pane rather
@@ -535,11 +535,11 @@ export interface SessionAdapter {
 	describeRegion?(exec: Exec, target: SessionTarget): RegionPane[]
 	/**
 	 * Report every tab of the workspace the target pane sits in, each with its own region's geometry —
-	 * the workspace-wide read beside `describeRegion`'s one-region read. `layout save --workspace` runs
+	 * the workspace-wide read beside `describeRegion`'s one-region read. `template save --workspace` runs
 	 * this backwards into a `tabs` template, and it is the exact inverse of the tabs walk.
 	 *
 	 * **Optional, exactly as `describeRegion` is**, and for the same reason: a backend that cannot
-	 * enumerate a workspace's tabs leaves a caller something to DO about it — `layout save --workspace`
+	 * enumerate a workspace's tabs leaves a caller something to DO about it — `template save --workspace`
 	 * exits naming the backend and writes nothing. An absent optional member is a refusal, never a
 	 * guess. (Contrast `rename`, which is required precisely because a caller finding it missing could
 	 * not degrade.) `save`'s default subject is unaffected: a bare `save` reads `describeRegion` and

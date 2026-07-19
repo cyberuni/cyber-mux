@@ -38,7 +38,7 @@ export const herdrSessionAdapter: SessionAdapter = {
 		// Native at EVERY tier, not just the split: `WorkspaceCreateParams` and `TabCreateParams` both
 		// carry an `env` Record in herdr's socket schema (protocol 16), and the CLI takes the same
 		// repeatable `--env KEY=VALUE` there as `pane split` does — verified against 0.7.4. That
-		// matters because a layout's root pane is born by the region open rather than by a split, so
+		// matters because a template's root pane is born by the region open rather than by a split, so
 		// scoping env to the split path would silently drop that pane's env.
 		const env = envFlags(opts.env)
 		// `opts.workspaceGroup` is deliberately unread here, and that IS this adapter's answer to it:

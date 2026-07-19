@@ -4,22 +4,22 @@ import {
 	collectPanes,
 	desugar,
 	type FlatPane,
-	isValidLayoutName,
-	type LayoutNode,
-	type LayoutTemplate,
-	parseLayout,
+	isValidTemplateName,
+	parseTemplate,
 	resolveTree,
 	type SplitNode,
 	type TabNode,
-	validateLayout,
-} from './layout.ts'
+	type Template,
+	type TemplateNode,
+	validateTemplate,
+} from './template.ts'
 
 /** A flat pool of `n` panes — the sugar's input, with labels that are irrelevant to the geometry. */
 function pool(n: number): FlatPane[] {
 	return Array.from({ length: n }, (_, i) => ({ label: `p${i + 1}`, command: 'zsh' }))
 }
 
-function asSplit(node: LayoutNode): SplitNode {
+function asSplit(node: TemplateNode): SplitNode {
 	if (node.type !== 'split') throw new Error(`expected a split node, got a ${node.type}`)
 	return node
 }
@@ -37,7 +37,7 @@ interface Rect {
 	h: number
 }
 
-function rects(node: LayoutNode, rect: Rect = { x: 0, y: 0, w: 1, h: 1 }): Rect[] {
+function rects(node: TemplateNode, rect: Rect = { x: 0, y: 0, w: 1, h: 1 }): Rect[] {
 	if (node.type === 'pane') return [rect]
 	// An omitted ratio is the backend's even split — the same default apply degrades to.
 	const ratio = node.ratio ?? 0.5
@@ -56,7 +56,7 @@ function rects(node: LayoutNode, rect: Rect = { x: 0, y: 0, w: 1, h: 1 }): Rect[
 }
 
 /** Every split node in the tree, for claims that quantify over all of them. */
-function splits(node: LayoutNode, acc: SplitNode[] = []): SplitNode[] {
+function splits(node: TemplateNode, acc: SplitNode[] = []): SplitNode[] {
 	if (node.type === 'split') {
 		acc.push(node)
 		splits(node.first, acc)
@@ -65,22 +65,22 @@ function splits(node: LayoutNode, acc: SplitNode[] = []): SplitNode[] {
 	return acc
 }
 
-describe('spec:cyber-mux/layout', () => {
-	describe('parseLayout', () => {
+describe('spec:cyber-mux/template', () => {
+	describe('parseTemplate', () => {
 		it('parses a template’s bytes into an object', () => {
-			expect(parseLayout('{"name":"render-farm","panes":[{"label":"gpu"}]}')).toEqual({
+			expect(parseTemplate('{"name":"render-farm","panes":[{"label":"gpu"}]}')).toEqual({
 				name: 'render-farm',
 				panes: [{ label: 'gpu' }],
 			})
 		})
 
 		it('throws naming the JSON failure rather than yielding a half-read template', () => {
-			expect(() => parseLayout('{"name": "render-farm",}')).toThrow(/not valid JSON/)
+			expect(() => parseTemplate('{"name": "render-farm",}')).toThrow(/not valid JSON/)
 		})
 	})
 
 	describe('a name is a lookup key, never a path', () => {
-		// The stem rule is the whole reason a name can never traverse out of the layouts directory.
+		// The stem rule is the whole reason a name can never traverse out of the templates directory.
 		it.each([
 			'../../../etc/pwd',
 			'pool/../../out',
@@ -88,32 +88,32 @@ describe('spec:cyber-mux/layout', () => {
 			'-pool',
 			'pool_4',
 		])('refuses "%s" as a template name', (name) => {
-			expect(isValidLayoutName(name)).toBe(false)
+			expect(isValidTemplateName(name)).toBe(false)
 		})
 
 		it('accepts a plain lower-case stem', () => {
-			for (const name of ['render-farm', 'p3', 'build-trio-2']) expect(isValidLayoutName(name)).toBe(true)
+			for (const name of ['render-farm', 'p3', 'build-trio-2']) expect(isValidTemplateName(name)).toBe(true)
 		})
 	})
 
-	describe('validateLayout', () => {
+	describe('validateTemplate', () => {
 		it('a name field that disagrees with the filename stem fails, naming both', () => {
 			// The redundancy is the point: a copied file that kept its old name fails loudly rather than
 			// resolving under one name while calling itself another.
-			const errors = validateLayout({ name: 'pool-3', panes: [{ label: 'w' }] }, 'pool-4')
+			const errors = validateTemplate({ name: 'pool-3', panes: [{ label: 'w' }] }, 'pool-4')
 			expect(errors).toHaveLength(1)
 			expect(errors[0]).toContain('pool-4')
 			expect(errors[0]).toContain('pool-3')
 		})
 
 		it('accepts a name field equal to the stem', () => {
-			expect(validateLayout({ name: 'render-farm', panes: [{ label: 'gpu' }] }, 'render-farm')).toEqual([])
+			expect(validateTemplate({ name: 'render-farm', panes: [{ label: 'gpu' }] }, 'render-farm')).toEqual([])
 		})
 
 		it('a template that sets cwd fails, naming its JSON path, --cwd and dir', () => {
 			// A hard error rather than an ignored key is what keeps a template reusable: silently dropping
 			// a cwd would let a template that pins a machine's path look like it worked.
-			const errors = validateLayout(
+			const errors = validateTemplate(
 				{
 					name: 'render-farm',
 					root: {
@@ -134,7 +134,7 @@ describe('spec:cyber-mux/layout', () => {
 		// The Examples rows are the contract's own vectors: absolute, a bare escape, and an escape that
 		// only shows up after normalization.
 		it.each(['/etc', '../sibling', 'packages/../../outside'])('refuses dir "%s", naming that pane’s path', (dir) => {
-			const errors = validateLayout(
+			const errors = validateTemplate(
 				{ name: 'render-farm', panes: [{ label: 'gpu' }, { label: 'cpu', dir }] },
 				'render-farm',
 			)
@@ -144,13 +144,13 @@ describe('spec:cyber-mux/layout', () => {
 
 		it('accepts a relative dir under the target', () => {
 			expect(
-				validateLayout({ name: 'render-farm', panes: [{ label: 'gpu', dir: 'services/api/logs' }] }, 'render-farm'),
+				validateTemplate({ name: 'render-farm', panes: [{ label: 'gpu', dir: 'services/api/logs' }] }, 'render-farm'),
 			).toEqual([])
 		})
 
 		// 0 and 1 hand one side the whole region and the other nothing — a mistake, not an intent.
 		it.each([0, 1, -0.5, 1.5])('refuses ratio %s, naming that node’s path', (ratio) => {
-			const errors = validateLayout(
+			const errors = validateTemplate(
 				{
 					name: 'render-farm',
 					root: {
@@ -168,7 +168,7 @@ describe('spec:cyber-mux/layout', () => {
 		})
 
 		it('accepts a ratio strictly between 0 and 1', () => {
-			const errors = validateLayout(
+			const errors = validateTemplate(
 				{
 					name: 'render-farm',
 					root: {
@@ -188,7 +188,7 @@ describe('spec:cyber-mux/layout', () => {
 			// Nothing keys on a label — the manifest's unique handle is the pane id — and neither backend
 			// requires a unique name. A pool of renderers all named `gpu` is a legitimate thing to mean.
 			expect(
-				validateLayout({ name: 'render-farm', panes: [{ label: 'gpu' }, { label: 'gpu' }] }, 'render-farm'),
+				validateTemplate({ name: 'render-farm', panes: [{ label: 'gpu' }, { label: 'gpu' }] }, 'render-farm'),
 			).toEqual([])
 		})
 
@@ -200,7 +200,7 @@ describe('spec:cyber-mux/layout', () => {
 			{ declares: 'both panes and tabs', panes: [{ label: 'cpu' }], tabs: [{ panes: [{ label: 'io' }] }] },
 			{ declares: 'none of root, panes or tabs' },
 		])('exactly one of root, panes and tabs', ({ declares: _declares, ...shape }) => {
-			const errors = validateLayout({ name: 'render-farm', ...shape }, 'render-farm')
+			const errors = validateTemplate({ name: 'render-farm', ...shape }, 'render-farm')
 			expect(errors.some((e) => e.startsWith('root/panes/tabs:'))).toBe(true)
 		})
 
@@ -210,14 +210,14 @@ describe('spec:cyber-mux/layout', () => {
 				{ panes: [{ label: 'cpu' }] },
 				{ tabs: [{ panes: [{ label: 'io' }] }] },
 			]) {
-				expect(validateLayout({ name: 'render-farm', ...shape }, 'render-farm')).toEqual([])
+				expect(validateTemplate({ name: 'render-farm', ...shape }, 'render-farm')).toEqual([])
 			}
 		})
 
 		it('every validation error is reported at once, not first-only', () => {
 			// CI's whole reason to run this is being told everything wrong in one pass — a template with
 			// three mistakes must not take three runs to fix.
-			const errors = validateLayout(
+			const errors = validateTemplate(
 				{
 					name: 'render-farm',
 					root: {
@@ -237,7 +237,7 @@ describe('spec:cyber-mux/layout', () => {
 		})
 
 		it('a cwd nested deep in the tree is named at its own path, not the root’s', () => {
-			const errors = validateLayout(
+			const errors = validateTemplate(
 				{
 					name: 'render-farm',
 					root: {
@@ -262,24 +262,24 @@ describe('spec:cyber-mux/layout', () => {
 	// is the two-level form, each tab a tree in the very same shape.
 	describe('tabs', () => {
 		it('a tab carries its own tree, in the same shape a single-tab template uses', () => {
-			const split: LayoutNode = {
+			const split: TemplateNode = {
 				type: 'split',
 				direction: 'right',
 				ratio: 0.6,
 				first: { type: 'pane', label: 'gpu', command: 'render' },
 				second: { type: 'pane', label: 'cpu' },
 			}
-			const solo: LayoutNode = { type: 'pane', label: 'io', command: 'iostat' }
-			const template: LayoutTemplate = {
+			const solo: TemplateNode = { type: 'pane', label: 'io', command: 'iostat' }
+			const template: Template = {
 				name: 'render-farm',
 				tabs: [{ label: 'shots', root: split }, { root: solo }],
 			}
-			expect(validateLayout(template, 'render-farm')).toEqual([])
+			expect(validateTemplate(template, 'render-farm')).toEqual([])
 
 			// "the same node shape a top-level root accepts", proven rather than asserted: each tab's tree,
 			// lifted verbatim to the top level, is a valid template and resolves to the identical tree.
 			for (const tab of template.tabs!) {
-				expect(validateLayout({ name: 'render-farm', root: tab.root }, 'render-farm')).toEqual([])
+				expect(validateTemplate({ name: 'render-farm', root: tab.root }, 'render-farm')).toEqual([])
 				expect(resolveTree(tab)).toEqual(resolveTree({ name: 'render-farm', root: tab.root }))
 			}
 			expect(resolveTree(template.tabs![0]!)).toBe(split)
@@ -289,7 +289,7 @@ describe('spec:cyber-mux/layout', () => {
 		it('a tab may use the flat sugar, desugared exactly as a single-tab template is', () => {
 			// Sugar is a property of a pane pool, not of where the pool sits — one desugarer, one answer.
 			const tab: TabNode = { label: 'shots', panes: pool(3), arrange: 'even-horizontal' }
-			const single: LayoutTemplate = { name: 'render-farm', panes: pool(3), arrange: 'even-horizontal' }
+			const single: Template = { name: 'render-farm', panes: pool(3), arrange: 'even-horizontal' }
 			expect(resolveTree(tab)).toEqual(resolveTree(single))
 			expect(resolveTree(tab)).toEqual(desugar(pool(3), 'even-horizontal'))
 			// The right-comb itself, so a desugarer that quietly stopped combing inside a tab is caught.
@@ -305,13 +305,13 @@ describe('spec:cyber-mux/layout', () => {
 			{ declares: 'both root and panes', root: { type: 'pane', label: 'gpu' }, panes: [{ label: 'cpu' }] },
 			{ declares: 'neither root nor panes', label: 'shots' },
 		])('a tab declares exactly one of root and panes, the same as the template itself', ({ declares: _d, ...tab }) => {
-			const errors = validateLayout({ name: 'render-farm', tabs: [{ panes: [{ label: 'io' }] }, tab] }, 'render-farm')
+			const errors = validateTemplate({ name: 'render-farm', tabs: [{ panes: [{ label: 'io' }] }, tab] }, 'render-farm')
 			// The error points at the offending TAB rather than at the template.
 			expect(errors.some((e) => e.startsWith('tabs[1]:'))).toBe(true)
 		})
 
 		it('an empty tabs array is refused, because a workspace of no tabs is not a workspace', () => {
-			const errors = validateLayout({ name: 'render-farm', tabs: [] }, 'render-farm')
+			const errors = validateTemplate({ name: 'render-farm', tabs: [] }, 'render-farm')
 			expect(errors.some((e) => e.startsWith('tabs:'))).toBe(true)
 			// And it is refused as an empty workspace, not by falling through to "declares none of the three".
 			expect(errors.some((e) => e.startsWith('root/panes/tabs:'))).toBe(false)
@@ -322,7 +322,7 @@ describe('spec:cyber-mux/layout', () => {
 			// by its own id at the seam. herdr labels every new workspace's root tab `1`, so a backend that
 			// manufactures duplicates by default cannot be one a uniqueness rule describes.
 			expect(
-				validateLayout(
+				validateTemplate(
 					{
 						name: 'render-farm',
 						tabs: [
@@ -337,14 +337,14 @@ describe('spec:cyber-mux/layout', () => {
 
 		it('a tab label is a separate namespace from a pane label, so a tab and a pane may share a name', () => {
 			expect(
-				validateLayout({ name: 'render-farm', tabs: [{ label: 'gpu', panes: [{ label: 'gpu' }] }] }, 'render-farm'),
+				validateTemplate({ name: 'render-farm', tabs: [{ label: 'gpu', panes: [{ label: 'gpu' }] }] }, 'render-farm'),
 			).toEqual([])
 		})
 
 		it('a tab may leave its label to the backend', () => {
 			// Matching --label omitted everywhere else: the backend's own default stands.
 			expect(
-				validateLayout(
+				validateTemplate(
 					{ name: 'render-farm', tabs: [{ panes: [{ label: 'gpu' }] }, { panes: [{ label: 'cpu' }] }] },
 					'render-farm',
 				),
@@ -353,7 +353,7 @@ describe('spec:cyber-mux/layout', () => {
 
 		it('a tab cannot carry a cwd any more than a pane can', () => {
 			// The rule the whole capability exists to enforce does not weaken because a level was added.
-			const errors = validateLayout(
+			const errors = validateTemplate(
 				{ name: 'render-farm', tabs: [{ label: 'shots', cwd: '/home/someone/render', panes: [{ label: 'gpu' }] }] },
 				'render-farm',
 			)
@@ -366,7 +366,7 @@ describe('spec:cyber-mux/layout', () => {
 		it('every error across every tab is reported at once, each naming its own JSON path', () => {
 			// The report-everything rule holds through the added level: a cwd in one tab does not hide a
 			// bad ratio in another.
-			const errors = validateLayout(
+			const errors = validateTemplate(
 				{
 					name: 'render-farm',
 					tabs: [
@@ -443,7 +443,7 @@ describe('spec:cyber-mux/layout', () => {
 		})
 
 		it('arrange omitted defaults to tiled', () => {
-			const template: LayoutTemplate = { name: 'render-farm', panes: pool(4) }
+			const template: Template = { name: 'render-farm', panes: pool(4) }
 			expect(resolveTree(template)).toEqual(desugar(pool(4), 'tiled'))
 		})
 
@@ -510,7 +510,7 @@ describe('spec:cyber-mux/layout', () => {
 
 	describe('resolveTree', () => {
 		it('returns an explicit root untouched, desugaring nothing', () => {
-			const root: LayoutNode = {
+			const root: TemplateNode = {
 				type: 'split',
 				direction: 'down',
 				ratio: 0.7,
@@ -523,7 +523,7 @@ describe('spec:cyber-mux/layout', () => {
 		it('is the one desugarer, so show --desugar and the walk cannot disagree', () => {
 			// Both callers go through this function; that identity is the guarantee, so it is asserted
 			// rather than left to two call sites that happen to match today.
-			const template: LayoutTemplate = { name: 'render-farm', arrange: 'even-vertical', panes: pool(3) }
+			const template: Template = { name: 'render-farm', arrange: 'even-vertical', panes: pool(3) }
 			expect(resolveTree(template)).toEqual(desugar(pool(3), 'even-vertical'))
 		})
 	})

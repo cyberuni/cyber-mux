@@ -9,7 +9,7 @@ through that binding where it exists and fall back to plain git plus a normal
 [`open`](/cyber-mux/cli/open/) where it does not, so the same command works on both. See
 [adapters](/cyber-mux/concepts/adapters/) and [worktrees](/cyber-mux/concepts/worktrees/).
 
-### `cyber-mux worktree add --branch <branch> [--path <path>] [--base <ref>] [--launch <cmd>] [--layout <name>] [--at <placement>] [--env <KEY=VALUE>...] [--label <name>]`
+### `cyber-mux worktree add --branch <branch> [--path <path>] [--base <ref>] [--launch <cmd>] [--template <name>] [--at <placement>] [--env <KEY=VALUE>...] [--label <name>]`
 
 Create a git worktree, and open it when given a placement.
 
@@ -20,7 +20,7 @@ Create a git worktree, and open it when given a placement.
 - `--base <ref>` — start point for the new branch; defaults to the current `HEAD`.
 - `--launch <cmd>` / `--env` — each **implies** `--at workspace`, the only placement a backend can
   bind a worktree to (asking for something *in* a pane is asking for the pane).
-- `--layout <name>` — same rules as [`open --layout`](/cyber-mux/cli/open/): resolved and validated
+- `--template <name>` — same rules as [`open --template`](/cyber-mux/cli/open/): resolved and validated
   before the worktree is created, and conflicts with `--launch`/`--env`.
 - `--label <name>` — names the opened workspace (see `open`'s label table). Worth knowing what you
   get without it: because `worktree add` always passes `--path`, herdr labels the workspace after
@@ -64,7 +64,7 @@ cyber-mux worktree add --branch feat/x --at workspace --launch "claude"
 cyber-mux worktree add --branch feat/x --path ~/code/my-app.worktrees/feat-x --base origin/main
 ```
 
-### `cyber-mux worktree open <path> [--launch <cmd>] [--layout <name>] [--at <placement>] [--env <KEY=VALUE>...] [--label <name>]`
+### `cyber-mux worktree open <path> [--launch <cmd>] [--template <name>] [--at <placement>] [--env <KEY=VALUE>...] [--label <name>]`
 
 Open an existing worktree, grouping it with its repo where the backend can bind. This is the remedy
 for a checkout made by a bare `worktree add` — add now, group later. Same flags as `worktree add`

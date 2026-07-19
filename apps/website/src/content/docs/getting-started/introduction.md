@@ -6,7 +6,7 @@ description: What cyber-mux is and why it exists.
 `cyber-mux` is a small CLI for **cross-multiplexer pane control**. It gives you one way to drive
 panes — open, send, submit, read, focus, close, list — regardless of the terminal multiplexer you
 happen to be inside. It also manages **git worktrees** bound to a workspace, and can build a whole
-named **layout** of panes from a template in one call.
+named **template** of panes in one call.
 
 Today it supports three backends:
 
@@ -38,7 +38,7 @@ skip detection entirely.
 - [Adapters](/cyber-mux/concepts/adapters/) — how tmux, herdr, and WezTerm each implement the
   common contract.
 - [Detection](/cyber-mux/concepts/detection/) — how cyber-mux figures out where it is running.
-- [Layouts](/cyber-mux/concepts/layouts/) — named, reusable pane pools.
+- [Templates](/cyber-mux/concepts/templates/) — named, reusable pane pools.
 - [Worktrees](/cyber-mux/concepts/worktrees/) — git worktrees bound to a workspace.
 - [AXI](/cyber-mux/concepts/axi/) — the agent-facing output contract every command follows.
 - [CLI Reference](/cyber-mux/cli/) — the full verb surface, one page per command.

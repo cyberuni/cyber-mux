@@ -34,8 +34,8 @@ once opened:
 - **A split can be told which pane, how big, and what environment** — three options on the seam's
   own open contract shape a `pane:*` placement. `from` and `ratio` are reached only through the
   adapter, never a CLI flag; `env` also has a `--env` flag (below), whose *surface* is its own
-  concern while what env *means* stays this bullet's. The layout capability is another such caller.
-  What a template *does* with these is [`layout/`](../layout/README.md)'s business; what they *mean*
+  concern while what env *means* stays this bullet's. The template capability is another such caller.
+  What a template *does* with these is [`template/`](../template/README.md)'s business; what they *mean*
   is this node's.
   - **`from` names the pane to split, and passing it is the only way `pane:right` means the same
     thing on both backends.** Omitting it does not mean "the calling pane" — it means "whatever this
@@ -55,7 +55,7 @@ once opened:
     issue that requested this backend (#47) and the CLI's own help text, not a live binary.
   - **A backend declares whether it can size a split at all**, so a caller can degrade a ratio rather
     than fail on a backend that cannot honor one — the degrade *policy* is the caller's, not this
-    seam's (layout warns once and takes the default). All three backends can size, so all three
+    seam's (template warns once and takes the default). All three backends can size, so all three
     declare it; silence is taken as cannot.
   - **`env` is set natively at the birth of whatever tier opens — not just a split — on tmux and
     herdr.** Both take a repeatable flag on every space-creating command (herdr `--env KEY=VALUE`,
@@ -87,7 +87,7 @@ once opened:
     worktree bind route**, the one route that cannot carry env, where the flag degrades to a prefix
     or a warning per the two bullets above. That exception is stated wherever the flag is, because a
     CLI property silently false on one backend's one route is this project's recurring defect.
-    Refused alongside `--layout` for `--launch`'s reason — the template owns what is in the panes it
+    Refused alongside `--template` for `--launch`'s reason — the template owns what is in the panes it
     declares. It **implies a placement** for `--launch`'s reason too: asking for something in a pane
     is asking for the pane, and without that a bare `worktree add --env` would open nothing and drop
     the env with nothing to carry it. A missing `=` is malformed and rejected before anything opens;
@@ -95,12 +95,12 @@ once opened:
     splitting on the first one only.
 
   **Boundary — the seam does not validate `ratio`.** It renders whatever number it is given; the
-  `0 < ratio < 1` bar belongs to the caller (layout's schema enforces it, and is where a degenerate
+  `0 < ratio < 1` bar belongs to the caller (template's schema enforces it, and is where a degenerate
   ratio is refused). An adapter author owes the rendering, not the range check.
 
 - **A caller can group the spaces it opens, on a backend with no tier to group them in** — one more
   option on the open contract, and the same shape as the three above: not a CLI flag, reached through
-  the adapter, with [`layout/`](../layout/README.md) as its caller. A caller opening several tabs as
+  the adapter, with [`template/`](../template/README.md) as its caller. A caller opening several tabs as
   one workspace needs them recognizable as a group afterwards. Where a real Workspace tier exists the
   tier **is** the group and the option is **ignored** — herdr already stamps every pane and tab record
   with its `workspace_id`, so a second grouping would duplicate a fact the backend never reads. Where
@@ -114,7 +114,7 @@ once opened:
   group `acme` with tab `beta - main` exactly as well as group `acme - beta` with tab `main`. No split
   rule resolves it; each merely picks which legal label to silently mis-group. So a label is never
   parsed to recover a grouping. What a *human* reads in a status bar is the label's job and belongs to
-  the caller that composes it (layout's business); what a *machine* reads is this id.
+  the caller that composes it (template's business); what a *machine* reads is this id.
 
   **Grouping is a verb, not only an option on `open`.** `open` cannot be the only way in: a caller
   that did not open the space still has to group it — the `worktree` route opens its region before any
@@ -172,7 +172,7 @@ once opened:
 - **`open` returns the workspace the new pane landed in, and reports it** — not just the pane's id,
   so a caller holding several panes can group them by the space they occupy. The seam is the fact's
   source; every surface reads it from there rather than asking again — `open` prints it beside the
-  pane, and the layout manifest ([`layout/`](../layout/README.md)) carries it for a whole pool.
+  pane, and the template manifest ([`template/`](../template/README.md)) carries it for a whole pool.
   Reporting it costs **nothing**: the backend already answered when the pane was opened, so a
   surface that hid it would be discarding a fact it already held. A backend with no workspace tier
   reports **absent** rather than a false "none" — the same absent-rather-than-false convention the
@@ -316,7 +316,7 @@ one group. What the premise never supported is the conclusion drawn from it: it 
 workspace's **root tab alone**. Every subsequent tab is named at birth on both backends — herdr
 `tab create --label`, tmux `new-window -n` — which `--label` above already specifies at every tier.
 So the cost is one `tab rename` on herdr's first tab, not a capability neither backend has. Multi-tab
-layouts ([`layout/`](../layout/README.md)) are the first real customer, and the non-goal is revisited
+templates ([`template/`](../template/README.md)) are the first real customer, and the non-goal is revisited
 here rather than silently contradicted.
 
 - **Typing text and pressing keys are separate verbs; only `submit` presses Enter *for you*** —
@@ -332,7 +332,7 @@ here rather than silently contradicted.
     failure is the backend's own — herdr refuses an unknown key (`unsupported key <k>`), while
     **tmux has no refusal path** and types the token as characters. Neither reaches the caller today:
     the `Exec` seam reports failure as `null`, so `send keys` exits 0 either way. The seam now
-    *captures* a backend's stderr into an optional `lastError` (added for the layout walk, which
+    *captures* a backend's stderr into an optional `lastError` (added for the template walk, which
     needed to say why a split was refused), so the reason is no longer thrown away — but `send keys`
     does not read it, and a `null` still cannot be told from an empty stdout. So the gap **narrows
     rather than closes**: it is still the seam's, not this verb's, it still predates the split, and a
@@ -370,9 +370,9 @@ here rather than silently contradicted.
 
 - **A pane is addressed by a name or an id, and an ambiguous name fails with its candidates** —
   every verb that takes a pane (`read`, `submit`, `exists`, `focus`, `close`, `send text`,
-  `send keys`, and `layout save --from`) accepts either. A layout template names its panes and the
+  `send keys`, and `template save --from`) accepts either. A template template names its panes and the
   apply manifest reports `(label, pane)` per pane, so a caller wanting "the `worker` pane" would
-  otherwise do the lookup itself — which is the surface [`layout/`](../layout/README.md)'s manifest
+  otherwise do the lookup itself — which is the surface [`template/`](../template/README.md)'s manifest
   already promises it will not need.
 
   - **An id outranks a name, and the ladder is what keeps this additive.** A string is taken as an
@@ -451,7 +451,7 @@ here rather than silently contradicted.
     reason this is one pass rather than a per-verb patch.
   - **An unknown flag names the flag AND the command's valid flags**, validated against the
     **subcommand's** set rather than the group's, since a group's subcommands need not share one:
-    `layout save` takes `--from`/`--workspace`/`--description`/`--force` and `layout list` takes none
+    `template save` takes `--from`/`--workspace`/`--description`/`--force` and `template list` takes none
     of them, so validating against the group's union would accept `--force` on `list` and then
     silently drop it — the exact failure fail-loud exists to prevent, and only the subcommand layer
     knows which set is in play. (`send text` and `send keys` are **not** an example of this: they
@@ -528,10 +528,10 @@ Every scenario in [`mux.feature`](./mux.feature) maps to one of these behaviors:
 | **multiplexer detection is two-mode** | `$CYBER_MUX` fast-path + override; ancestry walk; hint fallback; `doctor` hint |
 | **mux mode** | reports the detected session backend; "none" (exit 0) when no adapter is selectable |
 | **pane focus reporting** | tri-state focused / not-focused / unknown per backend (tmux: pane+window active & session attached; herdr: pane record `focused`); a query that can't be answered → unknown so callers fail open |
-| **open returns the pane's workspace, and reports it** | the workspace the new pane landed in, per placement on herdr (a created workspace reports itself; a tab reports the workspace it was created in; a split reports the caller's); absent on a backend with no workspace tier; read from the output the pane id already comes from, so it costs no extra call; reported beside the pane by `open` itself and carried for a pool by the layout manifest; occupancy is never a worktree binding |
+| **open returns the pane's workspace, and reports it** | the workspace the new pane landed in, per placement on herdr (a created workspace reports itself; a tab reports the workspace it was created in; a split reports the caller's); absent on a backend with no workspace tier; read from the output the pane id already comes from, so it costs no extra call; reported beside the pane by `open` itself and carried for a pool by the template manifest; occupancy is never a worktree binding |
 | **git worktree helpers** | `worktree add` defaults the path to a sibling of the primary checkout on every backend; `--base` sets the start-point; `worktree remove` refuses the primary checkout, tolerates an already-gone worktree, and refuses uncommitted changes unless `--force` |
 | **worktree/workspace binding** | a bare `add` — none of `--at`, `--launch` or `--env` — opens nothing and resolves no backend, which is what makes it the only route that works outside a multiplexer at all; `--launch` and `--env` each imply `--at workspace`, both being a request for something IN a pane; `--at workspace` groups where the backend binds and falls back where it does not; a pane/tab placement degrades (reports no workspace) rather than failing, and only where a grouping was on offer, the caller told through a stdout `help[N]:` entry naming `--at workspace` per [`axi/`](../axi/README.md)'s #9; `open` groups a checkout plain git made |
-| **`--env`, the CLI surface for the seam's env option** | repeatable `--env KEY=VALUE` on every verb that opens a pane (`open`, `worktree add`, `worktree open`) — the one split option with a flag, since a variable not set at birth cannot be set at all; it names the pane the verb opens, exactly one being opened on each route, **except** on herdr's worktree bind route, where it degrades to a prefix on `--launch` or a stderr warning with no command to ride — stated on BOTH worktree verbs, which are exposed identically; refused alongside `--layout`, which owns its own panes' env; implies a placement; a missing `=` is rejected before anything opens, a trailing `=` sets the variable empty, and a value's own `=` survives by splitting on the first only |
+| **`--env`, the CLI surface for the seam's env option** | repeatable `--env KEY=VALUE` on every verb that opens a pane (`open`, `worktree add`, `worktree open`) — the one split option with a flag, since a variable not set at birth cannot be set at all; it names the pane the verb opens, exactly one being opened on each route, **except** on herdr's worktree bind route, where it degrades to a prefix on `--launch` or a stderr warning with no command to ride — stated on BOTH worktree verbs, which are exposed identically; refused alongside `--template`, which owns its own panes' env; implies a placement; a missing `=` is rejected before anything opens, a trailing `=` sets the variable empty, and a value's own `=` survives by splitting on the first only |
 | **naming what was opened** | `--label` names the tier `--at` opened, on every backend (herdr workspace/tab/pane label; tmux window name or pane title); taken at birth where the backend's CLI allows, set immediately after where it does not; omitted leaves the backend's own default |
 | **worktree facts vs binding** | `list` reads path/branch/linked/prunable from git on every backend and reports only the binding from the backend; `list`/`remove` answer with no multiplexer |
 | **worktree removal ordering** | never delegated to a backend — cyber-mux's gates plus git, the backend only releasing its binding; gates run before the release (a refused removal has no side effect); the release runs before git's removal (no workspace on a dead directory), including for a checkout already gone |

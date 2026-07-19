@@ -28,7 +28,7 @@ import type { LivePane, OpenedPane, SessionAdapter, SessionReadOptions } from '.
  *   it via `send-text --no-paste`; see `WEZTERM_KEY_BYTES`.
  * - **No pane geometry** — `list --format json` reports a pane's `size` (rows/cols) but no position,
  *   so there is nothing to build a `PaneRect` from. `describeRegion`/`describeWorkspace` are omitted
- *   entirely, the same optional-omission `layout save` already handles for a backend that cannot.
+ *   entirely, the same optional-omission `template save` already handles for a backend that cannot.
  * - **No git-worktree concept in the CLI at all** — no `worktree` subcommand, so like tmux this
  *   backend never binds one to a workspace; `worktree` is omitted.
  *
@@ -192,7 +192,7 @@ export const weztermSessionAdapter: SessionAdapter = {
 	},
 
 	// No `describeRegion`/`describeWorkspace`: `list --format json` reports a pane's size, never its
-	// position, so there is no rect to build. Omitted entirely — the same optional-absence `layout
+	// position, so there is no rect to build. Omitted entirely — the same optional-absence `template
 	// save` already handles for a backend that cannot describe its own region, not a stub.
 
 	// No `worktree`: no `worktree` subcommand exists in the CLI at all, so — like tmux — this backend

@@ -50,7 +50,7 @@ export const tmuxSessionAdapter: SessionAdapter = {
 		const window = at === 'workspace' || at === 'tab'
 		// `-e` is on BOTH `split-window` and `new-window` (tmux(1): `new-window [-abdkPS] [-c
 		// start-directory] [-e environment] ...`), so env is native at EVERY tier — which it must be:
-		// a layout's root pane is the region's own pane, born by the window open rather than by any
+		// a template's root pane is the region's own pane, born by the window open rather than by any
 		// split, so scoping this to the split path would silently drop that pane's env.
 		const env = opts.env ? Object.entries(opts.env).flatMap(([k, v]) => ['-e', `${k}=${v}`]) : []
 		// A group id tags the WINDOW this open created. It no longer drives the FORMAT — `#{window_id}`

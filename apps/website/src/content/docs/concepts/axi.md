@@ -36,13 +36,13 @@ result: a command either succeeds and writes its payload, or fails and writes it
 A command that leaves an obvious next move names it as a `help[N]:` block inside its stdout payload
 — never a bare "see `--help`", and omitted when the output is already self-contained (a detail view,
 a count, a confirmation). Two ship today: `worktree add`/`open` names the flag that would have
-grouped what it just placed, and `layout save` reveals when a workspace held more tabs than were
+grouped what it just placed, and `template save` reveals when a workspace held more tabs than were
 captured.
 
 ## Ambiguous pane addressing
 
 Every verb that takes a pane (`read`, `submit`, `exists`, `focus`, `close`, `send text`, `send keys`,
-`layout save --from`) accepts either an **id** or a **label**. An id outranks a label and is
+`template save --from`) accepts either an **id** or a **label**. An id outranks a label and is
 recognized by matching a live pane — never by the shape of the string. Two or more label matches fail
 as a structured `ambiguous-pane` error (exit `2`) listing each candidate's id, label, and cwd — each
 id directly usable as the retry. Zero matches is the ordinary not-found path (exit `1`), not an
