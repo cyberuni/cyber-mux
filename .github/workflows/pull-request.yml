@@ -9,3 +9,69 @@ jobs:
     with:
       os: '["ubuntu-latest"]'
       skip-playwright: true
+
+  # The real-boundary suite (`pnpm test:integration`), which `pnpm verify` deliberately excludes:
+  # it drives the ACTUAL tmux and herdr binaries rather than a mocked Exec. Opt-in locally, run
+  # here so the frozen scenarios that only a live backend can exercise stop resting on source
+  # re-derivation. Runs outside any multiplexer pane, which is what unlocks the placements the
+  # suite gates away from a caller's own session.
+  #
+  # Non-blocking for now: herdr with no attached client is unproven in CI. Once this is green
+  # across a run of PRs, drop `continue-on-error` and make it required.
+  live-backends:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    env:
+      # Pinned, not "latest": a herdr release should never silently change what this suite runs
+      # against. Bump deliberately, the same way mise pins the toolchain.
+      HERDR_VERSION: v0.7.4
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+
+      - name: Install tmux
+        run: sudo apt-get update && sudo apt-get install -y tmux
+
+      # Upstream publishes statically linked release binaries, so this needs no package manager and
+      # no toolchain. (herdr is also in homebrew-core, but Homebrew is NOT on the ubuntu-24.04
+      # runner image — `brew` is simply not on PATH there.)
+      - name: Install herdr
+        run: |
+          curl -fsSL -o "${RUNNER_TEMP}/herdr" \
+            "https://github.com/ogulcancelik/herdr/releases/download/${HERDR_VERSION}/herdr-linux-x86_64"
+          sudo install -m 0755 "${RUNNER_TEMP}/herdr" /usr/local/bin/herdr
+          herdr --version
+
+      # Every herdr verb talks to one background server over a unix socket. Start it explicitly and
+      # wait for it to answer, rather than letting the first test command race the daemon's startup.
+      - name: Start the herdr server
+        run: |
+          nohup herdr server >/tmp/herdr-server.log 2>&1 &
+          for _ in $(seq 1 30); do
+            if herdr status | grep -q 'status: running'; then
+              echo "herdr server is up"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "herdr server did not come up in 30s"
+          cat /tmp/herdr-server.log
+          exit 1
+
+      - run: pnpm install --frozen-lockfile
+
+      # The CLI-level tests drive `bin/cyber-mux.mjs`, which loads `dist/cli.mjs` — they need a build.
+      - run: pnpm build
+
+      - name: Run the real-boundary suite
+        run: pnpm cm test:integration
+
+      # Diagnostics only — must never be the thing that reports the job as broken. An earlier step
+      # can fail before the server was ever started, in which case there is simply no log to show.
+      - name: herdr server log
+        if: failure()
+        run: cat /tmp/herdr-server.log || echo "(no herdr server log — it never started)"
