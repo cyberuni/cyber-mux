@@ -7,7 +7,7 @@ A multiplexer may bind a git worktree to a workspace as a first-class record —
 groups a repo's checkouts by. herdr does; tmux has no workspace tier and does not. These verbs route
 through that binding where it exists and fall back to plain git plus a normal
 [`open`](/cyber-mux/cli/open/) where it does not, so the same command works on both. See
-[adapters](/cyber-mux/concepts/adapters/) and [worktrees](/cyber-mux/concepts/worktrees/).
+[multiplexers](/cyber-mux/multiplexers/) and [worktrees](/cyber-mux/concepts/worktrees/).
 
 ### `cyber-mux worktree add --branch <branch> [--path <path>] [--base <ref>] [--launch <cmd>] [--template <name>] [--at <placement>] [--env <KEY=VALUE>...] [--label <name>]`
 
