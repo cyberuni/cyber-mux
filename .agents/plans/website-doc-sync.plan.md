@@ -23,7 +23,11 @@ todos:
 ---
 
 ## NEXT
-Done. website build/typecheck/lint + cyber-mux test suite (602) all green via
+Done and pushed (60d8bdb..31aa066). While this CR was in flight, WezTerm
+adapter #52 landed on main — rebased and did a second pass fixing every
+"two backends" claim + added a WezTerm section to adapters.md, matching
+[[feedback_rebase-before-analyzing-worktree]]. website build/typecheck/lint +
+cyber-mux test suite (638, was 602 pre-rebase) all green via
 `turbo run build typecheck lint test --filter=website --filter=cyber-mux`. The
 repo-wide `pnpm verify` still fails on a pre-existing, unrelated biome-format
 issue in the untracked `.github/setup-state.json` (present before this CR
