@@ -2,25 +2,25 @@ import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { envFallback } from './env-fallback.ts'
 import type { Exec } from './exec.ts'
+import type { OpenedPane, SessionAdapter, SessionPlacement, SessionTarget } from './session.ts'
 import {
 	collectPanes,
 	firstPane,
-	type LayoutNode,
-	type LayoutTemplate,
 	type PaneNode,
 	resolveTree,
 	type TabNode,
-} from './layout.ts'
-import type { OpenedPane, SessionAdapter, SessionPlacement, SessionTarget } from './session.ts'
+	type Template,
+	type TemplateNode,
+} from './template.ts'
 
 /**
- * Layouts × sessions — the walk, and the only module that knows both halves. `layout.ts` stays pure
- * and owes nothing to the mux; `session.ts` stays a pure mux seam that owes nothing to layouts.
+ * Templates × sessions — the walk, and the only module that knows both halves. `template.ts` stays pure
+ * and owes nothing to the mux; `session.ts` stays a pure mux seam that owes nothing to templates.
  * Compiling one into the other is a third concern, and it lives here — exactly what
  * `worktree-session.ts` is to `worktree.ts` + `session.ts`.
  *
  * The engine is cyber-mux's own: a tree-walk emitting `open`/`submit` against the PORTABLE
- * `SessionAdapter` verbs, never a backend's native layout primitive. herdr's `layout.apply` drops
+ * `SessionAdapter` verbs, never a backend's native template primitive. herdr's `template.apply` drops
  * out entirely rather than being deferred — it is a socket verb (this codebase speaks herdr's CLI,
  * synchronously, on purpose) and, more importantly, it is unique in the field: tmux, cmux, WezTerm
  * and screen have nothing equivalent. Leaning on it would mean the good path existing on exactly one
@@ -29,7 +29,7 @@ import type { OpenedPane, SessionAdapter, SessionPlacement, SessionTarget } from
  */
 
 /** One pane the apply created — `label` is the key a higher layer addresses it by. */
-export interface LayoutPaneReport {
+export interface TemplatePaneReport {
 	label: string | null
 	pane: string
 	/** The pane's resolved working directory: the apply-time cwd joined with the node's `dir`. */
@@ -56,29 +56,29 @@ export interface LayoutPaneReport {
  * surface, since it addresses panes through `read`/`submit`/`exists`/`focus`/`list`, which all
  * already exist.
  */
-export interface LayoutManifest {
-	layout: string
+export interface TemplateManifest {
+	template: string
 	/** The injected target — the apply-time cwd. Never anything the template said. */
 	cwd: string
 	/** `null` on tmux, matching how `reportOpenedWorktree` already reports it. */
 	workspace: string | null
-	panes: LayoutPaneReport[]
+	panes: TemplatePaneReport[]
 }
 
 /**
  * A walk that threw partway. Carries the manifest of what WAS built, because apply does not roll
  * back: rolling back would mean killing panes, and a kill is not obviously safer than a half-built
- * layout the caller can see and finish. This is the price of owning the engine rather than
+ * template the caller can see and finish. This is the price of owning the engine rather than
  * delegating to an atomic tree-apply, and it is paid uniformly — a guarantee only herdr could make
  * is not a guarantee cyber-mux can offer.
  */
-export class LayoutApplyError extends Error {
+export class TemplateApplyError extends Error {
 	constructor(
 		message: string,
-		readonly manifest: LayoutManifest,
+		readonly manifest: TemplateManifest,
 	) {
 		super(message)
-		this.name = 'LayoutApplyError'
+		this.name = 'TemplateApplyError'
 	}
 }
 
@@ -103,15 +103,15 @@ interface WalkContext {
  * engine that could drift from it.
  */
 interface TabState {
-	tree: LayoutNode
+	tree: TemplateNode
 	/** The tab's index in the template; `null` for a single-tab template, which has no tab tier. */
 	index: number | null
 	/** The pane the tab's tree is built AGAINST — its own root region, never another tab's pane. */
 	root: SessionTarget
 	/**
 	 * Where the root pane ACTUALLY sits. Not derived — supplied by whoever opened the region, because
-	 * only they know. The root leaf is the one pane no split ever births, so `open --layout` can place
-	 * it at `cwd + dir` while `worktree add --layout` cannot: the worktree's workspace must open at the
+	 * only they know. The root leaf is the one pane no split ever births, so `open --template` can place
+	 * it at `cwd + dir` while `worktree add --template` cannot: the worktree's workspace must open at the
 	 * worktree root, which is what the binding pins. Reporting `cwd + dir` regardless would make the
 	 * manifest claim a location nothing ever opened.
 	 */
@@ -133,7 +133,7 @@ interface TabState {
 
 /** A tab's bookkeeping, with its root pane already open and its root leaf pinned to that pane. */
 function tabState(
-	tree: LayoutNode,
+	tree: TemplateNode,
 	index: number | null,
 	root: SessionTarget,
 	rootDir: string,
@@ -165,17 +165,17 @@ function resolveDir(cwd: string, dir: string | undefined): string {
  *
  * Up front, not per-pane-at-birth: a predictable error should not cost a half-built pool.
  */
-export function assertLayoutDirs(tree: LayoutNode, cwd: string, dirExists: (path: string) => boolean): void {
+export function assertTemplateDirs(tree: TemplateNode, cwd: string, dirExists: (path: string) => boolean): void {
 	for (const pane of collectPanes(tree)) {
 		if (pane.dir === undefined) continue
 		const resolved = resolveDir(cwd, pane.dir)
 		if (!dirExists(resolved)) {
-			throw new Error(`layout pane "${pane.label ?? '(unlabeled)'}": directory does not exist — ${resolved}`)
+			throw new Error(`template pane "${pane.label ?? '(unlabeled)'}": directory does not exist — ${resolved}`)
 		}
 	}
 }
 
-export interface OpenLayoutOptions {
+export interface OpenTemplateOptions {
 	/** The injected target directory. */
 	cwd: string
 	/** Defaults to `workspace` — a fresh space is empty by construction. */
@@ -187,7 +187,7 @@ export interface OpenLayoutOptions {
 }
 
 /**
- * Open a region and build the template inside it — `open --layout`.
+ * Open a region and build the template inside it — `open --template`.
  *
  * The region opens BLANK (no `launch`) and its pane becomes the tree's root region: not a wasted
  * pane to close, but the pane the walk splits INTO. That is why nothing is launched here — the
@@ -199,16 +199,16 @@ export interface OpenLayoutOptions {
  * This is occupancy, not a worktree binding: `open` groups no repo, and a caller must not read a
  * workspace here as evidence that it did.
  */
-export function openLayout(
+export function openTemplate(
 	exec: Exec,
 	adapter: SessionAdapter,
-	template: LayoutTemplate,
-	opts: OpenLayoutOptions,
-): LayoutManifest {
-	if (template.tabs) return openTabsLayout(exec, adapter, template, template.tabs, opts)
+	template: Template,
+	opts: OpenTemplateOptions,
+): TemplateManifest {
+	if (template.tabs) return openTabsTemplate(exec, adapter, template, template.tabs, opts)
 	const tree = resolveTree(template)
 	// Before the region is opened, so a missing dir opens nothing at all.
-	assertLayoutDirs(tree, opts.cwd, opts.dirExists)
+	assertTemplateDirs(tree, opts.cwd, opts.dirExists)
 	// The root leaf sits on the region's OWN pane — no split ever births it — so its dir and env have
 	// to ride in on this open or they are lost. Both are native at every tier on both backends, so
 	// this route honors them exactly. No `launch`: commands are submitted last, together.
@@ -241,7 +241,7 @@ export function openLayout(
  * length, and not shortening is what makes a collision between two workspaces that shorten alike
  * impossible rather than merely handled.
  */
-function workspaceLabelOf(template: LayoutTemplate, label: string | undefined): string {
+function workspaceLabelOf(template: Template, label: string | undefined): string {
 	return label ?? template.name
 }
 
@@ -249,8 +249,8 @@ function workspaceLabelOf(template: LayoutTemplate, label: string | undefined): 
 interface FirstTab {
 	/**
 	 * An `OpenedPane`, not a bare handle: the walk groups this tab like every other, and grouping
-	 * addresses the TAB. Both routes already hold it — `open --layout` from the open it just ran,
-	 * `worktree add --layout` from the one the worktree verbs ran — so requiring it here takes nothing
+	 * addresses the TAB. Both routes already hold it — `open --template` from the open it just ran,
+	 * `worktree add --template` from the one the worktree verbs ran — so requiring it here takes nothing
 	 * from either and is what lets the first tab be grouped rather than left out.
 	 */
 	root: OpenedPane
@@ -265,8 +265,8 @@ interface FirstTab {
  * panes.
  *
  * `firstTab` is the ONE thing the two routes differ in, and the reason they share this walk rather
- * than owning two that could drift: `open --layout` opens the workspace and hands back its region,
- * while `worktree add --layout` already HAS one — the worktree's own workspace, which that route
+ * than owning two that could drift: `open --template` opens the workspace and hands back its region,
+ * while `worktree add --template` already HAS one — the worktree's own workspace, which that route
  * forced the placement for — so the first tab builds into it rather than opening a second.
  *
  * Every tab is opened and every split built BEFORE the first command is submitted — the single-tab
@@ -276,11 +276,11 @@ interface FirstTab {
 function walkTabs(
 	ctx: WalkContext,
 	tabs: TabNode[],
-	trees: LayoutNode[],
+	trees: TemplateNode[],
 	workspaceLabel: string,
 	group: string,
 	firstTab: () => FirstTab,
-): LayoutManifest {
+): TemplateManifest {
 	const built: TabState[] = []
 	try {
 		trees.forEach((tree, index) => {
@@ -294,7 +294,7 @@ function walkTabs(
 				// applied", naming no route, so a route that could forget this is a scenario that is
 				// silently false on it. Only the shared path makes forgetting impossible.
 				//
-				// Runs AFTER `firstTab()` because that is what settles the tier signal: `open --layout`
+				// Runs AFTER `firstTab()` because that is what settles the tier signal: `open --template`
 				// learns it from the open it just ran, and `tabLabelFor` reads it to decide whether the
 				// workspace is carried into the name.
 				//
@@ -320,7 +320,7 @@ function walkTabs(
 			}
 			// EVERY tab, the first one included, and through the verb rather than `open`'s option — which
 			// is the whole reason grouping is a verb. The first tab's region may have been opened before
-			// this walk ever ran (`worktree add --layout`), so an option on `open` could only ever have
+			// this walk ever ran (`worktree add --template`), so an option on `open` could only ever have
 			// covered tabs 2..N, and a group missing the workspace's own first tab is worse than no
 			// group: `save --workspace` would confidently round-trip a 3-tab workspace as 2. Grouping
 			// here means the route that opened the region cannot change what the template means.
@@ -336,25 +336,25 @@ function walkTabs(
 	} catch (err) {
 		// Unchanged, one level up: apply does not roll back, so the tabs already built are reported and
 		// nothing is killed. Adding a level does not buy an atomicity the node never offered.
-		throw new LayoutApplyError(err instanceof Error ? err.message : String(err), report(ctx, built))
+		throw new TemplateApplyError(err instanceof Error ? err.message : String(err), report(ctx, built))
 	}
 
 	submitCommands(built, ctx)
 	return report(ctx, built)
 }
 
-/** `open --layout` with a tabs template: the first tab opens the workspace the rest live in. */
-function openTabsLayout(
+/** `open --template` with a tabs template: the first tab opens the workspace the rest live in. */
+function openTabsTemplate(
 	exec: Exec,
 	adapter: SessionAdapter,
-	template: LayoutTemplate,
+	template: Template,
 	tabs: TabNode[],
-	opts: OpenLayoutOptions,
-): LayoutManifest {
+	opts: OpenTemplateOptions,
+): TemplateManifest {
 	const trees = tabs.map((tab) => resolveTree(tab))
 	// Every tab's dirs, before ANY tab is opened — a predictable error must not cost a half-built
 	// workspace any more than it costs a half-built region.
-	for (const tree of trees) assertLayoutDirs(tree, opts.cwd, opts.dirExists)
+	for (const tree of trees) assertTemplateDirs(tree, opts.cwd, opts.dirExists)
 
 	// The machine's carrier for the grouping, and the reason the label never has to be parsed back:
 	// an opaque id no one reads FOR its content. A backend with a real workspace tier ignores it, that
@@ -428,11 +428,11 @@ function tabLabelFor(ctx: WalkContext, tab: TabNode, workspaceLabel: string): st
  * at that open). Resolving the template itself here would desugar a `panes` list a tabs template does
  * not have.
  */
-export function layoutRootPane(template: LayoutTemplate): PaneNode {
+export function templateRootPane(template: Template): PaneNode {
 	return firstPane(resolveTree(template.tabs ? template.tabs[0]! : template))
 }
 
-export interface ApplyLayoutOptions {
+export interface ApplyTemplateOptions {
 	/**
 	 * An ALREADY-OPEN blank region whose pane is the tree's root — e.g. a worktree's workspace.
 	 *
@@ -455,25 +455,25 @@ export interface ApplyLayoutOptions {
 	/**
 	 * The label the region was opened under — the workspace's name, which a tabs template carries into
 	 * each later tab's label on a backend with no workspace tier. Only the caller that opened the region
-	 * knows what it named it; omitted, the template's own name stands, matching `open --layout`'s
+	 * knows what it named it; omitted, the template's own name stands, matching `open --template`'s
 	 * default.
 	 */
 	label?: string
 }
 
 /**
- * Build a template inside a region someone else already opened — `worktree add --layout`, where the
+ * Build a template inside a region someone else already opened — `worktree add --template`, where the
  * worktree's own workspace IS the region and its root pane is the tree's root.
  */
-export function applyLayoutToRegion(
+export function applyTemplateToRegion(
 	exec: Exec,
 	adapter: SessionAdapter,
-	template: LayoutTemplate,
-	opts: ApplyLayoutOptions,
-): LayoutManifest {
+	template: Template,
+	opts: ApplyTemplateOptions,
+): TemplateManifest {
 	if (template.tabs) return applyTabsToRegion(exec, adapter, template, template.tabs, opts)
 	const tree = resolveTree(template)
-	assertLayoutDirs(tree, opts.cwd, opts.dirExists)
+	assertTemplateDirs(tree, opts.cwd, opts.dirExists)
 	// The region was opened by someone whose own contract fixed its cwd — a worktree's workspace opens
 	// at the worktree root, because that is what the binding pins. So a root leaf's `dir` genuinely
 	// cannot be honored on this route. Degrade and warn, never silently drop: the caller is told which
@@ -482,7 +482,7 @@ export function applyLayoutToRegion(
 	const rootLeaf = firstPane(tree)
 	if (rootLeaf.dir !== undefined) {
 		process.stderr.write(
-			`the layout's root pane "${rootLeaf.label ?? '(unlabeled)'}" cannot start in "${rootLeaf.dir}" — ` +
+			`the template's root pane "${rootLeaf.label ?? '(unlabeled)'}" cannot start in "${rootLeaf.dir}" — ` +
 				`the region opens at ${opts.cwd}\n`,
 		)
 	}
@@ -499,20 +499,20 @@ export function applyLayoutToRegion(
 }
 
 /**
- * `worktree add --layout` with a tabs template: the workspace already EXISTS — that route forces the
+ * `worktree add --template` with a tabs template: the workspace already EXISTS — that route forces the
  * `workspace` placement and opened one for the worktree — so a set of tabs has somewhere to live and
  * needs no second workspace. The first tab is built INTO that region; every later tab opens as a tab
- * in it. That one difference is the whole of what separates this route from `open --layout`.
+ * in it. That one difference is the whole of what separates this route from `open --template`.
  */
 function applyTabsToRegion(
 	exec: Exec,
 	adapter: SessionAdapter,
-	template: LayoutTemplate,
+	template: Template,
 	tabs: TabNode[],
-	opts: ApplyLayoutOptions,
-): LayoutManifest {
+	opts: ApplyTemplateOptions,
+): TemplateManifest {
 	const trees = tabs.map((tab) => resolveTree(tab))
-	for (const tree of trees) assertLayoutDirs(tree, opts.cwd, opts.dirExists)
+	for (const tree of trees) assertTemplateDirs(tree, opts.cwd, opts.dirExists)
 
 	const ctx: WalkContext = {
 		exec,
@@ -532,12 +532,12 @@ function applyTabsToRegion(
 	const rootLeaf = firstPane(trees[0]!)
 	if (rootLeaf.dir !== undefined) {
 		process.stderr.write(
-			`the layout's root pane "${rootLeaf.label ?? '(unlabeled)'}" cannot start in "${rootLeaf.dir}" — ` +
+			`the template's root pane "${rootLeaf.label ?? '(unlabeled)'}" cannot start in "${rootLeaf.dir}" — ` +
 				`the region opens at ${opts.cwd}\n`,
 		)
 	}
 
-	// Grouped exactly as `open --layout` is, and by the same walk: the route that opened the region
+	// Grouped exactly as `open --template` is, and by the same walk: the route that opened the region
 	// cannot change what the template means. Nothing has to be threaded through the worktree verbs to
 	// make this work — `opts.root` is the region they opened, and it carries its own tab, which is all
 	// grouping an already-open space needs.
@@ -558,13 +558,13 @@ function applyTabsToRegion(
  * reflowing. Opening every pane blank first makes the whole geometry phase side-effect-free from the
  * agent's point of view.
  */
-function walk(tab: TabState, ctx: WalkContext): LayoutManifest {
+function walk(tab: TabState, ctx: WalkContext): TemplateManifest {
 	const tabs = [tab]
 	try {
 		buildGeometry(tab, ctx)
 	} catch (err) {
 		// No rollback, no kill — report what was built and let the caller finish or close it.
-		throw new LayoutApplyError(err instanceof Error ? err.message : String(err), report(ctx, tabs))
+		throw new TemplateApplyError(err instanceof Error ? err.message : String(err), report(ctx, tabs))
 	}
 	submitCommands(tabs, ctx)
 	return report(ctx, tabs)
@@ -584,12 +584,12 @@ function buildGeometry(tab: TabState, ctx: WalkContext): void {
 		if (ctx.adapter.canSizeSplits) return ratio
 		if (!ctx.warnedRatio) {
 			ctx.warnedRatio = true
-			process.stderr.write(`${ctx.adapter.name} cannot size a split — every ratio in this layout takes its default\n`)
+			process.stderr.write(`${ctx.adapter.name} cannot size a split — every ratio in this template takes its default\n`)
 		}
 		return undefined
 	}
 
-	const build = (node: LayoutNode, paneId: string): void => {
+	const build = (node: TemplateNode, paneId: string): void => {
 		if (node.type === 'pane') return
 		// The new pane becomes `second`'s region, and the leaf that ends up sitting on it is
 		// `firstPane(second)` — so THAT leaf's dir and env are what this split must carry, since a
@@ -622,9 +622,9 @@ function buildGeometry(tab: TabState, ctx: WalkContext): void {
  * rather than a second nesting a consumer has to walk. The unique handle is the pane `id`; `label` is
  * a name two panes may share, and the tab is reported by INDEX rather than by either.
  */
-function report(ctx: WalkContext, tabs: TabState[]): LayoutManifest {
+function report(ctx: WalkContext, tabs: TabState[]): TemplateManifest {
 	return {
-		layout: ctx.name,
+		template: ctx.name,
 		cwd: ctx.cwd,
 		workspace: ctx.workspace,
 		panes: tabs.flatMap((tab) =>
@@ -662,7 +662,7 @@ function submitCommands(tabs: TabState[], ctx: WalkContext): void {
 			// Nothing to prefix — the fallback only works by riding on a command line. Degrade and warn,
 			// never silently drop; stderr, so stdout stays machine-readable.
 			process.stderr.write(
-				`the layout's root pane "${tab.rootLeaf.label ?? '(unlabeled)'}" has env (${rootFallback.variables.join(', ')}) ` +
+				`the template's root pane "${tab.rootLeaf.label ?? '(unlabeled)'}" has env (${rootFallback.variables.join(', ')}) ` +
 					'but no command to carry it — this backend cannot set env on the region it opens\n',
 			)
 		}

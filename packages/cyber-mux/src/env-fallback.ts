@@ -8,7 +8,7 @@
  * IS a command to ride; with none, the honest outcome is to warn, never to drop silently.
  *
  * This lives in one module, called by both routes that can lose env (the CLI worktree verbs and the
- * layout walk's root pane), so the rule cannot be wired on one and forgotten on the other. Only a
+ * template walk's root pane), so the rule cannot be wired on one and forgotten on the other. Only a
  * route that lost env may call it: prefixing over a natively-set env would push the values into `ps`
  * and shell history on every route, the exact cost the prefix exists to pay only when it must.
  */

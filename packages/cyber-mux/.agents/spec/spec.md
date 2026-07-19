@@ -38,6 +38,6 @@ pane identity, placement, git worktree, and turn-taking (nudge) helpers — deco
 | Node | Concern |
 |---|---|
 | [`mux/`](./mux/README.md) | the pane abstraction — backend selection, placement, multiplexer detection, focus reporting |
-| [`layout/`](./layout/README.md) | named, reusable pane layouts — template resolution, the schema, and the walk that builds a pool against a target cwd |
+| [`template/`](./template/README.md) | named, reusable workspace templates — the arrangement, environment and launch commands a workspace is rebuilt from, plus resolution, the schema, and the walk that builds a pool against a target cwd |
 | [`axi/`](./axi/README.md) | the Agent Experience Interface output contract every CLI command follows |
 | [`design/`](./design/README.md) | cross-cutting rules/models and the decisions log (append-only, descriptive, ungated) |

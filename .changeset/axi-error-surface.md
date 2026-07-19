@@ -14,7 +14,7 @@ just the one path that already did.
   A caller matches on the code instead of parsing prose, and the help names the `cyber-mux` command
   that fixes the problem — never `see --help`, and never the underlying multiplexer's raw diagnostic.
 - **Usage errors exit `2`; operation failures exit `1`.** An unrecognized flag, a missing required
-  argument, a malformed layout name, a mutually exclusive flag pair, and a bare `cyber-mux send` are
+  argument, a malformed template name, a mutually exclusive flag pair, and a bare `cyber-mux send` are
   usage errors — the invocation is wrong and the fix is a different one — so they exit `2`. A genuine
   operation failure (no multiplexer, a pane that resolves to nothing, a backend that cannot answer)
   exits `1`. An unknown flag also lists the command's valid flags so the agent self-corrects in one

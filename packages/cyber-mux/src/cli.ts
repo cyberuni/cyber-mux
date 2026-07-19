@@ -4,33 +4,33 @@ import { callerPane, selectSessionAdapter } from './backend.ts'
 import { AmbiguousPaneError, CliError, reportError } from './cli-error.ts'
 import { AT_OPTION, ENV_OPTION, FORMAT_OPTION, LABEL_OPTION } from './cli-options.ts'
 import { type Exec, realExec } from './exec.ts'
-import {
-	collectPanes,
-	isValidLayoutName,
-	type LayoutTemplate,
-	parseLayout,
-	resolveTree,
-	validateLayout,
-} from './layout.ts'
-import { captureLayout, captureWorkspaceLayout } from './layout-capture.ts'
-import {
-	applyLayoutToRegion,
-	LayoutApplyError,
-	type LayoutManifest,
-	layoutRootPane,
-	openLayout,
-} from './layout-session.ts'
-import {
-	type LayoutStore,
-	layoutDirs,
-	listLayouts,
-	type ResolvedLayout,
-	realLayoutStore,
-	resolveLayout,
-} from './layout-store.ts'
 import { currentPane, probeMultiplexer } from './mux-probe.ts'
 import { type HelpEntry, output, printFields, printHelp, printTable } from './output.ts'
 import type { LivePane, SessionAdapter, SessionPlacement, SessionTarget } from './session.ts'
+import {
+	collectPanes,
+	isValidTemplateName,
+	parseTemplate,
+	resolveTree,
+	type Template,
+	validateTemplate,
+} from './template.ts'
+import { captureTemplate, captureWorkspaceTemplate } from './template-capture.ts'
+import {
+	applyTemplateToRegion,
+	openTemplate,
+	TemplateApplyError,
+	type TemplateManifest,
+	templateRootPane,
+} from './template-session.ts'
+import {
+	listTemplates,
+	type ResolvedTemplate,
+	realTemplateStore,
+	resolveTemplate as resolveTemplateSource,
+	type TemplateStore,
+	templateDirs,
+} from './template-store.ts'
 import { gitWorktreeAdapter, resolvePrimaryRoot, resolveWorktreePath, WorktreeGitError } from './worktree.ts'
 import {
 	addAndOpenWorktree,
@@ -48,20 +48,20 @@ import {
 export interface CliDeps {
 	env: NodeJS.ProcessEnv
 	exec: Exec
-	/** The filesystem half, for the `layout` group — injected for the same reason `exec` is: it is the
-	 * only way `layout` can be driven hermetically in tests, with no real templates on disk. Optional
-	 * at this boundary so a caller that drives no layout command need not know the seam exists. */
-	store?: LayoutStore
+	/** The filesystem half, for the `template` group — injected for the same reason `exec` is: it is the
+	 * only way `template` can be driven hermetically in tests, with no real templates on disk. Optional
+	 * at this boundary so a caller that drives no template command need not know the seam exists. */
+	store?: TemplateStore
 }
 
 /** `CliDeps` with every optional dep resolved — what each command is actually handed. */
 interface Deps {
 	env: NodeJS.ProcessEnv
 	exec: Exec
-	store: LayoutStore
+	store: TemplateStore
 }
 
-const REAL_DEPS: CliDeps = { env: process.env, exec: realExec, store: realLayoutStore }
+const REAL_DEPS: CliDeps = { env: process.env, exec: realExec, store: realTemplateStore }
 
 /**
  * Resolve the adapter for the multiplexer this process is inside, failing with a coded `no-mux` error
@@ -98,12 +98,12 @@ function paneNotFound(locator: string): CliError {
 	)
 }
 
-/** A malformed layout name — a usage error (exit 2): the fix is a different name, nothing was
+/** A malformed template name — a usage error (exit 2): the fix is a different name, nothing was
  * attempted. The same family a missing required argument is in. */
-function invalidLayoutName(name: string): CliError {
+function invalidTemplateName(name: string): CliError {
 	return new CliError(
-		'invalid-layout-name',
-		`invalid layout name "${name}" — a name must match [a-z0-9][a-z0-9-]* and be a plain filename stem`,
+		'invalid-template-name',
+		`invalid template name "${name}" — a name must match [a-z0-9][a-z0-9-]* and be a plain filename stem`,
 		'use a lowercase stem like pool-4',
 		2,
 	)
@@ -184,7 +184,7 @@ function resolveTarget(deps: Deps, a: SessionAdapter, locator: string): SessionT
 
 /**
  * Wrap a verb's action so ANY coded failure reports itself on stdout and exits — the one place that
- * turns a `CliError` (an ambiguity, a `no-mux`, a `pane-not-found`, a layout refusal) into output, for
+ * turns a `CliError` (an ambiguity, a `no-mux`, a `pane-not-found`, a template refusal) into output, for
  * every verb.
  *
  * Here rather than deeper so the report is the OUTERMOST thing a verb does: by the time it runs, every
@@ -270,51 +270,54 @@ function reportOpenedWorktree(opened: OpenedWorktree, regroupCommand: string): v
 }
 
 /**
- * `--layout`, the exact sibling of `--launch`: both answer "what runs in the space you are opening",
+ * `--template`, the exact sibling of `--launch`: both answer "what runs in the space you are opening",
  * one for a single pane and one for a pool. Mutually exclusive by construction — commander rejects
  * the pair rather than picking a winner.
  */
-function layoutOption(): Option {
+function templateOption(): Option {
 	// Conflicts with both `--launch` (one command line for the space) and `--env` (the template owns
 	// its own panes' env) — each answers "what is in the space you are opening", and a template names
 	// all of it.
-	return new Option('--layout <name>', 'Named layout template to build in the opened space').conflicts([
-		'launch',
-		'env',
-	])
+	return new Option('--template <name>', 'Named template to build in the opened space').conflicts(['launch', 'env'])
 }
 
 /**
  * Resolve, parse and validate a template — the whole answer BEFORE any side effect. A typo in a
- * layout name must never leave a worktree behind, and an invalid template must not either, so every
+ * template name must never leave a worktree behind, and an invalid template must not either, so every
  * caller runs this before it opens or creates anything.
  */
 function resolveTemplate(
 	deps: Deps,
 	opts: { name?: string; file?: string },
-): ResolvedLayout & { template: LayoutTemplate } {
-	// A malformed NAME is a usage error (exit 2), and it is caught HERE — before `resolveLayout` reads —
+): ResolvedTemplate & { template: Template } {
+	// A malformed NAME is a usage error (exit 2), and it is caught HERE — before `resolveTemplateSource` reads —
 	// so it is told apart from a well-formed name that simply resolves nowhere (exit 1, below). The name
 	// is a lookup key that must also be a filename; `../../../etc/pwd` must never get as far as a read.
-	if (opts.name !== undefined && opts.file === undefined && !isValidLayoutName(opts.name)) {
-		throw invalidLayoutName(opts.name)
+	if (opts.name !== undefined && opts.file === undefined && !isValidTemplateName(opts.name)) {
+		throw invalidTemplateName(opts.name)
 	}
-	let resolved: ResolvedLayout
+	let resolved: ResolvedTemplate
 	try {
-		resolved = resolveLayout({ name: opts.name, file: opts.file, store: deps.store, exec: deps.exec, env: deps.env })
+		resolved = resolveTemplateSource({
+			name: opts.name,
+			file: opts.file,
+			store: deps.store,
+			exec: deps.exec,
+			env: deps.env,
+		})
 	} catch (err) {
 		// A well-formed name that resolves nowhere is a failed lookup, not malformed input (exit 1). The
 		// message is this CLI's own — it names the directories it searched — so it is kept, not a backend's.
 		throw new CliError(
-			'layout-not-found',
+			'template-not-found',
 			err instanceof Error ? err.message : String(err),
-			'list the templates resolvable from here with: cyber-mux layout list',
+			'list the templates resolvable from here with: cyber-mux template list',
 			1,
 		)
 	}
 	let parsed: unknown
 	try {
-		parsed = parseLayout(resolved.raw)
+		parsed = parseTemplate(resolved.raw)
 	} catch (err) {
 		throw new CliError(
 			'invalid-template',
@@ -326,17 +329,17 @@ function resolveTemplate(
 	// A template's CONTENT being invalid is a predicate answer (exit 1), not a usage error — the
 	// invocation was well-formed, the fix is to the file. Every error at once, one per line, each naming
 	// its own JSON path — first-only would make a template with three mistakes take three runs to fix.
-	const errors = validateLayout(parsed, resolved.stem)
+	const errors = validateTemplate(parsed, resolved.stem)
 	if (errors.length > 0) {
 		throw new CliError('invalid-template', errors.join('\n'), 'fix the fields named above, then re-run', 1)
 	}
-	return { ...resolved, template: parsed as LayoutTemplate }
+	return { ...resolved, template: parsed as Template }
 }
 
 /** The apply manifest — the handoff. `printFields`/`printTable` for humans, the raw object for json. */
-function reportManifest(manifest: LayoutManifest, extra: Record<string, string | null> = {}): void {
+function reportManifest(manifest: TemplateManifest, extra: Record<string, string | null> = {}): void {
 	output({ ...extra, ...manifest }, () => {
-		printFields({ ...extra, layout: manifest.layout, cwd: manifest.cwd, workspace: manifest.workspace })
+		printFields({ ...extra, template: manifest.template, cwd: manifest.cwd, workspace: manifest.workspace })
 		printTable(manifest.panes, [
 			{ label: 'label', get: (p) => p.label ?? '' },
 			{ label: 'pane', get: (p) => p.pane },
@@ -348,11 +351,11 @@ function reportManifest(manifest: LayoutManifest, extra: Record<string, string |
 
 /**
  * A walk that threw reports what it BUILT and exits 1, killing nothing. Rolling back would mean
- * killing panes, and a kill is not obviously safer than a half-built layout the caller can see and
+ * killing panes, and a kill is not obviously safer than a half-built template the caller can see and
  * finish.
  */
 function reportApplyFailure(err: unknown, extra: Record<string, string | null> = {}): never {
-	if (err instanceof LayoutApplyError) {
+	if (err instanceof TemplateApplyError) {
 		// The manifest is the WHOLE of stdout — one result payload, with the failed pane named inside it,
 		// never a second structured error concatenated after it. The message is supplementary debug, so it
 		// goes to stderr: moving it to stdout would break the "stdout carries exactly one payload" invariant
@@ -364,34 +367,34 @@ function reportApplyFailure(err: unknown, extra: Record<string, string | null> =
 	// A totally-failed apply that produced no result — a predictable pre-open failure (a missing dir
 	// names the pane and the resolved path). Its message is this CLI's own text, exit 1.
 	throw new CliError(
-		'layout-apply-failed',
+		'template-apply-failed',
 		err instanceof Error ? err.message : String(err),
 		'check the template and the target directory, then re-run',
 		1,
 	)
 }
 
-function layoutListCommand(deps: Deps): Command {
+function templateListCommand(deps: Deps): Command {
 	return new Command('list')
-		.description('Every layout template resolvable from here, with its source and pane count')
+		.description('Every template resolvable from here, with its source and pane count')
 		.addOption(FORMAT_OPTION)
 		.action(
 			guarded(() => {
-				const dirs = layoutDirs(deps.exec, deps.env)
-				const layouts = listLayouts(deps.store, dirs).map((entry) => {
+				const dirs = templateDirs(deps.exec, deps.env)
+				const templates = listTemplates(deps.store, dirs).map((entry) => {
 					// A template that does not parse still LISTS — `list` answers "what is here", and
 					// `validate` answers "is it any good". Conflating them would hide a broken file entirely.
 					let panes = 0
 					try {
 						const raw = deps.store.read(entry.path)
-						if (raw) panes = collectPanes(resolveTree(parseLayout(raw) as LayoutTemplate)).length
+						if (raw) panes = collectPanes(resolveTree(parseTemplate(raw) as Template)).length
 					} catch {
 						panes = 0
 					}
 					return { ...entry, panes }
 				})
-				output({ layouts }, () =>
-					printTable(layouts, [
+				output({ templates }, () =>
+					printTable(templates, [
 						{ label: 'name', get: (l) => l.name },
 						{ label: 'source', get: (l) => l.source },
 						{ label: 'panes', get: (l) => String(l.panes) },
@@ -402,7 +405,7 @@ function layoutListCommand(deps: Deps): Command {
 		)
 }
 
-function layoutShowCommand(deps: Deps): Command {
+function templateShowCommand(deps: Deps): Command {
 	return new Command('show')
 		.description('Print a resolved template as JSON')
 		.argument('[name]', 'Template name')
@@ -413,7 +416,7 @@ function layoutShowCommand(deps: Deps): Command {
 				if (!name && !opts.file) {
 					throw new CliError(
 						'missing-argument',
-						'layout show needs a template name or --file <path>',
+						'template show needs a template name or --file <path>',
 						'pass a template name, or --file <path>',
 						2,
 					)
@@ -425,7 +428,7 @@ function layoutShowCommand(deps: Deps): Command {
 		)
 }
 
-function layoutValidateCommand(deps: Deps): Command {
+function templateValidateCommand(deps: Deps): Command {
 	return new Command('validate')
 		.description('Validate a template — exit 0 valid, 1 invalid, every error at once with a JSON path')
 		.argument('[name]', 'Template name')
@@ -435,7 +438,7 @@ function layoutValidateCommand(deps: Deps): Command {
 				if (!name && !opts.file) {
 					throw new CliError(
 						'missing-argument',
-						'layout validate needs a template name or --file <path>',
+						'template validate needs a template name or --file <path>',
 						'pass a template name, or --file <path>',
 						2,
 					)
@@ -455,8 +458,8 @@ function layoutValidateCommand(deps: Deps): Command {
  *
  * **What it saves is a draft, and the file says so.** A capture recovers geometry, labels and dirs;
  * it can never recover commands, because no multiplexer reports the command a pane was launched with
- * (`layout-capture.ts` has the why). A saved template therefore lands with no `command` on any pane
- * and is immediately listed by `layout list` alongside finished ones, so the draft has to announce
+ * (`template-capture.ts` has the why). A saved template therefore lands with no `command` on any pane
+ * and is immediately listed by `template list` alongside finished ones, so the draft has to announce
  * itself IN the file — hence the `description` default. Saying it only on stderr would put the
  * warning everywhere except where the reader is.
  *
@@ -471,7 +474,7 @@ function layoutValidateCommand(deps: Deps): Command {
  * stderr what it left out, rather than letting a caller believe a 3-tab workspace round-trips from a
  * 1-tab template.
  */
-function layoutSaveCommand(deps: Deps): Command {
+function templateSaveCommand(deps: Deps): Command {
 	return new Command('save')
 		.description('Capture the live region around a pane into a named template')
 		.argument('<name>', 'Name for the captured template')
@@ -479,7 +482,7 @@ function layoutSaveCommand(deps: Deps): Command {
 		.option('--workspace', "Capture every tab of the caller's workspace, as a tabs template")
 		.option('--description <text>', 'Description to record in the template')
 		.addOption(
-			new Option('--to <source>', 'Which layouts directory to write to').choices(['repo', 'user']).default('repo'),
+			new Option('--to <source>', 'Which templates directory to write to').choices(['repo', 'user']).default('repo'),
 		)
 		.option('--force', 'Overwrite an existing template of this name')
 		.addOption(FORMAT_OPTION)
@@ -498,16 +501,16 @@ function layoutSaveCommand(deps: Deps): Command {
 					// Before the multiplexer is touched: a name is a lookup key that must also be a filename, so an
 					// unusable one should not cost a region read to find out. A usage error (exit 2), the same
 					// malformed-name family `show` refuses at 2.
-					if (!isValidLayoutName(name)) throw invalidLayoutName(name)
+					if (!isValidTemplateName(name)) throw invalidTemplateName(name)
 					try {
-						const path = join(layoutDirs(deps.exec, deps.env)[opts.to], `${name}.json`)
+						const path = join(templateDirs(deps.exec, deps.env)[opts.to], `${name}.json`)
 						// Checked BEFORE the capture, so a refusal costs nothing — and refused by default, because a
 						// template is hand-edited after it is saved (the commands are added by hand) and silently
 						// overwriting one would throw that work away.
 						if (!opts.force && deps.store.read(path) !== null) {
 							throw new CliError(
-								'layout-exists',
-								`layout "${name}" already exists at ${path} — pass --force to overwrite it`,
+								'template-exists',
+								`template "${name}" already exists at ${path} — pass --force to overwrite it`,
 								're-run with --force to replace it',
 								1,
 							)
@@ -522,8 +525,8 @@ function layoutSaveCommand(deps: Deps): Command {
 						if (!opts.workspace && !describeRegion) {
 							throw new CliError(
 								'backend-unsupported',
-								`${a.name} cannot report a region's geometry — layout save needs a backend that can`,
-								'run layout save on a backend that reports geometry (tmux or herdr)',
+								`${a.name} cannot report a region's geometry — template save needs a backend that can`,
+								'run template save on a backend that reports geometry (tmux or herdr)',
 								1,
 							)
 						}
@@ -531,13 +534,13 @@ function layoutSaveCommand(deps: Deps): Command {
 						if (opts.workspace && !describeWorkspace) {
 							throw new CliError(
 								'backend-unsupported',
-								`${a.name} cannot enumerate a workspace's tabs — layout save --workspace needs a backend that can`,
-								'run layout save --workspace on a backend that enumerates tabs (tmux or herdr)',
+								`${a.name} cannot enumerate a workspace's tabs — template save --workspace needs a backend that can`,
+								'run template save --workspace on a backend that enumerates tabs (tmux or herdr)',
 								1,
 							)
 						}
 						// `--from` names a pane explicitly; otherwise capture around the pane THIS process sits in,
-						// which is what makes a bare `layout save pool-4` mean "the screen I am looking at".
+						// which is what makes a bare `template save pool-4` mean "the screen I am looking at".
 						//
 						// Through the same resolver every flat verb uses, rather than the `{ id: opts.from }` this
 						// built inline: `--from` is a pane locator like any other, and a name that works on `read`
@@ -548,18 +551,18 @@ function layoutSaveCommand(deps: Deps): Command {
 							// A required parameter is missing, not an operation that failed — a usage error (exit 2).
 							throw new CliError(
 								'missing-pane',
-								'layout save needs a pane to capture the region around — pass --from <pane>, or run it inside one',
-								'pass --from <pane>, or run layout save inside a pane',
+								'template save needs a pane to capture the region around — pass --from <pane>, or run it inside one',
+								'pass --from <pane>, or run template save inside a pane',
 								2,
 							)
 						}
 						const captureOpts = { name, description: opts.description ?? CAPTURED_DESCRIPTION }
 						const { template, warnings } = opts.workspace
-							? captureWorkspaceLayout(describeWorkspace!(deps.exec, target), captureOpts)
-							: captureLayout(describeRegion!(deps.exec, target), captureOpts)
+							? captureWorkspaceTemplate(describeWorkspace!(deps.exec, target), captureOpts)
+							: captureTemplate(describeRegion!(deps.exec, target), captureOpts)
 						deps.store.write(path, `${JSON.stringify(template, null, 2)}\n`)
 						// A capture warning (a dir outside the repo root) is a diagnostic, not part of the answer —
-						// it stays on stderr, where `layout.feature` pins it. The PAYLOAD is stdout.
+						// it stays on stderr, where `template.feature` pins it. The PAYLOAD is stdout.
 						for (const warning of warnings) process.stderr.write(`${warning}\n`)
 						// save's stdout is a structured payload: a `path` field, plus a `help[N]:` block only when a
 						// bare save left tabs behind (#9's reveal-a-truncated-list, omitted otherwise). This replaces
@@ -579,7 +582,7 @@ function layoutSaveCommand(deps: Deps): Command {
 						throw new CliError(
 							'unsplittable-region',
 							'this region could not be captured — it is not a tree any sequence of splits could have produced',
-							'layout save can only capture a region built by splitting',
+							'template save can only capture a region built by splitting',
 							1,
 						)
 					}
@@ -615,34 +618,34 @@ function noteTabsLeftOut(deps: Deps, adapter: SessionAdapter, target: SessionTar
 		message:
 			`this pane's workspace holds ${tabs} tabs — only the caller's own region was captured. ` +
 			'Pass --workspace to capture every tab of it',
-		command: `cyber-mux layout save ${name} --workspace`,
+		command: `cyber-mux template save ${name} --workspace`,
 	}
 }
 
 /**
  * The default `description` on a captured template — the draft warning, written where the reader
- * actually is. A saved capture is listed by `layout list` next to finished templates and shows up in
- * `layout show`, so a note that only ever reached the terminal that ran `save` would be gone by the
+ * actually is. A saved capture is listed by `template list` next to finished templates and shows up in
+ * `template show`, so a note that only ever reached the terminal that ran `save` would be gone by the
  * time anyone reads the file. Overridden by `--description`, since an author who names the template's
  * purpose has said something more useful than this.
  */
 const CAPTURED_DESCRIPTION = 'Captured from a live region — geometry only; add a command to each pane.'
 
 /**
- * The `layout` group manages templates — there is deliberately no `layout apply`. Applying is what
- * `open` and `worktree add` already do, told to build N panes instead of one, so it is `--layout` on
+ * The `template` group manages templates — there is deliberately no `template apply`. Applying is what
+ * `open` and `worktree add` already do, told to build N panes instead of one, so it is `--template` on
  * those verbs.
  *
  * `list` / `show` / `validate` take a FILE as their subject and touch no multiplexer. `save` is the
  * exception in both respects — it reads a live region and writes a file — and it belongs here anyway:
  * it AUTHORS a template, which is what this group is for.
  */
-function layoutCommand(deps: Deps): Command {
-	const cmd = new Command('layout').description('Manage named layout templates (apply one with open/worktree --layout)')
-	cmd.addCommand(layoutListCommand(deps))
-	cmd.addCommand(layoutShowCommand(deps))
-	cmd.addCommand(layoutValidateCommand(deps))
-	cmd.addCommand(layoutSaveCommand(deps))
+function templateCommand(deps: Deps): Command {
+	const cmd = new Command('template').description('Manage named templates (apply one with open/worktree --template)')
+	cmd.addCommand(templateListCommand(deps))
+	cmd.addCommand(templateShowCommand(deps))
+	cmd.addCommand(templateValidateCommand(deps))
+	cmd.addCommand(templateSaveCommand(deps))
 	return cmd
 }
 
@@ -700,7 +703,7 @@ function openCommand(deps: Deps): Command {
 	return new Command('open')
 		.description('Open a new pane/tab/workspace, optionally launching a command in it')
 		.option('--launch <command>', 'Command line to run in the new pane')
-		.addOption(layoutOption())
+		.addOption(templateOption())
 		.option('--cwd <path>', 'Working directory for the new pane', process.cwd())
 		.addOption(AT_OPTION)
 		.addOption(ENV_OPTION)
@@ -710,19 +713,19 @@ function openCommand(deps: Deps): Command {
 			guarded(
 				(opts: {
 					launch?: string
-					layout?: string
+					template?: string
 					cwd: string
 					at?: SessionPlacement
 					env?: Record<string, string>
 					label?: string
 				}) => {
-					if (opts.layout) {
+					if (opts.template) {
 						// Resolve and validate BEFORE touching a backend, so an unresolvable name opens nothing.
-						const { template } = resolveTemplate(deps, { name: opts.layout })
+						const { template } = resolveTemplate(deps, { name: opts.template })
 						const a = adapter(deps)
 						try {
 							reportManifest(
-								openLayout(deps.exec, a, template, {
+								openTemplate(deps.exec, a, template, {
 									cwd: opts.cwd,
 									// A fresh space is empty by construction, which is why the pool defaults there.
 									at: opts.at ?? 'workspace',
@@ -913,7 +916,7 @@ function worktreeAddCommand(deps: Deps): Command {
 		.option('--path <path>', 'Where to check out the worktree (default: a sibling of the primary checkout)')
 		.option('--base <ref>', 'Start point for the new branch (default: the current HEAD)')
 		.option('--launch <command>', 'Command to run in the opened pane; implies --at workspace')
-		.addOption(layoutOption())
+		.addOption(templateOption())
 		.addOption(AT_OPTION)
 		.addOption(ENV_OPTION)
 		.addOption(LABEL_OPTION)
@@ -924,7 +927,7 @@ function worktreeAddCommand(deps: Deps): Command {
 				path?: string
 				base?: string
 				launch?: string
-				layout?: string
+				template?: string
 				at?: SessionPlacement
 				env?: Record<string, string>
 				label?: string
@@ -932,9 +935,9 @@ function worktreeAddCommand(deps: Deps): Command {
 				try {
 					const primaryRoot = resolvePrimaryRoot(deps.exec)
 					// The primary flow this feature exists for. Resolve and validate FIRST: a typo in a
-					// layout name, or a template that sets a cwd, must not leave a worktree behind.
-					if (opts.layout) {
-						const { template } = resolveTemplate(deps, { name: opts.layout })
+					// template name, or a template that sets a cwd, must not leave a worktree behind.
+					if (opts.template) {
+						const { template } = resolveTemplate(deps, { name: opts.template })
 						const path = opts.path ?? resolveWorktreePath(primaryRoot, opts.branch)
 						const a = adapter(deps)
 						// No `launch`: the worktree's workspace opens blank and its root pane becomes the
@@ -946,7 +949,7 @@ function worktreeAddCommand(deps: Deps): Command {
 							branch: opts.branch,
 							path,
 							base: opts.base,
-							env: layoutRootPane(template).env,
+							env: templateRootPane(template).env,
 							at: 'workspace',
 							label: opts.label ?? template.name,
 							from: callerPane(a, deps.env),
@@ -954,7 +957,7 @@ function worktreeAddCommand(deps: Deps): Command {
 						const extra = { root: opened.worktree.root, branch: opened.worktree.branch }
 						try {
 							reportManifest(
-								applyLayoutToRegion(deps.exec, a, template, {
+								applyTemplateToRegion(deps.exec, a, template, {
 									root: opened.target,
 									cwd: opened.worktree.root,
 									workspace: opened.workspace ?? null,
@@ -1100,8 +1103,8 @@ function worktreeCommand(deps: Deps): Command {
  * exit 2, and they belong on stdout under a stable code exactly as an operation failure does.
  *
  * The callback is attached per command, so `command` is the SUBCOMMAND actually invoked — which is what
- * lets an unknown flag be rejected against that subcommand's own flags (`layout list` does not share
- * `layout save`'s), and the offending flag be named beside them so the agent self-corrects in one turn
+ * lets an unknown flag be rejected against that subcommand's own flags (`template list` does not share
+ * `template save`'s), and the offending flag be named beside them so the agent self-corrects in one turn
  * rather than a second `--help` round trip.
  */
 function handleCommanderError(command: Command, err: CommanderError): never {
@@ -1175,7 +1178,7 @@ function exitOverrideTree(command: Command): Command {
  * argument, a bare `send`) is catchable both here and in tests, rather than killing the test
  * runner's own process. */
 export function buildProgram(cliDeps: CliDeps = REAL_DEPS): Command {
-	const deps: Deps = { env: cliDeps.env, exec: cliDeps.exec, store: cliDeps.store ?? realLayoutStore }
+	const deps: Deps = { env: cliDeps.env, exec: cliDeps.exec, store: cliDeps.store ?? realTemplateStore }
 	const program = new Command()
 		.name('cyber-mux')
 		.description('Cross-multiplexer pane control — one contract over tmux and herdr')
@@ -1192,7 +1195,7 @@ export function buildProgram(cliDeps: CliDeps = REAL_DEPS): Command {
 	program.addCommand(listCommand(deps))
 	program.addCommand(existsCommand(deps))
 	program.addCommand(worktreeCommand(deps))
-	program.addCommand(layoutCommand(deps))
+	program.addCommand(templateCommand(deps))
 
 	return exitOverrideTree(program)
 }

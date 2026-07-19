@@ -391,7 +391,7 @@ describe('spec:cyber-mux/mux', () => {
 		})
 
 		// `new-window` takes `-e` too (tmux(1): `new-window [-abdkPS] [-c start-directory] [-e
-		// environment] ...`), so env is native at EVERY tier. That matters because a layout's root pane
+		// environment] ...`), so env is native at EVERY tier. That matters because a template's root pane
 		// is born by the window open, never by a split — scoping env to the split path would drop it.
 		// The title is static rather than interpolated so every tier folds into the one scenario key.
 		it.each([

@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Exec } from './exec.ts'
-import type { LayoutTemplate } from './layout.ts'
-import { applyLayoutToRegion, LayoutApplyError, openLayout } from './layout-session.ts'
 import { herdrSessionAdapter } from './session.herdr.ts'
 import { TMUX_WORKSPACE_GROUP_OPTION, tmuxSessionAdapter } from './session.tmux.ts'
 import type { OpenedPane, SessionAdapter, SessionOpenOptions } from './session.ts'
+import type { Template } from './template.ts'
+import { applyTemplateToRegion, openTemplate, TemplateApplyError } from './template-session.ts'
 
 /** Every dir the walk asks about exists, unless a test says otherwise. */
 const anyDir = () => true
@@ -125,7 +125,7 @@ function fakeAdapter(opts: { canSizeSplits?: boolean; failOnOpen?: number; works
 const noExec: Exec = () => null
 
 /** One planner over two workers — the tree form, written out. */
-const agentPool3: LayoutTemplate = {
+const agentPool3: Template = {
 	name: 'agent-pool-3',
 	root: {
 		type: 'split',
@@ -142,7 +142,7 @@ const agentPool3: LayoutTemplate = {
 	},
 }
 
-const pool4: LayoutTemplate = {
+const pool4: Template = {
 	name: 'pool-4',
 	arrange: 'tiled',
 	panes: [{ label: 'w1' }, { label: 'w2' }, { label: 'w3' }, { label: 'w4' }],
@@ -174,7 +174,7 @@ function herdrSplits(calls: string[][]) {
 		})
 }
 
-describe('spec:cyber-mux/layout', () => {
+describe('spec:cyber-mux/template', () => {
 	afterEach(() => {
 		vi.restoreAllMocks()
 	})
@@ -185,7 +185,7 @@ describe('spec:cyber-mux/layout', () => {
 			// already running an interactive agent — the split lands mid-render. The root pane is not a
 			// wasted pane either: it is the region the walk splits INTO.
 			const { adapter, calls } = fakeAdapter()
-			const manifest = openLayout(noExec, adapter, agentPool3, { cwd: '/target', dirExists: anyDir })
+			const manifest = openTemplate(noExec, adapter, agentPool3, { cwd: '/target', dirExists: anyDir })
 			expect(calls.opens[0]?.launch).toBeUndefined()
 			expect(calls.opens[0]?.at).toBe('workspace')
 			// The pane the region open returned IS the first leaf's pane, and it is never torn down.
@@ -199,7 +199,7 @@ describe('spec:cyber-mux/layout', () => {
 		// just opened a real workspace and said so.
 		it('the manifest carries the workspace the region opened in', () => {
 			const { adapter } = fakeAdapter({ workspace: 'w45' })
-			const manifest = openLayout(noExec, adapter, agentPool3, { cwd: '/target', dirExists: anyDir })
+			const manifest = openTemplate(noExec, adapter, agentPool3, { cwd: '/target', dirExists: anyDir })
 			expect(manifest.workspace).toBe('w45')
 		})
 
@@ -207,14 +207,14 @@ describe('spec:cyber-mux/layout', () => {
 		// `null` is the manifest's JSON-boundary spelling of that — the one place absent becomes null.
 		it('the manifest’s workspace is null on a backend with no workspace tier', () => {
 			const { adapter } = fakeAdapter()
-			const manifest = openLayout(noExec, adapter, agentPool3, { cwd: '/target', dirExists: anyDir })
+			const manifest = openTemplate(noExec, adapter, agentPool3, { cwd: '/target', dirExists: anyDir })
 			expect(manifest.workspace).toBeNull()
 		})
 
 		it('builds every split before the first command is submitted', () => {
 			const calls: string[][] = []
 			const exec = tmuxExec(calls)
-			openLayout(exec, tmuxSessionAdapter, agentPool3, { cwd: '/target', dirExists: anyDir })
+			openTemplate(exec, tmuxSessionAdapter, agentPool3, { cwd: '/target', dirExists: anyDir })
 			const lastSplit = calls.map((c) => c[0]).lastIndexOf('split-window')
 			const firstSubmit = calls.map((c) => c[0]).indexOf('send-keys')
 			expect(lastSplit).toBeGreaterThanOrEqual(0)
@@ -227,7 +227,7 @@ describe('spec:cyber-mux/layout', () => {
 			// UI-focused pane, tmux always splits the session's active pane. A tree walk must also split a
 			// pane created two steps earlier, which no default can express.
 			const { adapter, calls } = fakeAdapter()
-			openLayout(noExec, adapter, agentPool3, { cwd: '/target', dirExists: anyDir })
+			openTemplate(noExec, adapter, agentPool3, { cwd: '/target', dirExists: anyDir })
 			const splits = calls.opens.filter((o) => o.at === 'pane:right' || o.at === 'pane:down')
 			expect(splits).toHaveLength(2)
 			for (const split of splits) expect(split.from).toBeDefined()
@@ -238,7 +238,7 @@ describe('spec:cyber-mux/layout', () => {
 
 		it('submits commands last, in template order', () => {
 			const { adapter, calls } = fakeAdapter()
-			openLayout(noExec, adapter, agentPool3, { cwd: '/target', dirExists: anyDir })
+			openTemplate(noExec, adapter, agentPool3, { cwd: '/target', dirExists: anyDir })
 			expect(calls.submits).toEqual([
 				{ pane: 'p1', text: 'claude' },
 				{ pane: 'p2', text: 'claude' },
@@ -248,7 +248,7 @@ describe('spec:cyber-mux/layout', () => {
 
 		it('a pane with no command opens a blank shell and gets no submit', () => {
 			const { adapter, calls } = fakeAdapter()
-			const template: LayoutTemplate = {
+			const template: Template = {
 				name: 'build-trio',
 				root: {
 					type: 'split',
@@ -257,7 +257,7 @@ describe('spec:cyber-mux/layout', () => {
 					second: { type: 'pane', label: 'spare' },
 				},
 			}
-			const manifest = openLayout(noExec, adapter, template, { cwd: '/target', dirExists: anyDir })
+			const manifest = openTemplate(noExec, adapter, template, { cwd: '/target', dirExists: anyDir })
 			// Created — it is in the manifest with a real pane id...
 			expect(manifest.panes.map((p) => p.label)).toEqual(['editor', 'spare'])
 			expect(manifest.panes[1]?.command).toBeNull()
@@ -267,7 +267,7 @@ describe('spec:cyber-mux/layout', () => {
 
 		it('joins dir onto the apply-time cwd', () => {
 			const { adapter, calls } = fakeAdapter()
-			const template: LayoutTemplate = {
+			const template: Template = {
 				name: 'build-trio',
 				root: {
 					type: 'split',
@@ -276,7 +276,7 @@ describe('spec:cyber-mux/layout', () => {
 					second: { type: 'pane', label: 'watcher', dir: 'services/api/logs' },
 				},
 			}
-			const manifest = openLayout(noExec, adapter, template, { cwd: '/target/root', dirExists: anyDir })
+			const manifest = openTemplate(noExec, adapter, template, { cwd: '/target/root', dirExists: anyDir })
 			// The pane OPENS there — the split carries the joined path as its cwd...
 			expect(calls.opens[1]?.cwd).toBe('/target/root/services/api/logs')
 			// ...and the manifest reports the same resolved path.
@@ -290,12 +290,12 @@ describe('spec:cyber-mux/layout', () => {
 		it('a dir absent from this worktree fails naming the pane and the resolved path, opening nothing', () => {
 			// A branch that predates a directory is a real case, so the error has to be actionable.
 			const { adapter, calls } = fakeAdapter()
-			const template: LayoutTemplate = {
+			const template: Template = {
 				name: 'build-trio',
 				panes: [{ label: 'editor' }, { label: 'watcher', dir: 'services/api/logs' }],
 			}
 			const dirExists = (path: string) => path === '/target'
-			expect(() => openLayout(noExec, adapter, template, { cwd: '/target', dirExists })).toThrow(
+			expect(() => openTemplate(noExec, adapter, template, { cwd: '/target', dirExists })).toThrow(
 				/"watcher".*\/target\/services\/api\/logs/,
 			)
 			// Checked before the region is opened, so a predictable error costs no half-built pool.
@@ -304,11 +304,11 @@ describe('spec:cyber-mux/layout', () => {
 
 		it('the root leaf’s dir rides in on the region open, since no split ever births that pane', () => {
 			const { adapter, calls } = fakeAdapter()
-			const template: LayoutTemplate = {
+			const template: Template = {
 				name: 'build-trio',
 				panes: [{ label: 'editor', dir: 'apps/web' }, { label: 'spare' }],
 			}
-			const manifest = openLayout(noExec, adapter, template, { cwd: '/target', dirExists: anyDir })
+			const manifest = openTemplate(noExec, adapter, template, { cwd: '/target', dirExists: anyDir })
 			expect(calls.opens[0]?.cwd).toBe('/target/apps/web')
 			// And the manifest's claim matches where the pane was actually put.
 			expect(manifest.panes[0]).toMatchObject({ label: 'editor', dir: '/target/apps/web' })
@@ -317,7 +317,7 @@ describe('spec:cyber-mux/layout', () => {
 		it('the root leaf’s env rides in on the region open too, or nothing would ever set it', () => {
 			// Native at every tier on both backends, so this route honors it exactly — no degrade.
 			const { adapter, calls } = fakeAdapter()
-			const template: LayoutTemplate = {
+			const template: Template = {
 				name: 'build-trio',
 				root: {
 					type: 'split',
@@ -326,29 +326,29 @@ describe('spec:cyber-mux/layout', () => {
 					second: { type: 'pane', label: 'runner', env: { ROLE: 'worker' } },
 				},
 			}
-			openLayout(noExec, adapter, template, { cwd: '/target', dirExists: anyDir })
+			openTemplate(noExec, adapter, template, { cwd: '/target', dirExists: anyDir })
 			expect(calls.opens[0]?.env).toEqual({ ROLE: 'planner' })
 			expect(calls.opens[1]?.env).toEqual({ ROLE: 'worker' })
 		})
 
-		it('open --layout sets the root pane’s env natively on both backends’ region tier', () => {
-			const template: LayoutTemplate = {
+		it('open --template sets the root pane’s env natively on both backends’ region tier', () => {
+			const template: Template = {
 				name: 'render-farm',
 				panes: [{ label: 'dispatcher', env: { TIER: 'gpu' } }, { label: 'spare' }],
 			}
 			const tmuxCalls: string[][] = []
-			openLayout(tmuxExec(tmuxCalls), tmuxSessionAdapter, template, { cwd: '/target', dirExists: anyDir })
+			openTemplate(tmuxExec(tmuxCalls), tmuxSessionAdapter, template, { cwd: '/target', dirExists: anyDir })
 			expect(tmuxCalls.find((c) => c[0] === 'new-window')!.join(' ')).toContain('-e TIER=gpu')
 
 			const herdrCalls: string[][] = []
-			openLayout(herdrExec(herdrCalls), herdrSessionAdapter, template, { cwd: '/target', dirExists: anyDir })
+			openTemplate(herdrExec(herdrCalls), herdrSessionAdapter, template, { cwd: '/target', dirExists: anyDir })
 			expect(herdrCalls.find((c) => c[0] === 'workspace' && c[1] === 'create')!.join(' ')).toContain('--env TIER=gpu')
 		})
 	})
 
 	describe('the walk, across tabs', () => {
 		/** Three tabs of one pane each — the shape that makes every open a TAB open, nothing else. */
-		const tabs3: LayoutTemplate = {
+		const tabs3: Template = {
 			name: 'pool',
 			tabs: [
 				{ label: 'editor', panes: [{ label: 'edit', command: 'nvim' }] },
@@ -361,7 +361,7 @@ describe('spec:cyber-mux/layout', () => {
 			// A workspace is what a set of tabs needs to live in; every later tab belongs INSIDE it. A
 			// `pane:*` placement anywhere here would make a tab a split of the tab before it.
 			const { adapter, calls } = fakeAdapter({ workspace: 'w7' })
-			openLayout(noExec, adapter, tabs3, { cwd: '/target', dirExists: anyDir })
+			openTemplate(noExec, adapter, tabs3, { cwd: '/target', dirExists: anyDir })
 			expect(calls.opens.map((o) => o.at)).toEqual(['workspace', 'tab', 'tab'])
 			// No tab is a split of another tab's pane — and nothing was placed against a pane at all.
 			expect(calls.opens.filter((o) => o.at === 'pane:right' || o.at === 'pane:down')).toEqual([])
@@ -373,7 +373,7 @@ describe('spec:cyber-mux/layout', () => {
 			// backend's default, which tracks the user rather than the caller. Across tabs it also keeps a
 			// tab's splits inside that tab.
 			const { adapter, calls } = fakeAdapter({ workspace: 'w7' })
-			const template: LayoutTemplate = {
+			const template: Template = {
 				name: 'pool',
 				tabs: [
 					{ label: 'editor', panes: [{ label: 'edit' }] },
@@ -388,7 +388,7 @@ describe('spec:cyber-mux/layout', () => {
 					},
 				],
 			}
-			openLayout(noExec, adapter, template, { cwd: '/target', dirExists: anyDir })
+			openTemplate(noExec, adapter, template, { cwd: '/target', dirExists: anyDir })
 			// Opens: 1 = the workspace (tab 1's root), 2 = tab 2's root, 3 = tab 2's split.
 			const splits = calls.opens.filter((o) => o.at === 'pane:right' || o.at === 'pane:down')
 			expect(splits).toHaveLength(1)
@@ -400,7 +400,7 @@ describe('spec:cyber-mux/layout', () => {
 			// The single-tab reason scales: a split lands mid-render if it targets a pane already running
 			// an interactive agent, and a tab is opened blank for the same reason a region is.
 			const { adapter, calls } = fakeAdapter({ workspace: 'w7' })
-			const template: LayoutTemplate = {
+			const template: Template = {
 				name: 'pool',
 				tabs: [
 					{
@@ -423,7 +423,7 @@ describe('spec:cyber-mux/layout', () => {
 					},
 				],
 			}
-			openLayout(noExec, adapter, template, { cwd: '/target', dirExists: anyDir })
+			openTemplate(noExec, adapter, template, { cwd: '/target', dirExists: anyDir })
 			// EVERY open — both tab opens and both splits — precedes the first submit.
 			expect(calls.log.lastIndexOf('open')).toBeLessThan(calls.log.indexOf('submit'))
 			expect(calls.opens).toHaveLength(4)
@@ -442,7 +442,7 @@ describe('spec:cyber-mux/layout', () => {
 			// id from the manifest. A multi-tab apply lands MORE spaces at once, which makes stealing focus
 			// worse rather than more justified.
 			const { adapter, calls } = fakeAdapter({ workspace: 'w7' })
-			openLayout(noExec, adapter, tabs3, { cwd: '/target', dirExists: anyDir })
+			openTemplate(noExec, adapter, tabs3, { cwd: '/target', dirExists: anyDir })
 			expect(calls.focuses).toEqual([])
 			expect(calls.log).not.toContain('focus')
 
@@ -453,8 +453,8 @@ describe('spec:cyber-mux/layout', () => {
 				...tabs3,
 				focus: 'logs',
 				tabs: tabs3.tabs!.map((tab) => ({ ...tab, focus: true })),
-			} as LayoutTemplate
-			openLayout(noExec, b, withFocusField, { cwd: '/target', dirExists: anyDir })
+			} as Template
+			openTemplate(noExec, b, withFocusField, { cwd: '/target', dirExists: anyDir })
 			expect(asking.focuses).toEqual([])
 			expect(asking.log).toEqual(calls.log)
 		})
@@ -466,13 +466,13 @@ describe('spec:cyber-mux/layout', () => {
 			const { adapter, calls } = fakeAdapter({ workspace: 'w7', failOnOpen: 2 })
 			let thrown: unknown
 			try {
-				openLayout(noExec, adapter, tabs3, { cwd: '/target', dirExists: anyDir })
+				openTemplate(noExec, adapter, tabs3, { cwd: '/target', dirExists: anyDir })
 			} catch (err) {
 				thrown = err
 			}
 			// It exits 1 — the CLI's own exit path for this error — carrying what WAS built.
-			expect(thrown).toBeInstanceOf(LayoutApplyError)
-			const { manifest } = thrown as LayoutApplyError
+			expect(thrown).toBeInstanceOf(TemplateApplyError)
+			const { manifest } = thrown as TemplateApplyError
 			expect(manifest.panes).toEqual([{ label: 'edit', pane: 'p1', dir: '/target', command: 'nvim', tab: 0 }])
 			// Nothing is killed, and no command is typed into a half-built workspace.
 			expect(calls.teardowns).toEqual([])
@@ -483,14 +483,14 @@ describe('spec:cyber-mux/layout', () => {
 			// A consumer grouping panes by tab needs something to group on, exactly as it needs workspace
 			// to group by space.
 			const { adapter } = fakeAdapter({ workspace: 'w7' })
-			const template: LayoutTemplate = {
+			const template: Template = {
 				name: 'pool',
 				tabs: [
 					{ label: 'editor', panes: [{ label: 'edit' }, { label: 'test' }], arrange: 'even-horizontal' },
 					{ label: 'logs', panes: [{ label: 'tail' }] },
 				],
 			}
-			const manifest = openLayout(noExec, adapter, template, { cwd: '/target', dirExists: anyDir })
+			const manifest = openTemplate(noExec, adapter, template, { cwd: '/target', dirExists: anyDir })
 			expect(manifest.panes.map((p) => ({ label: p.label, tab: p.tab }))).toEqual([
 				{ label: 'edit', tab: 0 },
 				{ label: 'test', tab: 0 },
@@ -507,12 +507,12 @@ describe('spec:cyber-mux/layout', () => {
 			// Absent rather than false: there is no tab structure to report, and inventing one would claim
 			// the template said something it did not.
 			const { adapter } = fakeAdapter()
-			const manifest = openLayout(noExec, adapter, agentPool3, { cwd: '/target', dirExists: anyDir })
+			const manifest = openTemplate(noExec, adapter, agentPool3, { cwd: '/target', dirExists: anyDir })
 			expect(manifest.panes.map((p) => p.tab)).toEqual([null, null, null])
 		})
 
 		/** A workspace named `pool`, whose first tab is `editor` and whose second is `logs`. */
-		const pool: LayoutTemplate = {
+		const pool: Template = {
 			name: 'pool',
 			tabs: [
 				{ label: 'editor', panes: [{ label: 'edit' }] },
@@ -524,7 +524,7 @@ describe('spec:cyber-mux/layout', () => {
 			// tmux collapses workspace and tab onto the same Window, so a template's tabs would otherwise be
 			// an unlabeled pile — the prefix is what keeps them recognizable as a group in the status bar.
 			const calls: string[][] = []
-			openLayout(tmuxExec(calls), tmuxSessionAdapter, pool, { cwd: '/target', dirExists: anyDir })
+			openTemplate(tmuxExec(calls), tmuxSessionAdapter, pool, { cwd: '/target', dirExists: anyDir })
 			// The first tab's window is named after birth — at its birth the name went to the workspace,
 			// which on tmux is the same Window.
 			expect(calls.filter((c) => c[0] === 'rename-window')).toEqual([['rename-window', '-t', '@0', 'pool - editor']])
@@ -543,7 +543,7 @@ describe('spec:cyber-mux/layout', () => {
 			// herdr's UI already groups by the real workspace label, so a prefix would be redundant noise —
 			// the concept maps onto what the backend actually has.
 			const calls: string[][] = []
-			openLayout(herdrExec(calls), herdrSessionAdapter, pool, { cwd: '/target', dirExists: anyDir })
+			openTemplate(herdrExec(calls), herdrSessionAdapter, pool, { cwd: '/target', dirExists: anyDir })
 			// The workspace carries the workspace's name...
 			expect(calls.find((c) => c[0] === 'workspace' && c[1] === 'create')).toEqual(
 				expect.arrayContaining(['--label', 'pool']),
@@ -561,10 +561,10 @@ describe('spec:cyber-mux/layout', () => {
 		 * The same two claims, on the OTHER route — a second binding to each scenario rather than a new
 		 * scenario, because the scenarios say "when it is applied" and name no route.
 		 *
-		 * `worktree add --layout` has its region opened by the worktree verbs BEFORE the walk runs, so
+		 * `worktree add --template` has its region opened by the worktree verbs BEFORE the walk runs, so
 		 * its first tab is the one a route-specific implementation forgets. It was forgotten: the first
 		 * tab kept the workspace's own label and the tmux scenario was silently false here while passing
-		 * on `open --layout`. That is the third time in this CR a route-agnostic claim was implemented on
+		 * on `open --template`. That is the third time in this CR a route-agnostic claim was implemented on
 		 * one route and tested there — which is why the naming now lives in the walk both routes share,
 		 * and why both routes are bound.
 		 */
@@ -572,7 +572,7 @@ describe('spec:cyber-mux/layout', () => {
 			it('on a backend with no workspace tier, a tab is labeled with its workspace and its own name', () => {
 				const calls: string[][] = []
 				// The region already exists — the worktree's own workspace, opened under the label `pool`.
-				applyLayoutToRegion(tmuxExec(calls), tmuxSessionAdapter, pool, {
+				applyTemplateToRegion(tmuxExec(calls), tmuxSessionAdapter, pool, {
 					root: { id: '%0', tab: '@0' },
 					cwd: '/repo.worktrees/feat-x',
 					// tmux: no workspace tier, so the workspace must be carried into every tab's name.
@@ -590,7 +590,7 @@ describe('spec:cyber-mux/layout', () => {
 
 			it('on a backend with a real workspace tier, a tab carries its own label unprefixed', () => {
 				const calls: string[][] = []
-				applyLayoutToRegion(herdrExec(calls), herdrSessionAdapter, pool, {
+				applyTemplateToRegion(herdrExec(calls), herdrSessionAdapter, pool, {
 					root: { id: 'w1:p0', tab: 'w1:t1' },
 					cwd: '/repo.worktrees/feat-x',
 					// herdr: the tier IS the group, so its UI already shows the workspace and no tab is
@@ -617,7 +617,7 @@ describe('spec:cyber-mux/layout', () => {
 			const labels = ['acme-platform-migration-2026-phase-two', 'acme-platform-migration-2026-phase-three']
 			const named = labels.map((label) => {
 				const calls: string[][] = []
-				openLayout(tmuxExec(calls), tmuxSessionAdapter, pool, { cwd: '/target', label, dirExists: anyDir })
+				openTemplate(tmuxExec(calls), tmuxSessionAdapter, pool, { cwd: '/target', label, dirExists: anyDir })
 				return calls.find((c) => c[0] === 'rename-window')![3]!
 			})
 			// Each workspace label appears in its tab's label IN FULL, verbatim...
@@ -631,7 +631,7 @@ describe('spec:cyber-mux/layout', () => {
 			// herdr labels a new workspace's root tab `1` with no flag to change it; `tab create --label`
 			// names every subsequent tab at birth.
 			const calls: string[][] = []
-			openLayout(herdrExec(calls), herdrSessionAdapter, pool, { cwd: '/target', dirExists: anyDir })
+			openTemplate(herdrExec(calls), herdrSessionAdapter, pool, { cwd: '/target', dirExists: anyDir })
 			const verbs = calls.map((c) => c.slice(0, 2).join(' '))
 			// The workspace is created, and its own create names the WORKSPACE — never the tab under it.
 			const create = calls.find((c) => c[0] === 'workspace' && c[1] === 'create')!
@@ -655,7 +655,7 @@ describe('spec:cyber-mux/layout', () => {
 			// The grouping tag is cyber-mux's own bookkeeping, not a workspace tier. Reporting it as the
 			// workspace would claim a tier tmux does not have.
 			const calls: string[][] = []
-			const manifest = openLayout(tmuxExec(calls), tmuxSessionAdapter, tabs3, { cwd: '/target', dirExists: anyDir })
+			const manifest = openTemplate(tmuxExec(calls), tmuxSessionAdapter, tabs3, { cwd: '/target', dirExists: anyDir })
 			expect(manifest.workspace).toBeNull()
 			// The tabs really WERE grouped — so the null is the convention holding, not the tag missing.
 			const tagged = calls.filter((c) => c[0] === 'set-option' && c.includes(TMUX_WORKSPACE_GROUP_OPTION))
@@ -672,7 +672,7 @@ describe('spec:cyber-mux/layout', () => {
 		// `first` — the ORIGINAL pane. herdr's `--ratio` sizes the original, so it passes through
 		// unconverted; tmux's `-l` sizes the NEW pane, so it takes 1 - ratio. Applying the inversion to
 		// both backends, or to neither, fails exactly one of these two.
-		const skewed: LayoutTemplate = {
+		const skewed: Template = {
 			name: 'build-trio',
 			root: {
 				type: 'split',
@@ -685,14 +685,14 @@ describe('spec:cyber-mux/layout', () => {
 
 		it('herdr receives --ratio 0.333 — its flag sizes the original pane, so it is unconverted', () => {
 			const calls: string[][] = []
-			openLayout(herdrExec(calls), herdrSessionAdapter, skewed, { cwd: '/target', dirExists: anyDir })
+			openTemplate(herdrExec(calls), herdrSessionAdapter, skewed, { cwd: '/target', dirExists: anyDir })
 			const split = calls.find((c) => c[0] === 'pane' && c[1] === 'split')!
 			expect(split.join(' ')).toContain('--ratio 0.333')
 		})
 
 		it('tmux receives -l 67% — its flag sizes the new pane, so it inverts', () => {
 			const calls: string[][] = []
-			openLayout(tmuxExec(calls), tmuxSessionAdapter, skewed, { cwd: '/target', dirExists: anyDir })
+			openTemplate(tmuxExec(calls), tmuxSessionAdapter, skewed, { cwd: '/target', dirExists: anyDir })
 			const split = calls.find((c) => c[0] === 'split-window')!
 			expect(split.join(' ')).toContain('-l 67%')
 			// Never the un-inverted number, which is what a double- or missing inversion would emit.
@@ -701,7 +701,7 @@ describe('spec:cyber-mux/layout', () => {
 
 		it('a split carrying no ratio is left to the backend’s own even default', () => {
 			const calls: string[][] = []
-			const even: LayoutTemplate = {
+			const even: Template = {
 				name: 'build-trio',
 				root: {
 					type: 'split',
@@ -710,15 +710,15 @@ describe('spec:cyber-mux/layout', () => {
 					second: { type: 'pane', label: 'tests' },
 				},
 			}
-			openLayout(tmuxExec(calls), tmuxSessionAdapter, even, { cwd: '/target', dirExists: anyDir })
+			openTemplate(tmuxExec(calls), tmuxSessionAdapter, even, { cwd: '/target', dirExists: anyDir })
 			expect(calls.find((c) => c[0] === 'split-window')).not.toContain('-l')
 
 			const herdrCalls: string[][] = []
-			openLayout(herdrExec(herdrCalls), herdrSessionAdapter, even, { cwd: '/target', dirExists: anyDir })
+			openTemplate(herdrExec(herdrCalls), herdrSessionAdapter, even, { cwd: '/target', dirExists: anyDir })
 			expect(herdrCalls.find((c) => c[0] === 'pane' && c[1] === 'split')).not.toContain('--ratio')
 		})
 
-		const withEnv: LayoutTemplate = {
+		const withEnv: Template = {
 			name: 'build-trio',
 			root: {
 				type: 'split',
@@ -730,20 +730,20 @@ describe('spec:cyber-mux/layout', () => {
 
 		it('herdr sets env natively at the pane’s birth via --env', () => {
 			const calls: string[][] = []
-			openLayout(herdrExec(calls), herdrSessionAdapter, withEnv, { cwd: '/target', dirExists: anyDir })
+			openTemplate(herdrExec(calls), herdrSessionAdapter, withEnv, { cwd: '/target', dirExists: anyDir })
 			expect(calls.find((c) => c[0] === 'pane' && c[1] === 'split')!.join(' ')).toContain('--env ROLE=worker')
 		})
 
 		it('tmux sets env natively at the pane’s birth via -e', () => {
 			const calls: string[][] = []
-			openLayout(tmuxExec(calls), tmuxSessionAdapter, withEnv, { cwd: '/target', dirExists: anyDir })
+			openTemplate(tmuxExec(calls), tmuxSessionAdapter, withEnv, { cwd: '/target', dirExists: anyDir })
 			expect(calls.find((c) => c[0] === 'split-window')!.join(' ')).toContain('-e ROLE=worker')
 		})
 
 		it('a pane with env and no command is valid: the env is set, and nothing is submitted to it', () => {
 			// A coherent warm pane for something to attach to later. Both backends set env natively, so
 			// the command-prefix fallback the env rule once rested on has no customer.
-			const template: LayoutTemplate = {
+			const template: Template = {
 				name: 'build-trio',
 				root: {
 					type: 'split',
@@ -753,7 +753,7 @@ describe('spec:cyber-mux/layout', () => {
 				},
 			}
 			const calls: string[][] = []
-			const manifest = openLayout(herdrExec(calls), herdrSessionAdapter, template, {
+			const manifest = openTemplate(herdrExec(calls), herdrSessionAdapter, template, {
 				cwd: '/target',
 				dirExists: anyDir,
 			})
@@ -772,7 +772,7 @@ describe('spec:cyber-mux/layout', () => {
 			const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
 			const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
 			const { adapter, calls } = fakeAdapter({ canSizeSplits: false })
-			const manifest = openLayout(noExec, adapter, agentPool3, { cwd: '/target', dirExists: anyDir })
+			const manifest = openTemplate(noExec, adapter, agentPool3, { cwd: '/target', dirExists: anyDir })
 			// Every pane the template names is still created...
 			expect(manifest.panes.map((p) => p.label)).toEqual(['planner', 'worker-a', 'worker-b'])
 			// ...the ratios were dropped rather than passed to a backend that cannot honor them...
@@ -787,7 +787,7 @@ describe('spec:cyber-mux/layout', () => {
 		it('a backend that can size a split passes the ratio through and warns about nothing', () => {
 			const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
 			const { adapter, calls } = fakeAdapter()
-			openLayout(noExec, adapter, agentPool3, { cwd: '/target', dirExists: anyDir })
+			openTemplate(noExec, adapter, agentPool3, { cwd: '/target', dirExists: anyDir })
 			expect(calls.opens.filter((o) => o.ratio === 0.5)).toHaveLength(2)
 			expect(stderr).not.toHaveBeenCalled()
 		})
@@ -796,9 +796,9 @@ describe('spec:cyber-mux/layout', () => {
 	describe('one template, one geometry, every backend', () => {
 		it('tmux and herdr receive the same splits, in the same order, with the same directions and ratios', () => {
 			const tmuxCalls: string[][] = []
-			openLayout(tmuxExec(tmuxCalls), tmuxSessionAdapter, pool4, { cwd: '/target', dirExists: anyDir })
+			openTemplate(tmuxExec(tmuxCalls), tmuxSessionAdapter, pool4, { cwd: '/target', dirExists: anyDir })
 			const herdrCalls: string[][] = []
-			openLayout(herdrExec(herdrCalls), herdrSessionAdapter, pool4, { cwd: '/target', dirExists: anyDir })
+			openTemplate(herdrExec(herdrCalls), herdrSessionAdapter, pool4, { cwd: '/target', dirExists: anyDir })
 
 			const expected = [
 				{ direction: 'right', ratio: 0.5 },
@@ -810,21 +810,21 @@ describe('spec:cyber-mux/layout', () => {
 			expect(tmuxSplits(tmuxCalls)).toEqual(herdrSplits(herdrCalls))
 		})
 
-		it('tmux’s own select-layout is never invoked', () => {
+		it('tmux’s own select-template is never invoked', () => {
 			// It implements tmux's grid algorithm, which herdr has no equivalent of — using it would give
 			// the same template a different geometry per backend.
 			const calls: string[][] = []
-			openLayout(tmuxExec(calls), tmuxSessionAdapter, pool4, { cwd: '/target', dirExists: anyDir })
-			expect(calls.some((c) => c[0] === 'select-layout')).toBe(false)
+			openTemplate(tmuxExec(calls), tmuxSessionAdapter, pool4, { cwd: '/target', dirExists: anyDir })
+			expect(calls.some((c) => c[0] === 'select-template')).toBe(false)
 		})
 	})
 
 	describe('apply does not roll back', () => {
 		it('a throw mid-walk reports what was built, kills nothing, and surfaces the failure', () => {
-			// A kill is not obviously safer than a half-built layout the caller can see and finish. This is
+			// A kill is not obviously safer than a half-built template the caller can see and finish. This is
 			// the price of owning the engine rather than delegating to an atomic tree-apply, and it is
 			// paid uniformly — a guarantee only herdr could make is not one cyber-mux can offer.
-			const template: LayoutTemplate = {
+			const template: Template = {
 				name: 'render-farm',
 				arrange: 'even-horizontal',
 				panes: [{ label: 'a' }, { label: 'b' }, { label: 'c' }, { label: 'd' }],
@@ -833,16 +833,16 @@ describe('spec:cyber-mux/layout', () => {
 			const { adapter, calls } = fakeAdapter({ failOnOpen: 4 })
 			let thrown: unknown
 			try {
-				openLayout(noExec, adapter, template, { cwd: '/target', dirExists: anyDir })
+				openTemplate(noExec, adapter, template, { cwd: '/target', dirExists: anyDir })
 			} catch (err) {
 				thrown = err
 			}
-			expect(thrown).toBeInstanceOf(LayoutApplyError)
-			const { manifest } = thrown as LayoutApplyError
+			expect(thrown).toBeInstanceOf(TemplateApplyError)
+			const { manifest } = thrown as TemplateApplyError
 			// The panes built before the failure are reported, with their real ids.
 			expect(manifest.panes.map((p) => p.label)).toEqual(['a', 'b', 'c'])
 			expect(manifest.panes.map((p) => p.pane)).toEqual(['p1', 'p2', 'p3'])
-			expect(manifest.layout).toBe('render-farm')
+			expect(manifest.template).toBe('render-farm')
 			// Nothing is killed, and no command is typed into a half-built pool.
 			expect(calls.teardowns).toEqual([])
 			expect(calls.submits).toEqual([])
@@ -850,11 +850,11 @@ describe('spec:cyber-mux/layout', () => {
 	})
 
 	describe('the manifest', () => {
-		it('reports the layout, the injected cwd, the workspace, and one entry per pane', () => {
+		it('reports the template, the injected cwd, the workspace, and one entry per pane', () => {
 			const { adapter } = fakeAdapter()
-			const manifest = openLayout(noExec, adapter, agentPool3, { cwd: '/w/feat-x', dirExists: anyDir })
+			const manifest = openTemplate(noExec, adapter, agentPool3, { cwd: '/w/feat-x', dirExists: anyDir })
 			expect(manifest).toEqual({
-				layout: 'agent-pool-3',
+				template: 'agent-pool-3',
 				cwd: '/w/feat-x',
 				workspace: null,
 				panes: [
@@ -868,19 +868,19 @@ describe('spec:cyber-mux/layout', () => {
 
 		it('reports an unlabeled pane with a null label rather than dropping it', () => {
 			const { adapter } = fakeAdapter()
-			const template: LayoutTemplate = { name: 'render-farm', panes: [{ command: 'top' }] }
-			const manifest = openLayout(noExec, adapter, template, { cwd: '/target', dirExists: anyDir })
+			const template: Template = { name: 'render-farm', panes: [{ command: 'top' }] }
+			const manifest = openTemplate(noExec, adapter, template, { cwd: '/target', dirExists: anyDir })
 			expect(manifest.panes).toEqual([{ label: null, pane: 'p1', dir: '/target', command: 'top', tab: null }])
 		})
 	})
 
-	describe('applyLayoutToRegion', () => {
+	describe('applyTemplateToRegion', () => {
 		it('builds into a region someone else already opened, reporting its workspace', () => {
 			// The worktree flow: the worktree's own workspace IS the region, and its root pane is the
 			// tree's root — so the walk splits into it rather than opening a second space.
 			const { adapter, calls } = fakeAdapter()
 			const root: OpenedPane = { id: 'w9:p1', tab: 'w9:t1' }
-			const manifest = applyLayoutToRegion(noExec, adapter, agentPool3, {
+			const manifest = applyTemplateToRegion(noExec, adapter, agentPool3, {
 				root,
 				cwd: '/repo.worktrees/feat-x',
 				workspace: 'w9',
@@ -904,11 +904,11 @@ describe('spec:cyber-mux/layout', () => {
 			// manifest is precisely the answer to "which panes exist and what are they for".
 			const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
 			const { adapter } = fakeAdapter()
-			const template: LayoutTemplate = {
+			const template: Template = {
 				name: 'build-trio',
 				panes: [{ label: 'editor', dir: 'apps/web' }, { label: 'spare' }],
 			}
-			const manifest = applyLayoutToRegion(noExec, adapter, template, {
+			const manifest = applyTemplateToRegion(noExec, adapter, template, {
 				root: { id: 'w9:root', tab: 'w9:t1' },
 				cwd: '/repo.worktrees/feat-x',
 				workspace: 'w9',
@@ -933,11 +933,11 @@ describe('spec:cyber-mux/layout', () => {
 		it('a split-born pane’s dir is still honored on this route — only the root pane degrades', () => {
 			vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
 			const { adapter, calls } = fakeAdapter()
-			const template: LayoutTemplate = {
+			const template: Template = {
 				name: 'build-trio',
 				panes: [{ label: 'editor' }, { label: 'watcher', dir: 'apps/web' }],
 			}
-			const manifest = applyLayoutToRegion(noExec, adapter, template, {
+			const manifest = applyTemplateToRegion(noExec, adapter, template, {
 				root: { id: 'w9:root', tab: 'w9:t1' },
 				cwd: '/repo.worktrees/feat-x',
 				workspace: 'w9',
@@ -951,7 +951,7 @@ describe('spec:cyber-mux/layout', () => {
 		it('warns about nothing when the root pane asks for no dir', () => {
 			const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
 			const { adapter } = fakeAdapter()
-			const manifest = applyLayoutToRegion(noExec, adapter, agentPool3, {
+			const manifest = applyTemplateToRegion(noExec, adapter, agentPool3, {
 				root: { id: 'w9:root', tab: 'w9:t1' },
 				cwd: '/repo.worktrees/feat-x',
 				workspace: 'w9',
@@ -963,7 +963,7 @@ describe('spec:cyber-mux/layout', () => {
 		})
 
 		describe('the env-prefix fallback — design §7.3 Gap C’s first real customer', () => {
-			const farm: LayoutTemplate = {
+			const farm: Template = {
 				name: 'render-farm',
 				root: {
 					type: 'split',
@@ -975,7 +975,7 @@ describe('spec:cyber-mux/layout', () => {
 
 			it('prefixes the root pane’s command when the region open could not carry its env', () => {
 				const { adapter, calls } = fakeAdapter()
-				applyLayoutToRegion(noExec, adapter, farm, {
+				applyTemplateToRegion(noExec, adapter, farm, {
 					root: { id: 'w9:root', tab: 'w9:t1' },
 					cwd: '/repo.worktrees/feat-x',
 					workspace: 'w9',
@@ -991,7 +991,7 @@ describe('spec:cyber-mux/layout', () => {
 			it('never prefixes when the region open already set the env natively', () => {
 				// The double-application guard: prefixing here would set TIER twice and lie about which won.
 				const { adapter, calls } = fakeAdapter()
-				applyLayoutToRegion(noExec, adapter, farm, {
+				applyTemplateToRegion(noExec, adapter, farm, {
 					root: { id: 'w9:root', tab: 'w9:t1' },
 					cwd: '/repo.worktrees/feat-x',
 					workspace: 'w9',
@@ -1001,7 +1001,7 @@ describe('spec:cyber-mux/layout', () => {
 				expect(calls.submits[0]).toEqual({ pane: 'w9:root', text: 'render' })
 			})
 
-			it('open --layout sets env natively and prefixes nothing, on either backend', () => {
+			it('open --template sets env natively and prefixes nothing, on either backend', () => {
 				for (const [adapter, exec] of [
 					[tmuxSessionAdapter, tmuxExec([])],
 					[herdrSessionAdapter, herdrExec([])],
@@ -1011,7 +1011,7 @@ describe('spec:cyber-mux/layout', () => {
 						calls.push(args)
 						return exec(cmd, args)
 					}
-					openLayout(recording, adapter, farm, { cwd: '/target', dirExists: anyDir })
+					openTemplate(recording, adapter, farm, { cwd: '/target', dirExists: anyDir })
 					// Whatever this backend's submit spells, it carries the bare command — never `env ...`.
 					expect(calls.filter((c) => c.some((a) => a.startsWith('env ')))).toEqual([])
 					expect(calls.some((c) => c.includes('render'))).toBe(true)
@@ -1020,11 +1020,11 @@ describe('spec:cyber-mux/layout', () => {
 
 			it('shell-quotes a value carrying spaces or quotes, so the command line cannot break', () => {
 				const { adapter, calls } = fakeAdapter()
-				const template: LayoutTemplate = {
+				const template: Template = {
 					name: 'render-farm',
 					panes: [{ label: 'dispatcher', env: { NOTE: "it's a big one", FLAGS: '--x 1' }, command: 'render' }],
 				}
-				applyLayoutToRegion(noExec, adapter, template, {
+				applyTemplateToRegion(noExec, adapter, template, {
 					root: { id: 'w9:root', tab: 'w9:t1' },
 					cwd: '/target',
 					workspace: 'w9',
@@ -1039,11 +1039,11 @@ describe('spec:cyber-mux/layout', () => {
 				// The fallback can only ride on a command line — there is nothing to ride here.
 				const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
 				const { adapter, calls } = fakeAdapter()
-				const template: LayoutTemplate = {
+				const template: Template = {
 					name: 'render-farm',
 					panes: [{ label: 'dispatcher', env: { TIER: 'gpu' } }, { label: 'encoder' }],
 				}
-				applyLayoutToRegion(noExec, adapter, template, {
+				applyTemplateToRegion(noExec, adapter, template, {
 					root: { id: 'w9:root', tab: 'w9:t1' },
 					cwd: '/target',
 					workspace: 'w9',
@@ -1060,7 +1060,7 @@ describe('spec:cyber-mux/layout', () => {
 			it('says nothing when the root pane has no env to lose', () => {
 				const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
 				const { adapter } = fakeAdapter()
-				applyLayoutToRegion(noExec, adapter, agentPool3, {
+				applyTemplateToRegion(noExec, adapter, agentPool3, {
 					root: { id: 'w9:root', tab: 'w9:t1' },
 					cwd: '/target',
 					workspace: 'w9',
@@ -1072,7 +1072,7 @@ describe('spec:cyber-mux/layout', () => {
 
 			it('a root pane whose env the region open could not carry has it prefixed onto its command', () => {
 				const { adapter, calls } = fakeAdapter()
-				applyLayoutToRegion(noExec, adapter, farm, {
+				applyTemplateToRegion(noExec, adapter, farm, {
 					root: { id: 'w9:root', tab: 'w9:t1' },
 					cwd: '/repo.worktrees/feat-x',
 					workspace: 'w9',
@@ -1090,14 +1090,14 @@ describe('spec:cyber-mux/layout', () => {
 				// Several panes across several tabs, whose root pane has env but no command to ride it in on.
 				const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
 				const { adapter, calls } = fakeAdapter({ workspace: 'w9' })
-				const template: LayoutTemplate = {
+				const template: Template = {
 					name: 'render-farm',
 					tabs: [
 						{ label: 'gpu', panes: [{ label: 'dispatcher', env: { TIER: 'gpu' } }, { label: 'encoder' }] },
 						{ label: 'cpu', panes: [{ label: 'muxer' }, { label: 'sink' }] },
 					],
 				}
-				applyLayoutToRegion(noExec, adapter, template, {
+				applyTemplateToRegion(noExec, adapter, template, {
 					root: { id: 'w9:root', tab: 'w9:t1' },
 					cwd: '/target',
 					workspace: 'w9',
@@ -1117,7 +1117,7 @@ describe('spec:cyber-mux/layout', () => {
 
 		it('reports a null workspace on a backend that binds none', () => {
 			const { adapter } = fakeAdapter()
-			const manifest = applyLayoutToRegion(noExec, adapter, pool4, {
+			const manifest = applyTemplateToRegion(noExec, adapter, pool4, {
 				root: { id: '%0', tab: '@0' },
 				cwd: '/target',
 				workspace: null,

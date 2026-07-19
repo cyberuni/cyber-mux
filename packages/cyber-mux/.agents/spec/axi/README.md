@@ -176,11 +176,11 @@ scenarios.
 
    **#9 is not "unimplemented", as this node used to claim — it is built, and now on the right stream.**
    Two suggestion paths ship: `worktree add`/`open` names the flag that would have grouped what it just
-   placed (`src/cli.ts`, `reportOpenedWorktree`), and `layout save` reveals that a workspace holds more
+   placed (`src/cli.ts`, `reportOpenedWorktree`), and `template save` reveals that a workspace holds more
    tabs than were captured (`noteTabsLeftOut`). The second is AXI's *Reveal truncated lists* case
    verbatim — load-bearing scope information. Both used to write to **stderr**, the stream AXI defines
    as unread; this CR moved them into the structured payload on **stdout** as `help[N]:` blocks
-   (`{ message, command }`) — re-opening the [`layout/`](../layout/README.md) frozen scenarios under a
+   (`{ message, command }`) — re-opening the [`template/`](../template/README.md) frozen scenarios under a
    ratified Clearance for `save` and landing the worktree hint additively (it was only pinned
    stream-agnostically). Saying the principle was unbuilt would have hidden
    two live counter-examples behind a word — the same move that let #6's dropped code and #8's widening
@@ -233,14 +233,14 @@ corruption — but a failed `read` captures nothing, so the bytes and the error 
     single `fail()` helper this node used to describe is **gone**; `src/cli.ts` has no `fail(` sites and
     writes no error to stderr. The `ambiguous-pane` report of [`mux/`](../mux/README.md)'s pane
     addressing (its `code`, candidates, and `--format` honoring) is the shape every site now uses.
-  - **The two #9 suggestions now ship on stdout** — `layout save`'s truncation reveal
+  - **The two #9 suggestions now ship on stdout** — `template save`'s truncation reveal
     (`noteTabsLeftOut`) and the `worktree` grouping hint (`reportOpenedWorktree`) ride in the structured
     payload as `help[N]:` blocks (`{ message, command }`, rendered by `printHelp` in `output.ts`), each
     emitted only when there is a next move (#9's omit-when-self-contained rule). This CR moved them off
     stderr. See #9.
   - **Backend text is translated everywhere, including the generic `worktree-failed` catch-all.** The
-    coded error sites carry `cyber-mux`'s own text (the `layout-not-found` lookup names the directories
-    it searched; the `invalid-template` and `layout-apply-failed` messages are this CLI's own). The
+    coded error sites carry `cyber-mux`'s own text (the `template-not-found` lookup names the directories
+    it searched; the `invalid-template` and `template-apply-failed` messages are this CLI's own). The
     `worktree` verbs' catch-all (`reportWorktreeFailure`, `src/cli.ts`) used to forward whatever it
     caught verbatim — safe for this module's own refusals, a leak for a multiplexer failure opening or
     binding the worktree's pane. It now tells the two apart (`WorktreeGitError`, `src/worktree.ts`) and

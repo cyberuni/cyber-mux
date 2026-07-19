@@ -2,11 +2,11 @@ import type { Command } from 'commander'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildProgram } from './cli.ts'
 import type { Exec } from './exec.ts'
-import { collectPanes, type LayoutTemplate, resolveTree } from './layout.ts'
-import { captureWorkspaceLayout } from './layout-capture.ts'
-import type { LayoutStore } from './layout-store.ts'
 import { tmuxSessionAdapter } from './session.tmux.ts'
 import type { PaneRect } from './session.ts'
+import { collectPanes, resolveTree, type Template } from './template.ts'
+import { captureWorkspaceTemplate } from './template-capture.ts'
+import type { TemplateStore } from './template-store.ts'
 
 /** No ancestry available — forces every probe onto the env fast-path/hint, deterministic in CI. */
 const noAncestry: Exec = () => null
@@ -612,9 +612,9 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls).toEqual([])
 		})
 
-		describe('layout', () => {
-			const REPO_DIR = '/repo/.cyber-mux/layouts'
-			const USER_DIR = '/home/u/.config/cyber-mux/layouts'
+		describe('template', () => {
+			const REPO_DIR = '/repo/.cyber-mux/templates'
+			const USER_DIR = '/home/u/.config/cyber-mux/templates'
 			/** Pinned, so the user directory is never the runner's real ~/.config. */
 			const XDG = { XDG_CONFIG_HOME: '/home/u/.config' }
 
@@ -636,10 +636,10 @@ describe('spec:cyber-mux/mux', () => {
 				},
 			}
 
-			/** A `LayoutStore` over an in-memory file map — no templates on disk, ever. */
+			/** A `TemplateStore` over an in-memory file map — no templates on disk, ever. */
 			function fakeStore(
 				files: Record<string, unknown>,
-			): LayoutStore & { reads: string[]; writes: Record<string, string> } {
+			): TemplateStore & { reads: string[]; writes: Record<string, string> } {
 				const raw: Record<string, string> = {}
 				for (const [path, body] of Object.entries(files)) {
 					raw[path] = typeof body === 'string' ? body : JSON.stringify(body)
@@ -714,10 +714,10 @@ describe('spec:cyber-mux/mux', () => {
 			}
 
 			describe('resolving a template by name', () => {
-				it('--file skips resolution entirely — neither layouts directory is consulted', async () => {
+				it('--file skips resolution entirely — neither templates directory is consulted', async () => {
 					const store = fakeStore({ './scratch/pool.json': { name: 'pool', panes: [{ label: 'a' }] } })
 					const program = buildProgram({ env: XDG, exec: repoExec([]), store })
-					await run(program, ['layout', 'show', '--file', './scratch/pool.json'])
+					await run(program, ['template', 'show', '--file', './scratch/pool.json'])
 					expect(store.reads).toEqual(['./scratch/pool.json'])
 					expect(logs.join('\n')).toContain('"name": "pool"')
 				})
@@ -728,16 +728,16 @@ describe('spec:cyber-mux/mux', () => {
 						[user('pool-4')]: { name: 'pool-4', panes: [{ label: 'mine-only' }] },
 					})
 					const program = buildProgram({ env: XDG, exec: repoExec([]), store })
-					await run(program, ['layout', 'show', 'pool-4'])
+					await run(program, ['template', 'show', 'pool-4'])
 					// The repo's answer is the one shown — a personal template must not silently displace it.
 					expect(logs.join('\n')).toContain('"w1"')
 					expect(logs.join('\n')).not.toContain('mine-only')
 				})
 
-				it('layout list reports the user template a repo template shadows', async () => {
+				it('template list reports the user template a repo template shadows', async () => {
 					const store = fakeStore({ [repo('pool-4')]: POOL_4, [user('pool-4')]: POOL_4 })
 					const program = buildProgram({ env: XDG, exec: repoExec([]), store })
-					await run(program, ['layout', 'list'])
+					await run(program, ['template', 'list'])
 					const rows = logs.join('\n').split('\n')
 					expect(rows.some((r) => r.includes('pool-4') && r.includes('repo') && !r.includes('yes'))).toBe(true)
 					expect(rows.some((r) => r.includes('pool-4') && r.includes('user') && r.includes('yes'))).toBe(true)
@@ -746,20 +746,20 @@ describe('spec:cyber-mux/mux', () => {
 				it('a user template resolves when the repo has none of that name, and lists as user', async () => {
 					const store = fakeStore({ [user('scratch')]: { name: 'scratch', panes: [{ label: 'a' }, { label: 'b' }] } })
 					const program = buildProgram({ env: XDG, exec: repoExec([]), store })
-					await run(program, ['layout', 'show', 'scratch'])
+					await run(program, ['template', 'show', 'scratch'])
 					expect(logs.join('\n')).toContain('"name": "scratch"')
 
 					logs.length = 0
-					await run(buildProgram({ env: XDG, exec: repoExec([]), store }), ['layout', 'list'])
+					await run(buildProgram({ env: XDG, exec: repoExec([]), store }), ['template', 'list'])
 					expect(logs.join('\n')).toMatch(/scratch\s+user/)
 				})
 
-				it('the repo layouts directory resolves through the primary checkout, not the caller’s cwd', async () => {
+				it('the repo templates directory resolves through the primary checkout, not the caller’s cwd', async () => {
 					// The template exists ONLY under the primary checkout — which is exactly the case of a
 					// worktree whose branch predates it. Reading ./.cyber-mux would report not-found here.
 					const store = fakeStore({ [repo('pool-4')]: POOL_4 })
 					const program = buildProgram({ env: XDG, exec: repoExec([]), store })
-					await run(program, ['layout', 'show', 'pool-4'])
+					await run(program, ['template', 'show', 'pool-4'])
 					expect(store.reads).toEqual([repo('pool-4')])
 				})
 
@@ -767,7 +767,7 @@ describe('spec:cyber-mux/mux', () => {
 					catchExit()
 					captureStderr()
 					const program = buildProgram({ env: XDG, exec: repoExec([]), store: fakeStore({}) })
-					await expect(run(program, ['layout', 'show', 'pool-9'])).rejects.toThrow('exit:1')
+					await expect(run(program, ['template', 'show', 'pool-9'])).rejects.toThrow('exit:1')
 					// On stdout now — AXI reserves it for what the agent consumes, errors included.
 					expect(logs.join('\n')).toContain(REPO_DIR)
 					expect(logs.join('\n')).toContain(USER_DIR)
@@ -786,10 +786,10 @@ describe('spec:cyber-mux/mux', () => {
 					catchExit()
 					const store = fakeStore({})
 					const program = buildProgram({ env: XDG, exec: repoExec([]), store })
-					const failure = await run(program, ['layout', 'show', name]).catch((err: unknown) => err)
+					const failure = await run(program, ['template', 'show', name]).catch((err: unknown) => err)
 					expect(failure).toBeInstanceOf(Error)
 					// A malformed name is a usage error now: the stem rule refuses most at exit 2
-					// (invalid-layout-name), while `-pool` is rejected by commander as an unknown option — also
+					// (invalid-template-name), while `-pool` is rejected by commander as an unknown option — also
 					// exit 2, the usage-error family. Both exit 2 having read nothing.
 					const code = (failure as { exitCode?: number }).exitCode ?? (failure as Error).message
 					expect([2, 'exit:2']).toContain(code)
@@ -802,7 +802,7 @@ describe('spec:cyber-mux/mux', () => {
 					captureStderr()
 					const store = fakeStore({ [repo('pool-4')]: { name: 'pool-3', panes: [{ label: 'w1' }] } })
 					const program = buildProgram({ env: XDG, exec: repoExec([]), store })
-					await expect(run(program, ['layout', 'validate', 'pool-4'])).rejects.toThrow('exit:1')
+					await expect(run(program, ['template', 'validate', 'pool-4'])).rejects.toThrow('exit:1')
 					expect(logs.join('\n')).toContain('pool-4')
 					expect(logs.join('\n')).toContain('pool-3')
 				})
@@ -824,7 +824,7 @@ describe('spec:cyber-mux/mux', () => {
 						},
 					})
 					const program = buildProgram({ env: XDG, exec: repoExec([]), store })
-					await expect(run(program, ['layout', 'validate', 'bad-pool'])).rejects.toThrow('exit:1')
+					await expect(run(program, ['template', 'validate', 'bad-pool'])).rejects.toThrow('exit:1')
 					// On stdout now, the stream the agent reads.
 					expect(logs.join('\n')).toContain('root.first.cwd')
 					expect(logs.join('\n')).toContain('--cwd')
@@ -847,7 +847,7 @@ describe('spec:cyber-mux/mux', () => {
 						},
 					})
 					const program = buildProgram({ env: XDG, exec: repoExec([]), store })
-					await expect(run(program, ['layout', 'validate', 'bad-pool'])).rejects.toThrow('exit:1')
+					await expect(run(program, ['template', 'validate', 'bad-pool'])).rejects.toThrow('exit:1')
 					// Every error, one per line, each naming its own JSON path — the three path lines on stdout,
 					// beside the surface's own `error:`/`help:` framing.
 					const paths = logs
@@ -866,7 +866,7 @@ describe('spec:cyber-mux/mux', () => {
 					const stderr = captureStderr()
 					const store = fakeStore({ [repo('pool-4')]: POOL_4 })
 					const program = buildProgram({ env: XDG, exec: repoExec([]), store })
-					await run(program, ['layout', 'validate', 'pool-4'])
+					await run(program, ['template', 'validate', 'pool-4'])
 					expect(exit).not.toHaveBeenCalled()
 					expect(stderr).toEqual([])
 				})
@@ -876,7 +876,7 @@ describe('spec:cyber-mux/mux', () => {
 				it('prints exactly the tree apply will build', async () => {
 					const store = fakeStore({ [repo('pool-4')]: POOL_4 })
 					const program = buildProgram({ env: XDG, exec: repoExec([]), store })
-					await run(program, ['layout', 'show', 'pool-4', '--desugar'])
+					await run(program, ['template', 'show', 'pool-4', '--desugar'])
 					// The canonical tree the sugar expands to — one right split over the two panes, which is
 					// the same tree the walk splits from (both go through `resolveTree`).
 					expect(JSON.parse(logs.join('\n'))).toEqual({
@@ -891,16 +891,16 @@ describe('spec:cyber-mux/mux', () => {
 				it('without --desugar prints the template as written, sugar and all', async () => {
 					const store = fakeStore({ [repo('pool-4')]: POOL_4 })
 					const program = buildProgram({ env: XDG, exec: repoExec([]), store })
-					await run(program, ['layout', 'show', 'pool-4'])
+					await run(program, ['template', 'show', 'pool-4'])
 					expect(JSON.parse(logs.join('\n'))).toEqual(POOL_4)
 				})
 			})
 
 			describe('managing templates needs no multiplexer', () => {
 				it.each([
-					['list', ['layout', 'list']],
-					['show pool-4', ['layout', 'show', 'pool-4']],
-					['validate pool-4', ['layout', 'validate', 'pool-4']],
+					['list', ['template', 'list']],
+					['show pool-4', ['template', 'show', 'pool-4']],
+					['validate pool-4', ['template', 'validate', 'pool-4']],
 				])('%s answers without resolving a session backend', async (_name, argv) => {
 					// Their subject is a FILE, the same way `worktree list`'s subject is git.
 					const calls: string[][] = []
@@ -912,37 +912,37 @@ describe('spec:cyber-mux/mux', () => {
 				})
 
 				it("an unknown flag is rejected against the SUBCOMMAND's flags, not the group's", async () => {
-					// `--force` is a flag only `layout save` defines; on `layout list` it is unknown. Validating
+					// `--force` is a flag only `template save` defines; on `template list` it is unknown. Validating
 					// against the GROUP's union would accept it here and silently drop it.
 					catchExit()
 					const store = fakeStore({})
 					const program = buildProgram({ env: XDG, exec: repoExec([]), store })
-					await expect(run(program, ['layout', 'list', '--force'])).rejects.toThrow('exit:2')
+					await expect(run(program, ['template', 'list', '--force'])).rejects.toThrow('exit:2')
 					const out = logs.join('\n')
-					// Names --force as unknown for layout list, and the valid flags it lists are list's own...
+					// Names --force as unknown for template list, and the valid flags it lists are list's own...
 					expect(out).toContain('--force')
 					expect(out).toContain('--format')
-					// ...never layout save's.
+					// ...never template save's.
 					expect(out).not.toContain('--from')
 					expect(out).not.toContain('--workspace')
 				})
 			})
 
-			describe('--layout, the exact sibling of --launch', () => {
-				it('--layout and --launch are mutually exclusive', async () => {
+			describe('--template, the exact sibling of --launch', () => {
+				it('--template and --launch are mutually exclusive', async () => {
 					catchExit()
 					const store = fakeStore({ [repo('pool-4')]: POOL_4 })
 					const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'tmux' }, exec: repoExec([]), store })
 					// Two flags that cannot both be given is malformed input — a usage error (exit 2).
-					await expect(run(program, ['open', '--layout', 'pool-4', '--launch', 'claude'])).rejects.toThrow('exit:2')
+					await expect(run(program, ['open', '--template', 'pool-4', '--launch', 'claude'])).rejects.toThrow('exit:2')
 				})
 
-				it('--at defaults to workspace when --layout is given', async () => {
+				it('--at defaults to workspace when --template is given', async () => {
 					// A fresh space is empty by construction.
 					const calls: string[][] = []
 					const store = fakeStore({ [repo('pool-4')]: POOL_4 })
 					const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'tmux' }, exec: repoExec(calls), store })
-					await run(program, ['open', '--layout', 'pool-4'])
+					await run(program, ['open', '--template', 'pool-4'])
 					// tmux collapses workspace to a window — the region is a new-window, not a split.
 					expect(calls.find((c) => c[0] === 'tmux')?.[1]).toBe('new-window')
 				})
@@ -951,7 +951,7 @@ describe('spec:cyber-mux/mux', () => {
 					const calls: string[][] = []
 					const store = fakeStore({ [repo('pool-4')]: POOL_4 })
 					const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'tmux' }, exec: repoExec(calls), store })
-					await run(program, ['open', '--layout', 'pool-4'])
+					await run(program, ['open', '--template', 'pool-4'])
 					expect(calls.find((c) => c[1] === 'new-window')).toEqual(expect.arrayContaining(['-n', 'pool-4']))
 				})
 
@@ -959,13 +959,13 @@ describe('spec:cyber-mux/mux', () => {
 					const calls: string[][] = []
 					const store = fakeStore({ [repo('pool-4')]: POOL_4 })
 					const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'tmux' }, exec: repoExec(calls), store })
-					await run(program, ['open', '--layout', 'pool-4', '--label', 'my-pool'])
+					await run(program, ['open', '--template', 'pool-4', '--label', 'my-pool'])
 					expect(calls.find((c) => c[1] === 'new-window')).toEqual(expect.arrayContaining(['-n', 'my-pool']))
 				})
 			})
 
 			describe('resolution precedes side effects', () => {
-				it('open --layout with an unresolvable name opens nothing', async () => {
+				it('open --template with an unresolvable name opens nothing', async () => {
 					catchExit()
 					const calls: string[][] = []
 					const program = buildProgram({
@@ -973,11 +973,11 @@ describe('spec:cyber-mux/mux', () => {
 						exec: repoExec(calls),
 						store: fakeStore({}),
 					})
-					await expect(run(program, ['open', '--layout', 'pool-9'])).rejects.toThrow('exit:1')
+					await expect(run(program, ['open', '--template', 'pool-9'])).rejects.toThrow('exit:1')
 					expect(calls.some((c) => c[0] === 'tmux')).toBe(false)
 				})
 
-				it('worktree add --layout with a name that resolves nowhere leaves no worktree behind', async () => {
+				it('worktree add --template with a name that resolves nowhere leaves no worktree behind', async () => {
 					catchExit()
 					const calls: string[][] = []
 					const program = buildProgram({
@@ -985,13 +985,13 @@ describe('spec:cyber-mux/mux', () => {
 						exec: repoExec(calls),
 						store: fakeStore({}),
 					})
-					await expect(run(program, ['worktree', 'add', '--branch', 'feat-x', '--layout', 'pool-9'])).rejects.toThrow(
+					await expect(run(program, ['worktree', 'add', '--branch', 'feat-x', '--template', 'pool-9'])).rejects.toThrow(
 						'exit:1',
 					)
 					expect(calls.some((c) => c.includes('worktree') && c.includes('add'))).toBe(false)
 				})
 
-				it('worktree add --layout with an invalid template leaves no worktree behind', async () => {
+				it('worktree add --template with an invalid template leaves no worktree behind', async () => {
 					catchExit()
 					captureStderr()
 					const calls: string[][] = []
@@ -999,9 +999,9 @@ describe('spec:cyber-mux/mux', () => {
 						[repo('bad-pool')]: { name: 'bad-pool', panes: [{ label: 'a', cwd: '/home/someone/proj' }] },
 					})
 					const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'tmux' }, exec: repoExec(calls), store })
-					await expect(run(program, ['worktree', 'add', '--branch', 'feat-x', '--layout', 'bad-pool'])).rejects.toThrow(
-						'exit:1',
-					)
+					await expect(
+						run(program, ['worktree', 'add', '--branch', 'feat-x', '--template', 'bad-pool']),
+					).rejects.toThrow('exit:1')
 					expect(logs.join('\n')).toContain('panes[0].cwd')
 					expect(calls.some((c) => c.includes('worktree') && c.includes('add'))).toBe(false)
 				})
@@ -1012,7 +1012,7 @@ describe('spec:cyber-mux/mux', () => {
 					const store = fakeStore({ [repo('pool-4')]: POOL_4 })
 					// Neither $TMUX nor $HERDR_ENV — the template resolves and validates, then the backend does not.
 					const program = buildProgram({ env: XDG, exec: repoExec([]), store })
-					await expect(run(program, ['open', '--layout', 'pool-4'])).rejects.toThrow('exit:1')
+					await expect(run(program, ['open', '--template', 'pool-4'])).rejects.toThrow('exit:1')
 					// The no-mux error's help names both backends, on stdout.
 					expect(logs.join('\n')).toContain('tmux')
 					expect(logs.join('\n')).toContain('herdr')
@@ -1042,15 +1042,15 @@ describe('spec:cyber-mux/mux', () => {
 						},
 					})
 					const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'tmux' }, exec, store })
-					await withArgv(['open', '--layout', 'render-farm', '--format', 'json'], async () => {
-						await expect(run(program, ['open', '--layout', 'render-farm', '--format', 'json'])).rejects.toThrow(
+					await withArgv(['open', '--template', 'render-farm', '--format', 'json'], async () => {
+						await expect(run(program, ['open', '--template', 'render-farm', '--format', 'json'])).rejects.toThrow(
 							'exit:1',
 						)
 					})
 					// The manifest still reports the panes that were built before the failure...
 					const manifest = JSON.parse(logs.join('\n'))
 					expect(manifest.panes.map((p: { label: string }) => p.label)).toEqual(['a', 'b', 'c'])
-					// ...and nothing is killed: a kill is not obviously safer than a half-built layout the
+					// ...and nothing is killed: a kill is not obviously safer than a half-built template the
 					// caller can see and finish.
 					expect(calls.some((c) => c[1] === 'kill-pane')).toBe(false)
 				})
@@ -1060,11 +1060,11 @@ describe('spec:cyber-mux/mux', () => {
 				it('--format json reports every pane apply created', async () => {
 					const store = fakeStore({ [repo('agent-pool-3')]: AGENT_POOL_3 })
 					const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'tmux' }, exec: repoExec([]), store })
-					await withArgv(['open', '--layout', 'agent-pool-3', '--format', 'json'], () =>
-						run(program, ['open', '--layout', 'agent-pool-3', '--cwd', '/w/feat-x', '--format', 'json']),
+					await withArgv(['open', '--template', 'agent-pool-3', '--format', 'json'], () =>
+						run(program, ['open', '--template', 'agent-pool-3', '--cwd', '/w/feat-x', '--format', 'json']),
 					)
 					const manifest = JSON.parse(logs.join('\n'))
-					expect(manifest.layout).toBe('agent-pool-3')
+					expect(manifest.template).toBe('agent-pool-3')
 					expect(manifest.cwd).toBe('/w/feat-x')
 					expect(manifest).toHaveProperty('workspace')
 					// One entry per pane, each carrying its label, pane id, dir and command — plus the tab it
@@ -1080,14 +1080,14 @@ describe('spec:cyber-mux/mux', () => {
 					// Matching how reportOpenedWorktree already reports it.
 					const store = fakeStore({ [repo('pool-4')]: POOL_4 })
 					const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'tmux' }, exec: repoExec([]), store })
-					await withArgv(['open', '--layout', 'pool-4', '--format', 'json'], () =>
-						run(program, ['open', '--layout', 'pool-4', '--format', 'json']),
+					await withArgv(['open', '--template', 'pool-4', '--format', 'json'], () =>
+						run(program, ['open', '--template', 'pool-4', '--format', 'json']),
 					)
 					expect(JSON.parse(logs.join('\n')).workspace).toBeNull()
 				})
 			})
 
-			describe('worktree add --layout', () => {
+			describe('worktree add --template', () => {
 				const worktreeOut = JSON.stringify({
 					result: {
 						root_pane: { pane_id: 'w9:root', tab_id: 'w9:t1' },
@@ -1102,7 +1102,7 @@ describe('spec:cyber-mux/mux', () => {
 					const exec = repoExec(calls, { 'worktree create': worktreeOut })
 					const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'herdr' }, exec, store })
 					await withArgv(['worktree', 'add', '--format', 'json'], () =>
-						run(program, ['worktree', 'add', '--branch', 'feat-x', '--layout', 'agent-pool-3', '--format', 'json']),
+						run(program, ['worktree', 'add', '--branch', 'feat-x', '--template', 'agent-pool-3', '--format', 'json']),
 					)
 					const created = calls.find((c) => c[0] === 'herdr' && c[1] === 'worktree' && c[2] === 'create')!
 					expect(created).toBeDefined()
@@ -1119,7 +1119,7 @@ describe('spec:cyber-mux/mux', () => {
 					const out = JSON.parse(logs.join('\n'))
 					expect(out.root).toBe('/repo.worktrees/feat-x')
 					expect(out.branch).toBe('feat-x')
-					expect(out.layout).toBe('agent-pool-3')
+					expect(out.template).toBe('agent-pool-3')
 					expect(out.workspace).toBe('w9')
 					expect(out.panes.map((p: { label: string }) => p.label)).toEqual(['planner', 'worker-a', 'worker-b'])
 				})
@@ -1142,7 +1142,7 @@ describe('spec:cyber-mux/mux', () => {
 					})
 					const exec = repoExec(calls, { 'worktree create': worktreeOut })
 					const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'herdr' }, exec, store })
-					await run(program, ['worktree', 'add', '--branch', 'feat-x', '--layout', 'render-farm'])
+					await run(program, ['worktree', 'add', '--branch', 'feat-x', '--template', 'render-farm'])
 
 					// The flag is never emitted — that would throw on a live herdr.
 					const created = calls.find((c) => c[1] === 'worktree' && c[2] === 'create')!
@@ -1167,7 +1167,7 @@ describe('spec:cyber-mux/mux', () => {
 					})
 					const exec = repoExec(calls, { 'worktree create': worktreeOut })
 					const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'herdr' }, exec, store })
-					await run(program, ['worktree', 'add', '--branch', 'feat-x', '--layout', 'render-farm'])
+					await run(program, ['worktree', 'add', '--branch', 'feat-x', '--template', 'render-farm'])
 					// Nothing to prefix, so nothing is run — and the loss is reported rather than silent.
 					expect(calls.some((c) => c[1] === 'pane' && c[2] === 'run')).toBe(false)
 					const warnings = stderr.filter((line) => line.includes('dispatcher'))
@@ -1187,7 +1187,7 @@ describe('spec:cyber-mux/mux', () => {
 					const exec = repoExec(calls, { 'worktree create': worktreeOut })
 					const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'herdr' }, exec, store })
 					await withArgv(['worktree', 'add', '--format', 'json'], () =>
-						run(program, ['worktree', 'add', '--branch', 'feat-x', '--layout', 'render-farm', '--format', 'json']),
+						run(program, ['worktree', 'add', '--branch', 'feat-x', '--template', 'render-farm', '--format', 'json']),
 					)
 					// The workspace opens at the worktree root — that is what the binding pins...
 					const created = calls.find((c) => c[1] === 'worktree' && c[2] === 'create')!
@@ -1251,7 +1251,7 @@ describe('spec:cyber-mux/mux', () => {
 						if (fmt === '#{pane_id} #{session_name} #{window_id}') return panes.map((p) => `${p.id} main @1`).join('\n')
 						return panes.map((p) => [p.id, 'zsh', p.cwd ?? '/repo', p.label ?? HOST, HOST].join('\t')).join('\n')
 					}
-					// `list-panes -t <id>` is the REGION read `layout save` runs after resolution — one pane,
+					// `list-panes -t <id>` is the REGION read `template save` runs after resolution — one pane,
 					// with the geometry a capture needs. Keyed on `-t` so it never answers the `-a` readers.
 					if (args[0] === 'list-panes' && args[1] === '-t') {
 						const of = panes.find((p) => p.id === args[2])
@@ -1292,8 +1292,8 @@ describe('spec:cyber-mux/mux', () => {
 				return lines
 			}
 
-			/** A store with no templates — enough for `layout save`, which only ever writes. */
-			function saveStore(): LayoutStore & { writes: Record<string, string> } {
+			/** A store with no templates — enough for `template save`, which only ever writes. */
+			function saveStore(): TemplateStore & { writes: Record<string, string> } {
 				const writes: Record<string, string> = {}
 				return {
 					read: () => null,
@@ -1307,7 +1307,7 @@ describe('spec:cyber-mux/mux', () => {
 			}
 
 			/**
-			 * Every verb the outline names, each with the argv that drives it. `layout save --from` carries
+			 * Every verb the outline names, each with the argv that drives it. `template save --from` carries
 			 * its own env/store because it is the one verb here that also touches the filesystem — and it is
 			 * in this table precisely because it built its target inline and bypassed resolution entirely.
 			 */
@@ -1319,7 +1319,11 @@ describe('spec:cyber-mux/mux', () => {
 				{ verb: 'cyber-mux close', argv: ['close', 'worker'] },
 				{ verb: 'cyber-mux send text', argv: ['send', 'text', 'worker', 'hi'] },
 				{ verb: 'cyber-mux send keys', argv: ['send', 'keys', 'worker', 'Up'] },
-				{ verb: 'cyber-mux layout save --from', argv: ['layout', 'save', 'pool-3', '--from', 'worker'], store: true },
+				{
+					verb: 'cyber-mux template save --from',
+					argv: ['template', 'save', 'pool-3', '--from', 'worker'],
+					store: true,
+				},
 			]
 
 			// Both the Examples rows and the outline's two Thens: the verb reaches the pane labeled worker
@@ -1898,9 +1902,9 @@ describe('spec:cyber-mux/mux', () => {
 			})
 
 			it.each([
-				['open', ['open', '--layout', 'pool-4', '--env', 'ROLE=worker']],
-				['worktree add', ['worktree', 'add', '--branch', 'my-feature', '--layout', 'pool-4', '--env', 'ROLE=worker']],
-			])("--env is refused alongside --layout, which owns its own panes' env", async (_verb, argv) => {
+				['open', ['open', '--template', 'pool-4', '--env', 'ROLE=worker']],
+				['worktree add', ['worktree', 'add', '--branch', 'my-feature', '--template', 'pool-4', '--env', 'ROLE=worker']],
+			])("--env is refused alongside --template, which owns its own panes' env", async (_verb, argv) => {
 				const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: noAncestry })
 				await expect(run(program, argv)).rejects.toThrow()
 			})
@@ -1940,9 +1944,9 @@ describe('spec:cyber-mux/mux', () => {
 	})
 })
 
-describe('spec:cyber-mux/layout', () => {
-	const REPO_DIR = '/repo/.cyber-mux/layouts'
-	const USER_DIR = '/home/u/.config/cyber-mux/layouts'
+describe('spec:cyber-mux/template', () => {
+	const REPO_DIR = '/repo/.cyber-mux/templates'
+	const USER_DIR = '/home/u/.config/cyber-mux/templates'
 	/** Pinned, so the user directory is never the runner's real ~/.config. */
 	const XDG = { XDG_CONFIG_HOME: '/home/u/.config' }
 
@@ -2042,10 +2046,10 @@ describe('spec:cyber-mux/layout', () => {
 		],
 	}
 
-	/** A `LayoutStore` over an in-memory file map — no templates on disk, ever. */
+	/** A `TemplateStore` over an in-memory file map — no templates on disk, ever. */
 	function fakeStore(
 		files: Record<string, unknown>,
-	): LayoutStore & { reads: string[]; writes: Record<string, string> } {
+	): TemplateStore & { reads: string[]; writes: Record<string, string> } {
 		const raw: Record<string, string> = {}
 		for (const [path, body] of Object.entries(files)) {
 			raw[path] = typeof body === 'string' ? body : JSON.stringify(body)
@@ -2149,7 +2153,7 @@ describe('spec:cyber-mux/layout', () => {
 			const calls: string[][] = []
 			const store = fakeStore({ [repo('pool')]: POOL_TABS })
 			const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'herdr' }, exec: tabsExec(calls), store })
-			await run(program, ['open', '--layout', 'pool'])
+			await run(program, ['open', '--template', 'pool'])
 			const opens = calls.filter((c) => c[0] === 'herdr' && c[2] === 'create')
 			// The FIRST tab lands at the workspace placement — a real `workspace create`, not a tab in
 			// whatever workspace the caller happened to be sitting in.
@@ -2160,7 +2164,7 @@ describe('spec:cyber-mux/layout', () => {
 			expect(calls.some((c) => c[1] === 'pane' && c[2] === 'split')).toBe(false)
 		})
 
-		// The route that opened the region cannot change what the template means. `worktree add --layout`
+		// The route that opened the region cannot change what the template means. `worktree add --template`
 		// has its region opened by the worktree verbs BEFORE the walk runs, so an option on `open` could
 		// only ever have covered tabs 2..N — and a group missing the workspace's own first tab is worse
 		// than no group, because the capture would confidently round-trip a 3-tab workspace as 2.
@@ -2171,7 +2175,7 @@ describe('spec:cyber-mux/layout', () => {
 			// placement — the region exists before the walk ever sees it.
 			const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'tmux' }, exec, store })
 			await withArgv(['worktree', 'add', '--format', 'json'], () =>
-				run(program, ['worktree', 'add', '--branch', 'feat-x', '--layout', 'pool', '--format', 'json']),
+				run(program, ['worktree', 'add', '--branch', 'feat-x', '--template', 'pool', '--format', 'json']),
 			)
 
 			// Three tabs, three windows, and EVERY one of them carries a group — the first included.
@@ -2189,20 +2193,20 @@ describe('spec:cyber-mux/layout', () => {
 			// bug broke: with the first tab left ungrouped, its window reads as an untagged workspace of
 			// ONE and a 3-tab workspace round-trips as 1.
 			// Captured from the region's own root pane — the pane the worktree open returned, exactly what
-			// a caller sitting in that workspace would run `layout save --workspace` from.
+			// a caller sitting in that workspace would run `template save --workspace` from.
 			const tabs = tmuxSessionAdapter.describeWorkspace!(exec, { id: '%0' })
 			expect(tabs).toHaveLength(3)
 			// Each tab's OWN name comes back, in template order — every tab it was built with.
-			expect(captureWorkspaceLayout(tabs, { name: 'captured' }).template.tabs?.map((t) => t.label)).toEqual([
+			expect(captureWorkspaceTemplate(tabs, { name: 'captured' }).template.tabs?.map((t) => t.label)).toEqual([
 				'editor',
 				'logs',
 				'shell',
 			])
 		})
 
-		it("worktree add --layout builds a tabs template into the worktree's own workspace", async () => {
+		it("worktree add --template builds a tabs template into the worktree's own workspace", async () => {
 			// This route already forces the workspace placement, so the tabs have a workspace to live in and
-			// need no second one. It differs from `open --layout` in exactly one way: the region already
+			// need no second one. It differs from `open --template` in exactly one way: the region already
 			// exists, so the first tab builds INTO it rather than opening it.
 			const calls: string[][] = []
 			const store = fakeStore({ [repo('pool')]: POOL_TABS_SPLIT })
@@ -2219,7 +2223,7 @@ describe('spec:cyber-mux/layout', () => {
 				store,
 			})
 			await withArgv(['worktree', 'add', '--format', 'json'], () =>
-				run(program, ['worktree', 'add', '--branch', 'feat-x', '--layout', 'pool', '--format', 'json']),
+				run(program, ['worktree', 'add', '--branch', 'feat-x', '--template', 'pool', '--format', 'json']),
 			)
 
 			// The worktree's own workspace is the ONLY workspace: no second one is opened for the tabs.
@@ -2247,7 +2251,7 @@ describe('spec:cyber-mux/layout', () => {
 		})
 	})
 
-	describe('layout save', () => {
+	describe('template save', () => {
 		/**
 		 * tmux, plus a region of three panes around `%1` — a live capture from tmux 3.6b, so the
 		 * divider column that makes the ratio arithmetic interesting is really there.
@@ -2272,11 +2276,11 @@ describe('spec:cyber-mux/layout', () => {
 
 		const SAVE_ENV = { ...XDG, CYBER_MUX: 'tmux', CYBER_MUX_PANE: '%0' }
 
-		it('save writes to the repo layouts directory and reports the path on stdout', async () => {
+		it('save writes to the repo templates directory and reports the path on stdout', async () => {
 			const calls: string[][] = []
 			const store = fakeStore({})
 			const program = buildProgram({ env: SAVE_ENV, exec: saveExec(calls), store })
-			await run(program, ['layout', 'save', 'pool-3'])
+			await run(program, ['template', 'save', 'pool-3'])
 			// stdout carries the written path as a structured payload — a `path` field, and NO help block,
 			// because the caller's region is the whole workspace so nothing was left out. Programmatic
 			// composition reads the path from `--format json | jq -r .path`, not this bare line.
@@ -2302,10 +2306,10 @@ describe('spec:cyber-mux/layout', () => {
 
 		it('save captures the region around the calling pane, not the one the user is looking at', async () => {
 			// The same reason `open`'s split names its pane: tmux's default is the ACTIVE pane, which
-			// tracks the user rather than us. A bare `layout save` must mean "the region I am in".
+			// tracks the user rather than us. A bare `template save` must mean "the region I am in".
 			const calls: string[][] = []
 			const program = buildProgram({ env: SAVE_ENV, exec: saveExec(calls), store: fakeStore({}) })
-			await run(program, ['layout', 'save', 'pool-3'])
+			await run(program, ['template', 'save', 'pool-3'])
 			expect(calls.find((c) => c[1] === 'list-panes')?.[2]).toBe('-t')
 			expect(calls.find((c) => c[1] === 'list-panes')?.[3]).toBe('%0')
 		})
@@ -2313,7 +2317,7 @@ describe('spec:cyber-mux/layout', () => {
 		it('--from captures the region around a named pane', async () => {
 			const calls: string[][] = []
 			const program = buildProgram({ env: SAVE_ENV, exec: saveExec(calls), store: fakeStore({}) })
-			await run(program, ['layout', 'save', 'pool-3', '--from', '%7'])
+			await run(program, ['template', 'save', 'pool-3', '--from', '%7'])
 			// The REGION read (`list-panes -t <pane>`), not the `-a` server-wide lookup that resolves the
 			// locator first — the region around %7 is what the capture is asserted to be about.
 			expect(calls.find((c) => c[1] === 'list-panes' && c[2] === '-t')?.[3]).toBe('%7')
@@ -2321,10 +2325,10 @@ describe('spec:cyber-mux/layout', () => {
 
 		it('a captured template records in its own description that it is geometry only', async () => {
 			// The honest limit of the verb. A saved template is a DRAFT, and the file says so itself,
-			// since `layout list` will show it beside finished ones.
+			// since `template list` will show it beside finished ones.
 			const store = fakeStore({})
 			const program = buildProgram({ env: SAVE_ENV, exec: saveExec([]), store })
-			await run(program, ['layout', 'save', 'pool-3'])
+			await run(program, ['template', 'save', 'pool-3'])
 			const written = JSON.parse(store.writes[repo('pool-3')]!)
 			// Both clauses of the scenario's Then. The note has to say what the capture IS...
 			expect(written.description).toMatch(/geometry only/)
@@ -2336,14 +2340,14 @@ describe('spec:cyber-mux/layout', () => {
 		it('--description replaces the draft note', async () => {
 			const store = fakeStore({})
 			const program = buildProgram({ env: SAVE_ENV, exec: saveExec([]), store })
-			await run(program, ['layout', 'save', 'pool-3', '--description', 'the review pool'])
+			await run(program, ['template', 'save', 'pool-3', '--description', 'the review pool'])
 			expect(JSON.parse(store.writes[repo('pool-3')]!).description).toBe('the review pool')
 		})
 
-		it('--to user writes to the user layouts directory instead', async () => {
+		it('--to user writes to the user templates directory instead', async () => {
 			const store = fakeStore({})
 			const program = buildProgram({ env: SAVE_ENV, exec: saveExec([]), store })
-			await run(program, ['layout', 'save', 'pool-3', '--to', 'user'])
+			await run(program, ['template', 'save', 'pool-3', '--to', 'user'])
 			expect(Object.keys(store.writes)).toEqual([user('pool-3')])
 		})
 
@@ -2356,7 +2360,7 @@ describe('spec:cyber-mux/layout', () => {
 			const calls: string[][] = []
 			const store = fakeStore({ [repo('pool-3')]: POOL_4 })
 			const program = buildProgram({ env: SAVE_ENV, exec: saveExec(calls), store })
-			await expect(run(program, ['layout', 'save', 'pool-3'])).rejects.toThrow('exit:1')
+			await expect(run(program, ['template', 'save', 'pool-3'])).rejects.toThrow('exit:1')
 			expect(logs.join('\n')).toContain('--force to overwrite')
 			expect(store.writes).toEqual({})
 			expect(calls.some((c) => c[1] === 'list-panes')).toBe(false)
@@ -2365,7 +2369,7 @@ describe('spec:cyber-mux/layout', () => {
 		it('--force overwrites an existing template', async () => {
 			const store = fakeStore({ [repo('pool-3')]: POOL_4 })
 			const program = buildProgram({ env: SAVE_ENV, exec: saveExec([]), store })
-			await run(program, ['layout', 'save', 'pool-3', '--force'])
+			await run(program, ['template', 'save', 'pool-3', '--force'])
 			expect(JSON.parse(store.writes[repo('pool-3')]!).root).toBeDefined()
 		})
 
@@ -2378,8 +2382,8 @@ describe('spec:cyber-mux/layout', () => {
 			const store = fakeStore({})
 			const program = buildProgram({ env: SAVE_ENV, exec: saveExec(calls), store })
 			// A usage error now — the same malformed-name family show refuses at 2.
-			await expect(run(program, ['layout', 'save', '../escape'])).rejects.toThrow('exit:2')
-			expect(logs.join('\n')).toContain('invalid layout name')
+			await expect(run(program, ['template', 'save', '../escape'])).rejects.toThrow('exit:2')
+			expect(logs.join('\n')).toContain('invalid template name')
 			expect(store.writes).toEqual({})
 			expect(calls).toEqual([])
 		})
@@ -2394,7 +2398,7 @@ describe('spec:cyber-mux/layout', () => {
 			const store = fakeStore({})
 			const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'tmux' }, exec: saveExec(calls), store })
 			// A required parameter is missing, not an operation that failed — a usage error (exit 2).
-			await expect(run(program, ['layout', 'save', 'pool-3'])).rejects.toThrow('exit:2')
+			await expect(run(program, ['template', 'save', 'pool-3'])).rejects.toThrow('exit:2')
 			expect(logs.join('\n')).toContain('--from')
 			expect(store.writes).toEqual({})
 			// It never asked the backend for a region either — the refusal precedes the read.
@@ -2403,7 +2407,7 @@ describe('spec:cyber-mux/layout', () => {
 
 		it('a pane outside the captured root loses its dir and says so', async () => {
 			// Bound at CLI level, not on the pure module: the scenario's Then names stderr and "the
-			// template is still written", and neither is visible from captureLayout's return value.
+			// template is still written", and neither is visible from captureTemplate's return value.
 			const stderr = captureStderr()
 			const store = fakeStore({})
 			// The right-hand pane runs somewhere else entirely — a template cannot pin an absolute path.
@@ -2412,7 +2416,7 @@ describe('spec:cyber-mux/layout', () => {
 				['%0\t0\t0\t119\t50\t/repo\tzeta\tzeta', '%1\t120\t0\t80\t50\t/elsewhere\tzeta\tzeta'].join('\n'),
 			)
 			const program = buildProgram({ env: SAVE_ENV, exec, store })
-			await run(program, ['layout', 'save', 'pool-2'])
+			await run(program, ['template', 'save', 'pool-2'])
 			expect(stderr.join('')).toContain('/elsewhere')
 			expect(stderr.join('')).toContain('not under the captured root')
 			// Still written, and that pane simply has no dir — the geometry is the verbose part.
@@ -2433,7 +2437,7 @@ describe('spec:cyber-mux/layout', () => {
 				['%0\t0\t0\t119\t50\t/repo\tworker\tzeta', '%1\t120\t0\t80\t50\t/repo\tworker\tzeta'].join('\n'),
 			)
 			const program = buildProgram({ env: SAVE_ENV, exec, store })
-			await run(program, ['layout', 'save', 'pool-2'])
+			await run(program, ['template', 'save', 'pool-2'])
 			const written = JSON.parse(store.writes[repo('pool-2')]!)
 			// BOTH carry it — dropping either would report "no label" where there is one.
 			expect(written.root.first).toEqual({ type: 'pane', label: 'worker' })
@@ -2460,7 +2464,7 @@ describe('spec:cyber-mux/layout', () => {
 				].join('\n'),
 			)
 			const program = buildProgram({ env: SAVE_ENV, exec, store })
-			await expect(run(program, ['layout', 'save', 'pool-5'])).rejects.toThrow('exit:1')
+			await expect(run(program, ['template', 'save', 'pool-5'])).rejects.toThrow('exit:1')
 			// Nothing written — a refusal must not leave a half-truth on disk.
 			expect(store.writes).toEqual({})
 		})
@@ -2468,7 +2472,7 @@ describe('spec:cyber-mux/layout', () => {
 		it("a backend that cannot report its region's geometry refuses save cleanly", async () => {
 			// describeRegion is OPTIONAL on the seam. Both real backends implement it, so the only way to
 			// reach this branch is to take it away: stand in for a backend that never had it (a future
-			// screen adapter, which fails the layout floor on three other counts too). Restored in
+			// screen adapter, which fails the template floor on three other counts too). Restored in
 			// `finally`, since the adapter is a module singleton every other test shares.
 			catchExit()
 			captureStderr()
@@ -2477,7 +2481,7 @@ describe('spec:cyber-mux/layout', () => {
 			try {
 				delete (tmuxSessionAdapter as { describeRegion?: unknown }).describeRegion
 				const program = buildProgram({ env: SAVE_ENV, exec: saveExec([]), store })
-				await expect(run(program, ['layout', 'save', 'pool-3'])).rejects.toThrow('exit:1')
+				await expect(run(program, ['template', 'save', 'pool-3'])).rejects.toThrow('exit:1')
 			} finally {
 				tmuxSessionAdapter.describeRegion = original
 			}
@@ -2578,7 +2582,7 @@ describe('spec:cyber-mux/layout', () => {
 		it("save --workspace captures every tab of the caller's workspace", async () => {
 			const store = fakeStore({})
 			const program = buildProgram({ env: HERDR_ENV, exec: herdrWorkspaceExec([], WS_3), store })
-			await run(program, ['layout', 'save', 'pool', '--workspace'])
+			await run(program, ['template', 'save', 'pool', '--workspace'])
 			const written = JSON.parse(store.writes[repo('pool')]!)
 			// The two-level form, not the one-level one — a workspace is tabs of panes.
 			expect(written.tabs).toHaveLength(3)
@@ -2592,7 +2596,7 @@ describe('spec:cyber-mux/layout', () => {
 		it("save without --workspace captures only the caller's own region", async () => {
 			const store = fakeStore({})
 			const program = buildProgram({ env: HERDR_ENV, exec: herdrWorkspaceExec([], WS_3), store })
-			await run(program, ['layout', 'save', 'pool'])
+			await run(program, ['template', 'save', 'pool'])
 			const written = JSON.parse(store.writes[repo('pool')]!)
 			// The default subject is UNCHANGED — the caller sits in t1, and t1 is all that is captured.
 			// Widening it silently would rewrite what `save` has always meant for every existing caller.
@@ -2604,7 +2608,7 @@ describe('spec:cyber-mux/layout', () => {
 			const stderr = captureStderr()
 			const store = fakeStore({})
 			const program = buildProgram({ env: HERDR_ENV, exec: herdrWorkspaceExec([], WS_3), store })
-			await run(program, ['layout', 'save', 'pool'])
+			await run(program, ['template', 'save', 'pool'])
 			// stdout is a structured payload: the `path` field, then a help entry naming the tabs left out
 			// and the command that captures them. Per axi/'s #9 the reveal rides on STDOUT in the payload,
 			// not stderr the agent never reads — so a caller cannot believe a 3-tab workspace round-trips
@@ -2613,7 +2617,7 @@ describe('spec:cyber-mux/layout', () => {
 			const out = logs.join('\n')
 			expect(out).toContain('3 tabs')
 			expect(out).toContain('help[0]:')
-			expect(out).toContain('cyber-mux layout save pool --workspace')
+			expect(out).toContain('cyber-mux template save pool --workspace')
 			// Nothing on stderr — the note is load-bearing scope information, not a diagnostic.
 			expect(stderr.join('')).toBe('')
 		})
@@ -2621,8 +2625,8 @@ describe('spec:cyber-mux/layout', () => {
 		it('--format json reports the saved path and any help as one structured object', async () => {
 			const store = fakeStore({})
 			const program = buildProgram({ env: HERDR_ENV, exec: herdrWorkspaceExec([], WS_3), store })
-			await withArgv(['layout', 'save', 'pool', '--format', 'json'], () =>
-				run(program, ['layout', 'save', 'pool', '--format', 'json']),
+			await withArgv(['template', 'save', 'pool', '--format', 'json'], () =>
+				run(program, ['template', 'save', 'pool', '--format', 'json']),
 			)
 			// The machine-readable half of the same payload: one JSON object carrying the path and a help
 			// array, so a consumer reads `.path` and the next move from `.help` rather than parsing prose.
@@ -2630,13 +2634,13 @@ describe('spec:cyber-mux/layout', () => {
 			expect(payload.path).toBe(repo('pool'))
 			expect(Array.isArray(payload.help)).toBe(true)
 			expect(payload.help[0].message).toContain('3 tabs')
-			expect(payload.help[0].command).toBe('cyber-mux layout save pool --workspace')
+			expect(payload.help[0].command).toBe('cyber-mux template save pool --workspace')
 		})
 
 		it('a captured tab keeps the label its tab carries', async () => {
 			const store = fakeStore({})
 			const program = buildProgram({ env: HERDR_ENV, exec: herdrWorkspaceExec([], WS_2), store })
-			await run(program, ['layout', 'save', 'pool', '--workspace'])
+			await run(program, ['template', 'save', 'pool', '--workspace'])
 			const written = JSON.parse(store.writes[repo('pool')]!)
 			// The TAB's labels, not its panes' — the panes are labeled `edit`/`api`, so a capture reaching
 			// for the wrong level cannot pass by coincidence.
@@ -2652,14 +2656,14 @@ describe('spec:cyber-mux/layout', () => {
 			const store = fakeStore({ [repo('pool')]: POOL_TABS })
 			const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'tmux' }, exec, store })
 			// A workspace labeled pool, applied on tmux — so its tab DISPLAYS as "pool - editor".
-			await run(program, ['open', '--layout', 'pool'])
+			await run(program, ['open', '--template', 'pool'])
 			const displayed = [...windows.values()].map((w) => w.name)
 			expect(displayed).toEqual(['pool - editor', 'pool - logs'])
 
 			// Captured with --workspace, from a pane in that workspace.
 			const captured = buildProgram({ env: { ...XDG, CYBER_MUX: 'tmux', CYBER_MUX_PANE: '%0' }, exec, store })
-			await run(captured, ['layout', 'save', 'pool-copy', '--workspace'])
-			const written: LayoutTemplate = JSON.parse(store.writes[repo('pool-copy')]!)
+			await run(captured, ['template', 'save', 'pool-copy', '--workspace'])
+			const written: Template = JSON.parse(store.writes[repo('pool-copy')]!)
 			// The captured tab is labeled `editor` — the tab's OWN name. Not "pool - editor", which is
 			// what reading the window name verbatim would give.
 			expect(written.tabs?.map((t) => t.label)).toEqual(['editor', 'logs'])
@@ -2669,7 +2673,7 @@ describe('spec:cyber-mux/layout', () => {
 			// would still round-trip a label, and would name this window "pool - pool - editor".
 			const { exec: exec2, windows: windows2 } = tmuxState()
 			const replay = buildProgram({ env: { ...XDG, CYBER_MUX: 'tmux' }, exec: exec2, store })
-			await run(replay, ['open', '--layout', 'pool-copy', '--label', 'pool'])
+			await run(replay, ['open', '--template', 'pool-copy', '--label', 'pool'])
 			expect([...windows2.values()].map((w) => w.name)).toEqual(['pool - editor', 'pool - logs'])
 			// Said outright, because the compounding is the whole failure mode.
 			expect([...windows2.values()].some((w) => w.name.includes('pool - pool'))).toBe(false)
@@ -2678,13 +2682,13 @@ describe('spec:cyber-mux/layout', () => {
 		it('a captured workspace is still a draft carrying no command', async () => {
 			const store = fakeStore({})
 			const program = buildProgram({ env: HERDR_ENV, exec: herdrWorkspaceExec([], WS_2), store })
-			await run(program, ['layout', 'save', 'pool', '--workspace'])
-			const written: LayoutTemplate = JSON.parse(store.writes[repo('pool')]!)
+			await run(program, ['template', 'save', 'pool', '--workspace'])
+			const written: Template = JSON.parse(store.writes[repo('pool')]!)
 			// EVERY pane of EVERY tab — adding a level does not add a fact no multiplexer reports.
 			const panes = (written.tabs ?? []).flatMap((tab) => collectPanes(resolveTree(tab)))
 			expect(panes).not.toHaveLength(0)
 			for (const pane of panes) expect(pane.command).toBeUndefined()
-			// And the file says so ITSELF: `layout list` shows this beside finished templates, so a note
+			// And the file says so ITSELF: `template list` shows this beside finished templates, so a note
 			// that only reached the terminal that ran `save` would be gone by the time anyone read it.
 			expect(written.description).toMatch(/geometry only/)
 			expect(written.description).toMatch(/command/)
@@ -2715,7 +2719,7 @@ describe('spec:cyber-mux/layout', () => {
 				exec: untaggedTmuxExec(calls),
 				store,
 			})
-			await run(program, ['layout', 'save', 'pool', '--workspace'])
+			await run(program, ['template', 'save', 'pool', '--workspace'])
 			const written = JSON.parse(store.writes[repo('pool')]!)
 			// Exactly one tab — not a refusal, and not an empty template. The caller's own window IS the
 			// workspace, and it carries the region the caller is in.
@@ -2742,7 +2746,7 @@ describe('spec:cyber-mux/layout', () => {
 					exec: untaggedTmuxExec([]),
 					store,
 				})
-				await expect(run(program, ['layout', 'save', 'pool', '--workspace'])).rejects.toThrow('exit:1')
+				await expect(run(program, ['template', 'save', 'pool', '--workspace'])).rejects.toThrow('exit:1')
 			} finally {
 				tmuxSessionAdapter.describeWorkspace = original
 			}

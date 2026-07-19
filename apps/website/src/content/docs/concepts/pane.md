@@ -44,5 +44,5 @@ of a pane that has gone away is never mistaken for a label.
 [`send`](/cyber-mux/cli/send/), [`submit`](/cyber-mux/cli/submit/), [`read`](/cyber-mux/cli/read/),
 [`focus`](/cyber-mux/cli/focus/), [`close`](/cyber-mux/cli/close/), and
 [`exists`](/cyber-mux/cli/exists/) all take a single `<pane>` argument resolved this way.
-[`layout save --from <pane>`](/cyber-mux/cli/layout/) resolves its `--from` flag identically, and
+[`template save --from <pane>`](/cyber-mux/cli/template/) resolves its `--from` flag identically, and
 defaults to the calling process's own pane when omitted.

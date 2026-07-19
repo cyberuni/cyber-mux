@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { Exec } from './exec.ts'
-import { collectPanes, type LayoutNode, resolveTree, type SplitNode, validateLayout } from './layout.ts'
-import { captureLayout, captureWorkspaceLayout } from './layout-capture.ts'
 import { herdrSessionAdapter } from './session.herdr.ts'
 import { TMUX_TAB_NAME_OPTION, TMUX_WORKSPACE_GROUP_OPTION, tmuxSessionAdapter } from './session.tmux.ts'
 import type { PaneRect, RegionPane, WorkspaceTab } from './session.ts'
+import { collectPanes, resolveTree, type SplitNode, type TemplateNode, validateTemplate } from './template.ts'
+import { captureTemplate, captureWorkspaceTemplate } from './template-capture.ts'
 
 /**
  * Rects are written the way a multiplexer reports them — `x, y, width, height` in cells — so a fixture
@@ -23,13 +23,13 @@ function pane(
 	return { id, rect: { x, y, width, height }, ...extra }
 }
 
-function asSplit(node: LayoutNode): SplitNode {
+function asSplit(node: TemplateNode): SplitNode {
 	if (node.type !== 'split') throw new Error(`expected a split node, got a ${node.type}`)
 	return node
 }
 
-function treeOf(panes: RegionPane[]): LayoutNode {
-	return resolveTree(captureLayout(panes, { name: 'captured' }).template)
+function treeOf(panes: RegionPane[]): TemplateNode {
+	return resolveTree(captureTemplate(panes, { name: 'captured' }).template)
 }
 
 /**
@@ -39,7 +39,7 @@ function treeOf(panes: RegionPane[]): LayoutNode {
  * This models a backend that draws NO divider (herdr), which is what makes the round-trip check
  * exact rather than approximate. An omitted ratio means an even split, per the schema.
  */
-function applyToRects(node: LayoutNode, region: PaneRect, acc: PaneRect[] = []): PaneRect[] {
+function applyToRects(node: TemplateNode, region: PaneRect, acc: PaneRect[] = []): PaneRect[] {
 	if (node.type === 'pane') {
 		acc.push(region)
 		return acc
@@ -57,8 +57,8 @@ function applyToRects(node: LayoutNode, region: PaneRect, acc: PaneRect[] = []):
 	return acc
 }
 
-describe('spec:cyber-mux/layout', () => {
-	describe('captureLayout', () => {
+describe('spec:cyber-mux/template', () => {
+	describe('captureTemplate', () => {
 		it('captures a single pane as a bare leaf, with no split at all', () => {
 			const tree = treeOf([pane('%0', 0, 0, 200, 50)])
 			expect(tree).toEqual({ type: 'pane' })
@@ -174,7 +174,7 @@ describe('spec:cyber-mux/layout', () => {
 			)
 
 			for (const panes of [tmuxPanes, herdrPanes]) {
-				const { template } = captureLayout(panes, { name: 'captured' })
+				const { template } = captureTemplate(panes, { name: 'captured' })
 				for (const node of collectPanes(resolveTree(template))) {
 					expect(node.command).toBeUndefined()
 				}
@@ -199,9 +199,9 @@ describe('spec:cyber-mux/layout', () => {
 				{ x: 0, y: 0, width: 119, height: 50 },
 				{ x: 120, y: 0, width: 80, height: 50 },
 			])
-			// tmux's tree lives in `#{window_layout}` — a bespoke string it does not promise to keep.
+			// tmux's tree lives in `#{window_template}` — a bespoke string it does not promise to keep.
 			// Never requested, so nothing downstream can be coupled to its format.
-			expect(tmuxCalls.flat().join(' ')).not.toContain('window_layout')
+			expect(tmuxCalls.flat().join(' ')).not.toContain('window_template')
 
 			// herdr's `splits[]` reports direction and ratio OUTRIGHT — and is ignored, because it is flat:
 			// its parent links exist only inside the `split_1_0` id convention, which herdr documents
@@ -253,7 +253,7 @@ describe('spec:cyber-mux/layout', () => {
 				pane('w3X:p4', 61, 30, 60, 13),
 				pane('w3X:p2', 121, 0, 80, 43),
 			]
-			const { template } = captureLayout(original, { name: 'captured' })
+			const { template } = captureTemplate(original, { name: 'captured' })
 			// Lay the captured tree back out over a fresh region of the same size, the way a backend sizes
 			// a split: the ratio is the fraction kept by `first`, and the remainder goes to `second`.
 			const rebuilt = applyToRects(resolveTree(template), region)
@@ -263,9 +263,9 @@ describe('spec:cyber-mux/layout', () => {
 		})
 	})
 
-	describe('captureLayout cwd handling', () => {
+	describe('captureTemplate cwd handling', () => {
 		it('a pane under the captured root becomes a relative dir', () => {
-			const { template, warnings } = captureLayout(
+			const { template, warnings } = captureTemplate(
 				[pane('%0', 0, 0, 99, 50, { cwd: '/repo' }), pane('%1', 100, 0, 100, 50, { cwd: '/repo/packages/api' })],
 				{ name: 'captured' },
 			)
@@ -278,8 +278,8 @@ describe('spec:cyber-mux/layout', () => {
 			expect(JSON.stringify(template)).not.toContain('/repo')
 		})
 
-		it('captureLayout reports a pane outside the root as a warning, and emits no dir for it', () => {
-			const { template, warnings } = captureLayout(
+		it('captureTemplate reports a pane outside the root as a warning, and emits no dir for it', () => {
+			const { template, warnings } = captureTemplate(
 				[pane('%0', 0, 0, 99, 50, { cwd: '/repo' }), pane('%1', 100, 0, 100, 50, { cwd: '/elsewhere/other' })],
 				{ name: 'captured' },
 			)
@@ -309,7 +309,7 @@ describe('spec:cyber-mux/layout', () => {
 					].join('\n'),
 				{ id: '%0' },
 			)
-			const { template } = captureLayout(panes, { name: 'captured' })
+			const { template } = captureTemplate(panes, { name: 'captured' })
 			// Tree order is `first` before `second`: the host-titled %0, then %2, then %1.
 			const labels = collectPanes(resolveTree(template)).map((p) => p.label)
 			expect(labels).toEqual([undefined, 'watcher', 'reviewer'])
@@ -321,7 +321,7 @@ describe('spec:cyber-mux/layout', () => {
 			// The round trip that matters: a capture has to be loadable. Run the REAL validator over it —
 			// asserting the name and description came back would pass for a template carrying a cwd or a
 			// degenerate ratio, which is exactly what this has to rule out.
-			const { template } = captureLayout(
+			const { template } = captureTemplate(
 				[
 					pane('%0', 0, 0, 119, 34, { cwd: '/repo', label: 'top' }),
 					pane('%2', 0, 35, 119, 15, { cwd: '/repo/api' }),
@@ -329,14 +329,14 @@ describe('spec:cyber-mux/layout', () => {
 				],
 				{ name: 'captured', description: 'from a live region' },
 			)
-			expect(validateLayout(template, 'captured')).toEqual([])
+			expect(validateTemplate(template, 'captured')).toEqual([])
 			// The stem rule too: a name that disagrees with its filename fails validation, so a capture
 			// saved as <name>.json has to carry that same name.
-			expect(validateLayout(template, 'a-different-stem')).not.toEqual([])
+			expect(validateTemplate(template, 'a-different-stem')).not.toEqual([])
 		})
 	})
 
-	describe('captureWorkspaceLayout', () => {
+	describe('captureWorkspaceTemplate', () => {
 		it('re-applying a captured workspace reproduces the tabs it was captured from', () => {
 			// The round-trip property the whole derivation exists to hold, now at the TAB level as well as
 			// the pane level. Two tabs, each of two panes built by splitting — herdr-shaped rects (no
@@ -354,12 +354,12 @@ describe('spec:cyber-mux/layout', () => {
 					panes: [pane('w1:p3', 0, 0, 200, 20, { cwd: '/repo' }), pane('w1:p4', 0, 20, 200, 30, { cwd: '/repo' })],
 				},
 			]
-			const { template } = captureWorkspaceLayout(tabs, { name: 'captured' })
+			const { template } = captureWorkspaceTemplate(tabs, { name: 'captured' })
 			// The rebuilt workspace has the SAME TABS — the same count, in the same order, each still
 			// carrying the name its live tab did.
 			expect(template.tabs?.map((tab) => tab.label)).toEqual(['editor', 'logs'])
 			// And it is loadable: a capture its own validator rejects would never get as far as applying.
-			expect(validateLayout(template, 'captured')).toEqual([])
+			expect(validateTemplate(template, 'captured')).toEqual([])
 			// Every pane matches the size of its counterpart in the original, tab by tab. Laid back out
 			// through the same arithmetic a backend sizes a split with.
 			for (const [index, tab] of (template.tabs ?? []).entries()) {
@@ -403,19 +403,19 @@ describe('spec:cyber-mux/layout', () => {
 		})
 	})
 
-	describe('captureLayout refusals', () => {
+	describe('captureTemplate refusals', () => {
 		it('refuses a region with no panes rather than emitting an empty template', () => {
-			expect(() => captureLayout([], { name: 'captured' })).toThrow(/at least one pane/)
+			expect(() => captureTemplate([], { name: 'captured' })).toThrow(/at least one pane/)
 		})
 
-		it('captureLayout throws on a region no straight cut separates', () => {
+		it('captureTemplate throws on a region no straight cut separates', () => {
 			// A true pinwheel: four panes wound around a fifth, tiling the region with no gap. No straight
 			// line crosses it without cutting a pane in half, so there is no split that could have made it —
 			// and both backends build regions only BY splitting. Reaching this means the geometry is not
 			// what we think it is, which is worth failing on rather than guessing a tree that would misplace
 			// the user's panes.
 			expect(() =>
-				captureLayout(
+				captureTemplate(
 					[
 						pane('%0', 0, 0, 150, 12), // top, stopping short of the right edge
 						pane('%1', 150, 0, 50, 37), // right, stopping short of the bottom

@@ -410,7 +410,7 @@ describe('spec:cyber-mux/mux', () => {
 
 		// `WorkspaceCreateParams` and `TabCreateParams` both carry a native `env` Record in herdr's
 		// socket schema (protocol 16), and the CLI takes the same repeatable `--env` there as `pane
-		// split` does — verified against 0.7.4. Env is therefore native at EVERY tier, which a layout's
+		// split` does — verified against 0.7.4. Env is therefore native at EVERY tier, which a template's
 		// root pane depends on: it is born by the region open, never by a split.
 		// The pane tier of the same scenario. It overlaps the repeatable-flag test above by design:
 		// that one owns the per-variable/order contract, this one owns "pane is a tier env reaches",

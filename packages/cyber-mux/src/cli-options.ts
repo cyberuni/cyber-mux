@@ -21,12 +21,12 @@ function collectEnv(pair: string, previous: Record<string, string> = {}): Record
 /**
  * `--env KEY=VALUE`, repeatable — the CLI door to the seam's env option, on every verb that opens a
  * pane. One shared Option so the collector, the split rule, and the rejection are defined once and
- * every verb inherits them, the way `AT_OPTION`/`LABEL_OPTION` are shared. Conflicts with `--layout`,
- * whose template owns its own panes' env; the two verbs that carry `--layout` refuse the pair.
+ * every verb inherits them, the way `AT_OPTION`/`LABEL_OPTION` are shared. Conflicts with `--template`,
+ * whose template owns its own panes' env; the two verbs that carry `--template` refuse the pair.
  */
 export const ENV_OPTION = new Option('--env <pair>', 'Environment variable KEY=VALUE (repeatable)')
 	.argParser(collectEnv)
-	.conflicts('layout')
+	.conflicts('template')
 
 /** Placement for a newly opened pane, matching `SessionPlacement`. */
 export const AT_OPTION = new Option('--at <placement>', 'Where to place the new pane').choices([

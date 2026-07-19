@@ -1,5 +1,5 @@
 @frozen
-Feature: layout — named, reusable pane layouts
+Feature: template — named, reusable pane templates
   A template names a pane pool once — geometry, a startup command, an environment per pane — and
   re-targets it at a directory supplied at apply time. Nothing about the target is ever in the
   template.
@@ -8,41 +8,41 @@ Feature: layout — named, reusable pane layouts
   # Three sources, repo before user, resolved from the primary checkout so every worktree agrees.
 
   Scenario: --file skips resolution entirely
-    Given a caller running cyber-mux layout show --file ./scratch/pool.json
+    Given a caller running cyber-mux template show --file ./scratch/pool.json
     When the template is resolved
     Then the file at that path is the one read
-    And neither the repo nor the user layouts directory is consulted
+    And neither the repo nor the user templates directory is consulted
 
   Scenario: a repo template shadows a user template of the same name
-    Given a repo layouts directory containing pool-4.json
-    And a user layouts directory also containing pool-4.json
-    When cyber-mux layout show pool-4 runs
+    Given a repo templates directory containing pool-4.json
+    And a user templates directory also containing pool-4.json
+    When cyber-mux template show pool-4 runs
     Then the repo template is the one shown
-    And cyber-mux layout list reports the user pool-4 as shadowed
+    And cyber-mux template list reports the user pool-4 as shadowed
 
   Scenario: a user template resolves when the repo has none of that name
-    Given a repo layouts directory with no scratch.json
-    And a user layouts directory containing scratch.json
-    When cyber-mux layout show scratch runs
+    Given a repo templates directory with no scratch.json
+    And a user templates directory containing scratch.json
+    When cyber-mux template show scratch runs
     Then the user template is the one shown
-    And cyber-mux layout list reports its source as user
+    And cyber-mux template list reports its source as user
 
-  Scenario: the repo layouts directory resolves through the primary checkout, not the caller's cwd
+  Scenario: the repo templates directory resolves through the primary checkout, not the caller's cwd
     Given a caller inside a linked worktree whose branch predates pool-4.json
-    And the primary checkout carries .cyber-mux/layouts/pool-4.json
-    When cyber-mux layout show pool-4 runs
+    And the primary checkout carries .cyber-mux/templates/pool-4.json
+    When cyber-mux template show pool-4 runs
     Then the primary checkout's template is resolved
     # reading ./.cyber-mux relative to the caller's cwd reports not-found here — the worktree's own
     # checkout predates the file. Resolving through resolvePrimaryRoot gives one canonical answer.
 
   Scenario: a name that resolves nowhere lists the directories searched
-    Given no pool-9.json in either the repo or the user layouts directory
-    When cyber-mux layout show pool-9 runs
+    Given no pool-9.json in either the repo or the user templates directory
+    When cyber-mux template show pool-9 runs
     Then it exits 1
     And the error names both directories it searched
 
   Scenario Outline: a name that is not a plain stem is refused before any file is read
-    Given a caller running cyber-mux layout show "<name>"
+    Given a caller running cyber-mux template show "<name>"
     When the name is validated
     Then it exits 2, a usage error — the argument is malformed and the fix is a different name
     And no file is read
@@ -61,11 +61,11 @@ Feature: layout — named, reusable pane layouts
   # The invocation was well-formed — the fix is to the file, not to a different argument — so it is
   # not the malformed-argument family axi/'s #6 puts at 2. `validate` is a predicate reporting invalid
   # (an answer, the grep/test shape `exists` also takes), and a mutating verb like `apply` or
-  # `worktree add --layout` refusing a bad template is a genuine operation failure. Both are 1; only a
+  # `worktree add --template` refusing a bad template is a genuine operation failure. Both are 1; only a
   # malformed NAME or a missing required parameter (above, and in save's refusals) is the usage-error 2.
   Scenario: a template whose name field disagrees with its filename stem fails validation
     Given a repo template pool-4.json whose name field is "pool-3"
-    When cyber-mux layout validate pool-4 runs
+    When cyber-mux template validate pool-4 runs
     Then it exits 1
     And the error names both the filename stem and the name field
     # the redundancy is the point: a copied file that kept its old name fails loudly
@@ -75,7 +75,7 @@ Feature: layout — named, reusable pane layouts
 
   Scenario: a template that sets cwd fails validation naming --cwd and dir
     Given a template whose root.first pane node carries a cwd field
-    When cyber-mux layout validate runs
+    When cyber-mux template validate runs
     Then it exits 1
     And the error names the JSON path root.first.cwd
     And the error names --cwd as the apply-time option and dir as the subdirectory field
@@ -133,7 +133,7 @@ Feature: layout — named, reusable pane layouts
 
   Scenario: every validation error is reported at once, not first-only
     Given a template carrying a cwd field, an absolute dir, and a ratio of 0
-    When cyber-mux layout validate runs
+    When cyber-mux template validate runs
     Then all three errors are reported, one per line
     And each names its own JSON path
 
@@ -228,13 +228,13 @@ Feature: layout — named, reusable pane layouts
     Given a flat template with 4 panes and arrange tiled
     When it is applied on tmux and applied on herdr
     Then both backends receive the same splits, in the same order, with the same directions and ratios
-    And tmux's own select-layout is never invoked
-    # select-layout tiled implements tmux's grid algorithm, which herdr has no equivalent of —
+    And tmux's own select-template is never invoked
+    # select-template tiled implements tmux's grid algorithm, which herdr has no equivalent of —
     # using it would give the same template a different geometry per backend
 
   Scenario: show --desugar prints exactly the tree apply will build
     Given a flat template pool-4
-    When cyber-mux layout show pool-4 --desugar runs
+    When cyber-mux template show pool-4 --desugar runs
     Then the printed tree is the one the walk splits from
 
   # ── The walk ──
@@ -312,7 +312,7 @@ Feature: layout — named, reusable pane layouts
     # interactive agent, and a tab is opened blank for the same reason a region is
 
   Scenario: a tabs template still defaults --at to workspace
-    Given a caller running cyber-mux open --layout with a tabs template and no --at
+    Given a caller running cyber-mux open --template with a tabs template and no --at
     When the command runs
     Then the workspace placement is the one used
     # a fresh space is empty by construction, and a workspace is what a set of tabs needs to live in
@@ -325,22 +325,22 @@ Feature: layout — named, reusable pane layouts
     # unchanged from every spawn path: a caller who wants to land somewhere calls focus with a pane id
     # from the manifest
 
-  Scenario: worktree add --layout builds a tabs template into the worktree's own workspace
-    Given a caller running cyber-mux worktree add --layout with a tabs template
+  Scenario: worktree add --template builds a tabs template into the worktree's own workspace
+    Given a caller running cyber-mux worktree add --template with a tabs template
     When the command runs
     Then the first tab is built into the workspace the worktree opened
     And every later tab opens as a tab in it
 
   Scenario: a tabs template groups the same way whichever verb opened the workspace
-    Given a caller running cyber-mux worktree add --layout with a tabs template on tmux
+    Given a caller running cyber-mux worktree add --template with a tabs template on tmux
     When the command runs
     Then every tab carries the same workspace group, the first one included
     And the workspace captures back with every tab it was built with
     # the route that opened the region cannot change what the template means. Grouping only the tabs
     # the walk itself opened would leave the workspace's own first tab out, and a group missing a tab
     # is worse than no group: capture would confidently round-trip a 3-tab workspace as 2.
-    # worktree add --layout already forces the workspace placement, so a set of tabs has a workspace
-    # to live in and needs no second one. The route differs from open --layout in one way only: the
+    # worktree add --template already forces the workspace placement, so a set of tabs has a workspace
+    # to live in and needs no second one. The route differs from open --template in one way only: the
     # region already exists, so the first tab builds into it rather than opening it.
 
   Scenario: a throw part-way through a tabs walk reports the tabs already built and kills nothing
@@ -453,23 +453,23 @@ Feature: layout — named, reusable pane layouts
 
   # ── Resolution precedes side effects; apply does not roll back ──
 
-  Scenario: a layout name that resolves nowhere leaves no worktree behind
-    Given cyber-mux worktree add --branch feat-x --layout pool-9
-    And pool-9 resolves in neither layouts directory
+  Scenario: a template name that resolves nowhere leaves no worktree behind
+    Given cyber-mux worktree add --branch feat-x --template pool-9
+    And pool-9 resolves in neither templates directory
     When the command runs
     Then it exits 1
     And no worktree is created
 
   Scenario: an invalid template leaves no worktree behind
-    Given cyber-mux worktree add --branch feat-x --layout bad-pool
+    Given cyber-mux worktree add --branch feat-x --template bad-pool
     And bad-pool sets a cwd
     When the command runs
     Then it exits 1 with the validation error
     And no worktree is created
 
-  Scenario: open --layout with an unresolvable name opens nothing
-    Given cyber-mux open --layout pool-9
-    And pool-9 resolves in neither layouts directory
+  Scenario: open --template with an unresolvable name opens nothing
+    Given cyber-mux open --template pool-9
+    And pool-9 resolves in neither templates directory
     When the command runs
     Then it exits 1
     And no region is opened
@@ -482,28 +482,28 @@ Feature: layout — named, reusable pane layouts
     And the manifest reports those panes
     And it exits 1
     And no pane is killed
-    # a kill is not obviously safer than a half-built layout the caller can see and finish
+    # a kill is not obviously safer than a half-built template the caller can see and finish
 
-  # ── --layout, the exact sibling of --launch ──
+  # ── --template, the exact sibling of --launch ──
 
-  Scenario: --layout and --launch are mutually exclusive
-    Given a caller running cyber-mux open --layout pool-4 --launch claude
+  Scenario: --template and --launch are mutually exclusive
+    Given a caller running cyber-mux open --template pool-4 --launch claude
     When the command runs
     Then it exits 2 rejecting the pair, a usage error — two flags that cannot both be given is malformed input
 
-  Scenario: --at defaults to workspace when --layout is given
-    Given a caller running cyber-mux open --layout pool-4 with no --at
+  Scenario: --at defaults to workspace when --template is given
+    Given a caller running cyber-mux open --template pool-4 with no --at
     When the command runs
     Then the region opens at the workspace placement
     # a fresh space is empty by construction
 
   Scenario: --label defaults to the template name
-    Given a caller running cyber-mux open --layout pool-4 with no --label
+    Given a caller running cyber-mux open --template pool-4 with no --label
     When the command runs
     Then the opened region is labeled pool-4
 
-  Scenario: worktree add --layout applies the template against the worktree root
-    Given a caller running cyber-mux worktree add --branch feat-x --layout agent-pool-3
+  Scenario: worktree add --template applies the template against the worktree root
+    Given a caller running cyber-mux worktree add --branch feat-x --template agent-pool-3
     When the command runs
     Then the worktree's workspace is opened with no launch
     And the walk's cwd is the worktree root
@@ -512,15 +512,15 @@ Feature: layout — named, reusable pane layouts
   # ── The manifest is the handoff ──
 
   Scenario: --format json reports every pane apply created
-    Given a caller running cyber-mux open --layout agent-pool-3 --format json
+    Given a caller running cyber-mux open --template agent-pool-3 --format json
     When the command runs
-    Then stdout carries the layout name, the injected cwd, the workspace, and one entry per pane
+    Then stdout carries the template name, the injected cwd, the workspace, and one entry per pane
     And each entry carries its label, pane id, dir, and command
     # the complete answer to "which panes exist and what are they for" — a dispatcher built on it
     # needs no new cyber-mux surface
 
   Scenario: the manifest carries the workspace the region opened in
-    Given a caller running cyber-mux open --layout pool-4 --format json with $HERDR_ENV set and no $TMUX
+    Given a caller running cyber-mux open --template pool-4 --format json with $HERDR_ENV set and no $TMUX
     When the command runs
     Then the manifest's workspace field carries the workspace the region opened in
     # The manifest is framed as the complete machine-readable answer to "which panes exist and what
@@ -528,7 +528,7 @@ Feature: layout — named, reusable pane layouts
     # surfaces the workspace it landed in, so the manifest reports it rather than a flat null.
 
   Scenario: the manifest's workspace is null on tmux
-    Given a caller running cyber-mux open --layout pool-4 --format json with $TMUX set
+    Given a caller running cyber-mux open --template pool-4 --format json with $TMUX set
     When the command runs
     Then the manifest's workspace field is null
     # matching how reportOpenedWorktree already reports it
@@ -560,7 +560,7 @@ Feature: layout — named, reusable pane layouts
 
   Scenario Outline: list, show and validate answer with no multiplexer at all
     Given a caller with neither $TMUX nor $HERDR_ENV set
-    When cyber-mux layout <verb> runs
+    When cyber-mux template <verb> runs
     Then it answers without resolving a session backend
 
     Examples:
@@ -571,13 +571,13 @@ Feature: layout — named, reusable pane layouts
 
   Scenario: validate exits 0 on a valid template
     Given a well-formed template pool-4
-    When cyber-mux layout validate pool-4 runs
+    When cyber-mux template validate pool-4 runs
     Then it exits 0
     And stderr is empty
 
   Scenario: applying with no multiplexer fails through the existing adapter path
     Given a caller with neither $TMUX nor $HERDR_ENV set
-    When cyber-mux open --layout pool-4 runs
+    When cyber-mux open --template pool-4 runs
     Then it throws naming tmux/herdr as the required backend
 
   # ── Capturing a live region: which region, and what tree ──
@@ -585,13 +585,13 @@ Feature: layout — named, reusable pane layouts
 
   Scenario: save captures the region around the calling pane, not the one the user is looking at
     Given a caller in a pane whose region the caller is not focused on
-    When cyber-mux layout save pool-3 runs with no --from
+    When cyber-mux template save pool-3 runs with no --from
     Then the captured region is the caller's own
     # the same reason every split names its pane: both backends' defaults track the user rather than
     # the caller, and they only coincide while a human is typing
 
   Scenario: --from captures the region around a named pane
-    Given a caller running cyber-mux layout save pool-3 --from a pane in another region
+    Given a caller running cyber-mux template save pool-3 --from a pane in another region
     When the command runs
     Then the captured region is that pane's
 
@@ -653,15 +653,15 @@ Feature: layout — named, reusable pane layouts
     # pane cyber-mux creates and pane_current_command reports the shell or interpreter instead
 
   Scenario: a captured template records in its own description that it is geometry only
-    Given a caller running cyber-mux layout save pool-3 with no --description
+    Given a caller running cyber-mux template save pool-3 with no --description
     When the command runs
     Then the written template's description says the capture is geometry only
     And it says a command must be added to each pane
-    # layout list shows a capture beside finished templates, so a note that only reached the terminal
+    # template list shows a capture beside finished templates, so a note that only reached the terminal
     # that ran save would be gone by the time anyone read the file
 
   Scenario: --description replaces the draft note
-    Given a caller running cyber-mux layout save pool-3 --description "the review pool"
+    Given a caller running cyber-mux template save pool-3 --description "the review pool"
     When the command runs
     Then the written template's description is "the review pool"
 
@@ -687,7 +687,7 @@ Feature: layout — named, reusable pane layouts
 
   Scenario: a captured template passes validate
     Given a template captured from a live region
-    When cyber-mux layout validate runs on it
+    When cyber-mux template validate runs on it
     Then it exits 0
     # the round trip that matters: a capture that its own validator rejects is not a template
 
@@ -718,23 +718,23 @@ Feature: layout — named, reusable pane layouts
 
   Scenario: save --workspace captures every tab of the caller's workspace
     Given a caller in a workspace of 3 tabs
-    When cyber-mux layout save pool --workspace runs
+    When cyber-mux template save pool --workspace runs
     Then the written template declares tabs
     And it carries one tab per tab of the workspace, each with that tab's own tree
 
   Scenario: save without --workspace captures only the caller's own region
     Given a caller in a workspace of 3 tabs
-    When cyber-mux layout save pool runs
+    When cyber-mux template save pool runs
     Then the written template declares root rather than tabs
     And it carries only the caller's own region
     # the default subject is unchanged — widening it silently would rewrite what save has always meant
 
   Scenario: a bare save in a multi-tab workspace says what it left out, in a help block on stdout
     Given a caller in a workspace of 3 tabs
-    When cyber-mux layout save pool runs with no --workspace
+    When cyber-mux template save pool runs with no --workspace
     Then the written path is reported on stdout as a structured payload
     And that payload carries a help entry naming the tabs left out and the command that captures them
-    And the help entry's command is cyber-mux layout save pool --workspace
+    And the help entry's command is cyber-mux template save pool --workspace
     And stderr is empty
     # the capture is honest about its own scope rather than letting a caller believe a 3-tab workspace
     # round-trips from a 1-tab template. Per axi/'s #9 the reveal-a-truncated-list note belongs on
@@ -775,14 +775,14 @@ Feature: layout — named, reusable pane layouts
 
   Scenario: on a backend with no workspace tier, an untagged region captures as a single-tab workspace
     Given a caller in a tmux window carrying no grouping tag
-    When cyber-mux layout save pool --workspace runs
+    When cyber-mux template save pool --workspace runs
     Then the captured template carries exactly one tab
     # a window nobody grouped is a workspace of one — the honest answer, and the reason the tag is read
     # rather than the label parsed
 
   Scenario: a backend that cannot enumerate a workspace's tabs refuses save --workspace cleanly
     Given a backend that cannot report its workspace's tabs
-    When cyber-mux layout save pool --workspace runs
+    When cyber-mux template save pool --workspace runs
     Then it exits 1 naming the backend
     And no file is written
     # the same refusal shape as a backend that cannot report a region's geometry — an absent optional
@@ -790,35 +790,35 @@ Feature: layout — named, reusable pane layouts
 
   # ── save writes a file ──
 
-  Scenario: save writes to the repo layouts directory and reports the path on stdout
-    Given a caller running cyber-mux layout save pool-3
+  Scenario: save writes to the repo templates directory and reports the path on stdout
+    Given a caller running cyber-mux template save pool-3
     When the command runs
-    Then the template is written under the primary checkout's .cyber-mux/layouts as pool-3.json
+    Then the template is written under the primary checkout's .cyber-mux/templates as pool-3.json
     And stdout carries the written path as a structured payload
     And no help entry rides along, because the caller's region is the whole workspace
     # save's stdout is a structured payload (a path field, plus a help[N]: block only when there is a
     # next move — a multi-tab workspace a bare save only partly captured). Nothing is on stderr.
     # Programmatic composition reads the path from --format json, not bare stdout:
-    #   cyber-mux layout save pool-3 --format json | jq -r .path
+    #   cyber-mux template save pool-3 --format json | jq -r .path
 
   Scenario: --format json reports the saved path and any help as one structured object
-    Given a caller in a workspace of 3 tabs running cyber-mux layout save pool --format json
+    Given a caller in a workspace of 3 tabs running cyber-mux template save pool --format json
     When the command runs
     Then stdout is a JSON object carrying the path and a help array
     And each help entry carries a message and the command that acts on it
-    And the help entry's command is cyber-mux layout save pool --workspace
+    And the help entry's command is cyber-mux template save pool --workspace
     # the machine-readable half of the same payload — path plus the same #9 reveal, so a consumer that
     # branches on the help never has to parse a prose line off stderr
 
-  Scenario: --to user writes to the user layouts directory instead
-    Given a caller running cyber-mux layout save pool-3 --to user
+  Scenario: --to user writes to the user templates directory instead
+    Given a caller running cyber-mux template save pool-3 --to user
     When the command runs
-    Then the template is written under the user layouts directory
-    And nothing is written to the repo layouts directory
+    Then the template is written under the user templates directory
+    And nothing is written to the repo templates directory
 
   Scenario: save refuses to overwrite an existing template, and reads no region finding out
-    Given a repo layouts directory already containing pool-3.json
-    When cyber-mux layout save pool-3 runs
+    Given a repo templates directory already containing pool-3.json
+    When cyber-mux template save pool-3 runs
     Then it exits 1
     And the error names --force
     And the existing template is unchanged
@@ -827,15 +827,15 @@ Feature: layout — named, reusable pane layouts
     # silently would throw that work away. Checked before the capture, so the refusal is free.
 
   Scenario: --force overwrites an existing template
-    Given a repo layouts directory already containing pool-3.json
-    When cyber-mux layout save pool-3 --force runs
+    Given a repo templates directory already containing pool-3.json
+    When cyber-mux template save pool-3 --force runs
     Then it exits 0
     And pool-3.json is replaced by the captured template
 
   # ── save's refusals ──
 
   Scenario: save validates the name before touching the filesystem or the multiplexer
-    Given a caller running cyber-mux layout save "../escape"
+    Given a caller running cyber-mux template save "../escape"
     When the command runs
     Then it exits 2, a usage error — the same malformed-name family show refuses at 2
     And no file is written
@@ -845,7 +845,7 @@ Feature: layout — named, reusable pane layouts
   Scenario: save with no pane to capture around refuses rather than guessing
     Given a caller in no pane at all
     And no --from
-    When cyber-mux layout save pool-3 runs
+    When cyber-mux template save pool-3 runs
     Then it exits 2 naming --from, a usage error — a required parameter is missing, not an operation that failed
     And no template is written
     # falling back to the backend's own default would capture whichever region the user happens to be
@@ -853,7 +853,7 @@ Feature: layout — named, reusable pane layouts
 
   Scenario: a backend that cannot report its region's geometry refuses save cleanly
     Given a backend with no region-geometry primitive
-    When cyber-mux layout save pool-3 runs
+    When cyber-mux template save pool-3 runs
     Then it exits 1 naming that backend
     And no template is written
     # geometry reporting is an optional capability, exactly as the worktree binding already is —

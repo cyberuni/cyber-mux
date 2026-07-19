@@ -3,8 +3,8 @@
 ---
 
 Address a pane by name or by id. Every pane-taking verb — `read`, `submit`, `exists`, `focus`,
-`close`, `send text`, `send keys`, and `layout save --from` — now accepts a pane's label wherever it
-took an id, so a caller holding a layout manifest's `(label, pane)` pairs can address "the `worker`
+`close`, `send text`, `send keys`, and `template save --from` — now accepts a pane's label wherever it
+took an id, so a caller holding a template manifest's `(label, pane)` pairs can address "the `worker`
 pane" without doing the lookup itself.
 
 An id still wins. A string is taken as an id when a live pane carries that id, and resolved as a name

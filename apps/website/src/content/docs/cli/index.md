@@ -40,7 +40,7 @@ conflicting flags) — the fix is a different invocation, not a retry.
 - [`list`](/cyber-mux/cli/list/) — enumerate every live pane.
 - [`exists`](/cyber-mux/cli/exists/) — probe whether a single pane is still live.
 
-## Worktrees and layouts
+## Worktrees and templates
 
 - [`worktree`](/cyber-mux/cli/worktree/) — `add` / `open` / `list` / `remove` git worktrees.
-- [`layout`](/cyber-mux/cli/layout/) — `list` / `show` / `validate` / `save` named pane pools.
+- [`template`](/cyber-mux/cli/template/) — `list` / `show` / `validate` / `save` named pane pools.

@@ -100,7 +100,7 @@ Feature: mux — the pane abstraction
 
   # Two levels, deliberately separate: what `open` RETURNS (the seam, below) and what the CLI PRINTS
   # (further down). The seam is the fact's source; every surface that reports it — the bare `open`
-  # report and the layout manifest (see layout/) — reads it from there rather than asking again.
+  # report and the template manifest (see template/) — reads it from there rather than asking again.
 
   Scenario Outline: open returns the workspace the new pane landed in
     Given a caller running cyber-mux open --at <placement> with $HERDR_ENV set and no $TMUX
@@ -155,7 +155,7 @@ Feature: mux — the pane abstraction
     # Nothing is looked up to answer this: the backend already said so when the pane was opened, and
     # the seam already carries it. Reporting it is what makes a caller able to group the panes it
     # holds by the space they occupy — the point of knowing it at all — rather than that fact
-    # reaching only a `--layout` caller through the manifest.
+    # reaching only a `--template` caller through the manifest.
 
     Examples:
       | env                         | workspace                                          |
@@ -182,8 +182,8 @@ Feature: mux — the pane abstraction
   # The seam's own contract, stated at the seam: these scenarios address open() directly rather than
   # a `cyber-mux open` command line, because the seam is what they pin. `from` and `ratio` have no
   # CLI flag at all; `env` has one, specified as its own surface in the `--env` block below rather
-  # than here — what the flag DOES is that block's business, what env MEANS is this one's. The layout
-  # capability is another such caller; what a template DOES with these is layout's business.
+  # than here — what the flag DOES is that block's business, what env MEANS is this one's. The template
+  # capability is another such caller; what a template DOES with these is template's business.
 
   Scenario Outline: from names the pane a pane:* split targets
     Given a caller opening at pane:right through the <adapter> adapter, with from naming a pane
@@ -342,10 +342,10 @@ Feature: mux — the pane abstraction
   # compensation, not a reversal of the drop.
   #
   # These state the rule ONCE, and both callers inherit it rather than restating it: `--env` pins what
-  # a user observes per verb (the `--env` block below) and `layout/` pins what a TEMPLATE does with it
+  # a user observes per verb (the `--env` block below) and `template/` pins what a TEMPLATE does with it
   # (root pane only, warned once — its "Ratio and env" block). Neither is a duplicate of this
-  # and neither may contradict it. Unlike `ratio`, whose degrade policy is layout's alone because
-  # layout is its only caller, env has two callers — so the rule lives here, where env's MEANING
+  # and neither may contradict it. Unlike `ratio`, whose degrade policy is template's alone because
+  # template is its only caller, env has two callers — so the rule lives here, where env's MEANING
   # already does, and a caller cannot quietly invent its own.
 
   Scenario Outline: whether a route carried env is reported by the route, because only it knows
@@ -429,7 +429,7 @@ Feature: mux — the pane abstraction
       | worktree open |
 
     # Exactly one pane is opened on each of these routes, so "which pane" needs no rule: it is the
-    # one the verb opened. A template's per-pane env is layout's business, and --layout is refused
+    # one the verb opened. A template's per-pane env is template's business, and --template is refused
     # alongside --env for that reason.
     #
     # "On a route that carries env natively" is the load-bearing qualifier, NOT throat-clearing:
@@ -489,8 +489,8 @@ Feature: mux — the pane abstraction
     # verb rather than one — a flag wired repeatably where a scenario watches and non-repeatably where
     # none does is this project's recurring defect wearing its plainest disguise.
 
-  Scenario Outline: --env is refused alongside --layout, which owns its own panes' env
-    Given a caller running <verb> with both --layout and --env
+  Scenario Outline: --env is refused alongside --template, which owns its own panes' env
+    Given a caller running <verb> with both --template and --env
     When it runs
     Then the command is rejected before any pane opens
     And the reason names the two flags as the conflict
@@ -500,10 +500,10 @@ Feature: mux — the pane abstraction
       | open         |
       | worktree add |
 
-    # The exact shape of --launch's conflict with --layout, for the exact reason: the template owns
+    # The exact shape of --launch's conflict with --template, for the exact reason: the template owns
     # what is IN the panes it declares. A caller wanting both edits the template.
     #
-    # Both verbs that HAVE --layout, not just one — `worktree open` carries no --layout at all, so
+    # Both verbs that HAVE --template, not just one — `worktree open` carries no --template at all, so
     # the pair is unreachable there and pinning it would specify what no route can reach.
 
   Scenario Outline: --env without a KEY=VALUE pair is rejected before any side effect
@@ -525,7 +525,7 @@ Feature: mux — the pane abstraction
     # by verb, which is why each is named rather than generalized to "opens". A worktree half-created
     # by a typo in an env flag is the outcome resolution-precedes-side-effects exists to prevent, and
     # only `worktree add` can produce it: pinning this on `open` alone would test the one verb that
-    # carries no checkout to leave behind. The sibling pair at layout.feature's resolution block
+    # carries no checkout to leave behind. The sibling pair at template.feature's resolution block
     # splits the same guarantee per verb for the same reason.
     #
     # A missing `=` and an empty KEY are both malformed; a missing `=` cannot be read as a key with
@@ -744,7 +744,7 @@ Feature: mux — the pane abstraction
     # The declaration is what lets a caller DEGRADE a ratio instead of failing when a backend cannot
     # honor one. Both real backends can size, so both say yes; an adapter that stays silent is taken
     # as cannot. What a caller does about a `no` is the caller's policy, not this seam's — see
-    # layout/, which warns once and takes the backend's own default.
+    # template/, which warns once and takes the backend's own default.
 
   # ── --launch is optional — a blank pane is a valid open() outcome ──
 
@@ -1019,7 +1019,7 @@ Feature: mux — the pane abstraction
       | cyber-mux close              |
       | cyber-mux send text          |
       | cyber-mux send keys          |
-      | cyber-mux layout save --from |
+      | cyber-mux template save --from |
 
   Scenario: a name never resolves a wezterm pane — only an id can
     Given a live wezterm pane and a caller naming some word as if it were a label
@@ -1044,7 +1044,7 @@ Feature: mux — the pane abstraction
       | cyber-mux close              |
       | cyber-mux send text          |
       | cyber-mux send keys          |
-      | cyber-mux layout save --from |
+      | cyber-mux template save --from |
 
   # An id outranks a name, so every caller that works today keeps working: an id can never be made
   # to mean something else by a person renaming an unrelated pane. Ambiguity is a fuzzy-tier
@@ -1190,9 +1190,9 @@ Feature: mux — the pane abstraction
   # carries no suite of its own. One helper reaches every verb here, so these scenarios are about the
   # surface rather than any one command — a verb-by-verb pin would freeze twenty copies of one rule.
 
-  # This surface rule holds for EVERY verb, layout included; the examples stay on the shared,
-  # non-layout surface so this node owns the shape, not any command's specifics. Each layout verb's
-  # own code, exit and message live in layout/'s suite (the Boundary rule: domain behavior belongs to
+  # This surface rule holds for EVERY verb, template included; the examples stay on the shared,
+  # non-template surface so this node owns the shape, not any command's specifics. Each template verb's
+  # own code, exit and message live in template/'s suite (the Boundary rule: domain behavior belongs to
   # its capability node), and they follow this same shape.
   Scenario Outline: a failure is a structured error on stdout, under the code for THAT failure
     Given <world>
@@ -1245,13 +1245,13 @@ Feature: mux — the pane abstraction
     # two-turn correction into one.
 
   Scenario: an unknown flag is rejected against the SUBCOMMAND's flags, not the group's
-    Given a caller running cyber-mux layout list with --force, a flag only cyber-mux layout save defines
+    Given a caller running cyber-mux template list with --force, a flag only cyber-mux template save defines
     When the command is parsed
-    Then it exits 2 and names --force as unknown for layout list
-    And the valid flags it lists are layout list's own, never layout save's
+    Then it exits 2 and names --force as unknown for template list
+    And the valid flags it lists are template list's own, never template save's
     # A group's subcommands do not share a flag set, and only the subcommand layer knows which is in
     # play. Validating against the GROUP's union would accept --force here and then silently drop it —
-    # the exact failure fail-loud exists to prevent. layout is the pair that can carry this rule: save
+    # the exact failure fail-loud exists to prevent. template is the pair that can carry this rule: save
     # takes --from/--workspace/--description/--force and list takes none of them. send cannot — its
     # text and keys subcommands define identical flag sets, so no flag exists that separates them.
 
@@ -1284,13 +1284,13 @@ Feature: mux — the pane abstraction
     # structured payload — the one place a mixture would be genuinely unparseable, not merely untidy.
     # It holds because a failed read captures nothing: there are no bytes for an error to land amid.
 
-  Scenario: a partially-applied layout is one result payload, not a result plus an error
+  Scenario: a partially-applied template is one result payload, not a result plus an error
     Given a tabs template whose second tab fails to open
     When cyber-mux applies it
     Then stdout carries the manifest of the panes already built, and that manifest alone
     And the tab that failed is named inside that manifest, never appended as a second structured error
     And it exits nonzero to signal the apply was incomplete
-    # apply does not roll back (layout/), so a partial build is a real outcome with a real result — the
+    # apply does not roll back (template/), so a partial build is a real outcome with a real result — the
     # one case that looks like "result AND error on stdout" and is not. The nonzero exit and the named
     # failing tab live INSIDE the one manifest payload, which is what keeps the invariant true here.
 
