@@ -5,8 +5,9 @@ concept: [cyber-mux]
 
 # mux — the pane abstraction
 
-The `cyber-mux` CLI's entire subject: which session backend (tmux or herdr) is available, where a
-new pane opens, and how a caller detects the multiplexer it is really running inside. Ported from
+The `cyber-mux` CLI's entire subject: which session backend (tmux, herdr, or wezterm) is available,
+where a new pane opens, and how a caller detects the multiplexer it is really running inside. Ported
+from
 `cyberlegion`'s `spec/mux/` (`packages/cyberlegion/.agents/spec/mux/`, ADR-0024/ADR-0021) when the
 mux seam was extracted into this standalone repo (scaffold commit `21557b4`) — adapted from
 `cyberlegion`'s command-group verbs (`unit spawn`, `cyberlegion mux doctor`) to this repo's flat
@@ -49,19 +50,23 @@ once opened:
     number passes through unconverted; tmux's `-l` sizes the **new** pane, so it takes `1 - ratio`.
     Applying the inversion to both, or to neither, is the single most likely way to get a split
     backwards. Omitted, each backend takes its own even default. Ratio is a *split* concept: a tab or
-    workspace is never sized against a pane, so it is not passed there.
+    workspace is never sized against a pane, so it is not passed there. **wezterm's `--percent` sizes
+    the NEW pane** — the same direction as tmux's `-l`, not herdr's pass-through — probed from the
+    issue that requested this backend (#47) and the CLI's own help text, not a live binary.
   - **A backend declares whether it can size a split at all**, so a caller can degrade a ratio rather
     than fail on a backend that cannot honor one — the degrade *policy* is the caller's, not this
-    seam's (layout warns once and takes the default). Both real backends can size, so both declare
-    it; silence is taken as cannot.
-  - **`env` is set natively at the birth of whatever tier opens — not just a split.** Both backends
-    take a repeatable flag on every space-creating command (herdr `--env KEY=VALUE`, tmux
-    `-e KEY=VALUE`), one per variable. That breadth is load-bearing rather than incidental: a pane
-    pool's root pane is born by the region open and never by a split, so a seam that scoped env to
-    `pane:*` would drop it silently exactly where a caller needs it. Valid with or without a launch —
-    a pane with env and no command is a blank shell with that env set. The one exception is herdr's
-    **worktree** verbs, whose create/open take no env parameter and refuse the flag outright; the
-    checkout is never failed over it.
+    seam's (layout warns once and takes the default). All three backends can size, so all three
+    declare it; silence is taken as cannot.
+  - **`env` is set natively at the birth of whatever tier opens — not just a split — on tmux and
+    herdr.** Both take a repeatable flag on every space-creating command (herdr `--env KEY=VALUE`,
+    tmux `-e KEY=VALUE`), one per variable. That breadth is load-bearing rather than incidental: a
+    pane pool's root pane is born by the region open and never by a split, so a seam that scoped env
+    to `pane:*` would drop it silently exactly where a caller needs it. Valid with or without a launch
+    — a pane with env and no command is a blank shell with that env set. The one exception among
+    herdr's own routes is its **worktree** verbs, whose create/open take no env parameter and refuse
+    the flag outright; the checkout is never failed over it. **wezterm has no `--env` flag on ANY
+    space-creating command at all** — `spawn` and `split-pane` take no such option — so every one of
+    its opens takes the same fallback path herdr's one worktree route alone needs, not just one.
   - **The one route that cannot carry env reports that fact to its caller** — the seam's answer, not
     a message to a human. No env flag reaches herdr's worktree command, and the route that opened the
     region is the only thing that knows env was lost (every other route carries it, and a caller
@@ -158,7 +163,10 @@ once opened:
   `focused` flag (`pane get <id>`). A backend that has no primitive to report focus — or a query that
   errors or names a pane the backend can no longer resolve — answers **unknown** (a tri-state, not a
   boolean) so callers **fail open** — treat unknown as "go ahead" rather than as "absent" — never
-  suppressing behavior on a mux that simply can't tell. This is a **read-only** probe: it moves no
+  suppressing behavior on a mux that simply can't tell. **wezterm always answers unknown**: unlike
+  tmux/herdr, where unknown is a per-query fallback, wezterm's `list --format json` carries no
+  active/focused field for a pane, tab, or window at all — there is no primitive to ask, ever, so
+  this is the whole backend's answer rather than an edge case of it. This is a **read-only** probe: it moves no
   focus and opens nothing (unlike `focus`, which drives the attached client's view to a pane).
 
 - **`open` returns the workspace the new pane landed in, and reports it** — not just the pane's id,
@@ -217,7 +225,9 @@ once opened:
   routing through herdr's own `worktree create`/`worktree open` produces one. (herdr's `worktree
   list` still shows the ungrouped checkout with an `open_workspace_id`, matching it by path after
   the fact — the list view is misleading here; the workspace record is the truth.) tmux has no
-  workspace tier at all and never binds.
+  workspace tier at all and never binds. **wezterm, despite having a real workspace tier, also never
+  binds** — its CLI has no `worktree` subcommand or concept of one at all, so like tmux it falls back
+  to plain git plus a placement-appropriate `open()`.
 
 - **git owns the worktree facts; a backend contributes only the binding** — path, branch, linked,
   and prunable are read from git on **every** backend, so two backends can never report a different
@@ -271,6 +281,13 @@ once opened:
   breadth `--label` already relies on. This is the naming route for the case birth cannot serve, not a
   second way to do what `--label` does. It is the mechanism behind the reversed tab-naming non-goal
   below, and the whole of its cost: **one rename, on herdr's first tab**.
+
+  **wezterm widens this beyond one tier.** `spawn` has no title flag at all — unlike tmux's `-n` or
+  herdr's `--label` — so *every* new tab's label is a post-birth `set-tab-title`, not just herdr's one
+  root-tab case; and a **new workspace's name is native at birth** (it doubles as the `--workspace`
+  value spawn already takes). The pane tier has no rename route at all: there is no `set-pane-title`
+  or equivalent in the CLI, at birth or after, so `rename(..., 'pane', …)` throws rather than
+  silently doing nothing, and `open`'s own pane-tier `--label` degrades to a stderr warning instead.
 
   A rename is **as read-only in its side effects as the focus probe is**: it moves no focus and opens
   nothing. Naming a space is not visiting it — the same rule every spawn path already holds.
@@ -413,6 +430,10 @@ here rather than silently contradicted.
   hostname resolve to all of them — ambiguity manufactured out of nothing. A title differing from the
   host is the author's and is reported; the listing already applies this rule for a region
   (`describeRegion`). herdr has the honest primitive and simply omits the key until `pane rename`.
+  **wezterm never reports a label at all** — not a filtering rule like tmux's, but the honest
+  consequence of there being no primitive to set one in the first place (see above): its `title`
+  field is always the ambient running-program name, never something an author chose, so exporting it
+  would manufacture the same collision the hostname guard exists to prevent.
 
 - **Every failure is a structured error on stdout, coded, with the command that fixes it** — this
   node is where [`axi/`](../axi/README.md)'s #6 is verified, because a reference node carries no suite
@@ -465,15 +486,15 @@ same four levels — **Session › Workspace › Tab › Pane** — but each cal
 (notably: a tmux/screen "Window" is the **Tab** level, not a workspace). The adapter maps the
 concept onto whatever the live backend calls it:
 
-| Concept       | tmux    | screen | zellij  | cmux                          | Orca                  | herdr     |
-| ------------- | ------- | ------ | ------- | ----------------------------- | --------------------- | --------- |
-| **Session**   | Session | Session| Session | App (state saved on restart)  | ----                  | Session   |
-| **Workspace** | ----    | ----   | ----    | Window/Workspace              | Worktree (git branch) | Workspace (bindable to a git worktree) |
-| **Tab**       | Window  | Window | Tab     | Vertical Tab (w/ git status)  | Tab                   | Tab       |
-| **Pane**      | Pane    | Region | Pane    | Split Pane                    | Pane                  | Pane      |
+| Concept       | tmux    | screen | zellij  | cmux                          | Orca                  | herdr     | WezTerm |
+| ------------- | ------- | ------ | ------- | ----------------------------- | --------------------- | --------- | ------- |
+| **Session**   | Session | Session| Session | App (state saved on restart)  | ----                  | Session   | ----    |
+| **Workspace** | ----    | ----   | ----    | Window/Workspace              | Worktree (git branch) | Workspace (bindable to a git worktree) | Workspace (state saved on restart) |
+| **Tab**       | Window  | Window | Tab     | Vertical Tab (w/ git status)  | Tab                   | Tab       | Window (a real, separate tier from Tab — see below) |
+| **Pane**      | Pane    | Region | Pane    | Split Pane                    | Pane                  | Pane      | Pane / Tab |
 
-`cyber-mux` drives two of these backends (tmux, herdr). `--at` exposes three of the levels —
-`pane:right`/`pane:down` (**Pane**), `tab` (**Tab**), `workspace` (**Workspace**). The property
+`cyber-mux` drives three of these backends (tmux, herdr, wezterm). `--at` exposes three of the levels
+— `pane:right`/`pane:down` (**Pane**), `tab` (**Tab**), `workspace` (**Workspace**). The property
 `workspace` guarantees is **its own space, VISIBLE in the attached client and navigable** — not a
 structural tier. tmux, having no Workspace level, maps `workspace` onto the finest unit that keeps
 that property: a new **Window** (visible in the status bar, `select-window`-able) — the same unit
@@ -483,6 +504,15 @@ and unreachable by beaming (`focus`), so a pane is never opened there — a trul
 would be a separate explicit intent, out of scope. There is no `window` value — "window" is tmux's
 local name for the **Tab** concept, already covered by `tab`.
 
+**WezTerm's own native tiers are Workspace › Window › Tab › Pane** — a genuine fourth level between
+Workspace and Tab that neither tmux nor herdr has, and it is what `--at workspace` maps onto: a new
+**Window**, spawned into a fresh (or caller-named) **Workspace** via `wezterm cli spawn --new-window
+--workspace <name>` — never a bare new tab in the current window/workspace, and never wezterm's own
+higher-level "switch workspace" affordance, which the CLI does not expose a command for at all.
+`--at tab` maps onto a real wezterm **Tab** in the current window (`wezterm cli spawn`, no
+`--new-window`) — never a new Window, and never a new Workspace. Both collapse onto tmux's one
+Window level; wezterm keeps them genuinely distinct.
+
 Every scenario in [`mux.feature`](./mux.feature) maps to one of these behaviors:
 
 | Behavior | What it covers |
@@ -490,7 +520,7 @@ Every scenario in [`mux.feature`](./mux.feature) maps to one of these behaviors:
 | **backend selected by environment** | tmux vs herdr selection; neither present errors |
 | **placement** | `--at` choices; tab honored per backend, never a split; `workspace` → each backend's own visible space (herdr `workspace create`, tmux window), never a detached tmux session; a workspace `open` makes is bound to no repo; omitted `--at` falls back to `tab` |
 | **split options — which pane, how big, what environment** | `from` targets a `pane:*` split on both backends (tmux `-t`, herdr positional) and is ignored by `tab`/`workspace`; omitted, each backend takes its own default, which tracks the user's focus rather than the caller's. `ratio` is the fraction kept by the ORIGINAL pane and converts in opposite directions (herdr passes it through, tmux inverts to `1 - ratio`); omitted, each backend splits evenly; never passed to a tab or workspace. Each backend declares whether it can size a split at all. `env` is native at the birth of every tier on both backends, one repeated flag per variable, with or without a launch — except herdr's worktree verbs, which take no env param and refuse the flag; that route reports to its caller that it could not carry env (both directions of the report are pinned, so neither answer can be hardcoded), and the caller then compensates — prefixing `env K=V` onto the command where there is one, warning on stderr where there is none, and never prefixing over a native set |
-| **open returns the pane's tab, and reports it** | the tab the new pane landed in, per placement on both backends (herdr: a new tab reports itself, a created workspace its root tab, a split the caller's; tmux: the Window the pane landed in); reported by every backend and absent on none, because every multiplexer has the Tab level; read from the output the pane id already comes from, so it costs no extra call; it is what addresses a rename at the tab tier, which a pane id cannot do portably |
+| **open returns the pane's tab, and reports it** | the tab the new pane landed in, per placement on every backend (herdr: a new tab reports itself, a created workspace its root tab, a split the caller's; tmux: the Window the pane landed in); reported by every backend and absent on none, because every multiplexer has the Tab level; read from the output the pane id already comes from on tmux/herdr, so it costs no extra call there — wezterm's spawn/split-pane report only the bare pane id, so its tab (and, on a tab or pane:* placement, its workspace) cost one follow-up `list --format json` call; it is what addresses a rename at the tab tier, which a pane id cannot do portably |
 | **naming a space after its birth** | every backend renames every tier it can name at birth (tmux a window name or pane title; herdr a tab or pane rename); a new workspace's root tab is named this way because herdr offers no flag to name it at birth; a rename moves no focus and opens nothing |
 | **the workspace group — carrying a grouping a backend has no tier for** | the open contract carries an opaque group id, never parsed, split, or derived from the label; a backend with no workspace tier stores it natively (tmux: a window option it can filter on, surviving a rename); a backend with a real workspace tier ignores it, its tier being the group; no id is invented for a caller that did not ask; the id is not a workspace, so `open` still reports the workspace absent; grouping is also a **verb** over an already-open space, which `open`'s own option routes through; a backend whose display name is composed stores the space's **own name** beside the group, since one name field means composing destroys the original |
 | **text and keys are separate; only submit presses Enter for you** | `send text` types literal characters and presses no Enter (a key-named word is typed, not interpreted; no text → rejected); `send keys` presses named keys in order and types nothing — core keys normalized onto each backend, a non-core token forwarded verbatim to the backend's own semantics (no tokens at all → rejected); `send keys Enter` presses Enter and takes the turn, because the caller wrote it; bare `send` is incomplete input — help to **stdout**, **exit 2**, axi #6's `usage error` for a missing required parameter (it is #6 that decides this, not #8); `submit` always presses Enter — with text it types it literally then Enters, with none (or empty text) it bare-Enter flushes without retyping; `open --launch` submits |

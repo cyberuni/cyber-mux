@@ -3,6 +3,7 @@ import { callerPane, selectSessionAdapter } from './backend.ts'
 import type { Exec } from './exec.ts'
 import { herdrSessionAdapter } from './session.herdr.ts'
 import { tmuxSessionAdapter } from './session.tmux.ts'
+import { weztermSessionAdapter } from './session.wezterm.ts'
 
 // selectSessionAdapter consults the ancestry-discovery mux probe by default (see mux-probe.ts).
 // These tests pin `exec` to a stub that reports no ancestry (ps unavailable), so the outcome is
@@ -24,8 +25,12 @@ describe('spec:cyber-mux/mux', () => {
 			expect(selectSessionAdapter({ TMUX: 't', HERDR_ENV: '1' }, noAncestry)).toBe(tmuxSessionAdapter)
 		})
 
-		it('neither tmux nor herdr detected errors before opening anything', () => {
-			expect(() => selectSessionAdapter({}, noAncestry)).toThrow(/tmux.*herdr|herdr.*tmux/)
+		it('the session backend is selected by environment', () => {
+			expect(selectSessionAdapter({ WEZTERM_PANE: '9' }, noAncestry)).toBe(weztermSessionAdapter)
+		})
+
+		it('neither tmux, herdr, nor wezterm detected errors before opening anything', () => {
+			expect(() => selectSessionAdapter({}, noAncestry)).toThrow(/tmux.*herdr.*wezterm|wezterm.*herdr.*tmux/)
 		})
 
 		it('an ancestry-verified mux wins over a stale env hint', () => {
@@ -43,6 +48,7 @@ describe('spec:cyber-mux/mux', () => {
 		it('reports this session’s own pane as a target the adapter can address', () => {
 			expect(callerPane(tmuxSessionAdapter, { TMUX_PANE: '%7' })).toEqual({ id: '%7' })
 			expect(callerPane(herdrSessionAdapter, { HERDR_ENV: '1', HERDR_PANE_ID: 'w3:p1' })).toEqual({ id: 'w3:p1' })
+			expect(callerPane(weztermSessionAdapter, { WEZTERM_PANE: '9' })).toEqual({ id: '9' })
 		})
 
 		it('honors the $CYBER_MUX_PANE fast-path a spawn propagates', () => {
