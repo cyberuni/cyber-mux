@@ -19,12 +19,13 @@ it), tolerates a checkout already gone from disk, and refuses to discard uncommi
 
 A backend either binds a worktree to a workspace as a first-class record, or it doesn't — that
 binding, not "knows what a worktree is", is the capability in question. herdr has one; tmux, with no
-workspace tier at all, never binds.
+workspace tier at all, never binds; WezTerm, despite having a real Workspace tier, never binds either
+— its CLI has no `worktree` subcommand or concept of one.
 
 **git owns the worktree facts; a backend contributes only the binding.** `worktree list` reads path,
-branch, linked, and prunable from git on every backend, so two backends can never disagree about the
-same worktree — only the `workspace` column comes from the multiplexer, and it reads blank outside
-one entirely.
+branch, linked, and prunable from git on every backend, so backends can never disagree about the same
+worktree — only the `workspace` column comes from the multiplexer, and it reads blank outside herdr
+entirely.
 
 ## `worktree add` — plain git until a placement is asked for
 

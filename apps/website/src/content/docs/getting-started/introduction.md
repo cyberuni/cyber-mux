@@ -8,10 +8,11 @@ panes — open, send, submit, read, focus, close, list — regardless of the ter
 happen to be inside. It also manages **git worktrees** bound to a workspace, and can build a whole
 named **layout** of panes from a template in one call.
 
-Today it supports two backends:
+Today it supports three backends:
 
 - **tmux** — the ubiquitous terminal multiplexer.
 - **herdr** — an agent-aware multiplexer ([herdr.dev](https://herdr.dev)).
+- **WezTerm** — a GUI terminal with a built-in multiplexer, driven through `wezterm cli`.
 
 It is the mux seam extracted from [`cyberlegion`](https://github.com/cyberuni/cyberplace), kept
 deliberately narrow: it drives panes and nothing else. No mail, no dispatch, no agent registry —
@@ -23,7 +24,7 @@ those live in the tools that build *on top of* this seam.
 # What multiplexer am I in?
 npx cyber-mux doctor
 
-# Just the backend name (tmux / herdr / none)
+# Just the backend name (tmux / herdr / wezterm / none)
 npx cyber-mux mode
 ```
 
@@ -33,7 +34,7 @@ skip detection entirely.
 ## Where next
 
 - [The mux seam](/cyber-mux/concepts/mux-seam/) — the one contract every backend implements.
-- [Adapters](/cyber-mux/concepts/adapters/) — how tmux and herdr each fulfill it.
+- [Adapters](/cyber-mux/concepts/adapters/) — how tmux, herdr, and WezTerm each fulfill it.
 - [Detection](/cyber-mux/concepts/detection/) — how cyber-mux figures out where it is running.
 - [Layouts](/cyber-mux/concepts/layouts/) — named, reusable pane pools.
 - [Worktrees](/cyber-mux/concepts/worktrees/) — git worktrees bound to a workspace.

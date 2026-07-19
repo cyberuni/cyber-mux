@@ -12,7 +12,7 @@ export default defineConfig({
 	integrations: [
 		starlight({
 			title: 'cyber-mux',
-			description: 'Cross-multiplexer pane control — one contract over tmux and herdr.',
+			description: 'Cross-multiplexer pane control — one contract over tmux, herdr, and WezTerm.',
 			social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/cyberuni/cyber-mux' }],
 			customCss: ['./src/styles/global.css'],
 			sidebar: [

@@ -8,8 +8,8 @@ two-mode.
 
 ## 1. Fast-path / override
 
-If `CYBER_MUX` is set to a known value (`tmux`, `herdr`, `screen`, or `none`), it is trusted
-outright. `CYBER_MUX_PANE` carries the pane id alongside it.
+If `CYBER_MUX` is set to a known value (`tmux`, `herdr`, `wezterm`, `screen`, or `none`), it is
+trusted outright. `CYBER_MUX_PANE` carries the pane id alongside it.
 
 This also acts as an **override**: `CYBER_MUX=none` forces no-mux behavior even inside a real
 multiplexer.
@@ -24,15 +24,17 @@ discovery.
 ## 2. Ancestry discovery
 
 With no fast-path set, `cyber-mux` walks the process ancestry from its own PID (`ps -o ppid=,comm=`),
-looking for a `tmux`, `herdr`, or `screen` ancestor. It walks *past* the tool's own shell — the
-immediate parent is often not the human's pane.
+looking for a `tmux`, `herdr`, `wezterm`/`wezterm-gui`/`wezterm-mux-server`, or `screen` ancestor. It
+walks *past* the tool's own shell — the immediate parent is often not the human's pane.
 
-If the walk is inconclusive (e.g. `ps` is unavailable), it falls back to the `$TMUX` / `$HERDR_ENV`
-environment hints. These hints are **never trusted alone** — an ancestry-verified multiplexer always
-wins over a stale env hint.
+If the walk is inconclusive (e.g. `ps` is unavailable), it falls back to the `$TMUX` / `$HERDR_ENV` /
+`$WEZTERM_PANE` environment hints — the fast-positive signal used only when the walk itself found
+nothing. WezTerm has no separate "inside wezterm" flag the way `$TMUX`/`$HERDR_ENV` are:
+`$WEZTERM_PANE` **is** the hint, doubling as both the signal and the pane id. These hints are **never
+trusted over ancestry** — an ancestry-verified multiplexer always wins over a stale env hint.
 
 ## Self pane
 
 `cyber-mux` resolves *its own* pane from environment alone (no `ps` walk): the `CYBER_MUX_PANE`
-fast-path, then `$TMUX_PANE` (tmux), then `$HERDR_PANE_ID` (herdr). This is the identity key a
-session uses to address itself.
+fast-path, then `$TMUX_PANE` (tmux), then `$HERDR_PANE_ID` (herdr), then `$WEZTERM_PANE` (wezterm).
+This is the identity key a session uses to address itself.

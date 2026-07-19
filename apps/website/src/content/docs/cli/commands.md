@@ -138,8 +138,8 @@ for a checkout made by a bare `worktree add` — add now, group later.
 Every worktree of the repo, and the workspace each is currently open in.
 
 Path, branch, linked, and prunable always come from **git**, on every backend — only the workspace
-binding comes from the multiplexer, so two backends can never disagree about a worktree. Works
-outside a multiplexer, where every `workspace` is simply blank.
+binding comes from the multiplexer, so backends can never disagree about a worktree. Works outside a
+multiplexer, where every `workspace` is simply blank.
 
 ### `cyber-mux worktree remove <path> [--force]`
 

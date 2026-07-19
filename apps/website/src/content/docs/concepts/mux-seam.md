@@ -35,9 +35,10 @@ host-specific concepts**, so it composes with any caller.
 - `pane:right` / `pane:down` — split the current pane.
 - `tab` — a new tab/window in the current space (the default).
 - `workspace` — the backend's own **visible** space: herdr `workspace create`, tmux a new
-  **Window**. It is deliberately **not** a detached tmux session (`new-session -d`) — a detached
-  session is invisible to the attached client and unreachable by `focus`, so a pane is never
-  opened there.
+  **Window**, WezTerm a real **Workspace** (spawned into a fresh Window — never a bare new tab in
+  the current window/workspace). It is deliberately **not** a detached tmux session
+  (`new-session -d`) — a detached session is invisible to the attached client and unreachable by
+  `focus`, so a pane is never opened there.
 
 ...and an optional `label` for whatever it opens, at whatever tier it opens it. That is host-neutral
 because every backend names every tier: on herdr a workspace, tab, or pane label; on tmux a window
@@ -50,13 +51,15 @@ Beyond placement and `label`, `open` takes:
 
 - `from` — the pane to split (`pane:*` only); omitted, each backend defaults to whatever pane the
   *user* is looking at, not necessarily the calling pane.
-- `ratio` — the fraction kept by the **original** pane. The two backends convert in opposite
-  directions: herdr's own `--ratio` passes through unconverted, tmux's `-l` sizes the **new** pane
-  so it takes `1 - ratio`. Split-only; ignored by `tab`/`workspace`.
+- `ratio` — the fraction kept by the **original** pane. herdr's own `--ratio` passes through
+  unconverted; tmux's `-l` and WezTerm's `--percent` both size the **new** pane instead, so each
+  takes `1 - ratio`. Split-only; ignored by `tab`/`workspace`.
 - `env` — a map of variables set natively at the birth of whatever tier opens, on every
-  space-creating command, not just a split. herdr's worktree-bind route is the one exception: it
-  takes no env parameter, reports that back to its caller, and the caller compensates (a
-  `--launch` command-line prefix, or a stderr warning when there is nothing to prefix onto).
+  space-creating command, not just a split — true of tmux and herdr. herdr's worktree-bind route
+  is one exception: it takes no env parameter, reports that back to its caller, and the caller
+  compensates (a `--launch` command-line prefix, or a stderr warning when there is nothing to
+  prefix onto). WezTerm has **no** native `--env` on any space-creating command at all, so every
+  one of its opens takes that same fallback path.
 - `workspaceGroup` — an opaque group id for a backend with no tier to group spaces in (tmux stores
   it in a window option); a backend with a real workspace tier ignores it, its tier already being
   the group.
@@ -65,7 +68,8 @@ Beyond placement and `label`, `open` takes:
 
 The one optional member. A backend implements it when it binds a git worktree to a workspace as a
 **first-class record** — the binding a multiplexer's UI groups a repo's checkouts by. herdr has one;
-tmux, with no workspace tier at all, leaves it `undefined`.
+tmux, with no workspace tier at all, leaves it `undefined`; WezTerm, despite having a real workspace
+tier, also leaves it `undefined` — its CLI has no worktree concept at all.
 
 | Member | What it does |
 | --- | --- |
@@ -80,8 +84,8 @@ own:
 
 - **The worktree facts.** Path, branch, linked, and prunable are git's, read from git on every
   backend. A multiplexer that also enumerates worktrees is only re-reading git; letting it answer
-  would let two backends disagree about the same worktree's branch. A backend contributes
-  `bindings` alone — the one fact git cannot know.
+  would let backends disagree about the same worktree's branch. A backend contributes `bindings`
+  alone — the one fact git cannot know.
 - **Removal.** A backend's own worktree-removal primitive addresses a workspace, so it cannot reach
   an unbound worktree. Removal is always `cyber-mux`'s gates plus `git worktree remove`; a backend
   is asked only to release its binding.
