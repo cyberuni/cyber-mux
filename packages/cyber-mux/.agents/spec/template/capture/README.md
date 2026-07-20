@@ -38,9 +38,13 @@ reason not to ship one. Two things changed on the way in: the verb is **`save`**
 because it writes the file rather than printing it; and the honesty the original design bought by
 printing to stdout is bought instead by the draft note the file carries in its own `description`.
 
-**Commands are not recovered, and that is structural rather than a gap to close later.** No
-multiplexer can report the command a pane was launched with, so no future backend closes it either;
-see the reasoning under the first use case below.
+**Commands are not recovered, and that is structural rather than a gap to close later** — on
+PORTABILITY grounds, not availability. A backend often can say what is running (herdr's `pane
+process-info` reports full argv for a pane's whole foreground tree), so the limit is not that the
+information is missing. It is that what a backend reports is the RESOLVED command line rather than
+the one a human typed, and resolution destroys the portable form: `$PATH` lookup, aliases and version
+shims are applied on the way in and cannot be run backwards. No future backend closes that, because
+no backend is holding the original. See the reasoning under the first use case below.
 
 **Widening `save`'s default subject** is out. `save`'s subject is a **region** and stays one — a bare
 `save` in a 3-tab workspace still captures the caller's own region, because widening the default
@@ -60,10 +64,15 @@ silently would rewrite what `save` has always meant for every caller who already
   the schema is coherent rather than arbitrary.
 
   **The capture recovers geometry, labels and dirs — never commands, and that limit is structural.**
-  No multiplexer can report the command a pane was launched with: the walk types commands with
-  `submit` rather than passing them to the split (herdr's `pane split` takes no command at all), so
-  tmux's `pane_start_command` is empty for every pane cyber-mux creates, and `pane_current_command`
-  reports `zsh` or `node`, never `claude --foo`. So a saved template carries the tree, its ratios,
+  What a backend reports about a running pane is the resolved command line, not the one that was
+  typed: `nr web dev` comes back as `node /run/user/1000/fnm_multishells/4223_1784479278417/bin/nr web
+  dev`, a path carrying a uid, a pid and a timestamp that is dead on the next machine and often on the
+  next login. An idle pane reports its shell, and a `claude` pane reports exactly `claude` with the
+  flags that made it that session already gone. A template is meant to be checked in and run
+  elsewhere, and apply SUBMITS whatever `command` says — so a wrong one fails by executing something,
+  and absent beats wrong exactly as it does for a pane's `label`. (A capture is also never the pane's
+  own launch record: the walk types commands with `submit` rather than passing them to the split, so
+  tmux's `pane_start_command` is empty for every pane cyber-mux creates.) So a saved template carries the tree, its ratios,
   labels and dirs, with `command` left for the author. Geometry is the verbose part and a command is
   one word, so this is still the bulk of the value — but the result is a **draft**, and it says so in
   its own `description`, because `template list` shows it beside finished templates and a note that
@@ -124,7 +133,8 @@ silently would rewrite what `save` has always meant for every caller who already
   optional seam member is a refusal, never a guess.
 
   What the capture recovers is unchanged and so is its limit: geometry, labels and dirs, and **never a
-  command**, on any backend, for the reason that was structural before and is structural still. A
+  command**, on any backend, for the same portability reason — adding a level does not make a
+  machine-local command line portable. A
   captured workspace is a **draft** and says so in its own `description`.
 
 - **A composed tab label is never parsed back** — where the backend has no workspace tier, the walk

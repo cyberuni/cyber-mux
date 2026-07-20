@@ -63,9 +63,13 @@ Capture an already-open pane pool as a reusable template.
   the default silently would change what `save` has always meant. A bare capture of a
   multi-tab workspace notes on stdout (a `help[N]:` block) how many tabs were left out.
 - `--description <text>` — recorded in the template; defaults to a draft warning, since a capture
-  recovers geometry, labels, and dirs but **never commands** — no multiplexer reports the command a
-  pane was launched with, so every captured pane needs one filled in by hand before the template is
-  worth applying.
+  recovers geometry, labels, and dirs but **never commands**. A backend can often report what is
+  *running* — herdr's `pane process-info` gives full argv — but what it reports is the **resolved**
+  command line, not the one you typed: `nr web dev` comes back as
+  `node /run/user/1000/fnm_multishells/4223_1784479278417/bin/nr web dev`, a path carrying a uid, a
+  pid, and a timestamp that is dead on the next machine. That is not portable, and a template is
+  meant to be checked in and run elsewhere — so every captured pane needs its command filled in
+  before the template is worth applying — `template edit` below lists the panes and fills them in.
 - `--to repo|user` — which templates directory to write to; defaults to `repo`.
 - `--force` — overwrite an existing template of the same name; refused without it, so a hand-edited
   template is never silently discarded.
@@ -84,6 +88,90 @@ cyber-mux template save pool-4
 # Capture every tab of a specific pane's workspace, overwriting an existing template
 cyber-mux template save pool-4 --from %3 --workspace --force
 ```
+
+### `cyber-mux template edit [<name>] [--set <pane>=<value>] [--interactive] [--field command|label] [--dry-run]`
+
+Show a template's panes, and fill them in. This is `save`'s other half: a capture lands with no
+`command` on any pane, and filling them in by hand means opening the JSON and counting braces to
+work out which leaf is the pane on the left.
+
+Three modes. **The bare form lists and mutates nothing**, so finding out what is there can never
+change it:
+
+```bash
+cyber-mux template edit pool-4
+```
+
+```
+template  pool-4
+path      ~/.config/cyber-mux/templates/pool-4.json
+source    user
+PANE  POSITION      LABEL    DIR           COMMAND
+----  ------------  -------  ------------  -----------
+1     top-left      planner
+2     bottom-left   web      apps/website
+3     top-right     logs                   tail -f log
+4     bottom-right  shell
+help[0]: 3 of 4 panes have no command — a template applies without one, but the pane just sits at a shell
+  -> cyber-mux template edit pool-4 --set 1=<command>
+help[1]: Fill them in one prompt at a time, with the current value pre-filled
+  -> cyber-mux template edit pool-4 --interactive
+```
+
+The `PANE` column is verbatim what `--set` takes. Panes are addressed by **ordinal, never by label** —
+two panes may share a label by design, and an ambiguous selector in a non-interactive API is a silent
+wrong-pane write. `POSITION` is there because apply order is a tree walk rather than a reading order:
+pane 2 of a 2x2 is the pane *below* pane 1, not the one beside it.
+
+- `--set <pane>=<value>` — set the field on one pane. Repeatable. Splits on the first `=` only, so a
+  value may contain one (`--set 1=FOO=bar make`). An empty value clears the field (`--set 1=`).
+  Needs no terminal.
+- `--interactive` / `-i` — ask one question per pane instead, in apply order, with the current value
+  pre-filled into the editable line.
+- `--field command|label` — which field `--set` and `--interactive` write; defaults to `command`.
+- `--dry-run` — print the edited template to stdout instead of writing it.
+- `--file <path>` — edit this path instead, skipping name resolution entirely.
+
+`--set` and `--interactive` cannot be given together (exit 2).
+
+**Setting values**
+
+```bash
+# One call, several panes; "2.3" addresses tab 2, pane 3 in a tabs template
+cyber-mux template edit pool-4 --set 1=claude --set 2="pnpm dev" --set 3=
+```
+
+Re-running the same `--set` is a **no-op that exits 0** — it reports `changed 0` and leaves the file's
+mtime alone, so a template that is checked in is never dirtied by an edit that changes nothing. A
+batch naming one pane that does not exist writes **none** of them, and the error lists every
+identifier that would have worked:
+
+```
+error: invalid-set: no pane "9" in this template — it has 4 panes: 1, 2, 3, 4
+help: list the panes and their identifiers with: cyber-mux template edit <name>
+```
+
+**Interactive**
+
+```bash
+cyber-mux template edit pool-4 --interactive
+```
+
+| Input | Meaning |
+| --- | --- |
+| Enter | keep the current value |
+| `-` | clear the field |
+| `'-'` | a literal `-` |
+| anything else | set the field |
+
+Nothing is written until every pane has been answered and the result validates, so **Ctrl-D abandons
+the edit** and leaves the file untouched (exit 1, code `edit-aborted`).
+
+Refuses (exit 2, code `not-interactive`) when stdin is not a tty, or when `--format json|agent` was
+asked for — a caller wanting machine output has said it is not a human. Use `--set` instead.
+
+A template's spelling survives an edit either way: one written with the flat `panes` + `arrange`
+sugar comes back out flat, never re-spelled as a `root` tree.
 
 ### `--template <name>` on `open` / `worktree add` / `worktree open`
 
