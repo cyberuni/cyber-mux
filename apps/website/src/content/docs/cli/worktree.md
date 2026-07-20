@@ -87,16 +87,16 @@ Markers ride on the column they are about, so no one-bit fact spends a column of
 | Marker | Column | Meaning |
 | --- | --- | --- |
 | `(*)` | `branch` | the primary checkout — every other row is a linked worktree |
-| `(done)` | `branch` | the worktree looks **disposable** — see below |
+| `(removable)` | `branch` | the worktree looks **disposable** — see below |
 | `(gone)` | `root` | the checkout no longer exists on disk; git can prune it |
 
 A `root` under your home directory is also shortened to `~/…`. Every marker and the shortening are
 **table-only**: `--format json` carries the raw `linked`, `prunable`, `merged`, and `dirty` booleans
 and the absolute `root`, unmarked.
 
-#### `(done)` — is this worktree still needed?
+#### `(removable)` — is this worktree still needed?
 
-A worktree is marked `(done)` when **all** of the following hold:
+A worktree is marked `(removable)` when **all** of the following hold:
 
 1. its branch is **merged** into the repo's default branch — the work has landed, so removing the
    checkout destroys nothing the trunk does not already have;
@@ -111,7 +111,7 @@ Two things worth knowing:
 - A **squash** or rebase merge rewrites the commits, so the original branch tip is no longer an
   ancestor and the worktree is *not* marked, even though its work landed. The signal errs toward
   "still needed" on purpose — a missed marker costs you one manual check, a wrong one costs you work.
-- The marker is **advisory**. `worktree list` reports; it never removes, and nothing consults `(done)`
+- The marker is **advisory**. `worktree list` reports; it never removes, and nothing consults `(removable)`
   before a `worktree remove`. The removal gates are unchanged.
 
 When a signal cannot be determined — a detached HEAD, a checkout already gone, no default branch to
@@ -134,13 +134,13 @@ cyber-mux worktree list
 ```
 
 ```
-BRANCH                          ROOT                                   WORKSPACE
-------------------------------  -------------------------------------  ---------
-main (*)                        ~/code/my-app                          w19
-feat/search (done)              ~/code/my-app.worktrees/search
-feat/checkout                   ~/code/my-app.worktrees/checkout       w6F
-fix/flaky-test                  ~/code/my-app.worktrees/flaky
-old/spike (gone)                ~/code/my-app.worktrees/spike
+BRANCH                   ROOT                              WORKSPACE
+-----------------------  --------------------------------  ---------
+main (*)                 ~/code/my-app                     w19
+feat/search (removable)  ~/code/my-app.worktrees/search
+feat/checkout            ~/code/my-app.worktrees/checkout  w6F
+fix/flaky-test           ~/code/my-app.worktrees/flaky
+old/spike (gone)         ~/code/my-app.worktrees/spike
 ```
 
 `feat/search` is merged, clean, and unoccupied — safe to remove. `feat/checkout` is open in a

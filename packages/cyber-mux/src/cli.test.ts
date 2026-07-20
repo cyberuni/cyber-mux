@@ -570,7 +570,7 @@ describe('spec:cyber-mux/mux', () => {
 
 			// The disposability composite: `worktree list` answers "is this still NEEDED", not just
 			// "is it OCCUPIED", and compresses merged AND clean AND unoccupied to one BRANCH marker.
-			describe('worktree list marks a disposable worktree `(done)`', () => {
+			describe('worktree list marks a disposable worktree `(removable)`', () => {
 				const porcelain = [
 					'worktree /repo',
 					'branch refs/heads/main',
@@ -588,12 +588,12 @@ describe('spec:cyber-mux/mux', () => {
 					const program = buildProgram({ env: {}, exec: gitListExec(porcelain, disposable) })
 					await run(program, ['worktree', 'list'])
 					const out = logs.join('\n')
-					expect(out).toContain('feat/landed (done)')
+					expect(out).toContain('feat/landed (removable)')
 					// Unmerged work is not disposable, and the primary checkout is never disposable —
-					// `(done)` and `(*)` are mutually exclusive, so BRANCH never carries two markers.
-					expect(out).not.toContain('feat/open (done)')
+					// `(removable)` and `(*)` are mutually exclusive, so BRANCH never carries two markers.
+					expect(out).not.toContain('feat/open (removable)')
 					expect(out).toContain('main (*)')
-					expect(out).not.toContain('main (done)')
+					expect(out).not.toContain('main (removable)')
 				})
 
 				it('withholds the marker while a workspace still holds the worktree', async () => {
@@ -605,7 +605,7 @@ describe('spec:cyber-mux/mux', () => {
 						cmd === 'git' ? gitExec(cmd, args) : args.slice(0, 2).join(' ') === 'worktree list' ? bindings : ''
 					const program = buildProgram({ env: { CYBER_MUX: 'herdr' }, exec })
 					await run(program, ['worktree', 'list'])
-					expect(logs.join('\n')).not.toContain('(done)')
+					expect(logs.join('\n')).not.toContain('(removable)')
 				})
 
 				it('withholds the marker on a dirty checkout, whose edits exist nowhere else', async () => {
@@ -614,7 +614,7 @@ describe('spec:cyber-mux/mux', () => {
 						dirty: (root) => (root.endsWith('landed') ? ' M a.ts' : ''),
 					})
 					await run(buildProgram({ env: {}, exec }), ['worktree', 'list'])
-					expect(logs.join('\n')).not.toContain('(done)')
+					expect(logs.join('\n')).not.toContain('(removable)')
 				})
 
 				it('keeps `merged` and `dirty` raw and unmarked in JSON, where a consumer composes its own policy', async () => {
@@ -627,8 +627,8 @@ describe('spec:cyber-mux/mux', () => {
 					expect(payload.worktrees.map((w: { dirty: boolean }) => w.dirty)).toEqual([false, false, false])
 					// The composite is the TABLE's compression, never a field — a consumer that wants a
 					// different policy (ignore occupancy, say) must not inherit this one from the payload.
-					expect(payload.worktrees.every((w: Record<string, unknown>) => !('done' in w))).toBe(true)
-					expect(logs.join('\n')).not.toContain('(done)')
+					expect(payload.worktrees.every((w: Record<string, unknown>) => !('removable' in w))).toBe(true)
+					expect(logs.join('\n')).not.toContain('(removable)')
 				})
 
 				it('lists every worktree with the signal simply absent when git cannot answer', async () => {
@@ -651,7 +651,7 @@ describe('spec:cyber-mux/mux', () => {
 					const out = logs.join('\n')
 					expect(out).toContain('(detached)')
 					expect(out).toContain('/repo.worktrees/gone (gone)')
-					expect(out).not.toContain('(done)')
+					expect(out).not.toContain('(removable)')
 
 					logs.length = 0
 					await withArgv(['worktree', 'list', '--format', 'json'], () =>

@@ -283,7 +283,7 @@ once opened:
   checkout's own branch, which is the trunk for a local-only repo and costs no extra read.
 
   Those two plus the binding compose into **one composite** the table compresses to a single
-  `(done)` marker on the *branch* — merged **and** clean **and** unoccupied. A composite earns one
+  `(removable)` marker on the *branch* — merged **and** clean **and** unoccupied. A composite earns one
   marker by the same rule a one-bit fact does: the reader's question is one question, and three
   markers would spend the width of an answer on its inputs. It rides on the branch because the branch
   carries the work that landed, and it is mutually exclusive with `(*)`, so no row shows two.
@@ -565,7 +565,7 @@ Every scenario in [`mux.feature`](./mux.feature) maps to one of these behaviors:
 | **`--env`, the CLI surface for the seam's env option** | repeatable `--env KEY=VALUE` on every verb that opens a pane (`open`, `worktree add`, `worktree open`) — the one split option with a flag, since a variable not set at birth cannot be set at all; it names the pane the verb opens, exactly one being opened on each route, **except** on herdr's worktree bind route, where it degrades to a prefix on `--launch` or a stderr warning with no command to ride — stated on BOTH worktree verbs, which are exposed identically; refused alongside `--template`, which owns its own panes' env; implies a placement; a missing `=` is rejected before anything opens, a trailing `=` sets the variable empty, and a value's own `=` survives by splitting on the first only |
 | **naming what was opened** | `--label` names the tier `--at` opened, on every backend (herdr workspace/tab/pane label; tmux window name or pane title); taken at birth where the backend's CLI allows, set immediately after where it does not; omitted leaves the backend's own default |
 | **worktree facts vs binding** | `list` reads path/branch/linked/prunable/merged/dirty from git on every backend and reports only the binding from the backend; `list`/`remove` answer with no multiplexer |
-| **disposability — needed, not merely free** | `merged` (tip is an ancestor of the repo's default branch, itself resolved rather than assumed) and `dirty` (uncommitted changes) join the binding into one composite the table compresses to `(done)` on the branch; the composite is a rendering and never a payload field, every signal degrades to an absent field rather than `false`, and the listing reports without ever acting on what it reports |
+| **disposability — needed, not merely free** | `merged` (tip is an ancestor of the repo's default branch, itself resolved rather than assumed) and `dirty` (uncommitted changes) join the binding into one composite the table compresses to `(removable)` on the branch; the composite is a rendering and never a payload field, every signal degrades to an absent field rather than `false`, and the listing reports without ever acting on what it reports |
 | **the listing's render contract** | a one-bit fact earns a **marker on the column it is about**, never a column of its own — primary checkout `<branch> (*)`, vanished checkout `<path> (gone)`; a home-rooted path collapses to `~` (matched at a path boundary, the same shortening axi/'s #10 owes the home view); every marker is human-surface only — the boundary being the surface, not one `--format` value, so **every** structured payload keeps each field and the absolute path |
 | **worktree removal ordering** | never delegated to a backend — cyber-mux's gates plus git, the backend only releasing its binding; gates run before the release (a refused removal has no side effect); the release runs before git's removal (no workspace on a dead directory), including for a checkout already gone |
 
@@ -1047,7 +1047,7 @@ Every scenario in [`mux.feature`](./mux.feature), one row each, grouped by use c
 | Edge | Path (Given) | Scenario |
 |---|---|---|
 | a one-bit fact → a marker on the column it is about, never a column | the primary checkout and a checkout whose directory is gone | `a one-bit worktree fact is marked, never given its own column` |
-| composite disposability → one `(done)` marker, all three inputs required | a merged, clean, unoccupied worktree | `worktree list answers whether a worktree is still needed, not only whether it is occupied` |
+| composite disposability → one `(removable)` marker, all three inputs required | a merged, clean, unoccupied worktree | `worktree list answers whether a worktree is still needed, not only whether it is occupied` |
 | the composite is a rendering, not a payload field | a marked worktree read as structured output | `the disposability composite is the table's compression, never a field of its own` |
 | the default branch is resolved, never assumed | a repo whose default branch is not `main` | `the default branch merged is measured against is resolved, never assumed` |
 | an undeterminable signal → absent, never `false`, and never marked | a detached HEAD and a vanished checkout | `a disposability signal git cannot determine is absent, never false` |

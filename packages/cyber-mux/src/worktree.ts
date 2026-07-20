@@ -207,7 +207,7 @@ function readDirty(exec: Exec, worktreeRoot: string): boolean | undefined {
 
 /**
  * The disposability composite — "the work has landed and nothing is holding this checkout", the single
- * thing `worktree list` compresses to a `(done)` marker on BRANCH.
+ * thing `worktree list` compresses to a `(removable)` marker on BRANCH.
  *
  * Stated once, here, rather than inline at the render site: it is the rule the docs describe and the
  * one worth testing directly. Deliberately NOT a field on `WorktreeEntry` — it is fully derivable from
@@ -218,9 +218,9 @@ function readDirty(exec: Exec, worktreeRoot: string): boolean | undefined {
  * Every clause earns its place, and the two signal reads are STRICT identity rather than truthiness —
  * an absent field means undeterminable, and undeterminable must never render as "safe to delete".
  */
-export function isWorktreeDone(entry: WorktreeEntry): boolean {
+export function isWorktreeRemovable(entry: WorktreeEntry): boolean {
 	return (
-		// The primary checkout is never disposable — which also makes `(done)` mutually exclusive with
+		// The primary checkout is never disposable — which also makes `(removable)` mutually exclusive with
 		// the `(*)` marker, so BRANCH never carries two.
 		entry.linked &&
 		// A vanished checkout already says `(gone)` on ROOT, which is THE prune signal; two markers for

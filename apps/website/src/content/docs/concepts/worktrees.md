@@ -30,7 +30,7 @@ outside herdr entirely.
 **Occupied is not the same question as needed.** The `workspace` binding says whether something is
 *currently holding* a worktree; it cannot say whether the worktree still has a reason to exist. A free
 worktree is either finished or merely idle. `merged` and `dirty` close that gap, and `worktree list`
-compresses them — together with the binding — into a `(done)` marker meaning *merged, clean, and
+compresses them — together with the binding — into a `(removable)` marker meaning *merged, clean, and
 unoccupied*. It is a report, not an authorization: nothing consults it before removing anything.
 
 ## `worktree add` — plain git until a placement is asked for

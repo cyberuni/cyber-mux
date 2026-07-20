@@ -1512,12 +1512,12 @@ Feature: mux — the pane abstraction
   Scenario: worktree list answers whether a worktree is still needed, not only whether it is occupied
     Given a repo with a worktree whose branch is merged into the default branch, whose checkout is clean, and which nothing is open in
     When a caller runs cyber-mux worktree list and reads the human table
-    Then that worktree's branch is marked (done), meaning its work landed and nothing holds it
+    Then that worktree's branch is marked (removable), meaning its work landed and nothing holds it
     And a worktree failing any one of those three carries no marker, the three being one question
     And the primary checkout is never marked, so the mark and (*) can never appear on one branch
 
   Scenario: the disposability composite is the table's compression, never a field of its own
-    Given any worktree the human table marks (done)
+    Given any worktree the human table marks (removable)
     When a caller runs cyber-mux worktree list asking for structured output in any format
     Then the payload carries merged and dirty as raw fields, exactly as it carries linked and prunable
     And no composite field appears, a consumer composing its own policy from the raw facts instead
@@ -1536,10 +1536,10 @@ Feature: mux — the pane abstraction
     When a caller runs cyber-mux worktree list
     Then every worktree is still listed, the missing signal costing a field rather than the listing
     And the undeterminable signal is absent from the payload rather than reported as a negative
-    And no such row is marked (done), because undeterminable must never render as safe to delete
+    And no such row is marked (removable), because undeterminable must never render as safe to delete
 
   Scenario: the listing reports disposability and never acts on it
-    Given a worktree the human table marks (done)
+    Given a worktree the human table marks (removable)
     When a caller runs cyber-mux worktree remove against it
     Then the removal applies exactly the gates it always did, consulting no disposability signal
     And nothing about the listing deletes or prunes a worktree of its own accord

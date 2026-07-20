@@ -21,11 +21,11 @@ The gap to close: *is this worktree still **needed**?*
 | --- | --- |
 | Signal | `merged` **and** `dirty`, both raw booleans on `WorktreeEntry` |
 | Merge target | `origin/HEAD` when it resolves; otherwise the branch checked out in the **primary checkout**. Never a hardcoded `main`. |
-| Table | one marker, `(done)`, on **BRANCH** — the composite `linked && !prunable && merged && !dirty && !workspace` |
+| Table | one marker, `(removable)`, on **BRANCH** — the composite `linked && !prunable && merged && !dirty && !workspace` |
 | JSON | the raw booleans only. **No composite field.** |
 | Rejected | ahead/behind vs upstream; last-commit age |
 | Cost | `4 + N` git calls per invocation (`N` = worktrees whose checkout is on disk), up from `2` |
-| Not in scope | removal gating, auto-prune, a `--prunable`/`--done` filter |
+| Not in scope | removal gating, auto-prune, a `--prunable`/`--removable` filter |
 
 ## 3. Which signal actually answers "no longer needed"
 
@@ -44,7 +44,7 @@ worktrees.
 
 *Known limitation, deliberately accepted:* a **squash** or **rebase** merge rewrites the commits, so
 the original tip is not an ancestor and `--merged` reports `false`. The error is one-directional —
-the listing says *not done* for a worktree that is in fact done. Under-reporting a disposal candidate
+the listing withholds the marker from a worktree that is in fact disposable. Under-reporting a candidate
 costs the reader one manual check; over-reporting would cost them work. The conservative direction is
 the correct one for a signal whose whole purpose is "is it safe to delete this."
 
@@ -52,7 +52,7 @@ the correct one for a signal whose whole purpose is "is it safe to delete this."
 
 Merged is not sufficient on its own. A merged branch whose checkout carries uncommitted edits is
 *not* disposable: the edits exist nowhere else, and `worktree remove` already refuses to discard them
-without `--force`. Reporting such a worktree as done would point the reader at exactly the removal
+without `--force`. Marking such a worktree removable would point the reader at exactly the removal
 the CLI is going to refuse.
 
 Dirtiness is also the one input the reader cannot recover from anywhere else in the row.
@@ -106,7 +106,7 @@ Four raw booleans in a table is a wall, and the previous CR deleted a column on 
   occupancy" — a batch cleaner that closes workspaces itself — is a legitimate consumer, and the raw
   fields serve it while a baked `disposable` fights it.
 
-**The table compresses to one marker.** `(done)` on BRANCH, meaning all of:
+**The table compresses to one marker.** `(removable)` on BRANCH, meaning all of:
 
 ```
 linked && !prunable && merged && !dirty && !workspace
@@ -114,7 +114,7 @@ linked && !prunable && merged && !dirty && !workspace
 
 Every clause earns its place:
 
-- `linked` — the primary checkout is never disposable. This also makes `(done)` mutually exclusive
+- `linked` — the primary checkout is never disposable. This also makes `(removable)` mutually exclusive
   with the existing `(*)`, so BRANCH never carries two markers.
 - `!prunable` — a vanished checkout already says `(gone)` on ROOT, which is *the* prune signal. Two
   markers for one action is noise, and `dirty` is unknowable for a directory that is not there.
@@ -126,10 +126,38 @@ Every clause earns its place:
 BRANCH is the right column because the branch is what carries the work, and "the work has landed" is
 what makes the checkout expendable.
 
-`(done)` over the alternatives: `(merged)` names only one of three inputs and would read as a promise
-the marker does not make; `(disposable)` is accurate and too wide for a column that is mostly short
-branch names; `(gone)` is taken and means something else. The marker is defined in the command's own
-`--help` text and in the docs, and the reader who wants the three inputs is one `--format json` away.
+`(removable)` over the alternatives, and this went through a revision worth recording. The marker
+first shipped as `(done)`, which is shorter and reads as plain English — but its **referent is
+ambiguous**: done *what*? A reader (or an agent still on the default table, see §5.1) has to guess
+whether it describes the branch's work, a process that finished, or a task. `(removable)` names the
+**action the reader can take** rather than a state they must interpret, which is also what this repo's
+AXI bar pushes for everywhere else. The six extra characters land on one column, on only the rows that
+earned the marker.
+
+The others: `(merged)` names one of three inputs and would read as a promise the marker does not make;
+`(disposable)` is a synonym with no advantage and two more characters; `(gone)` is taken and means
+something else. The marker is defined in the command's own `--help` text and in the docs, and the
+reader who wants the three inputs is one `--format json` away.
+
+### 5.1 Would a column be clearer to an agent?
+
+No — and the question is answered on a different surface than the one it is asked about.
+
+**An agent reads `--format json`, where there are no markers at all.** It receives `merged`, `dirty`,
+`linked`, `prunable`, and `workspace` as named booleans, and `mux/`'s frozen render contract holds the
+line: *a marker shows a fact, and is never the fact*. Nothing about a marker's wording reaches a
+consumer that asks for structured output, so a column would add a fourth human-surface rendering
+beside three that already exist, on the surface the agent is not reading.
+
+The caveat is real but narrow, and it is checked at the source rather than assumed: `.agents/spec/axi.md`
+lists TOON-as-the-default-format under **"What still trails the contract."** So *today* an agent that
+runs `worktree list` with no `--format` does get the human table. That is the only reason marker
+wording is an agent question at all — and the fix for it is finishing AXI #1, not spending a column.
+
+A column would not even solve the stated problem. A `STATUS` column carrying the value `removable` has
+exactly the same referent to resolve as the marker does, and costs its full width on **every** row to
+carry a value that distinguishes a few. That is the trade the previous CR deleted a column to avoid.
+The wording fix (`done` → `removable`) addresses the ambiguity; the column addresses nothing.
 
 **Why no marker for the negative case.** The table's job here is to point at the removable rows, not
 to explain every non-removable one. Marking "why not" would put a second marker on most rows in a
@@ -143,8 +171,8 @@ backend; the multiplexer contributes only the workspace binding.** A backend tha
 know something about a checkout is never asked, because two backends that both answered could
 disagree about the same worktree.
 
-The `(done)` composite reads `workspace`, which is joined in later by `listWorktrees` — so the
-composite is evaluated at **render** time (`isWorktreeDone`, exported from `worktree.ts` so the rule
+The `(removable)` composite reads `workspace`, which is joined in later by `listWorktrees` — so the
+composite is evaluated at **render** time (`isWorktreeRemovable`, exported from `worktree.ts` so the rule
 is stated once and tested directly), not baked into the entry during the git read.
 
 ## 7. Cost
@@ -177,7 +205,7 @@ never a throw and never a `false`.
 
 | Situation | `merged` | `dirty` | Marked? |
 | --- | --- | --- | --- |
-| merged + clean + free | `true` | `false` | `(done)` |
+| merged + clean + free | `true` | `false` | `(removable)` |
 | merged + dirty | `true` | `true` | no |
 | unmerged | `false` | `false` | no |
 | merged + clean but **occupied** | `true` | `false` | no |
@@ -190,8 +218,8 @@ never a throw and never a `false`.
 
 ## 9. Explicitly out of scope
 
-- **Removal gating.** `removeWorktreeSafely`'s gates are unchanged. `(done)` informs a human; it does
+- **Removal gating.** `removeWorktreeSafely`'s gates are unchanged. `(removable)` informs a human; it does
   not authorize a deletion, and nothing consults it before removing.
 - **Auto-prune.** This CR adds no verb that deletes.
-- **Filtering.** No `--done` / `--prunable` flag. `--format json` plus `jq` serves the scripted case
+- **Filtering.** No `--removable` / `--prunable` flag. `--format json` plus `jq` serves the scripted case
   today; a filter can be added later against the fields this CR establishes.

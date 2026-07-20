@@ -3,7 +3,7 @@ import type { Exec } from './exec.ts'
 import {
 	assertDistinctFromPrimary,
 	gitWorktreeAdapter,
-	isWorktreeDone,
+	isWorktreeRemovable,
 	listWorktreesFromGit,
 	removeWorktreeSafely,
 	resolvePrimaryRoot,
@@ -197,7 +197,7 @@ describe('spec:cyber-mux/mux', () => {
 
 		const byRoot = (exec: Exec) => new Map(listWorktreesFromGit(exec, '/repo').map((w) => [w.root, w]))
 
-		it('reports a merged, clean worktree as done', () => {
+		it('reports a merged, clean worktree as removable', () => {
 			const entries = byRoot(
 				gitFake({
 					originHead: 'origin/main',
@@ -206,10 +206,10 @@ describe('spec:cyber-mux/mux', () => {
 				}),
 			)
 			expect(entries.get('/repo.worktrees/landed')).toMatchObject({ merged: true, dirty: false })
-			expect(isWorktreeDone(entries.get('/repo.worktrees/landed')!)).toBe(true)
+			expect(isWorktreeRemovable(entries.get('/repo.worktrees/landed')!)).toBe(true)
 		})
 
-		it('a merged worktree with uncommitted changes is not done', () => {
+		it('a merged worktree with uncommitted changes is not removable', () => {
 			const entries = byRoot(
 				gitFake({
 					originHead: 'origin/main',
@@ -218,13 +218,13 @@ describe('spec:cyber-mux/mux', () => {
 				}),
 			)
 			expect(entries.get('/repo.worktrees/landed')).toMatchObject({ merged: true, dirty: true })
-			expect(isWorktreeDone(entries.get('/repo.worktrees/landed')!)).toBe(false)
+			expect(isWorktreeRemovable(entries.get('/repo.worktrees/landed')!)).toBe(false)
 		})
 
-		it('an unmerged worktree is not done however clean it is', () => {
+		it('an unmerged worktree is not removable however clean it is', () => {
 			const entries = byRoot(gitFake({ originHead: 'origin/main', merged: 'main', status: () => '' }))
 			expect(entries.get('/repo.worktrees/open')).toMatchObject({ merged: false, dirty: false })
-			expect(isWorktreeDone(entries.get('/repo.worktrees/open')!)).toBe(false)
+			expect(isWorktreeRemovable(entries.get('/repo.worktrees/open')!)).toBe(false)
 		})
 
 		it('a detached HEAD lists with no merged verdict rather than a false one', () => {
@@ -232,7 +232,7 @@ describe('spec:cyber-mux/mux', () => {
 			const spike = entries.get('/repo.worktrees/spike')!
 			expect(spike.merged).toBeUndefined()
 			expect(spike.dirty).toBe(false)
-			expect(isWorktreeDone(spike)).toBe(false)
+			expect(isWorktreeRemovable(spike)).toBe(false)
 		})
 
 		it('a prunable entry lists with no dirty verdict, and git is never asked for one', () => {
@@ -244,8 +244,8 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls.filter((args) => args.includes('status')).map((args) => args[1])).not.toContain(
 				'/repo.worktrees/gone',
 			)
-			// A gone checkout says `(gone)` on ROOT; it must never also claim `(done)`.
-			expect(isWorktreeDone(gone)).toBe(false)
+			// A gone checkout says `(gone)` on ROOT; it must never also claim `(removable)`.
+			expect(isWorktreeRemovable(gone)).toBe(false)
 		})
 
 		it('falls back to the primary checkout branch when origin/HEAD does not resolve', () => {
@@ -279,7 +279,7 @@ describe('spec:cyber-mux/mux', () => {
 			const landed = entries.get('/repo.worktrees/landed')!
 			expect(landed.merged).toBeUndefined()
 			expect(landed.dirty).toBeUndefined()
-			expect(isWorktreeDone(landed)).toBe(false)
+			expect(isWorktreeRemovable(landed)).toBe(false)
 		})
 
 		it('reads the whole repo merge set in one batched call', () => {
@@ -289,19 +289,26 @@ describe('spec:cyber-mux/mux', () => {
 		})
 	})
 
-	describe('isWorktreeDone', () => {
-		const done = { root: '/repo.worktrees/x', branch: 'x', linked: true, prunable: false, merged: true, dirty: false }
+	describe('isWorktreeRemovable', () => {
+		const removable = {
+			root: '/repo.worktrees/x',
+			branch: 'x',
+			linked: true,
+			prunable: false,
+			merged: true,
+			dirty: false,
+		}
 
 		it('is false for the primary checkout, which is never disposable', () => {
-			expect(isWorktreeDone({ ...done, linked: false })).toBe(false)
+			expect(isWorktreeRemovable({ ...removable, linked: false })).toBe(false)
 		})
 
 		it('is false while a workspace still holds the worktree', () => {
-			expect(isWorktreeDone({ ...done, workspace: 'ws-1' })).toBe(false)
+			expect(isWorktreeRemovable({ ...removable, workspace: 'ws-1' })).toBe(false)
 		})
 
 		it('is true only when merged, clean, unoccupied, and on disk', () => {
-			expect(isWorktreeDone(done)).toBe(true)
+			expect(isWorktreeRemovable(removable)).toBe(true)
 		})
 	})
 
