@@ -194,9 +194,65 @@ a **directory**, and git offers no primitive that reports it for several worktre
 `worktree list --porcelain` does not carry it, and there is no `status --all-worktrees`. The one call
 is skipped for a `prunable` entry, where there is no directory to stat.
 
-Measured on this repo (~20 worktrees, warm cache): 20 sequential `git status --porcelain` calls total
-**~75 ms**. The batched merge read is a single call regardless of worktree count, so the growth term
-is the status loop alone and it is comfortably inside an interactive budget at the target scale.
+### 7.1 Where the wall time actually goes
+
+Measured on this repo, 20 worktrees, warm cache, local ext4 — per `worktree list` invocation:
+
+| Component | Cost | Grows with `N`? |
+| --- | --- | --- |
+| node startup + bundle load | 41 ms | no |
+| `rev-parse` + `worktree list --porcelain` + `execFileSync` spawn overhead | ~117 ms | no |
+| `symbolic-ref` + `branch --merged` — the **`merged`** signal | **10 ms** | **no — batched** |
+| `status --porcelain` × 20 — the **`dirty`** signal | **74 ms** | **yes** |
+| **total** | **~242 ms** | |
+
+Two things fall out, and both matter more than the headline number:
+
+- **The signal costs ~84 ms on a ~160 ms baseline** — roughly 1.5×, not an order of magnitude. Most of
+  the invocation is node startup and per-spawn overhead, not git.
+- **`merged` and `dirty` are not the same kind of cost.** `merged` is batched and flat — ~10 ms whether
+  the repo has 2 worktrees or 200. `dirty` is **100% of the growth term**. Any future lever belongs on
+  `dirty` alone; gating "the disposability signal" as one unit would trade away the cheap half for
+  nothing.
+
+A full `status --porcelain` on the largest repo available locally (1675 tracked files, 581 MB of
+`node_modules`) measured **13 ms** — `.gitignore` short-circuits the directory walk, so the untracked
+scan is far cheaper than its reputation.
+
+### 7.2 The tail this does NOT measure
+
+Every number above is **warm-cache, small-repo, local ext4**, and none of it generalizes to:
+
+- a monorepo one to two orders of magnitude larger (100k+ tracked files);
+- a **cold** page cache;
+- a network filesystem, or a host where per-file `stat` is expensive.
+
+On any of those, one `git status` can run 500 ms–2 s, and 20 worktrees becomes **10–40 seconds**. That
+is a real cliff, it is simply not reachable from the measurements here, and it is recorded rather than
+left for a best-case number to imply away.
+
+**Trigger to revisit:** a report of `worktree list` taking more than ~2 s, or adoption on a repo an
+order of magnitude larger than this one.
+
+### 7.3 Why there is no `--no-dirty` flag
+
+There are genuine callers that never need the signal — resolving a branch's checkout path, or asking
+only which workspace holds a worktree — and `axi.md` notes this CLI is driven almost entirely by
+agents, for whom path lookup is plausibly the dominant call. So the question is real; a bespoke flag is
+just the wrong shape of answer:
+
+1. **The general lever already exists in the contract and is unbuilt.** AXI **#2** (`--fields` / `--full`,
+   listed under *"What still trails the contract"*) says a list row carries 3–4 fields by default and
+   full detail is reached explicitly. Computing `dirty` only when that field was asked for falls out of
+   #2 for free and applies to every command, not just this one.
+2. **A one-off `--no-dirty` becomes debt against that work** — a negative flag, a second code path, and
+   something #2 would have to unwind.
+3. **The measured cost does not justify the surface today**, per §7.1.
+
+Short-circuiting instead — running `status` only where `merged && linked && !prunable && !workspace`,
+the rows where the answer could change — was also weighed and rejected here: it would make `dirty`
+absent on rows that were simply never checked, overloading the "absent means *undeterminable*" promise
+§8 depends on. It stays available as a remedy if §7.2's tail is ever actually hit.
 
 ## 8. Degradation
 
