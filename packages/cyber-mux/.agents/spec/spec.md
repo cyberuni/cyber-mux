@@ -30,7 +30,7 @@ produced-by:
 > Root project spec — the **descriptive** top index for the `cyber-mux` npm package
 > (`packages/cyber-mux`). Behaviors live in the capability folders below.
 
-`cyber-mux`: one contract (`SessionAdapter`) over terminal multiplexers (tmux, herdr) — detection,
+`cyber-mux`: one contract (`SessionAdapter`) over terminal multiplexers (tmux, herdr, wezterm) — detection,
 pane identity, placement, git worktree, and turn-taking (nudge) helpers — decoupled from legion
 (no store/identity/doorbell). Env namespace is `CYBER_MUX` / `CYBER_MUX_PANE`.
 
@@ -43,8 +43,8 @@ declared in `concept:` frontmatter rather than given a folder of its own.
 
 | Node | Owns |
 |---|---|
-| [`mux/`](./mux/README.md) | the pane abstraction — backend selection, placement, multiplexer detection, focus reporting |
-| [`template/`](./template/README.md) | named, reusable workspace templates — the arrangement, environment and launch commands a workspace is rebuilt from, plus resolution, the schema, and the walk that builds a pool against a target cwd |
+| [`mux/`](./mux/README.md) | the pane abstraction, as five units — [`detection/`](./mux/detection/README.md) (which backend, and what am I inside), [`placement/`](./mux/placement/README.md) (where a pane opens and what `open` reports), [`driving/`](./mux/driving/README.md) (a pane's turn), [`lookup/`](./mux/lookup/README.md) (addressing, focus, listing, the error surface), [`worktree/`](./mux/worktree/README.md) (the git-worktree surface and its binding) |
+| [`template/`](./template/README.md) | named, reusable workspace templates, as two units — [`apply/`](./template/apply/README.md) (resolve a template and walk it into a live pool against a target cwd) and [`capture/`](./template/capture/README.md) (the inverse: read a live workspace and write a template back out) |
 | [`axi.md`](./axi.md) | the Agent Experience Interface output contract every CLI command follows |
 | [`glossary.md`](./glossary.md) | the ubiquitous language — every load-bearing term defined once |
 | [`design/`](./design/README.md) | the rules & model, and the decisions log (append-only, descriptive, ungated) |
