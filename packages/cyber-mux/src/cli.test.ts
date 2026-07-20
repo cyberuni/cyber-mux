@@ -446,6 +446,25 @@ describe('spec:cyber-mux/mux', () => {
 				expect(logs.join('\n')).toContain('w9')
 			})
 
+			/**
+			 * `worktree list` makes four distinct git reads, so a fake that answers every git call with the
+			 * porcelain dump would also hand it to `status` and read every checkout as dirty. Route by verb,
+			 * and default the two signal reads to "git could not say" so a test opts into a signal it means
+			 * to assert on.
+			 */
+			const gitListExec =
+				(
+					porcelain: string,
+					signals: { commonDir?: string; originHead?: string; merged?: string; dirty?: (root: string) => string } = {},
+				): Exec =>
+				(_cmd, args) => {
+					if (args[0] === 'rev-parse') return signals.commonDir ?? '/repo/.git'
+					if (args.includes('symbolic-ref')) return signals.originHead ?? null
+					if (args.includes('branch')) return signals.merged ?? null
+					if (args.includes('status')) return signals.dirty?.(args[1]!) ?? null
+					return porcelain
+				}
+
 			it('worktree list reports every worktree and the workspace each is open in', async () => {
 				const porcelain = [
 					'worktree /repo',
@@ -458,10 +477,9 @@ describe('spec:cyber-mux/mux', () => {
 				const bindings = JSON.stringify({
 					result: { worktrees: [{ path: '/repo.worktrees/x', open_workspace_id: 'w21' }] },
 				})
-				const exec: Exec = (cmd, args) => {
-					if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : porcelain
-					return args.slice(0, 2).join(' ') === 'worktree list' ? bindings : ''
-				}
+				const gitExec = gitListExec(porcelain)
+				const exec: Exec = (cmd, args) =>
+					cmd === 'git' ? gitExec(cmd, args) : args.slice(0, 2).join(' ') === 'worktree list' ? bindings : ''
 				const program = buildProgram({ env: { CYBER_MUX: 'herdr' }, exec })
 				await run(program, ['worktree', 'list'])
 				const out = logs.join('\n')
@@ -479,7 +497,7 @@ describe('spec:cyber-mux/mux', () => {
 					'branch refs/heads/feat/x',
 					'',
 				].join('\n')
-				const exec: Exec = (_cmd, args) => (args[0] === 'rev-parse' ? '/repo/.git' : porcelain)
+				const exec = gitListExec(porcelain)
 				const program = buildProgram({ env: {}, exec })
 				await run(program, ['worktree', 'list'])
 				const out = logs.join('\n')
@@ -498,7 +516,7 @@ describe('spec:cyber-mux/mux', () => {
 					'prunable gitdir file points to non-existent location',
 					'',
 				].join('\n')
-				const exec: Exec = (_cmd, args) => (args[0] === 'rev-parse' ? '/repo/.git' : porcelain)
+				const exec = gitListExec(porcelain)
 				const program = buildProgram({ env: {}, exec })
 				await run(program, ['worktree', 'list'])
 				const out = logs.join('\n')
@@ -518,7 +536,7 @@ describe('spec:cyber-mux/mux', () => {
 			it('worktree list shortens a home-rooted ROOT to `~`, but never in JSON', async () => {
 				const home = homedir()
 				const porcelain = [`worktree ${home}/code/app`, 'branch refs/heads/main', ''].join('\n')
-				const exec: Exec = (_cmd, args) => (args[0] === 'rev-parse' ? `${home}/code/app/.git` : porcelain)
+				const exec = gitListExec(porcelain, { commonDir: `${home}/code/app/.git` })
 				const program = buildProgram({ env: {}, exec })
 				await run(program, ['worktree', 'list'])
 				expect(logs.join('\n')).toContain('~/code/app')
@@ -540,7 +558,7 @@ describe('spec:cyber-mux/mux', () => {
 					'branch refs/heads/feat/x',
 					'',
 				].join('\n')
-				const exec: Exec = (_cmd, args) => (args[0] === 'rev-parse' ? '/repo/.git' : porcelain)
+				const exec = gitListExec(porcelain)
 				const program = buildProgram({ env: {}, exec })
 				await withArgv(['worktree', 'list', '--format', 'json'], () =>
 					run(program, ['worktree', 'list', '--format', 'json']),
@@ -550,9 +568,106 @@ describe('spec:cyber-mux/mux', () => {
 				expect(payload.worktrees[0].branch).toBe('main')
 			})
 
+			// The disposability composite: `worktree list` answers "is this still NEEDED", not just
+			// "is it OCCUPIED", and compresses merged AND clean AND unoccupied to one BRANCH marker.
+			describe('worktree list marks a disposable worktree `(done)`', () => {
+				const porcelain = [
+					'worktree /repo',
+					'branch refs/heads/main',
+					'',
+					'worktree /repo.worktrees/landed',
+					'branch refs/heads/feat/landed',
+					'',
+					'worktree /repo.worktrees/open',
+					'branch refs/heads/feat/open',
+					'',
+				].join('\n')
+				const disposable = { originHead: 'origin/main', merged: 'main\nfeat/landed', dirty: () => '' }
+
+				it('marks the merged, clean, unoccupied worktree and nothing else', async () => {
+					const program = buildProgram({ env: {}, exec: gitListExec(porcelain, disposable) })
+					await run(program, ['worktree', 'list'])
+					const out = logs.join('\n')
+					expect(out).toContain('feat/landed (done)')
+					// Unmerged work is not disposable, and the primary checkout is never disposable —
+					// `(done)` and `(*)` are mutually exclusive, so BRANCH never carries two markers.
+					expect(out).not.toContain('feat/open (done)')
+					expect(out).toContain('main (*)')
+					expect(out).not.toContain('main (done)')
+				})
+
+				it('withholds the marker while a workspace still holds the worktree', async () => {
+					const bindings = JSON.stringify({
+						result: { worktrees: [{ path: '/repo.worktrees/landed', open_workspace_id: 'w21' }] },
+					})
+					const gitExec = gitListExec(porcelain, disposable)
+					const exec: Exec = (cmd, args) =>
+						cmd === 'git' ? gitExec(cmd, args) : args.slice(0, 2).join(' ') === 'worktree list' ? bindings : ''
+					const program = buildProgram({ env: { CYBER_MUX: 'herdr' }, exec })
+					await run(program, ['worktree', 'list'])
+					expect(logs.join('\n')).not.toContain('(done)')
+				})
+
+				it('withholds the marker on a dirty checkout, whose edits exist nowhere else', async () => {
+					const exec = gitListExec(porcelain, {
+						...disposable,
+						dirty: (root) => (root.endsWith('landed') ? ' M a.ts' : ''),
+					})
+					await run(buildProgram({ env: {}, exec }), ['worktree', 'list'])
+					expect(logs.join('\n')).not.toContain('(done)')
+				})
+
+				it('keeps `merged` and `dirty` raw and unmarked in JSON, where a consumer composes its own policy', async () => {
+					const program = buildProgram({ env: {}, exec: gitListExec(porcelain, disposable) })
+					await withArgv(['worktree', 'list', '--format', 'json'], () =>
+						run(program, ['worktree', 'list', '--format', 'json']),
+					)
+					const payload = JSON.parse(logs.join('\n'))
+					expect(payload.worktrees.map((w: { merged: boolean }) => w.merged)).toEqual([true, true, false])
+					expect(payload.worktrees.map((w: { dirty: boolean }) => w.dirty)).toEqual([false, false, false])
+					// The composite is the TABLE's compression, never a field — a consumer that wants a
+					// different policy (ignore occupancy, say) must not inherit this one from the payload.
+					expect(payload.worktrees.every((w: Record<string, unknown>) => !('done' in w))).toBe(true)
+					expect(logs.join('\n')).not.toContain('(done)')
+				})
+
+				it('lists every worktree with the signal simply absent when git cannot answer', async () => {
+					// A detached HEAD, a prunable entry, and no origin/HEAD to measure against — the listing
+					// still renders, with no field guessed and no row wrongly marked disposable.
+					const awkward = [
+						'worktree /repo',
+						'detached',
+						'',
+						'worktree /repo.worktrees/spike',
+						'detached',
+						'',
+						'worktree /repo.worktrees/gone',
+						'branch refs/heads/old',
+						'prunable gitdir file points to non-existent location',
+						'',
+					].join('\n')
+					const program = buildProgram({ env: {}, exec: gitListExec(awkward) })
+					await run(program, ['worktree', 'list'])
+					const out = logs.join('\n')
+					expect(out).toContain('(detached)')
+					expect(out).toContain('/repo.worktrees/gone (gone)')
+					expect(out).not.toContain('(done)')
+
+					logs.length = 0
+					await withArgv(['worktree', 'list', '--format', 'json'], () =>
+						run(program, ['worktree', 'list', '--format', 'json']),
+					)
+					const payload = JSON.parse(logs.join('\n'))
+					expect(payload.worktrees).toHaveLength(3)
+					expect(payload.worktrees.every((w: Record<string, unknown>) => w['merged'] === undefined)).toBe(true)
+					// The prunable row has no working tree to read, so `dirty` is absent rather than false.
+					expect(payload.worktrees[2].dirty).toBeUndefined()
+				})
+			})
+
 			it('worktree list answers outside a multiplexer — listing is a git question', async () => {
 				const porcelain = ['worktree /repo', 'branch refs/heads/main', ''].join('\n')
-				const exec: Exec = (_cmd, args) => (args[0] === 'rev-parse' ? '/repo/.git' : porcelain)
+				const exec = gitListExec(porcelain)
 				const program = buildProgram({ env: {}, exec })
 				await run(program, ['worktree', 'list'])
 				expect(logs.join('\n')).toContain('main')

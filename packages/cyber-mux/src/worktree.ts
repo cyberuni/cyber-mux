@@ -36,6 +36,25 @@ export interface WorktreeEntry {
 	/** git considers the entry stale — its checkout is gone from disk. */
 	prunable: boolean
 	/**
+	 * The branch's tip is an ancestor of the repo's default branch — its work has landed, so removing
+	 * the checkout destroys nothing the trunk does not already hold. Absent when UNDETERMINABLE, never
+	 * `false` as a stand-in: a detached HEAD or bare entry has no branch to ask about, and a repo whose
+	 * default branch cannot be resolved has nothing to compare against.
+	 *
+	 * A SQUASH or rebase merge rewrites the commits, so the original tip is not an ancestor and this
+	 * reads `false` for work that did in fact land. The error is one-directional and deliberately so:
+	 * under-reporting a disposal candidate costs the reader one manual check, over-reporting costs them
+	 * work. See `docs/design/worktree-disposability.md` §3.
+	 */
+	merged?: boolean
+	/**
+	 * The checkout has uncommitted changes — tracked or untracked. Merged is not sufficient on its own:
+	 * a merged branch whose checkout carries edits is not disposable, because those edits exist nowhere
+	 * else and `removeWorktreeSafely` is going to refuse them. Absent when there is no working tree to
+	 * read (a `prunable` entry) or when git could not answer.
+	 */
+	dirty?: boolean
+	/**
 	 * The multiplexer workspace this worktree is currently open in. Joined in by the caller from a
 	 * backend's binding; always absent on a backend that has no worktree/workspace binding, and when
 	 * nothing is open on the worktree.
@@ -114,11 +133,11 @@ export function listWorktreesFromGit(exec: Exec, primaryRoot: string): WorktreeE
 	if (!out) return []
 	const normalizedPrimary = normalizeWorktreePath(primaryRoot)
 	// Porcelain emits one blank-line-separated record per worktree, each opening with `worktree <path>`.
-	return out
+	const entries = out
 		.split('\n\n')
 		.map((record) => record.trim())
 		.filter((record) => record.startsWith('worktree '))
-		.map((record) => {
+		.map((record): WorktreeEntry => {
 			const lines = record.split('\n')
 			const root = normalizeWorktreePath(lines[0]!.slice('worktree '.length))
 			// `branch refs/heads/<name>`; absent entirely when detached or bare.
@@ -132,6 +151,86 @@ export function listWorktreesFromGit(exec: Exec, primaryRoot: string): WorktreeE
 				prunable: lines.some((line) => line === 'prunable' || line.startsWith('prunable ')),
 			}
 		})
+	const merged = readMergedBranches(exec, primaryRoot, resolveDefaultBranchRef(exec, primaryRoot, entries))
+	for (const entry of entries) {
+		if (merged && entry.branch) entry.merged = merged.has(entry.branch)
+		// No directory to stat for an entry git already calls stale — and skipping it is the one place
+		// the per-worktree cost can be avoided honestly.
+		if (!entry.prunable) entry.dirty = readDirty(exec, entry.root)
+	}
+	return entries
+}
+
+/**
+ * The ref that "merged" is measured against — never a hardcoded `main`, which is wrong on a `master`
+ * repo and on any repo with a different trunk.
+ *
+ * `origin/HEAD` first: the REMOTE-tracking ref is the target rather than the local branch, because
+ * "merged" means *landed upstream* in the PR workflow this tool exists to serve, and a stale local
+ * trunk would under-report. The fallback is the branch checked out in the PRIMARY checkout — already
+ * parsed and in hand, so it costs zero extra git calls, and for a local-only repo with no remote the
+ * primary checkout's branch simply IS the trunk. Undefined when neither answers (a bare or detached
+ * primary with no origin), which leaves `merged` absent everywhere rather than guessed.
+ */
+function resolveDefaultBranchRef(exec: Exec, primaryRoot: string, entries: WorktreeEntry[]): string | undefined {
+	const originHead = exec('git', ['-C', primaryRoot, 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD'])
+	if (originHead) return originHead
+	return entries.find((entry) => !entry.linked)?.branch
+}
+
+/**
+ * Every local branch whose tip is an ancestor of `target`, in ONE call for the whole repo — the merge
+ * signal costs the same at one worktree as at fifty. `undefined` when there is no target or git
+ * refused, which is what keeps `merged` absent rather than uniformly `false`.
+ */
+function readMergedBranches(exec: Exec, primaryRoot: string, target: string | undefined): Set<string> | undefined {
+	if (!target) return undefined
+	const out = exec('git', ['-C', primaryRoot, 'branch', '--format=%(refname:short)', '--merged', target])
+	if (out === null) return undefined
+	return new Set(
+		out
+			.split('\n')
+			.map((line) => line.trim())
+			.filter(Boolean),
+	)
+}
+
+/**
+ * Whether a checkout has uncommitted changes, distinguishing "clean" from "git could not say" —
+ * `undefined` is not `false`, and a caller deciding whether a worktree is safe to delete must not read
+ * an unanswered question as a clean tree.
+ */
+function readDirty(exec: Exec, worktreeRoot: string): boolean | undefined {
+	const out = exec('git', ['-C', worktreeRoot, 'status', '--porcelain'])
+	return out === null ? undefined : out.length > 0
+}
+
+/**
+ * The disposability composite — "the work has landed and nothing is holding this checkout", the single
+ * thing `worktree list` compresses to a `(done)` marker on BRANCH.
+ *
+ * Stated once, here, rather than inline at the render site: it is the rule the docs describe and the
+ * one worth testing directly. Deliberately NOT a field on `WorktreeEntry` — it is fully derivable from
+ * fields already there, and baking it into the payload would freeze one policy into the wire format
+ * (see `docs/design/worktree-disposability.md` §5).
+ *
+ * Evaluated at render time because `workspace` is joined in by `listWorktrees` after the git read.
+ * Every clause earns its place, and the two signal reads are STRICT identity rather than truthiness —
+ * an absent field means undeterminable, and undeterminable must never render as "safe to delete".
+ */
+export function isWorktreeDone(entry: WorktreeEntry): boolean {
+	return (
+		// The primary checkout is never disposable — which also makes `(done)` mutually exclusive with
+		// the `(*)` marker, so BRANCH never carries two.
+		entry.linked &&
+		// A vanished checkout already says `(gone)` on ROOT, which is THE prune signal; two markers for
+		// one action is noise.
+		!entry.prunable &&
+		entry.merged === true &&
+		entry.dirty === false &&
+		// Occupied is in use, whatever git thinks of the branch.
+		!entry.workspace
+	)
 }
 
 /**
@@ -156,9 +255,13 @@ export function resolveWorktreePath(primaryRoot: string, name: string): string {
 	return join(dirname(primaryRoot), `${basename(primaryRoot)}.worktrees`, name)
 }
 
-/** Whether a worktree has uncommitted changes — gates a safe remove unless the caller forces it. */
+/**
+ * Whether a worktree has uncommitted changes — gates a safe remove unless the caller forces it. An
+ * unanswered `status` collapses to `false` HERE, unlike the reporting path: a gate that refused on a
+ * question git could not answer would block removal of a checkout git has nothing to say about.
+ */
 function isDirty(exec: Exec, worktreeRoot: string): boolean {
-	return !!exec('git', ['-C', worktreeRoot, 'status', '--porcelain'])
+	return readDirty(exec, worktreeRoot) === true
 }
 
 /**
