@@ -57,7 +57,14 @@ export const herdrSessionAdapter: SessionAdapter = {
 		} else if (at === 'tab') {
 			// A real tab in the current window, not a split pane — `--no-focus` so spawning doesn't
 			// steal the caller's attention/focus, matching workspace/worktree spawns.
-			const out = exec('herdr', ['tab', 'create', '--cwd', opts.cwd, ...label, ...env, '--no-focus'])
+			//
+			// `--workspace` whenever the caller names one, and the omission is NOT harmless: without it
+			// `tab create` resolves the workspace the same way `--current` resolves a pane — from the
+			// UI-focused space — so a caller filling a workspace it just opened would put its first tab
+			// in the new space and every later one beside the pane it was RUN from. Verified against
+			// 0.7.4, whose `tab create` takes `--workspace <workspace_id>` natively.
+			const within = opts.within ? ['--workspace', opts.within] : []
+			const out = exec('herdr', ['tab', 'create', ...within, '--cwd', opts.cwd, ...label, ...env, '--no-focus'])
 			if (!out) throw new Error(withReason(exec, 'herdr tab create failed'))
 			opened = parseRootPaneId(out, 'herdr tab create')
 		} else {

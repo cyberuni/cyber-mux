@@ -311,6 +311,13 @@ function walkTabs(
 					// A real tab in the workspace the first tab established — never a `pane:*` placement,
 					// which would make this tab a split of the tab before it.
 					at: 'tab',
+					// Anchored to THAT workspace, and this is what `ctx.workspace` is for at open time rather
+					// than only in the report: a bare `tab` placement is resolved by every backend against the
+					// space the USER is looking at, so without this the first tab landed in the new workspace
+					// and tabs 2..N landed beside the pane the command was RUN from.
+					// `undefined` on a backend with no workspace tier (tmux) — there is no second space for a
+					// tab to land in the wrong one of, so there is nothing to anchor to.
+					within: ctx.workspace ?? undefined,
 					// Named at BIRTH: every tab but a new workspace's root can be, on both backends.
 					label: tabLabelFor(ctx, tabs[index]!, workspaceLabel),
 					env: rootLeaf.env,

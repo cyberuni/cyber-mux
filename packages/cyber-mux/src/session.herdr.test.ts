@@ -122,6 +122,38 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls[1]).toEqual(['pane', 'run', 'w3:pT', 'claude'])
 		})
 
+		it("open() at 'tab' opens in the workspace the caller NAMES, not the one the user is looking at", () => {
+			// The tab tier's counterpart to `from`: `tab create` without `--workspace` resolves the
+			// UI-focused space, so a caller filling a workspace it just opened has to name it or every tab
+			// after the first lands beside the pane the command was run from.
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'tab create': PANE_IN_TAB('w7:pT', 'w7') })
+			const target = herdrSessionAdapter.open(exec, { cwd: '/unit', at: 'tab', within: 'w7' })
+			expect(target.workspace).toBe('w7')
+			expect(calls[0]).toEqual(['tab', 'create', '--workspace', 'w7', '--cwd', '/unit', '--no-focus'])
+		})
+
+		it("a `within` is ignored by every placement but 'tab'", () => {
+			// A split lands in its own pane's space and a `workspace` create makes the space it opens in —
+			// neither has a space to be placed INTO, so neither emits a flag for one.
+			const workspaceCalls: string[][] = []
+			herdrSessionAdapter.open(fakeExec(workspaceCalls, { 'workspace create': PANE_IN_WORKSPACE('w7:p1', 'w7') }), {
+				cwd: '/unit',
+				at: 'workspace',
+				within: 'w3',
+			})
+			expect(workspaceCalls[0]).not.toContain('--workspace')
+
+			const splitCalls: string[][] = []
+			herdrSessionAdapter.open(fakeExec(splitCalls, { 'pane split': PANE_IN_SPLIT('w3:pB', 'w3') }), {
+				cwd: '/unit',
+				at: 'pane:right',
+				from: { id: 'w3:pA' },
+				within: 'w3',
+			})
+			expect(splitCalls[0]).not.toContain('--workspace')
+		})
+
 		it('--at omitted falls back to tab', () => {
 			const calls: string[][] = []
 			const tabOut = JSON.stringify({

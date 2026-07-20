@@ -62,7 +62,12 @@ export const weztermSessionAdapter: SessionAdapter = {
 			return opened
 		}
 		if (at === 'tab') {
-			const out = exec('wezterm', ['cli', 'spawn', '--cwd', opts.cwd])
+			// A WezTerm workspace is a set of WINDOWS and a tab lives in a window, so the anchor is
+			// resolved one level down: any window already in the named workspace will do — a tab spawned
+			// into it lands in that workspace. Without it `spawn` targets the window the USER is looking
+			// at, which is the whole reason `within` exists.
+			const within = opts.within ? ['--window-id', resolveWorkspaceWindow(exec, opts.within)] : []
+			const out = exec('wezterm', ['cli', 'spawn', ...within, '--cwd', opts.cwd])
 			if (!out) throw new Error(withReason(exec, 'wezterm cli spawn failed'))
 			const pane = out.trim()
 			if (!pane) throw new Error('wezterm cli spawn did not report the new pane id')
@@ -210,6 +215,20 @@ function resolveTab(exec: Exec, pane: string): string {
 	const found = listWeztermPanes(exec).find((p) => String(p.pane_id) === pane)
 	if (!found) throw new Error(`wezterm did not report a tab for the new pane ${pane}`)
 	return String(found.tab_id)
+}
+
+/**
+ * A window of the named workspace — what `spawn --window-id` needs to place a tab in a workspace
+ * WezTerm's CLI cannot target directly (`--workspace` only names the space a `--new-window` spawn
+ * creates, so it cannot place a tab in an existing one).
+ *
+ * Throws rather than falling back to an untargeted spawn: an unresolvable anchor means the workspace
+ * is gone, and the untargeted spawn is exactly the wrong-space bug `within` was added to close.
+ */
+function resolveWorkspaceWindow(exec: Exec, workspace: string): string {
+	const found = listWeztermPanes(exec).find((p) => p.workspace === workspace)
+	if (!found) throw new Error(`wezterm reported no window in workspace ${workspace} to open a tab in`)
+	return String(found.window_id)
 }
 
 /** `resolveTab` plus the workspace the same lookup already answers — one call serves both facts. */

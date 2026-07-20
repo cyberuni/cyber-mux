@@ -42,6 +42,24 @@ export interface SessionOpenOptions {
 	 */
 	from?: SessionTarget
 	/**
+	 * The workspace a `tab` placement opens INSIDE — a backend workspace id, exactly the value
+	 * `OpenedPane.workspace` reports. Ignored by `pane:*` (a split lands in its pane's own space) and
+	 * by `workspace` (which creates the space it opens in).
+	 *
+	 * This is `from`'s counterpart one tier up, and it exists for the same reason: omitting it does
+	 * NOT mean "the caller's workspace", it means "whatever this backend defaults to", and every
+	 * backend defaults to the workspace the USER is looking at (herdr's `tab create` without
+	 * `--workspace`, WezTerm's `spawn` without `--window-id`). That default is only coincidentally the
+	 * caller's, and it diverges exactly when a program is driving — a walk that opens a workspace and
+	 * then fills it with tabs must name the workspace it just opened, or every tab after the first
+	 * lands beside the pane the command was RUN from.
+	 *
+	 * Absent on a backend with no workspace tier (tmux, where `workspace` and `tab` both collapse onto
+	 * a Window): an adapter with nothing to resolve it against ignores it, which still satisfies the
+	 * contract — there is no second space for a tab to land in the wrong one of.
+	 */
+	within?: string
+	/**
 	 * Fraction of the split region kept by `first` — the ORIGINAL pane, not the new one. Only
 	 * meaningful for a `pane:*` placement; `0 < ratio < 1`, and omitting it takes the backend's own
 	 * even (50/50) default.

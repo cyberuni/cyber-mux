@@ -368,6 +368,32 @@ describe('spec:cyber-mux/template', () => {
 			expect(calls.opens.slice(1).map((o) => o.from)).toEqual([undefined, undefined])
 		})
 
+		it('every later tab is ANCHORED to the workspace the first tab landed in', () => {
+			// The `at: 'tab'` placement alone is not enough: every backend resolves a bare tab open against
+			// the space the USER is looking at, so without the anchor the first tab opened the new
+			// workspace and tabs 2..N appeared beside the pane the command was RUN from.
+			const { adapter, calls } = fakeAdapter({ workspace: 'w7' })
+			openTemplate(noExec, adapter, tabs3, { cwd: '/target', dirExists: anyDir })
+			expect(calls.opens.map((o) => o.within)).toEqual([undefined, 'w7', 'w7'])
+		})
+
+		it('a backend with no workspace tier anchors nothing, having no second space to land in', () => {
+			// tmux collapses workspace and tab onto one Window, so there is no space for a tab to land in
+			// the wrong one of — the grouping tag, not an anchor, is what makes its tabs one pool.
+			const { adapter, calls } = fakeAdapter()
+			openTemplate(noExec, adapter, tabs3, { cwd: '/target', dirExists: anyDir })
+			expect(calls.opens.map((o) => o.within)).toEqual([undefined, undefined, undefined])
+		})
+
+		it('herdr names the workspace on every later tab create', () => {
+			// At the argv, on the backend the bug was reported on: `tab create --workspace <id>`.
+			const calls: string[][] = []
+			openTemplate(herdrExec(calls), herdrSessionAdapter, tabs3, { cwd: '/target', dirExists: anyDir })
+			const creates = calls.filter((c) => c[0] === 'tab' && c[1] === 'create')
+			expect(creates).toHaveLength(2)
+			for (const create of creates) expect(create.slice(0, 4)).toEqual(['tab', 'create', '--workspace', 'w1'])
+		})
+
 		it("each tab's tree is built against that tab's own root pane", () => {
 			// The same rule the single-tab walk holds: a split names its pane rather than trusting the
 			// backend's default, which tracks the user rather than the caller. Across tabs it also keeps a
@@ -895,6 +921,29 @@ describe('spec:cyber-mux/template', () => {
 			// walk names it by its pane handle rather than passing the whole opened region through.
 			expect(calls.opens[0]?.from).toEqual({ id: root.id })
 			expect(manifest.panes[0]).toMatchObject({ label: 'planner', pane: 'w9:p1' })
+		})
+
+		it('anchors every later tab to the workspace the region already lives in', () => {
+			// The same anchor `open --template` needs, from the other end: here the workspace was opened
+			// by the worktree verbs and is TOLD to the walk, so a tab that trusted the backend's default
+			// would land beside the caller instead of in the worktree's own workspace.
+			const { adapter, calls } = fakeAdapter({ workspace: 'w9' })
+			const template: Template = {
+				name: 'pool',
+				tabs: [
+					{ label: 'editor', panes: [{ label: 'edit' }] },
+					{ label: 'logs', panes: [{ label: 'tail' }] },
+				],
+			}
+			applyTemplateToRegion(noExec, adapter, template, {
+				root: { id: 'w9:root', tab: 'w9:t1' },
+				cwd: '/repo.worktrees/feat-x',
+				workspace: 'w9',
+				rootEnvHonored: true,
+				dirExists: anyDir,
+			})
+			// The region was already open, so the ONLY open here is the second tab's — and it is anchored.
+			expect(calls.opens.map((o) => ({ at: o.at, within: o.within }))).toEqual([{ at: 'tab', within: 'w9' }])
 		})
 
 		it('reports the root pane’s ACTUAL dir, never the dir the template asked for', () => {
