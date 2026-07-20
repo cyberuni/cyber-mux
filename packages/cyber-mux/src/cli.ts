@@ -6,6 +6,7 @@ import { AT_OPTION, ENV_OPTION, FORMAT_OPTION, LABEL_OPTION } from './cli-option
 import { type Exec, realExec } from './exec.ts'
 import { currentPane, probeMultiplexer } from './mux-probe.ts'
 import { type HelpEntry, output, printFields, printHelp, printTable, tildify } from './output.ts'
+import { type OpenPrompt, realPrompt } from './prompt.ts'
 import type { LivePane, SessionAdapter, SessionPlacement, SessionTarget } from './session.ts'
 import {
 	collectPanes,
@@ -16,6 +17,15 @@ import {
 	validateTemplate,
 } from './template.ts'
 import { captureTemplate, captureWorkspaceTemplate } from './template-capture.ts'
+import {
+	applyEdits,
+	type EditField,
+	type EditInput,
+	type EditSlot,
+	planEdits,
+	readEditInput,
+	toAnswers,
+} from './template-edit.ts'
 import {
 	applyTemplateToRegion,
 	openTemplate,
@@ -58,6 +68,10 @@ export interface CliDeps {
 	 * only way `template` can be driven hermetically in tests, with no real templates on disk. Optional
 	 * at this boundary so a caller that drives no template command need not know the seam exists. */
 	store?: TemplateStore
+	/** The interactive half, for `template edit` — injected for the same reason `store` is, and a
+	 * FACTORY rather than a live prompt so no other verb pays stdin for its existence (`prompt.ts`
+	 * has the why). */
+	prompt?: OpenPrompt
 }
 
 /** `CliDeps` with every optional dep resolved — what each command is actually handed. */
@@ -65,9 +79,10 @@ interface Deps {
 	env: NodeJS.ProcessEnv
 	exec: Exec
 	store: TemplateStore
+	prompt: OpenPrompt
 }
 
-const REAL_DEPS: CliDeps = { env: process.env, exec: realExec, store: realTemplateStore }
+const REAL_DEPS: CliDeps = { env: process.env, exec: realExec, store: realTemplateStore, prompt: realPrompt }
 
 /**
  * Resolve the adapter for the multiplexer this process is inside, failing with a coded `no-mux` error
@@ -202,6 +217,25 @@ function guarded<A extends unknown[]>(action: (...args: A) => void): (...args: A
 	return (...args: A) => {
 		try {
 			action(...args)
+		} catch (err) {
+			if (err instanceof CliError) reportError(err)
+			throw err
+		}
+	}
+}
+
+/**
+ * `guarded` for an action that awaits — the same contract, and separate rather than a widening of it.
+ *
+ * Making `guarded` return `void | Promise<void>` would put an ignored promise behind every sync verb's
+ * action, where a rejection would escape the guard entirely and surface as an unhandled rejection
+ * instead of a coded error. Two functions keeps the sync path provably sync; commander's own
+ * `parseAsync` (already what `main` calls) awaits whichever it gets.
+ */
+function guardedAsync<A extends unknown[]>(action: (...args: A) => Promise<void>): (...args: A) => Promise<void> {
+	return async (...args: A) => {
+		try {
+			await action(...args)
 		} catch (err) {
 			if (err instanceof CliError) reportError(err)
 			throw err
@@ -638,6 +672,181 @@ function noteTabsLeftOut(deps: Deps, adapter: SessionAdapter, target: SessionTar
 const CAPTURED_DESCRIPTION = 'Captured from a live region — geometry only; add a command to each pane.'
 
 /**
+ * `edit` is `save`'s other half, and exists because of what `save` cannot do: a capture recovers
+ * geometry, labels and dirs and lands with no `command` on any pane (`template-capture.ts` has the
+ * why), so a saved template is a draft that is worth nothing until every command is filled in. Doing
+ * that by hand means opening JSON and counting braces to work out which leaf is the pane on the left.
+ * This walks the panes in APPLY order and asks.
+ *
+ * **Line-based, not a TUI, and that is a design decision rather than a stopgap.** A full-screen editor
+ * would need a rendering dependency in a package that has exactly one, and a raw-mode event loop that
+ * the synchronous `Exec` seam every other verb is built on cannot express. A prompt per pane needs
+ * `node:readline` and nothing else, and it composes: the walk is the same order the manifest reports,
+ * so filling top to bottom fills in the order the commands will run.
+ *
+ * **Nothing is written until every answer is in and the result validates.** `applyEdits` clones, so a
+ * refusal costs the author nothing and there is never a half-edited template on disk — which is what
+ * lets Ctrl-D mean "abandon this" rather than "commit whatever I happened to have typed".
+ */
+function templateEditCommand(deps: Deps): Command {
+	return new Command('edit')
+		.description('Fill in a template pane by pane, answering one prompt per pane')
+		.argument('[name]', 'Template name')
+		.option('--file <path>', 'Edit this path instead, skipping resolution entirely')
+		.addOption(
+			new Option('--field <field>', 'Which field to ask about').choices(['command', 'label']).default('command'),
+		)
+		.option('--dry-run', 'Ask, then print the edited template instead of writing it')
+		.addOption(FORMAT_OPTION)
+		.addHelpText(
+			'after',
+			'\nOne prompt per pane, in the order apply submits them. Enter keeps the current value,\n' +
+				'"-" clears it, Ctrl-D abandons the edit and writes nothing. The current value is\n' +
+				'pre-filled into the line, so a small change is an edit rather than a retype.',
+		)
+		.action(
+			guardedAsync(
+				async (
+					name: string | undefined,
+					opts: { file?: string; field: EditField; dryRun?: boolean; format?: string },
+				) => {
+					if (!name && !opts.file) {
+						throw new CliError(
+							'missing-argument',
+							'template edit needs a template name or --file <path>',
+							'pass a template name, or --file <path>',
+							2,
+						)
+					}
+					// BEFORE resolution, so a piped invocation fails on the thing that is actually wrong rather
+					// than after a read. A prompt against a non-tty would block forever with nothing on screen
+					// to say why — the one failure mode an agent driving this CLI cannot diagnose or escape.
+					if (!process.stdin.isTTY) {
+						throw new CliError(
+							'not-interactive',
+							'template edit asks questions and needs a terminal — stdin is not a tty',
+							'run template edit in a terminal, or edit the JSON directly (cyber-mux template show <name>)',
+							2,
+						)
+					}
+					const resolved = resolveTemplate(deps, { name, file: opts.file })
+					const slots = planEdits(resolved.template)
+					if (slots.length === 0) {
+						throw new CliError(
+							'empty-template',
+							`template "${resolved.stem}" declares no panes to edit`,
+							'check the template with: cyber-mux template validate',
+							1,
+						)
+					}
+					const inputs = await askSlots(deps, resolved, slots, opts.field)
+					// `undefined` is Ctrl-D — the human left. Nothing is written, and it is a failure rather than
+					// a quiet success so a caller that wrapped this can tell an abandoned edit from a finished one.
+					if (!inputs) {
+						throw new CliError(
+							'edit-aborted',
+							`edit of "${resolved.stem}" abandoned — nothing was written`,
+							'run it again to start over',
+							1,
+						)
+					}
+					const answers = toAnswers(slots, inputs, opts.field)
+					const edited = applyEdits(resolved.template, answers)
+					// Belt-and-braces, and honestly so: `resolveTemplate` already validated on the way in, and
+					// neither field this verb offers can be made invalid (both are free strings), so today this
+					// cannot fire. It is here because `--field` is the seam that grows — a `dir` can escape the
+					// apply-time root and a `ratio` can leave `(0,1)`, and the moment one of those is offered
+					// this is the check that stops an answer from writing a template apply would then refuse.
+					const errors = validateTemplate(edited, resolved.stem)
+					if (errors.length > 0) {
+						throw new CliError(
+							'invalid-template',
+							`those answers would make "${resolved.stem}" invalid:\n${errors.join('\n')}`,
+							'run it again and give a value the schema accepts',
+							1,
+						)
+					}
+					if (opts.dryRun) {
+						console.log(JSON.stringify(edited, null, 2))
+						return
+					}
+					// Unchanged writes nothing at all. A walk where the author pressed Enter through every pane
+					// should leave the file's mtime alone — a template is checked in, and a no-op edit that
+					// dirties the working tree would show up as a change in review that is not one.
+					if (answers.length === 0) {
+						output({ path: resolved.path, changed: 0 }, () => printFields({ path: resolved.path, changed: '0' }))
+						return
+					}
+					deps.store.write(resolved.path, `${JSON.stringify(edited, null, 2)}\n`)
+					output({ path: resolved.path, changed: answers.length }, () =>
+						printFields({ path: resolved.path, changed: String(answers.length) }),
+					)
+				},
+			),
+		)
+}
+
+/**
+ * The walk itself: a header, then one question per pane, in apply order.
+ *
+ * Returns `undefined` the moment the prompt reports EOF, rather than collecting a partial list —
+ * "the human left" has to reach the caller as one fact, and a short array would be indistinguishable
+ * from a walk where the last few panes were skipped.
+ *
+ * The prompt is closed in a `finally` because it owns stdin: a throw from anywhere in the walk that
+ * left it open would hang the process at exit with no output, turning a diagnosable error into a
+ * silent freeze.
+ */
+async function askSlots(
+	deps: Deps,
+	resolved: ResolvedTemplate & { template: Template },
+	slots: EditSlot[],
+	field: EditField,
+): Promise<EditInput[] | undefined> {
+	const tabs = resolved.template.tabs?.length
+	const scope = tabs ? `${tabs} tabs, ${slots.length} panes` : `${slots.length} panes`
+	process.stdout.write(`\n${resolved.stem} — ${scope}  (${resolved.source}: ${tildify(resolved.path)})\n`)
+	process.stdout.write(`Enter keeps, "-" clears, Ctrl-D abandons.\n\n`)
+	const prompt = deps.prompt()
+	const inputs: EditInput[] = []
+	try {
+		let tab: number | undefined
+		for (const slot of slots) {
+			// Printed only when it CHANGES, so a single-region template shows no tab header at all and a
+			// tabs template shows each one once — the grouping the author sees matches the one in the file.
+			if (slot.tab !== undefined && slot.tab !== tab) {
+				tab = slot.tab
+				process.stdout.write(`  tab ${tab + 1}${slot.tabLabel ? ` "${slot.tabLabel}"` : ''}\n`)
+			}
+			const line = await prompt.ask(`  ${describeSlot(slot, field)} `, slot[field])
+			if (line === undefined) return undefined
+			inputs.push(readEditInput(line))
+		}
+	} finally {
+		prompt.close()
+	}
+	return inputs
+}
+
+/**
+ * One pane's prompt text: which pane, what already identifies it, and the field being asked for.
+ *
+ * The context shown is every field EXCEPT the one being edited — a pane is told apart by its dir and
+ * its label, and echoing the current value here would duplicate what the pre-filled line already
+ * shows. Panes carry no identity of their own beyond their ordinal (a label is a name two panes may
+ * share, by design), so the ordinal always leads.
+ */
+function describeSlot(slot: EditSlot, field: EditField): string {
+	const context = [
+		slot.label !== undefined && field !== 'label' ? `label: ${slot.label}` : null,
+		slot.dir !== undefined ? `dir: ${slot.dir}` : null,
+		slot.command !== undefined && field !== 'command' ? `command: ${slot.command}` : null,
+	].filter((part) => part !== null)
+	const indent = slot.tab === undefined ? '' : '  '
+	return `${indent}pane ${slot.index + 1}${context.length ? ` (${context.join(', ')})` : ''} ${field}?`
+}
+
+/**
  * The `template` group manages templates — there is deliberately no `template apply`. Applying is what
  * `open` and `worktree add` already do, told to build N panes instead of one, so it is `--template` on
  * those verbs.
@@ -652,6 +861,7 @@ function templateCommand(deps: Deps): Command {
 	cmd.addCommand(templateShowCommand(deps))
 	cmd.addCommand(templateValidateCommand(deps))
 	cmd.addCommand(templateSaveCommand(deps))
+	cmd.addCommand(templateEditCommand(deps))
 	return cmd
 }
 
@@ -1199,7 +1409,12 @@ function exitOverrideTree(command: Command): Command {
  * argument, a bare `send`) is catchable both here and in tests, rather than killing the test
  * runner's own process. */
 export function buildProgram(cliDeps: CliDeps = REAL_DEPS): Command {
-	const deps: Deps = { env: cliDeps.env, exec: cliDeps.exec, store: cliDeps.store ?? realTemplateStore }
+	const deps: Deps = {
+		env: cliDeps.env,
+		exec: cliDeps.exec,
+		store: cliDeps.store ?? realTemplateStore,
+		prompt: cliDeps.prompt ?? realPrompt,
+	}
 	const program = new Command()
 		.name('cyber-mux')
 		.description('Cross-multiplexer pane control — one contract over tmux and herdr')

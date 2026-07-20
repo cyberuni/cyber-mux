@@ -1124,6 +1124,223 @@ describe('spec:cyber-mux/mux', () => {
 				})
 			})
 
+			describe('template edit — one prompt per pane', () => {
+				/** A scripted human: hands back `lines` in order, then EOF. Records what it was asked. */
+				function fakePrompt(lines: (string | undefined)[]) {
+					const asked: { question: string; initial?: string }[] = []
+					// A plain mutable object, never getters on the function itself: `Object.assign` would copy a
+					// getter's VALUE at assign time and freeze both counters at zero.
+					const count = { opened: 0, closed: 0 }
+					const open = () => {
+						count.opened++
+						return {
+							async ask(question: string, initial?: string) {
+								asked.push({ question, initial })
+								return lines.shift()
+							},
+							close() {
+								count.closed++
+							},
+						}
+					}
+					return Object.assign(open, { asked, count })
+				}
+
+				/**
+				 * `edit` refuses a non-tty, so every test here has to claim one.
+				 *
+				 * Defined rather than spied: under vitest `process.stdin.isTTY` is absent entirely (the runner
+				 * has no terminal), and `vi.spyOn` cannot stub a property that does not exist. Deleted again in
+				 * `afterEach` so the runner's own stdin is left exactly as it was found.
+				 */
+				function setTty(value: boolean) {
+					Object.defineProperty(process.stdin, 'isTTY', { value, configurable: true })
+				}
+				const withTty = () => setTty(true)
+
+				afterEach(() => {
+					delete (process.stdin as { isTTY?: boolean }).isTTY
+				})
+
+				const DRAFT = {
+					name: 'draft',
+					arrange: 'tiled',
+					panes: [{ label: 'w1' }, { label: 'w2', dir: 'apps/web' }],
+				}
+
+				it('asks once per pane and writes the answers back', async () => {
+					withTty()
+					const prompt = fakePrompt(['claude', 'pnpm dev'])
+					const store = fakeStore({ [repo('draft')]: DRAFT })
+					const program = buildProgram({ env: XDG, exec: repoExec([]), store, prompt })
+					await run(program, ['template', 'edit', 'draft'])
+					expect(prompt.asked).toHaveLength(2)
+					expect(JSON.parse(store.writes[repo('draft')]!).panes).toEqual([
+						{ label: 'w1', command: 'claude' },
+						{ label: 'w2', dir: 'apps/web', command: 'pnpm dev' },
+					])
+				})
+
+				it('pre-fills the current value, so a small change is an edit not a retype', async () => {
+					withTty()
+					const filled = { name: 'draft', panes: [{ label: 'w1', command: 'claude' }] }
+					const prompt = fakePrompt(['claude --resume'])
+					const store = fakeStore({ [repo('draft')]: filled })
+					const program = buildProgram({ env: XDG, exec: repoExec([]), store, prompt })
+					await run(program, ['template', 'edit', 'draft'])
+					expect(prompt.asked[0]?.initial).toBe('claude')
+				})
+
+				it('names each pane by its ordinal and shows the fields that identify it', async () => {
+					withTty()
+					const prompt = fakePrompt(['a', 'b'])
+					const store = fakeStore({ [repo('draft')]: DRAFT })
+					const program = buildProgram({ env: XDG, exec: repoExec([]), store, prompt })
+					await run(program, ['template', 'edit', 'draft'])
+					expect(prompt.asked[0]?.question).toContain('pane 1')
+					expect(prompt.asked[1]?.question).toContain('pane 2')
+					// The dir tells two otherwise identical panes apart; the field being asked for is named.
+					expect(prompt.asked[1]?.question).toContain('dir: apps/web')
+					expect(prompt.asked[1]?.question).toContain('command?')
+				})
+
+				it('writes NOTHING when every pane was kept', async () => {
+					// A template is checked in; a walk the author pressed Enter through must not dirty it.
+					withTty()
+					const prompt = fakePrompt(['', ''])
+					const store = fakeStore({ [repo('draft')]: DRAFT })
+					const program = buildProgram({ env: XDG, exec: repoExec([]), store, prompt })
+					await run(program, ['template', 'edit', 'draft'])
+					expect(store.writes).toEqual({})
+					expect(logs.join('\n')).toMatch(/changed\s+0/)
+				})
+
+				it('Ctrl-D abandons the edit and writes nothing, even mid-walk', async () => {
+					catchExit()
+					withTty()
+					const stderr = captureStderr()
+					// Answered the first pane, then left.
+					const prompt = fakePrompt(['claude', undefined])
+					const store = fakeStore({ [repo('draft')]: DRAFT })
+					const program = buildProgram({ env: XDG, exec: repoExec([]), store, prompt })
+					await expect(run(program, ['template', 'edit', 'draft'])).rejects.toThrow('exit:1')
+					expect(store.writes).toEqual({})
+					expect(stderr.join('') + logs.join('\n')).toContain('edit-aborted')
+				})
+
+				it('releases the terminal even when the walk throws', async () => {
+					// The prompt owns stdin — leaving it open would hang the process at exit with no output.
+					catchExit()
+					withTty()
+					captureStderr()
+					const prompt = fakePrompt([undefined])
+					const store = fakeStore({ [repo('draft')]: DRAFT })
+					const program = buildProgram({ env: XDG, exec: repoExec([]), store, prompt })
+					await expect(run(program, ['template', 'edit', 'draft'])).rejects.toThrow('exit:1')
+					expect(prompt.count).toEqual({ opened: 1, closed: 1 })
+				})
+
+				it('refuses a non-tty rather than blocking on a pipe forever', async () => {
+					catchExit()
+					setTty(false)
+					const stderr = captureStderr()
+					const prompt = fakePrompt([])
+					const store = fakeStore({ [repo('draft')]: DRAFT })
+					const program = buildProgram({ env: XDG, exec: repoExec([]), store, prompt })
+					// A usage error (exit 2): the invocation itself cannot work, nothing was attempted.
+					await expect(run(program, ['template', 'edit', 'draft'])).rejects.toThrow('exit:2')
+					expect(prompt.count.opened).toBe(0)
+					expect(stderr.join('') + logs.join('\n')).toContain('not-interactive')
+				})
+
+				it('--dry-run prints the edited template and writes nothing', async () => {
+					withTty()
+					const prompt = fakePrompt(['claude', ''])
+					const store = fakeStore({ [repo('draft')]: DRAFT })
+					const program = buildProgram({ env: XDG, exec: repoExec([]), store, prompt })
+					await run(program, ['template', 'edit', 'draft', '--dry-run'])
+					expect(store.writes).toEqual({})
+					expect(JSON.parse(logs.join('\n')).panes[0]).toEqual({ label: 'w1', command: 'claude' })
+				})
+
+				it('--field label edits labels instead', async () => {
+					withTty()
+					const prompt = fakePrompt(['planner', 'runner'])
+					const store = fakeStore({ [repo('draft')]: DRAFT })
+					const program = buildProgram({ env: XDG, exec: repoExec([]), store, prompt })
+					await run(program, ['template', 'edit', 'draft', '--field', 'label'])
+					expect(prompt.asked[0]?.question).toContain('label?')
+					expect(JSON.parse(store.writes[repo('draft')]!).panes[0]).toEqual({ label: 'planner' })
+				})
+
+				it('keeps a flat template flat', async () => {
+					// The spelling rule at the CLI seam: `panes`/`arrange` survive, no `root` appears.
+					withTty()
+					const prompt = fakePrompt(['claude', 'pnpm dev'])
+					const store = fakeStore({ [repo('draft')]: DRAFT })
+					const program = buildProgram({ env: XDG, exec: repoExec([]), store, prompt })
+					await run(program, ['template', 'edit', 'draft'])
+					const written = JSON.parse(store.writes[repo('draft')]!)
+					expect(written.arrange).toBe('tiled')
+					expect(written.root).toBeUndefined()
+				})
+
+				it('refuses an invalid template BEFORE asking anything', async () => {
+					// Resolution validates on read, so a template that would not apply never reaches the walk —
+					// which matters here more than elsewhere: the cost of finding out late is a human having
+					// typed a command into every pane for nothing.
+					catchExit()
+					withTty()
+					captureStderr()
+					const prompt = fakePrompt(['claude'])
+					// `cwd` is not in the schema — a template carrying one fails validation outright.
+					const store = fakeStore({ [repo('draft')]: { name: 'draft', panes: [{ label: 'w1', cwd: '/tmp' }] } })
+					const program = buildProgram({ env: XDG, exec: repoExec([]), store, prompt })
+					await expect(run(program, ['template', 'edit', 'draft'])).rejects.toThrow('exit:1')
+					expect(prompt.count.opened).toBe(0)
+					expect(store.writes).toEqual({})
+				})
+
+				it('needs a name or --file, like every other template verb', async () => {
+					catchExit()
+					withTty()
+					captureStderr()
+					const store = fakeStore({})
+					const program = buildProgram({ env: XDG, exec: repoExec([]), store, prompt: fakePrompt([]) })
+					await expect(run(program, ['template', 'edit'])).rejects.toThrow('exit:2')
+				})
+
+				it('groups a tabs template by tab, restarting the ordinal in each', async () => {
+					withTty()
+					const tabs = {
+						name: 'two-tabs',
+						tabs: [
+							{ label: 'main', panes: [{ label: 'a' }] },
+							{ label: 'docs', panes: [{ label: 'c' }] },
+						],
+					}
+					const prompt = fakePrompt(['claude', 'pnpm docs'])
+					const store = fakeStore({ [repo('two-tabs')]: tabs })
+					const program = buildProgram({ env: XDG, exec: repoExec([]), store, prompt })
+					await run(program, ['template', 'edit', 'two-tabs'])
+					expect(prompt.asked[0]?.question).toContain('pane 1')
+					expect(prompt.asked[1]?.question).toContain('pane 1')
+					const written = JSON.parse(store.writes[repo('two-tabs')]!)
+					expect(written.tabs[0].panes[0].command).toBe('claude')
+					expect(written.tabs[1].panes[0].command).toBe('pnpm docs')
+				})
+
+				it('needs no multiplexer — its subject is a FILE', async () => {
+					withTty()
+					const calls: string[][] = []
+					const prompt = fakePrompt([''])
+					const store = fakeStore({ [repo('draft')]: { name: 'draft', panes: [{ label: 'w1' }] } })
+					const program = buildProgram({ env: XDG, exec: repoExec(calls), store, prompt })
+					await run(program, ['template', 'edit', 'draft'])
+					expect(calls.every((c) => c[0] === 'git')).toBe(true)
+				})
+			})
+
 			describe('--template, the exact sibling of --launch', () => {
 				it('--template and --launch are mutually exclusive', async () => {
 					catchExit()

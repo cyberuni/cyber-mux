@@ -64,8 +64,8 @@ Capture an already-open pane pool as a reusable template.
   multi-tab workspace notes on stdout (a `help[N]:` block) how many tabs were left out.
 - `--description <text>` — recorded in the template; defaults to a draft warning, since a capture
   recovers geometry, labels, and dirs but **never commands** — no multiplexer reports the command a
-  pane was launched with, so every captured pane needs one filled in by hand before the template is
-  worth applying.
+  pane was launched with, so every captured pane needs one filled in before the template is
+  worth applying — `template edit` walks the panes and asks.
 - `--to repo|user` — which templates directory to write to; defaults to `repo`.
 - `--force` — overwrite an existing template of the same name; refused without it, so a hand-edited
   template is never silently discarded.
@@ -83,6 +83,54 @@ cyber-mux template save pool-4
 ```bash
 # Capture every tab of a specific pane's workspace, overwriting an existing template
 cyber-mux template save pool-4 --from %3 --workspace --force
+```
+
+### `cyber-mux template edit [<name>] [--file <path>] [--field command|label] [--dry-run]`
+
+Fill a template in pane by pane, answering one prompt per pane. This is `save`'s other half: a
+capture lands with no `command` on any pane, and filling them in by hand means opening the JSON and
+counting braces to work out which leaf is the pane on the left.
+
+Panes are walked in **apply order** — the same order the manifest reports and commands submit in —
+so filling top to bottom fills in the order they will run. A `tabs` template is grouped by tab, with
+the pane ordinal restarting in each.
+
+- `--field command|label` — which field to ask about; defaults to `command`.
+- `--dry-run` — ask, then print the edited template to stdout instead of writing it.
+- `--file <path>` — edit this path instead, skipping name resolution entirely.
+
+At each prompt the current value is **pre-filled into the editable line**, so a small change is an
+edit rather than a retype:
+
+| Input | Meaning |
+| --- | --- |
+| Enter | keep the current value |
+| `-` | clear the field |
+| `'-'` | a literal `-` |
+| anything else | set the field |
+
+Nothing is written until every pane has been answered and the result validates, so **Ctrl-D
+abandons the edit** and leaves the file untouched (exit 1, code `edit-aborted`). A walk where every
+pane was kept writes nothing at all and reports `changed 0` — a template is checked in, and a no-op
+edit must not dirty the working tree.
+
+A template's spelling survives the edit: one written with the flat `panes` + `arrange` sugar comes
+back out flat, never re-spelled as a `root` tree.
+
+Refuses (exit 2, code `not-interactive`) when stdin is not a tty, rather than blocking forever on a
+pipe. To edit non-interactively, read the JSON with `template show` and write it yourself.
+
+**Examples**
+
+```bash
+# Fill in the commands a capture could not recover
+cyber-mux template save pool-4
+cyber-mux template edit pool-4
+```
+
+```bash
+# Rename the panes instead, and preview without writing
+cyber-mux template edit pool-4 --field label --dry-run
 ```
 
 ### `--template <name>` on `open` / `worktree add` / `worktree open`
