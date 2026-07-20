@@ -5,7 +5,7 @@ import { AmbiguousPaneError, CliError, reportError } from './cli-error.ts'
 import { AT_OPTION, ENV_OPTION, FORMAT_OPTION, LABEL_OPTION } from './cli-options.ts'
 import { type Exec, realExec } from './exec.ts'
 import { currentPane, probeMultiplexer } from './mux-probe.ts'
-import { type HelpEntry, output, printFields, printHelp, printTable } from './output.ts'
+import { type HelpEntry, output, printFields, printHelp, printTable, tildify } from './output.ts'
 import type { LivePane, SessionAdapter, SessionPlacement, SessionTarget } from './session.ts'
 import {
 	collectPanes,
@@ -1066,7 +1066,7 @@ function worktreeListCommand(deps: Deps): Command {
 						// row where it is false — is marked in BRANCH instead. The field itself stays intact in
 						// `--format json`, where a consumer reads the boolean rather than the marker.
 						{ label: 'branch', get: (w) => `${w.branch ?? '(detached)'}${w.linked ? '' : ' (*)'}` },
-						{ label: 'root', get: (w) => w.root },
+						{ label: 'root', get: (w) => tildify(w.root) },
 						{ label: 'workspace', get: (w) => w.workspace ?? '' },
 					]),
 				)

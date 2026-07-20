@@ -81,7 +81,8 @@ cyber-mux worktree open ~/code/my-app.worktrees/feat-x --at workspace
 
 Every worktree of the repo, and the workspace each is currently open in. Table columns: `branch`
 (`(detached)` when none), `root`, `workspace`. The primary checkout is marked `(*)` after its branch;
-every other row is a linked worktree. `--format json` still carries the `linked` boolean per entry.
+every other row is a linked worktree, and a `root` under your home directory is shortened to `~/…`.
+Both are table-only: `--format json` carries the `linked` boolean and the absolute `root`.
 
 Path, branch, linked, and prunable always come from **git**, on every backend — only the workspace
 binding comes from the multiplexer, so backends can never disagree about a worktree. Works outside a

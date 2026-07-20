@@ -1,3 +1,4 @@
+import { homedir } from 'node:os'
 import type { Command } from 'commander'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildProgram } from './cli.ts'
@@ -485,6 +486,22 @@ describe('spec:cyber-mux/mux', () => {
 				expect(out).toContain('main (*)')
 				expect(out).not.toContain('feat/x (*)')
 				expect(out).not.toContain('LINKED')
+			})
+
+			it('worktree list shortens a home-rooted ROOT to `~`, but never in JSON', async () => {
+				const home = homedir()
+				const porcelain = [`worktree ${home}/code/app`, 'branch refs/heads/main', ''].join('\n')
+				const exec: Exec = (_cmd, args) => (args[0] === 'rev-parse' ? `${home}/code/app/.git` : porcelain)
+				const program = buildProgram({ env: {}, exec })
+				await run(program, ['worktree', 'list'])
+				expect(logs.join('\n')).toContain('~/code/app')
+				expect(logs.join('\n')).not.toContain(home)
+
+				logs.length = 0
+				await withArgv(['worktree', 'list', '--format', 'json'], () =>
+					run(program, ['worktree', 'list', '--format', 'json']),
+				)
+				expect(JSON.parse(logs.join('\n')).worktrees[0].root).toBe(`${home}/code/app`)
 			})
 
 			it('worktree list keeps `linked` in JSON, where a consumer reads the boolean', async () => {
