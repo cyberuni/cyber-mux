@@ -1499,6 +1499,51 @@ Feature: mux — the pane abstraction
     And each path is absolute, because a consumer of the payload has to be able to act on it
     And no marker the table added appears anywhere in the payload — a marker shows a fact, and is never the fact
 
+  # ── Is the worktree still NEEDED, not merely free ──
+  # The workspace binding answers only whether something is currently HOLDING a worktree. A free
+  # worktree is either finished or merely idle, and the listing could not tell them apart. Two more
+  # git facts close that: whether the branch's work has landed, and whether the checkout is clean.
+  # They compose with the binding into one COMPOSITE the table compresses to a single marker —
+  # earning its place by the same rule a one-bit fact does, because the reader's question is one
+  # question. The composite is a rendering, never a field: baking it into the payload would freeze
+  # ONE policy into the wire format, and a consumer with a different one composes it from the raw
+  # facts instead.
+
+  Scenario: worktree list answers whether a worktree is still needed, not only whether it is occupied
+    Given a repo with a worktree whose branch is merged into the default branch, whose checkout is clean, and which nothing is open in
+    When a caller runs cyber-mux worktree list and reads the human table
+    Then that worktree's branch is marked (done), meaning its work landed and nothing holds it
+    And a worktree failing any one of those three carries no marker, the three being one question
+    And the primary checkout is never marked, so the mark and (*) can never appear on one branch
+
+  Scenario: the disposability composite is the table's compression, never a field of its own
+    Given any worktree the human table marks (done)
+    When a caller runs cyber-mux worktree list asking for structured output in any format
+    Then the payload carries merged and dirty as raw fields, exactly as it carries linked and prunable
+    And no composite field appears, a consumer composing its own policy from the raw facts instead
+
+  Scenario: the default branch merged is measured against is resolved, never assumed
+    Given a repo whose default branch is not named main
+    When a caller runs cyber-mux worktree list
+    Then merged is measured against the branch the repo actually treats as its default
+    # The remote-tracking ref first, because "merged" means landed upstream in the workflow this
+    # serves; the primary checkout's own branch when there is no remote to ask, which is the trunk
+    # for a local-only repo and costs no extra read.
+    And a repo with no resolvable default branch reports no merged verdict rather than a guessed one
+
+  Scenario: a disposability signal git cannot determine is absent, never false
+    Given worktrees including one on a detached HEAD and one whose checkout is gone from disk
+    When a caller runs cyber-mux worktree list
+    Then every worktree is still listed, the missing signal costing a field rather than the listing
+    And the undeterminable signal is absent from the payload rather than reported as a negative
+    And no such row is marked (done), because undeterminable must never render as safe to delete
+
+  Scenario: the listing reports disposability and never acts on it
+    Given a worktree the human table marks (done)
+    When a caller runs cyber-mux worktree remove against it
+    Then the removal applies exactly the gates it always did, consulting no disposability signal
+    And nothing about the listing deletes or prunes a worktree of its own accord
+
   # ── worktree removal ordering — gates before release, release before git ──
 
   Scenario: worktree remove refuses uncommitted changes BEFORE releasing the workspace
