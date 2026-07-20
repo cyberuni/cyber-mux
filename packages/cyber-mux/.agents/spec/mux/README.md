@@ -260,6 +260,20 @@ once opened:
   git; the one fact git cannot answer is which workspace a worktree is currently open in, and that
   is the only thing asked of a backend.
 
+- **The listing renders those facts; it never restates them** — a fact worth **one bit** does not
+  earn a column, which would cost every row its full width to carry a value only one row differs on.
+  The bit becomes a **marker on the column the fact is about**: the primary checkout is marked on its
+  *branch* (`<branch> (*)`), and a checkout whose directory is gone is marked on its *path*
+  (`<path> (gone)` — git's own word for a target that vanished, where "stale" would read as merely
+  out of date). A home-rooted path collapses its prefix to `~`, the same shortening [`axi/`](../axi/README.md)'s
+  #10 already owes the home view — matched at a path **boundary**, so a sibling directory whose name
+  merely starts with the home directory's name is left whole rather than rewritten into a path the
+  caller cannot `cd` to. Every marker is **human-surface only**, and the boundary is the *surface*
+  rather than any one `--format` value: **every** structured payload keeps `linked`, `prunable`, and
+  the **absolute** path as their own fields, so a later structured default cannot inherit the markers
+  by omission. A marker is a way of *showing* a fact and never the fact itself, and the payload is
+  the surface an agent acts on.
+
 - **`worktree add` is plain git until a placement is asked for** — with neither `--at` nor
   `--launch` it creates a checkout, opens nothing, and resolves no backend, so it works outside any
   multiplexer. There is nothing to group because nothing was opened. `--launch` implies
@@ -523,6 +537,7 @@ Every scenario in [`mux.feature`](./mux.feature) maps to one of these behaviors:
 | **`--env`, the CLI surface for the seam's env option** | repeatable `--env KEY=VALUE` on every verb that opens a pane (`open`, `worktree add`, `worktree open`) — the one split option with a flag, since a variable not set at birth cannot be set at all; it names the pane the verb opens, exactly one being opened on each route, **except** on herdr's worktree bind route, where it degrades to a prefix on `--launch` or a stderr warning with no command to ride — stated on BOTH worktree verbs, which are exposed identically; refused alongside `--template`, which owns its own panes' env; implies a placement; a missing `=` is rejected before anything opens, a trailing `=` sets the variable empty, and a value's own `=` survives by splitting on the first only |
 | **naming what was opened** | `--label` names the tier `--at` opened, on every backend (herdr workspace/tab/pane label; tmux window name or pane title); taken at birth where the backend's CLI allows, set immediately after where it does not; omitted leaves the backend's own default |
 | **worktree facts vs binding** | `list` reads path/branch/linked/prunable from git on every backend and reports only the binding from the backend; `list`/`remove` answer with no multiplexer |
+| **the listing's render contract** | a one-bit fact earns a **marker on the column it is about**, never a column of its own — primary checkout `<branch> (*)`, vanished checkout `<path> (gone)`; a home-rooted path collapses to `~` (matched at a path boundary, the same shortening axi/'s #10 owes the home view); every marker is human-surface only — the boundary being the surface, not one `--format` value, so **every** structured payload keeps each field and the absolute path |
 | **worktree removal ordering** | never delegated to a backend — cyber-mux's gates plus git, the backend only releasing its binding; gates run before the release (a refused removal has no side effect); the release runs before git's removal (no workspace on a dead directory), including for a checkout already gone |
 
 ## Logic
@@ -997,3 +1012,11 @@ Every scenario in [`mux.feature`](./mux.feature), one row each, grouped by use c
 | release runs before git removes the checkout | a worktree open in a workspace, every gate passing | `worktree remove releases the workspace before git removes the checkout` |
 | release runs before git removes the checkout | a path already gone, still open in a workspace | `worktree remove releases the workspace of a checkout already gone from disk` |
 | removal never delegated → this CLI's gates plus git | a backend with a worktree-removal primitive of its own | `worktree removal is never delegated to the backend` |
+
+### The listing renders those facts; it never restates them
+
+| Edge | Path (Given) | Scenario |
+|---|---|---|
+| a one-bit fact → a marker on the column it is about, never a column | the primary checkout and a checkout whose directory is gone | `a one-bit worktree fact is marked, never given its own column` |
+| a path under home → the prefix collapses to `~`, matched at a boundary | worktrees under home, and a sibling whose name extends home's own | `a home-rooted worktree path is shortened to ~ in the human table` |
+| a structured payload → the fields, never the markers | any worktree whose row the human table marks or shortens | `a table marker never reaches a structured payload` |
