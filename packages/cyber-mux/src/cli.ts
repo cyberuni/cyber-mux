@@ -1052,7 +1052,9 @@ function worktreeOpenCommand(deps: Deps): Command {
 
 function worktreeListCommand(deps: Deps): Command {
 	return new Command('list')
-		.description('Every worktree of the repo, and the workspace each is open in')
+		.description(
+			'Every worktree of the repo, and the workspace each is open in — BRANCH is marked "(*)" for the primary checkout (every other row is a linked worktree)',
+		)
 		.addOption(FORMAT_OPTION)
 		.action(() => {
 			try {
@@ -1060,9 +1062,11 @@ function worktreeListCommand(deps: Deps): Command {
 				const worktrees = listWorktrees(deps.exec, optionalAdapter(deps), { primaryRoot })
 				output({ worktrees }, () =>
 					printTable(worktrees, [
-						{ label: 'branch', get: (w) => w.branch ?? '(detached)' },
+						// `linked` is one BIT, so it does not earn a column: the primary checkout — the single
+						// row where it is false — is marked in BRANCH instead. The field itself stays intact in
+						// `--format json`, where a consumer reads the boolean rather than the marker.
+						{ label: 'branch', get: (w) => `${w.branch ?? '(detached)'}${w.linked ? '' : ' (*)'}` },
 						{ label: 'root', get: (w) => w.root },
-						{ label: 'linked', get: (w) => String(w.linked) },
 						{ label: 'workspace', get: (w) => w.workspace ?? '' },
 					]),
 				)

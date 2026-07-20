@@ -469,6 +469,43 @@ describe('spec:cyber-mux/mux', () => {
 				expect(out).toContain('w21')
 			})
 
+			it('worktree list marks the primary checkout in BRANCH instead of spending a column on it', async () => {
+				const porcelain = [
+					'worktree /repo',
+					'branch refs/heads/main',
+					'',
+					'worktree /repo.worktrees/x',
+					'branch refs/heads/feat/x',
+					'',
+				].join('\n')
+				const exec: Exec = (_cmd, args) => (args[0] === 'rev-parse' ? '/repo/.git' : porcelain)
+				const program = buildProgram({ env: {}, exec })
+				await run(program, ['worktree', 'list'])
+				const out = logs.join('\n')
+				expect(out).toContain('main (*)')
+				expect(out).not.toContain('feat/x (*)')
+				expect(out).not.toContain('LINKED')
+			})
+
+			it('worktree list keeps `linked` in JSON, where a consumer reads the boolean', async () => {
+				const porcelain = [
+					'worktree /repo',
+					'branch refs/heads/main',
+					'',
+					'worktree /repo.worktrees/x',
+					'branch refs/heads/feat/x',
+					'',
+				].join('\n')
+				const exec: Exec = (_cmd, args) => (args[0] === 'rev-parse' ? '/repo/.git' : porcelain)
+				const program = buildProgram({ env: {}, exec })
+				await withArgv(['worktree', 'list', '--format', 'json'], () =>
+					run(program, ['worktree', 'list', '--format', 'json']),
+				)
+				const payload = JSON.parse(logs.join('\n'))
+				expect(payload.worktrees.map((w: { linked: boolean }) => w.linked)).toEqual([false, true])
+				expect(payload.worktrees[0].branch).toBe('main')
+			})
+
 			it('worktree list answers outside a multiplexer — listing is a git question', async () => {
 				const porcelain = ['worktree /repo', 'branch refs/heads/main', ''].join('\n')
 				const exec: Exec = (_cmd, args) => (args[0] === 'rev-parse' ? '/repo/.git' : porcelain)
