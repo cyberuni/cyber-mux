@@ -46,6 +46,28 @@ describe('spec:cyber-mux/mux', () => {
 			expect(target).toEqual({ id: '9', tab: '2', workspace: 'default' })
 		})
 
+		it('open() at tab with a `within` spawns into a window of THAT workspace', () => {
+			// A wezterm workspace is a set of WINDOWS, so the anchor resolves one tier down: any window
+			// already in the named workspace will do. Untargeted, `spawn` lands in the window the user is
+			// looking at — the wrong-workspace bug this closes.
+			const calls: string[][] = []
+			const list = JSON.stringify([
+				{ window_id: 1, tab_id: 2, pane_id: 9, workspace: 'default' },
+				{ window_id: 4, tab_id: 5, pane_id: 6, workspace: 'pool' },
+			])
+			const exec = fakeExec(calls, { spawn: '9', list })
+			weztermSessionAdapter.open(exec, { cwd: '/unit', at: 'tab', within: 'pool' })
+			// The list lookup that resolved the anchor comes FIRST, then the targeted spawn.
+			expect(calls[0]).toEqual(['cli', 'list', '--format', 'json'])
+			expect(calls[1]).toEqual(['cli', 'spawn', '--window-id', '4', '--cwd', '/unit'])
+		})
+
+		it('open() at tab throws when the named workspace has no window left to open a tab in', () => {
+			// Never a silent fall back to an untargeted spawn: that IS the wrong-space bug.
+			const exec = fakeExec([], { spawn: '9', list: LIST_ONE })
+			expect(() => weztermSessionAdapter.open(exec, { cwd: '/unit', at: 'tab', within: 'gone' })).toThrow(/gone/)
+		})
+
 		it('open() at workspace passes --new-window and a fresh --workspace name, and reports it without an extra call', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { spawn: '9', list: LIST_ONE })
