@@ -1,4 +1,12 @@
-import { collectPanes, type FlatPane, type Template, type TemplateTree } from './template.ts'
+import {
+	collectPanes,
+	type FlatPane,
+	resolveTree,
+	type TabNode,
+	type Template,
+	type TemplateNode,
+	type TemplateTree,
+} from './template.ts'
 
 /**
  * The edit plan behind `template edit` — what to ask about, and where each answer goes back. PURE,
@@ -39,9 +47,26 @@ export interface EditSlot {
 	tabLabel?: string
 	/** Ordinal within this tab, in apply order. */
 	index: number
+	/**
+	 * Where the pane sits on screen, in words — `top-left`, `right`, `center`.
+	 *
+	 * The one thing that actually answers "which pane am I being asked about?", which an ordinal and a
+	 * label cannot: apply order is a tree walk, not a reading order, so pane 2 of a 2x2 is the pane
+	 * BELOW pane 1 rather than the one beside it. Absent when the tab holds one pane (there is nothing
+	 * to tell apart) or when the geometry cannot be resolved.
+	 */
+	position?: string
 	label?: string
 	dir?: string
 	command?: string
+}
+
+/** A pane's share of its tab, as fractions of the whole — the unit square, never cells. */
+export interface UnitRect {
+	x: number
+	y: number
+	width: number
+	height: number
 }
 
 /**
@@ -78,6 +103,79 @@ function treePanes(tree: TemplateTree): FlatPane[] {
 }
 
 /**
+ * Where every pane in a tree lands, as fractions of the tab — the geometry a template DETERMINES,
+ * computed the same way apply builds it.
+ *
+ * `ratio` is the fraction kept by `first` (the original pane), so a `right` split at 0.6 puts `first`
+ * in the left 60% and `second` in what is left. Splitting the remainder rather than multiplying by
+ * `1 - ratio` is what keeps a comb exact: three even panes come out at exactly 1/3 each instead of
+ * drifting on the last one.
+ *
+ * Unit fractions rather than cells because a template has no size — it is applied to whatever region
+ * it is given, and the only honest thing to say is a proportion.
+ */
+function layout(node: TemplateNode, rect: UnitRect, acc: UnitRect[] = []): UnitRect[] {
+	if (node.type === 'pane') {
+		acc.push(rect)
+		return acc
+	}
+	const ratio = node.ratio ?? 0.5
+	if (node.direction === 'right') {
+		const width = rect.width * ratio
+		layout(node.first, { ...rect, width }, acc)
+		layout(node.second, { ...rect, x: rect.x + width, width: rect.width - width }, acc)
+	} else {
+		const height = rect.height * ratio
+		layout(node.first, { ...rect, height }, acc)
+		layout(node.second, { ...rect, y: rect.y + height, height: rect.height - height }, acc)
+	}
+	return acc
+}
+
+/**
+ * A rect in words, from where its CENTER falls on a 3x3 grid.
+ *
+ * Thirds rather than halves because halves cannot name a middle: a row of three panes would come out
+ * `left`, `left`, `right`, which is worse than saying nothing. Reading the center rather than the
+ * edges is what makes an uneven split still land in the band a human would point at — a pane taking
+ * the left 60% is `left`, not straddling.
+ *
+ * Deliberately coarse. This is a hint that tells two panes apart on one screen, not a coordinate; a
+ * template with a dozen panes will repeat a word, and the ordinal is still what identifies a pane.
+ */
+export function describePosition(rect: UnitRect): string {
+	const column = band(rect.x + rect.width / 2, 'left', 'center', 'right')
+	const row = band(rect.y + rect.height / 2, 'top', 'middle', 'bottom')
+	if (row === 'middle') return column === 'center' ? 'center' : column
+	if (column === 'center') return row
+	return `${row}-${column}`
+}
+
+function band(center: number, low: string, mid: string, high: string): string {
+	if (center < 1 / 3) return low
+	if (center > 2 / 3) return high
+	return mid
+}
+
+/**
+ * Each pane's position, in apply order — or nothing at all.
+ *
+ * Empty for a single-pane tree, because "center" said of the only pane is noise rather than a
+ * bearing. Empty too when the tree cannot be resolved: this is a display hint, and a template
+ * malformed enough to defeat `resolveTree` should still be walkable rather than refused HERE, where
+ * the error would name the wrong thing. Validation is the caller's job and already ran.
+ */
+function positionsOf(tree: Template | TabNode): string[] {
+	let rects: UnitRect[]
+	try {
+		rects = layout(resolveTree(tree), { x: 0, y: 0, width: 1, height: 1 })
+	} catch {
+		return []
+	}
+	return rects.length < 2 ? [] : rects.map(describePosition)
+}
+
+/**
  * Every pane worth asking about, in the order a walk should ask.
  *
  * Tabs in order, panes within each tab in apply order — the same traversal `walkTabs` submits
@@ -87,14 +185,24 @@ export function planEdits(template: Template): EditSlot[] {
 	const slots: EditSlot[] = []
 	if (template.tabs) {
 		template.tabs.forEach((tab, index) => {
+			const positions = positionsOf(tab)
 			for (const [ordinal, pane] of treePanes(tab).entries()) {
-				slots.push({ tab: index, tabLabel: tab.label, index: ordinal, ...fields(pane) })
+				slots.push({ tab: index, tabLabel: tab.label, index: ordinal, ...at(positions, ordinal), ...fields(pane) })
 			}
 		})
 		return slots
 	}
-	for (const [ordinal, pane] of treePanes(template).entries()) slots.push({ index: ordinal, ...fields(pane) })
+	const positions = positionsOf(template)
+	for (const [ordinal, pane] of treePanes(template).entries()) {
+		slots.push({ index: ordinal, ...at(positions, ordinal), ...fields(pane) })
+	}
 	return slots
+}
+
+/** A position when there is one — absent rather than an empty string, like every other slot field. */
+function at(positions: string[], ordinal: number): { position?: string } {
+	const position = positions[ordinal]
+	return position ? { position } : {}
 }
 
 /** What a slot reports about a pane — the fields a prompt shows, never the pane object itself. */
@@ -132,6 +240,71 @@ export function applyEdits(template: Template, answers: EditAnswer[]): Template 
 		else pane[answer.field] = answer.value
 	}
 	return next
+}
+
+/**
+ * The token that ADDRESSES a pane on the command line — `3`, or `2.3` in a tabs template. Both
+ * 1-based, because they are read and typed by humans and agents rather than indexed by code.
+ *
+ * This is what the listing prints in its `pane` column and what `--set` takes, deliberately the same
+ * string: an agent's loop is list-then-act, and a listing whose identifiers cannot be pasted straight
+ * into the next command forces it to derive them. Panes are addressed by ORDINAL and never by label,
+ * because a label is explicitly a name two panes may share (`PaneNode.label`) — an ambiguous selector
+ * in a non-interactive API is a silent wrong-pane write.
+ */
+export function slotRef(slot: EditSlot): string {
+	return slot.tab === undefined ? `${slot.index + 1}` : `${slot.tab + 1}.${slot.index + 1}`
+}
+
+/** One `--set <ref>=<value>`, parsed. `value: undefined` clears, exactly as `-` does interactively. */
+export interface SetSpec {
+	ref: string
+	value: string | undefined
+}
+
+/**
+ * Parse a `--set` argument into a reference and a value.
+ *
+ * Split on the FIRST `=` only, so a command containing one (`--set 1=FOO=bar make`) keeps it. An
+ * empty value clears the field — the flag spelling of the walk's `-`, and unambiguous here because a
+ * shell already distinguishes `--set 1=` from omitting the flag.
+ */
+export function parseSet(spec: string): SetSpec {
+	const at = spec.indexOf('=')
+	if (at === -1) throw new Error(`--set needs <pane>=<value>, got "${spec}"`)
+	const ref = spec.slice(0, at).trim()
+	if (ref === '') throw new Error(`--set needs a pane before the "=", got "${spec}"`)
+	const value = spec.slice(at + 1)
+	return { ref, value: value === '' ? undefined : value }
+}
+
+/**
+ * Turn `--set` specs into answers against a known set of slots.
+ *
+ * Every reference is resolved BEFORE any answer is produced, so a batch naming one bad pane writes
+ * none of them — a partial application of a multi-pane edit is the worst outcome available here,
+ * since the caller cannot tell which half landed without re-reading the file.
+ *
+ * A value equal to what the pane already says yields no answer at all, which is what makes a re-run
+ * of the same `--set` a no-op rather than a rewrite (AXI's idempotent-mutation rule).
+ */
+export function resolveSets(slots: EditSlot[], specs: SetSpec[], field: EditField): EditAnswer[] {
+	const byRef = new Map(slots.map((slot) => [slotRef(slot), slot]))
+	const answers: EditAnswer[] = []
+	for (const spec of specs) {
+		const slot = byRef.get(spec.ref)
+		if (!slot) {
+			throw new Error(
+				`no pane "${spec.ref}" in this template — it has ${slots.length} ` +
+					`${slots.length === 1 ? 'pane' : 'panes'}: ${[...byRef.keys()].join(', ')}`,
+			)
+		}
+		if (spec.value === slot[field]) continue
+		const answer: EditAnswer = { index: slot.index, field, value: spec.value }
+		if (slot.tab !== undefined) answer.tab = slot.tab
+		answers.push(answer)
+	}
+	return answers
 }
 
 /**

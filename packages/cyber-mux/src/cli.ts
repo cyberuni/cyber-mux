@@ -5,7 +5,7 @@ import { AmbiguousPaneError, CliError, reportError } from './cli-error.ts'
 import { AT_OPTION, ENV_OPTION, FORMAT_OPTION, LABEL_OPTION } from './cli-options.ts'
 import { type Exec, realExec } from './exec.ts'
 import { currentPane, probeMultiplexer } from './mux-probe.ts'
-import { type HelpEntry, output, printFields, printHelp, printTable, tildify } from './output.ts'
+import { type HelpEntry, isAutomatedOutput, output, printFields, printHelp, printTable, tildify } from './output.ts'
 import { type OpenPrompt, realPrompt } from './prompt.ts'
 import type { LivePane, SessionAdapter, SessionPlacement, SessionTarget } from './session.ts'
 import {
@@ -19,11 +19,15 @@ import {
 import { captureTemplate, captureWorkspaceTemplate } from './template-capture.ts'
 import {
 	applyEdits,
+	type EditAnswer,
 	type EditField,
 	type EditInput,
 	type EditSlot,
+	parseSet,
 	planEdits,
 	readEditInput,
+	resolveSets,
+	slotRef,
 	toAnswers,
 } from './template-edit.ts'
 import {
@@ -676,39 +680,68 @@ const CAPTURED_DESCRIPTION = 'Captured from a live region — geometry only; add
  * geometry, labels and dirs and lands with no `command` on any pane (`template-capture.ts` has the
  * why), so a saved template is a draft that is worth nothing until every command is filled in. Doing
  * that by hand means opening JSON and counting braces to work out which leaf is the pane on the left.
- * This walks the panes in APPLY order and asks.
  *
- * **Line-based, not a TUI, and that is a design decision rather than a stopgap.** A full-screen editor
- * would need a rendering dependency in a package that has exactly one, and a raw-mode event loop that
- * the synchronous `Exec` seam every other verb is built on cannot express. A prompt per pane needs
- * `node:readline` and nothing else, and it composes: the walk is the same order the manifest reports,
- * so filling top to bottom fills in the order the commands will run.
+ * **Three modes, and the DEFAULT is the one an agent uses.** AXI's no-interactive-prompts rule is not
+ * a preference here — a verb whose only mode is a conversation is unusable by the caller this CLI is
+ * built for, and a prompt against a pipe hangs with nothing on screen to say why. So:
+ *
+ * - bare — LIST the panes and what each says. AXI #8's content-first home view, and the half of the
+ *   agent's loop that makes the other half possible: the `pane` column prints exactly the token
+ *   `--set` takes, so acting on the listing is a paste rather than a derivation.
+ * - `--set <pane>=<value>` — the mutation, complete with flags alone, repeatable, idempotent.
+ * - `--interactive` — the guided walk, for a human filling a fresh capture in one pass.
+ *
+ * **Line-based rather than a TUI even in the interactive mode.** A full-screen editor would need a
+ * rendering dependency in a package that has exactly one, and a raw-mode event loop the synchronous
+ * `Exec` seam every other verb is built on cannot express.
  *
  * **Nothing is written until every answer is in and the result validates.** `applyEdits` clones, so a
  * refusal costs the author nothing and there is never a half-edited template on disk — which is what
- * lets Ctrl-D mean "abandon this" rather than "commit whatever I happened to have typed".
+ * lets Ctrl-D mean "abandon this" rather than "commit whatever I happened to have typed", and what
+ * makes a `--set` batch naming one bad pane write none of them.
  */
 function templateEditCommand(deps: Deps): Command {
 	return new Command('edit')
-		.description('Fill in a template pane by pane, answering one prompt per pane')
+		.description('Show a template’s panes, and fill them in with --set or --interactive')
 		.argument('[name]', 'Template name')
 		.option('--file <path>', 'Edit this path instead, skipping resolution entirely')
-		.addOption(
-			new Option('--field <field>', 'Which field to ask about').choices(['command', 'label']).default('command'),
+		.option(
+			'--set <pane=value>',
+			'Set the field on a pane, e.g. --set 1=claude (repeatable; empty value clears)',
+			(value: string, previous: string[]) => [...previous, value],
+			[] as string[],
 		)
-		.option('--dry-run', 'Ask, then print the edited template instead of writing it')
+		.option('-i, --interactive', 'Ask one question per pane instead, pre-filling the current value')
+		.addOption(
+			new Option('--field <field>', 'Which field --set and --interactive write')
+				.choices(['command', 'label'])
+				.default('command'),
+		)
+		.option('--dry-run', 'Print the edited template instead of writing it')
 		.addOption(FORMAT_OPTION)
 		.addHelpText(
 			'after',
-			'\nOne prompt per pane, in the order apply submits them. Enter keeps the current value,\n' +
-				'"-" clears it, Ctrl-D abandons the edit and writes nothing. The current value is\n' +
-				'pre-filled into the line, so a small change is an edit rather than a retype.',
+			'\nPanes are addressed by ordinal, never by label (two panes may share one): "3" in a\n' +
+				'single-region template, "2.3" for tab 2 pane 3. Run the bare form to see them.\n' +
+				'\nExamples\n' +
+				'  cyber-mux template edit pool-4                        # list the panes\n' +
+				'  cyber-mux template edit pool-4 --set 1=claude         # fill one in\n' +
+				'  cyber-mux template edit pool-4 --set 2="pnpm dev" --set 3=          # set two, clear one\n' +
+				'  cyber-mux template edit pool-4 --field label --set 1=planner\n' +
+				'  cyber-mux template edit pool-4 --interactive          # one prompt per pane',
 		)
 		.action(
 			guardedAsync(
 				async (
 					name: string | undefined,
-					opts: { file?: string; field: EditField; dryRun?: boolean; format?: string },
+					opts: {
+						file?: string
+						set: string[]
+						interactive?: boolean
+						field: EditField
+						dryRun?: boolean
+						format?: string
+					},
 				) => {
 					if (!name && !opts.file) {
 						throw new CliError(
@@ -718,14 +751,13 @@ function templateEditCommand(deps: Deps): Command {
 							2,
 						)
 					}
-					// BEFORE resolution, so a piped invocation fails on the thing that is actually wrong rather
-					// than after a read. A prompt against a non-tty would block forever with nothing on screen
-					// to say why — the one failure mode an agent driving this CLI cannot diagnose or escape.
-					if (!process.stdin.isTTY) {
+					// Two ways of saying what to write, given together, cannot be reconciled — the same
+					// malformed-input family `--template` with `--launch` is in (exit 2).
+					if (opts.interactive && opts.set.length > 0) {
 						throw new CliError(
-							'not-interactive',
-							'template edit asks questions and needs a terminal — stdin is not a tty',
-							'run template edit in a terminal, or edit the JSON directly (cyber-mux template show <name>)',
+							'conflicting-options',
+							'template edit takes --set or --interactive, not both',
+							'pass --set for a scripted edit, or --interactive to be asked pane by pane',
 							2,
 						)
 					}
@@ -739,18 +771,15 @@ function templateEditCommand(deps: Deps): Command {
 							1,
 						)
 					}
-					const inputs = await askSlots(deps, resolved, slots, opts.field)
-					// `undefined` is Ctrl-D — the human left. Nothing is written, and it is a failure rather than
-					// a quiet success so a caller that wrapped this can tell an abandoned edit from a finished one.
-					if (!inputs) {
-						throw new CliError(
-							'edit-aborted',
-							`edit of "${resolved.stem}" abandoned — nothing was written`,
-							'run it again to start over',
-							1,
-						)
+					// The bare form MUTATES NOTHING. It is the listing, so an agent that runs the verb to find
+					// out what is there cannot accidentally change anything by doing so.
+					if (!opts.interactive && opts.set.length === 0) {
+						printSlots(resolved, slots, opts.field)
+						return
 					}
-					const answers = toAnswers(slots, inputs, opts.field)
+					const answers = opts.interactive
+						? await interactiveAnswers(deps, resolved, slots, opts.field)
+						: setAnswers(slots, opts.set, opts.field)
 					const edited = applyEdits(resolved.template, answers)
 					// Belt-and-braces, and honestly so: `resolveTemplate` already validated on the way in, and
 					// neither field this verb offers can be made invalid (both are free strings), so today this
@@ -762,7 +791,7 @@ function templateEditCommand(deps: Deps): Command {
 						throw new CliError(
 							'invalid-template',
 							`those answers would make "${resolved.stem}" invalid:\n${errors.join('\n')}`,
-							'run it again and give a value the schema accepts',
+							'give a value the schema accepts',
 							1,
 						)
 					}
@@ -770,20 +799,120 @@ function templateEditCommand(deps: Deps): Command {
 						console.log(JSON.stringify(edited, null, 2))
 						return
 					}
-					// Unchanged writes nothing at all. A walk where the author pressed Enter through every pane
-					// should leave the file's mtime alone — a template is checked in, and a no-op edit that
-					// dirties the working tree would show up as a change in review that is not one.
-					if (answers.length === 0) {
-						output({ path: resolved.path, changed: 0 }, () => printFields({ path: resolved.path, changed: '0' }))
-						return
-					}
-					deps.store.write(resolved.path, `${JSON.stringify(edited, null, 2)}\n`)
+					// Unchanged writes nothing at all, and exits 0 — AXI's idempotent-mutation rule. Re-running the
+					// same `--set` is a no-op rather than an error, and a walk the author pressed Enter through
+					// leaves the file's mtime alone: a template is checked in, and a no-op edit that dirtied the
+					// working tree would show up as a change in review that is not one.
+					if (answers.length > 0) deps.store.write(resolved.path, `${JSON.stringify(edited, null, 2)}\n`)
 					output({ path: resolved.path, changed: answers.length }, () =>
 						printFields({ path: resolved.path, changed: String(answers.length) }),
 					)
 				},
 			),
 		)
+}
+
+/**
+ * The listing — AXI #8's content-first view, and the first half of an agent's list-then-act loop.
+ *
+ * The `pane` column is `slotRef`, which is verbatim what `--set` takes: an identifier a caller has to
+ * transform before reusing is an identifier that invites transforming it wrong. `position` is here
+ * for the same reason it is in the prompt — apply order is a tree walk, not a reading order, so an
+ * ordinal alone cannot tell a caller which pane on screen it is about to write to.
+ */
+function printSlots(resolved: ResolvedTemplate & { template: Template }, slots: EditSlot[], field: EditField): void {
+	const missing = slots.filter((slot) => slot[field] === undefined)
+	const panes = slots.map((slot) => ({
+		pane: slotRef(slot),
+		tab: slot.tabLabel ?? (slot.tab === undefined ? '' : String(slot.tab + 1)),
+		position: slot.position ?? '',
+		label: slot.label ?? '',
+		dir: slot.dir ?? '',
+		command: slot.command ?? '',
+	}))
+	// #9 disclosure: what to do next, parameterized rather than guessed. The name is echoed back from
+	// what the caller actually passed, so the suggestion is runnable as printed.
+	const subject = resolved.source === 'file' ? `--file ${resolved.path}` : resolved.stem
+	const help: HelpEntry[] = []
+	if (missing.length > 0) {
+		help.push({
+			message: `${missing.length} of ${slots.length} panes have no ${field} — a template applies without one, but the pane just sits at a shell`,
+			command: `cyber-mux template edit ${subject} --set ${slotRef(missing[0]!)}=<${field}>`,
+		})
+	}
+	help.push({
+		message: 'Fill them in one prompt at a time, with the current value pre-filled',
+		command: `cyber-mux template edit ${subject} --interactive`,
+	})
+	output({ path: resolved.path, field, panes, help }, () => {
+		printFields({ template: resolved.stem, path: tildify(resolved.path), source: resolved.source })
+		printTable(panes, [
+			{ label: 'pane', get: (p) => p.pane },
+			// Dropped entirely for a single-region template rather than printed empty — a column of blanks
+			// is a claim that there is a tab tier to think about, and there is not.
+			...(resolved.template.tabs ? [{ label: 'tab', get: (p: (typeof panes)[number]) => p.tab }] : []),
+			{ label: 'position', get: (p) => p.position },
+			{ label: 'label', get: (p) => p.label },
+			{ label: 'dir', get: (p) => p.dir },
+			{ label: field, get: (p) => (field === 'label' ? p.label : p.command) },
+		])
+		printHelp(help)
+	})
+}
+
+/**
+ * `--set` resolved against the listing's own identifiers.
+ *
+ * The parse and the lookup both throw plain `Error`s from the pure module; they become coded usage
+ * errors HERE, at the boundary that owns exit codes. Exit 2 rather than 1 for the same reason
+ * `invalidTemplateName` is a 2: the fix is a different argument, and nothing was attempted.
+ */
+function setAnswers(slots: EditSlot[], specs: string[], field: EditField): EditAnswer[] {
+	try {
+		return resolveSets(slots, specs.map(parseSet), field)
+	} catch (err) {
+		throw new CliError(
+			'invalid-set',
+			err instanceof Error ? err.message : String(err),
+			'list the panes and their identifiers with: cyber-mux template edit <name>',
+			2,
+		)
+	}
+}
+
+/**
+ * The guided walk's answers — the interactive mode's whole body, kept out of the action so the two
+ * mutation paths meet at exactly one place (`applyEdits`) and cannot drift on validation or writing.
+ */
+async function interactiveAnswers(
+	deps: Deps,
+	resolved: ResolvedTemplate & { template: Template },
+	slots: EditSlot[],
+	field: EditField,
+): Promise<EditAnswer[]> {
+	// A prompt against a pipe would block forever with nothing on screen to say why — the one failure
+	// mode an agent driving this CLI cannot diagnose or escape. `--format json|agent` is refused for the
+	// same reason even on a tty: a caller asking for machine output has said it is not a human.
+	if (!process.stdin.isTTY || isAutomatedOutput()) {
+		throw new CliError(
+			'not-interactive',
+			'template edit --interactive asks questions and needs a terminal',
+			'set the values directly instead: cyber-mux template edit <name> --set <pane>=<value>',
+			2,
+		)
+	}
+	const inputs = await askSlots(deps, resolved, slots, field)
+	// `undefined` is Ctrl-D — the human left. Nothing is written, and it is a failure rather than a
+	// quiet success so a caller that wrapped this can tell an abandoned edit from a finished one.
+	if (!inputs) {
+		throw new CliError(
+			'edit-aborted',
+			`edit of "${resolved.stem}" abandoned — nothing was written`,
+			'run it again to start over',
+			1,
+		)
+	}
+	return toAnswers(slots, inputs, field)
 }
 
 /**
@@ -816,7 +945,11 @@ async function askSlots(
 			// tabs template shows each one once — the grouping the author sees matches the one in the file.
 			if (slot.tab !== undefined && slot.tab !== tab) {
 				tab = slot.tab
-				process.stdout.write(`  tab ${tab + 1}${slot.tabLabel ? ` "${slot.tabLabel}"` : ''}\n`)
+				// The count is the tab's OWN, not the walk's — a tabs template's panes are numbered within
+				// each tab, so "4 panes" here is what the ordinals below actually run to.
+				const panes = slots.filter((other) => other.tab === tab).length
+				const label = slot.tabLabel ? ` "${slot.tabLabel}"` : ''
+				process.stdout.write(`  tab ${tab + 1}${label} (${panes} ${panes === 1 ? 'pane' : 'panes'})\n`)
 			}
 			const line = await prompt.ask(`  ${describeSlot(slot, field)} `, slot[field])
 			if (line === undefined) return undefined
@@ -835,9 +968,15 @@ async function askSlots(
  * its label, and echoing the current value here would duplicate what the pre-filled line already
  * shows. Panes carry no identity of their own beyond their ordinal (a label is a name two panes may
  * share, by design), so the ordinal always leads.
+ *
+ * **The position leads the rest of the context**, because it is the only part that answers the
+ * question the author is actually asking — which pane on my screen is this? Apply order is a tree
+ * walk rather than a reading order, so pane 2 of a 2x2 is the one BELOW pane 1, not the one beside
+ * it; without a bearing the ordinal alone invites filling the right command into the wrong pane.
  */
 function describeSlot(slot: EditSlot, field: EditField): string {
 	const context = [
+		slot.position ?? null,
 		slot.label !== undefined && field !== 'label' ? `label: ${slot.label}` : null,
 		slot.dir !== undefined ? `dir: ${slot.dir}` : null,
 		slot.command !== undefined && field !== 'command' ? `command: ${slot.command}` : null,

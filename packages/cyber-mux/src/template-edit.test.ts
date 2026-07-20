@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import { collectPanes, resolveTree, type Template } from './template.ts'
-import { applyEdits, type EditInput, planEdits, readEditInput, toAnswers } from './template-edit.ts'
+import {
+	applyEdits,
+	type EditInput,
+	parseSet,
+	planEdits,
+	readEditInput,
+	resolveSets,
+	slotRef,
+	toAnswers,
+} from './template-edit.ts'
 
 const FLAT: Template = {
 	name: 'pool-3',
@@ -32,16 +41,16 @@ const set = (value: string): EditInput => ({ kind: 'set', value })
 describe('planEdits', () => {
 	it('walks a flat template in array order, carrying each pane its context', () => {
 		expect(planEdits(FLAT)).toEqual([
-			{ index: 0, label: 'w1' },
-			{ index: 1, label: 'w2', dir: 'apps/web' },
-			{ index: 2, label: 'w3', command: 'pnpm dev' },
+			{ index: 0, position: 'top-left', label: 'w1' },
+			{ index: 1, position: 'bottom-left', label: 'w2', dir: 'apps/web' },
+			{ index: 2, position: 'right', label: 'w3', command: 'pnpm dev' },
 		])
 	})
 
 	it('walks a tree first-before-second', () => {
 		expect(planEdits(TREE)).toEqual([
-			{ index: 0, label: 'planner', command: 'claude' },
-			{ index: 1, label: 'runner' },
+			{ index: 0, position: 'left', label: 'planner', command: 'claude' },
+			{ index: 1, position: 'right', label: 'runner' },
 		])
 	})
 
@@ -49,8 +58,8 @@ describe('planEdits', () => {
 		// The ordinal restarts per tab because that is how the manifest reports it — a template with two
 		// tabs of two panes has two "pane 1"s, told apart by their tab and not by a running count.
 		expect(planEdits(TABS)).toEqual([
-			{ tab: 0, tabLabel: 'main', index: 0, label: 'a' },
-			{ tab: 0, tabLabel: 'main', index: 1, label: 'b' },
+			{ tab: 0, tabLabel: 'main', index: 0, position: 'left', label: 'a' },
+			{ tab: 0, tabLabel: 'main', index: 1, position: 'right', label: 'b' },
 			{ tab: 1, tabLabel: 'docs', index: 0, label: 'c', dir: 'apps/website' },
 		])
 	})
@@ -120,6 +129,116 @@ describe('applyEdits', () => {
 	it('refuses an answer addressed at a pane or tab that does not exist', () => {
 		expect(() => applyEdits(FLAT, [{ index: 9, field: 'command', value: 'x' }])).toThrow('no pane 9')
 		expect(() => applyEdits(TABS, [{ tab: 5, index: 0, field: 'command', value: 'x' }])).toThrow('no tab 5')
+	})
+})
+
+describe('position', () => {
+	it('names a row left to right', () => {
+		const row: Template = { name: 'row', arrange: 'even-horizontal', panes: [{}, {}, {}] }
+		expect(planEdits(row).map((s) => s.position)).toEqual(['left', 'center', 'right'])
+	})
+
+	it('names a stack top to bottom', () => {
+		const stack: Template = { name: 'stack', arrange: 'even-vertical', panes: [{}, {}] }
+		expect(planEdits(stack).map((s) => s.position)).toEqual(['top', 'bottom'])
+	})
+
+	it('names a 2x2 by corner, in APPLY order rather than reading order', () => {
+		// The whole reason a position is worth showing: `tiled` lays columns out first, so pane 2 is
+		// the pane BELOW pane 1, not the one beside it. An ordinal alone would invite filling the
+		// right command into the wrong pane.
+		const grid: Template = { name: 'grid', arrange: 'tiled', panes: [{}, {}, {}, {}] }
+		expect(planEdits(grid).map((s) => s.position)).toEqual(['top-left', 'bottom-left', 'top-right', 'bottom-right'])
+	})
+
+	it('reads an uneven split by where the pane sits, not where it starts', () => {
+		// A pane taking the left 60% is `left`, not straddling the middle.
+		const uneven: Template = {
+			name: 'uneven',
+			root: {
+				type: 'split',
+				direction: 'right',
+				ratio: 0.6,
+				first: { type: 'pane', label: 'big' },
+				second: { type: 'pane', label: 'small' },
+			},
+		}
+		expect(planEdits(uneven).map((s) => s.position)).toEqual(['left', 'right'])
+	})
+
+	it('says nothing about the only pane in a tab', () => {
+		// "center" said of the only pane is noise, not a bearing.
+		expect(planEdits({ name: 'one', panes: [{ label: 'solo' }] })[0]?.position).toBeUndefined()
+	})
+
+	it('positions each tab independently', () => {
+		expect(planEdits(TABS).map((s) => s.position)).toEqual(['left', 'right', undefined])
+	})
+
+	it('degrades to no position rather than throwing on geometry it cannot resolve', () => {
+		// A display hint must never be the thing that fails a walk; validation is the caller's job.
+		const broken = { name: 'broken' } as Template
+		expect(() => planEdits(broken)).not.toThrow()
+	})
+})
+
+describe('slotRef', () => {
+	it('is 1-based, and bare for a single-region template', () => {
+		expect(planEdits(FLAT).map(slotRef)).toEqual(['1', '2', '3'])
+	})
+
+	it('is tab.pane for a tabs template', () => {
+		expect(planEdits(TABS).map(slotRef)).toEqual(['1.1', '1.2', '2.1'])
+	})
+})
+
+describe('parseSet', () => {
+	it('splits on the first = only, so a value may contain one', () => {
+		expect(parseSet('1=FOO=bar make')).toEqual({ ref: '1', value: 'FOO=bar make' })
+	})
+
+	it('an empty value clears — the flag spelling of the walk’s dash', () => {
+		expect(parseSet('1=')).toEqual({ ref: '1', value: undefined })
+	})
+
+	it('accepts a tab.pane reference', () => {
+		expect(parseSet('2.3=claude')).toEqual({ ref: '2.3', value: 'claude' })
+	})
+
+	it('refuses input with no = at all, naming the shape it wanted', () => {
+		expect(() => parseSet('claude')).toThrow('<pane>=<value>')
+		expect(() => parseSet('=claude')).toThrow('a pane before')
+	})
+})
+
+describe('resolveSets', () => {
+	it('addresses panes by the same ref the listing prints', () => {
+		expect(resolveSets(planEdits(FLAT), [parseSet('2=pnpm dev')], 'command')).toEqual([
+			{ index: 1, field: 'command', value: 'pnpm dev' },
+		])
+	})
+
+	it('carries the tab through for a tabs template', () => {
+		expect(resolveSets(planEdits(TABS), [parseSet('2.1=pnpm docs')], 'command')).toEqual([
+			{ tab: 1, index: 0, field: 'command', value: 'pnpm docs' },
+		])
+	})
+
+	it('drops a set that matches what the pane already says', () => {
+		// Idempotence: re-running the same --set writes nothing.
+		expect(resolveSets(planEdits(FLAT), [parseSet('3=pnpm dev')], 'command')).toEqual([])
+	})
+
+	it('refuses an unknown ref, listing every one that would have worked', () => {
+		// Self-correcting in one turn — the fix is in the error, not behind another call.
+		expect(() => resolveSets(planEdits(FLAT), [parseSet('9=x')], 'command')).toThrow('no pane "9"')
+		expect(() => resolveSets(planEdits(FLAT), [parseSet('9=x')], 'command')).toThrow('1, 2, 3')
+	})
+
+	it('resolves every ref BEFORE producing any answer', () => {
+		// A batch naming one bad pane must yield none of them — a partial write is unrecoverable
+		// without re-reading the file.
+		expect(() => resolveSets(planEdits(FLAT), [parseSet('1=claude'), parseSet('9=x')], 'command')).toThrow()
 	})
 })
 
