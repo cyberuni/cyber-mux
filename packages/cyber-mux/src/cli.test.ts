@@ -1,3 +1,4 @@
+import { homedir } from 'node:os'
 import type { Command } from 'commander'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildProgram } from './cli.ts'
@@ -467,6 +468,86 @@ describe('spec:cyber-mux/mux', () => {
 				expect(out).toContain('main')
 				expect(out).toContain('feat/x')
 				expect(out).toContain('w21')
+			})
+
+			it('worktree list marks the primary checkout in BRANCH instead of spending a column on it', async () => {
+				const porcelain = [
+					'worktree /repo',
+					'branch refs/heads/main',
+					'',
+					'worktree /repo.worktrees/x',
+					'branch refs/heads/feat/x',
+					'',
+				].join('\n')
+				const exec: Exec = (_cmd, args) => (args[0] === 'rev-parse' ? '/repo/.git' : porcelain)
+				const program = buildProgram({ env: {}, exec })
+				await run(program, ['worktree', 'list'])
+				const out = logs.join('\n')
+				expect(out).toContain('main (*)')
+				expect(out).not.toContain('feat/x (*)')
+				expect(out).not.toContain('LINKED')
+			})
+
+			it('worktree list marks a vanished checkout `(gone)` on ROOT, and keeps `prunable` in JSON', async () => {
+				const porcelain = [
+					'worktree /repo',
+					'branch refs/heads/main',
+					'',
+					'worktree /repo.worktrees/gone',
+					'branch refs/heads/old',
+					'prunable gitdir file points to non-existent location',
+					'',
+				].join('\n')
+				const exec: Exec = (_cmd, args) => (args[0] === 'rev-parse' ? '/repo/.git' : porcelain)
+				const program = buildProgram({ env: {}, exec })
+				await run(program, ['worktree', 'list'])
+				const out = logs.join('\n')
+				expect(out).toContain('/repo.worktrees/gone (gone)')
+				// The live checkout carries no marker — the cost is paid only by the row that earned it.
+				expect(out).not.toContain('/repo (gone)')
+
+				logs.length = 0
+				await withArgv(['worktree', 'list', '--format', 'json'], () =>
+					run(program, ['worktree', 'list', '--format', 'json']),
+				)
+				const payload = JSON.parse(logs.join('\n'))
+				expect(payload.worktrees.map((w: { prunable: boolean }) => w.prunable)).toEqual([false, true])
+				expect(payload.worktrees[1].root).toBe('/repo.worktrees/gone')
+			})
+
+			it('worktree list shortens a home-rooted ROOT to `~`, but never in JSON', async () => {
+				const home = homedir()
+				const porcelain = [`worktree ${home}/code/app`, 'branch refs/heads/main', ''].join('\n')
+				const exec: Exec = (_cmd, args) => (args[0] === 'rev-parse' ? `${home}/code/app/.git` : porcelain)
+				const program = buildProgram({ env: {}, exec })
+				await run(program, ['worktree', 'list'])
+				expect(logs.join('\n')).toContain('~/code/app')
+				expect(logs.join('\n')).not.toContain(home)
+
+				logs.length = 0
+				await withArgv(['worktree', 'list', '--format', 'json'], () =>
+					run(program, ['worktree', 'list', '--format', 'json']),
+				)
+				expect(JSON.parse(logs.join('\n')).worktrees[0].root).toBe(`${home}/code/app`)
+			})
+
+			it('worktree list keeps `linked` in JSON, where a consumer reads the boolean', async () => {
+				const porcelain = [
+					'worktree /repo',
+					'branch refs/heads/main',
+					'',
+					'worktree /repo.worktrees/x',
+					'branch refs/heads/feat/x',
+					'',
+				].join('\n')
+				const exec: Exec = (_cmd, args) => (args[0] === 'rev-parse' ? '/repo/.git' : porcelain)
+				const program = buildProgram({ env: {}, exec })
+				await withArgv(['worktree', 'list', '--format', 'json'], () =>
+					run(program, ['worktree', 'list', '--format', 'json']),
+				)
+				const payload = JSON.parse(logs.join('\n'))
+				expect(payload.worktrees.map((w: { linked: boolean }) => w.linked)).toEqual([false, true])
+				expect(payload.worktrees[0].branch).toBe('main')
 			})
 
 			it('worktree list answers outside a multiplexer — listing is a git question', async () => {

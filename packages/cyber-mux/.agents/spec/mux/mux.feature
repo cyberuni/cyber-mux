@@ -1466,6 +1466,41 @@ Feature: mux — the pane abstraction
     When the command runs
     Then it answers from git rather than failing — a multiplexer can only add a binding to the answer
 
+  # ── The worktree listing renders git's facts; it never restates them ──
+  # A fact worth ONE BIT does not earn a column: a column costs its full width on EVERY row to carry
+  # a value only one row differs on. The bit becomes a marker on the column naming the thing the fact
+  # is about — the branch for which checkout is primary, the path for the one that vanished — and the
+  # marker is HUMAN-surface only: every structured payload keeps the field it was derived from,
+  # because that is the surface an agent acts on. The boundary is the SURFACE, not any one --format
+  # value, so a later structured default cannot satisfy these scenarios while breaking the rule.
+
+  Scenario: a one-bit worktree fact is marked, never given its own column
+    Given a repo whose worktrees include the primary checkout and one whose directory is gone from disk
+    When a caller runs cyber-mux worktree list and reads the human table
+    Then the primary checkout's branch is marked (*), and the gone checkout's path is marked (gone)
+    And a linked worktree's branch carries no marker, the mark being what tells the one row from the rest
+    And neither fact spends a column of its own, which would cost every row width to distinguish one
+
+  Scenario: a home-rooted worktree path is shortened to ~ in the human table
+    Given worktrees checked out under the caller's home directory
+    And one worktree checked out in a sibling directory whose name merely extends the home directory's own name
+    When a caller runs cyber-mux worktree list and reads the human table
+    Then each path under the home directory renders with that prefix collapsed to ~
+    # The prefix is matched at a path BOUNDARY, not as a string prefix: a sibling directory whose
+    # name merely starts with the home directory's name is a different location entirely, and
+    # rewriting it would report a path the caller cannot cd to. axi/'s #10 owes the same $HOME → ~
+    # shortening on the home view, so the two surfaces stay consistent once that one is built.
+    And the sibling path is left whole, being a different location rather than one inside home
+
+  Scenario: a table marker never reaches a structured payload
+    Given any worktree whose row the human table marks or shortens
+    When a caller runs cyber-mux worktree list asking for structured output in any format
+    Then every fact a marker was derived from is still its own field, carrying git's own value
+    And each path is absolute, because a consumer of the payload has to be able to act on it
+    And no marker the table added appears anywhere in the payload — a marker shows a fact, and is never the fact
+
+  # ── worktree removal ordering — gates before release, release before git ──
+
   Scenario: worktree remove refuses uncommitted changes BEFORE releasing the workspace
     Given a worktree with uncommitted changes, open in a workspace on a backend that binds
     When a caller runs cyber-mux worktree remove without --force
