@@ -1053,7 +1053,7 @@ function worktreeOpenCommand(deps: Deps): Command {
 function worktreeListCommand(deps: Deps): Command {
 	return new Command('list')
 		.description(
-			'Every worktree of the repo, and the workspace each is open in — BRANCH is marked "(*)" for the primary checkout (every other row is a linked worktree)',
+			'Every worktree of the repo, and the workspace each is open in — BRANCH is marked "(*)" for the primary checkout (every other row is a linked worktree), and ROOT is marked "(gone)" when the checkout no longer exists on disk (git can prune it)',
 		)
 		.addOption(FORMAT_OPTION)
 		.action(() => {
@@ -1066,7 +1066,10 @@ function worktreeListCommand(deps: Deps): Command {
 						// row where it is false — is marked in BRANCH instead. The field itself stays intact in
 						// `--format json`, where a consumer reads the boolean rather than the marker.
 						{ label: 'branch', get: (w) => `${w.branch ?? '(detached)'}${w.linked ? '' : ' (*)'}` },
-						{ label: 'root', get: (w) => tildify(w.root) },
+						// `prunable` is likewise one bit, and a rarer one — the marker rides on ROOT because the
+						// path is the thing that is actually gone. `(gone)` is git's own word for a target that
+						// vanished (`branch -vv` prints it), where "stale" would read as merely out of date.
+						{ label: 'root', get: (w) => `${tildify(w.root)}${w.prunable ? ' (gone)' : ''}` },
 						{ label: 'workspace', get: (w) => w.workspace ?? '' },
 					]),
 				)

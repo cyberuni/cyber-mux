@@ -488,6 +488,33 @@ describe('spec:cyber-mux/mux', () => {
 				expect(out).not.toContain('LINKED')
 			})
 
+			it('worktree list marks a vanished checkout `(gone)` on ROOT, and keeps `prunable` in JSON', async () => {
+				const porcelain = [
+					'worktree /repo',
+					'branch refs/heads/main',
+					'',
+					'worktree /repo.worktrees/gone',
+					'branch refs/heads/old',
+					'prunable gitdir file points to non-existent location',
+					'',
+				].join('\n')
+				const exec: Exec = (_cmd, args) => (args[0] === 'rev-parse' ? '/repo/.git' : porcelain)
+				const program = buildProgram({ env: {}, exec })
+				await run(program, ['worktree', 'list'])
+				const out = logs.join('\n')
+				expect(out).toContain('/repo.worktrees/gone (gone)')
+				// The live checkout carries no marker — the cost is paid only by the row that earned it.
+				expect(out).not.toContain('/repo (gone)')
+
+				logs.length = 0
+				await withArgv(['worktree', 'list', '--format', 'json'], () =>
+					run(program, ['worktree', 'list', '--format', 'json']),
+				)
+				const payload = JSON.parse(logs.join('\n'))
+				expect(payload.worktrees.map((w: { prunable: boolean }) => w.prunable)).toEqual([false, true])
+				expect(payload.worktrees[1].root).toBe('/repo.worktrees/gone')
+			})
+
 			it('worktree list shortens a home-rooted ROOT to `~`, but never in JSON', async () => {
 				const home = homedir()
 				const porcelain = [`worktree ${home}/code/app`, 'branch refs/heads/main', ''].join('\n')
