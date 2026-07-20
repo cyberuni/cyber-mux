@@ -27,11 +27,17 @@ const GIT_PORCELAIN = [
 	'',
 ].join('\n')
 
-/** Routes by binary name, so one fake serves a git call and a mux call in the same flow. */
+/**
+ * Routes by binary name, so one fake serves a git call and a mux call in the same flow. Matching is on
+ * the WHOLE invocation rather than its first two args, because `listWorktreesFromGit` runs four
+ * different git commands against the same `-C <root>` — a two-arg key could not tell `worktree list`
+ * from the `symbolic-ref`/`branch`/`status` reads behind the disposability signals. First match wins,
+ * so a fixture lists its specific routes before any catch-all prefix.
+ */
 function fakeExec(calls: string[][], responses: Record<string, string | null> = {}): Exec {
 	return (cmd, args) => {
 		calls.push([cmd, ...args])
-		const key = `${cmd} ${args.slice(0, 2).join(' ')}`
+		const key = [cmd, ...args].join(' ')
 		for (const [prefix, out] of Object.entries(responses)) {
 			if (key.startsWith(prefix)) return out
 		}
@@ -252,16 +258,30 @@ describe('spec:cyber-mux/mux', () => {
 	})
 
 	describe('listWorktrees — git owns the facts, the backend contributes only the binding', () => {
+		// Every git read the listing makes, answered explicitly: the primary is merged into origin/main
+		// and the linked worktree is not, and both checkouts are clean.
+		const GIT_FACTS: Record<string, string | null> = {
+			'git -C /repo worktree list': GIT_PORCELAIN,
+			'git -C /repo symbolic-ref': 'origin/main',
+			'git -C /repo branch': 'main',
+			'git -C /repo status': '',
+			'git -C /repo.worktrees/x status': '',
+		}
+		const GIT_ANSWER = [
+			{ root: '/repo', branch: 'main', linked: false, prunable: false, merged: true, dirty: false },
+			{ root: '/repo.worktrees/x', branch: 'feat/x', linked: true, prunable: false, merged: false, dirty: false },
+		]
+
 		it('worktree list reports which workspace each worktree is open in', () => {
 			// Only the linked worktree is open in a workspace. The primary is open in NONE — which is
 			// the half of the scenario a fixture with every worktree bound could never show.
 			const listOut = JSON.stringify({
 				result: { worktrees: [{ path: '/repo.worktrees/x', open_workspace_id: 'w21' }] },
 			})
-			const exec = fakeExec([], { 'git -C /repo': GIT_PORCELAIN, 'herdr worktree list': listOut })
+			const exec = fakeExec([], { ...GIT_FACTS, 'herdr worktree list': listOut })
 			expect(listWorktrees(exec, herdrSessionAdapter, { primaryRoot: '/repo' })).toEqual([
-				{ root: '/repo', branch: 'main', linked: false, prunable: false, workspace: undefined },
-				{ root: '/repo.worktrees/x', branch: 'feat/x', linked: true, prunable: false, workspace: 'w21' },
+				{ ...GIT_ANSWER[0], workspace: undefined },
+				{ ...GIT_ANSWER[1], workspace: 'w21' },
 			])
 		})
 
@@ -281,14 +301,14 @@ describe('spec:cyber-mux/mux', () => {
 					],
 				},
 			})
-			const exec = fakeExec([], { 'git -C /repo': GIT_PORCELAIN, 'herdr worktree list': listOut })
+			const exec = fakeExec([], { ...GIT_FACTS, 'herdr worktree list': listOut })
 			const entries = listWorktrees(exec, herdrSessionAdapter, { primaryRoot: '/repo' })
-			// Path, branch, linked and prunable are ALL git's answer — the scenario names all four, so
-			// asserting the branch alone would leave the backend free to win on the other three.
-			// `workspace` is the one and only fact the backend contributes.
+			// Path, branch, linked, prunable, merged and dirty are ALL git's answer — asserting the branch
+			// alone would leave the backend free to win on the rest. `workspace` is the one and only fact
+			// the backend contributes.
 			expect(entries).toEqual([
-				{ root: '/repo', branch: 'main', linked: false, prunable: false, workspace: undefined },
-				{ root: '/repo.worktrees/x', branch: 'feat/x', linked: true, prunable: false, workspace: 'w21' },
+				{ ...GIT_ANSWER[0], workspace: undefined },
+				{ ...GIT_ANSWER[1], workspace: 'w21' },
 			])
 		})
 

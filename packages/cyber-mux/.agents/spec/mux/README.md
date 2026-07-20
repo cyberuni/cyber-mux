@@ -255,7 +255,7 @@ once opened:
   to plain git plus a placement-appropriate `open()`.
 
 - **git owns the worktree facts; a backend contributes only the binding** — path, branch, linked,
-  and prunable are read from git on **every** backend, so two backends can never report a different
+  prunable, merged and dirty are read from git on **every** backend, so two backends can never report a different
   branch for the same worktree. A multiplexer that also enumerates worktrees is merely re-reading
   git; the one fact git cannot answer is which workspace a worktree is currently open in, and that
   is the only thing asked of a backend.
@@ -273,6 +273,34 @@ once opened:
   the **absolute** path as their own fields, so a later structured default cannot inherit the markers
   by omission. A marker is a way of *showing* a fact and never the fact itself, and the payload is
   the surface an agent acts on.
+
+- **Occupied is not the same question as needed** — the binding says only what is currently *holding*
+  a worktree, so a free one is either finished or merely idle and the listing could not tell them
+  apart. Two further git facts close that gap: **merged** (the branch's tip is an ancestor of the
+  repo's default branch, so its work has landed) and **dirty** (the checkout has uncommitted changes,
+  which exist nowhere else). The default branch is **resolved, never assumed** — the remote-tracking
+  ref first, because "merged" means landed *upstream* in the workflow this serves, then the primary
+  checkout's own branch, which is the trunk for a local-only repo and costs no extra read.
+
+  Those two plus the binding compose into **one composite** the table compresses to a single
+  `(removable)` marker on the *branch* — merged **and** clean **and** unoccupied. A composite earns one
+  marker by the same rule a one-bit fact does: the reader's question is one question, and three
+  markers would spend the width of an answer on its inputs. It rides on the branch because the branch
+  carries the work that landed, and it is mutually exclusive with `(*)`, so no row shows two.
+
+  The composite is a **rendering, never a field**. It is fully derivable from facts already in the
+  payload, and baking it in would freeze *one* policy into the wire format — a consumer that scores
+  disposability differently composes it from `merged` and `dirty` instead.
+
+  Every signal degrades to an **absent field, never `false`**: a detached HEAD has no branch to ask
+  about, a vanished checkout no working tree to read, a repo with no resolvable default branch nothing
+  to measure against. Undeterminable must never render as safe to delete, so the marker demands the
+  positive facts rather than the absence of negative ones. A **squash** merge rewrites the commits and
+  so reads unmerged — the signal errs toward "still needed", because under-reporting a candidate costs
+  the reader one check while over-reporting costs them work.
+
+  The listing **reports; it never acts**. Removal keeps exactly the gates it always had and consults
+  no disposability signal, and nothing here deletes or prunes of its own accord.
 
 - **`worktree add` is plain git until a placement is asked for** — with neither `--at` nor
   `--launch` it creates a checkout, opens nothing, and resolves no backend, so it works outside any
@@ -536,7 +564,8 @@ Every scenario in [`mux.feature`](./mux.feature) maps to one of these behaviors:
 | **worktree/workspace binding** | a bare `add` — none of `--at`, `--launch` or `--env` — opens nothing and resolves no backend, which is what makes it the only route that works outside a multiplexer at all; `--launch` and `--env` each imply `--at workspace`, both being a request for something IN a pane; `--at workspace` groups where the backend binds and falls back where it does not; a pane/tab placement degrades (reports no workspace) rather than failing, and only where a grouping was on offer, the caller told through a stdout `help[N]:` entry naming `--at workspace` per [`axi.md`](../axi.md)'s #9; `open` groups a checkout plain git made |
 | **`--env`, the CLI surface for the seam's env option** | repeatable `--env KEY=VALUE` on every verb that opens a pane (`open`, `worktree add`, `worktree open`) — the one split option with a flag, since a variable not set at birth cannot be set at all; it names the pane the verb opens, exactly one being opened on each route, **except** on herdr's worktree bind route, where it degrades to a prefix on `--launch` or a stderr warning with no command to ride — stated on BOTH worktree verbs, which are exposed identically; refused alongside `--template`, which owns its own panes' env; implies a placement; a missing `=` is rejected before anything opens, a trailing `=` sets the variable empty, and a value's own `=` survives by splitting on the first only |
 | **naming what was opened** | `--label` names the tier `--at` opened, on every backend (herdr workspace/tab/pane label; tmux window name or pane title); taken at birth where the backend's CLI allows, set immediately after where it does not; omitted leaves the backend's own default |
-| **worktree facts vs binding** | `list` reads path/branch/linked/prunable from git on every backend and reports only the binding from the backend; `list`/`remove` answer with no multiplexer |
+| **worktree facts vs binding** | `list` reads path/branch/linked/prunable/merged/dirty from git on every backend and reports only the binding from the backend; `list`/`remove` answer with no multiplexer |
+| **disposability — needed, not merely free** | `merged` (tip is an ancestor of the repo's default branch, itself resolved rather than assumed) and `dirty` (uncommitted changes) join the binding into one composite the table compresses to `(removable)` on the branch; the composite is a rendering and never a payload field, every signal degrades to an absent field rather than `false`, and the listing reports without ever acting on what it reports |
 | **the listing's render contract** | a one-bit fact earns a **marker on the column it is about**, never a column of its own — primary checkout `<branch> (*)`, vanished checkout `<path> (gone)`; a home-rooted path collapses to `~` (matched at a path boundary, the same shortening axi/'s #10 owes the home view); every marker is human-surface only — the boundary being the surface, not one `--format` value, so **every** structured payload keeps each field and the absolute path |
 | **worktree removal ordering** | never delegated to a backend — cyber-mux's gates plus git, the backend only releasing its binding; gates run before the release (a refused removal has no side effect); the release runs before git's removal (no workspace on a dead directory), including for a checkout already gone |
 
@@ -1018,5 +1047,10 @@ Every scenario in [`mux.feature`](./mux.feature), one row each, grouped by use c
 | Edge | Path (Given) | Scenario |
 |---|---|---|
 | a one-bit fact → a marker on the column it is about, never a column | the primary checkout and a checkout whose directory is gone | `a one-bit worktree fact is marked, never given its own column` |
+| composite disposability → one `(removable)` marker, all three inputs required | a merged, clean, unoccupied worktree | `worktree list answers whether a worktree is still needed, not only whether it is occupied` |
+| the composite is a rendering, not a payload field | a marked worktree read as structured output | `the disposability composite is the table's compression, never a field of its own` |
+| the default branch is resolved, never assumed | a repo whose default branch is not `main` | `the default branch merged is measured against is resolved, never assumed` |
+| an undeterminable signal → absent, never `false`, and never marked | a detached HEAD and a vanished checkout | `a disposability signal git cannot determine is absent, never false` |
+| the listing reports; removal consults nothing it reports | a marked worktree passed to `worktree remove` | `the listing reports disposability and never acts on it` |
 | a path under home → the prefix collapses to `~`, matched at a boundary | worktrees under home, and a sibling whose name extends home's own | `a home-rooted worktree path is shortened to ~ in the human table` |
 | a structured payload → the fields, never the markers | any worktree whose row the human table marks or shortens | `a table marker never reaches a structured payload` |

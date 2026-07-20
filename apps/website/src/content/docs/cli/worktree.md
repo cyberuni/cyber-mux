@@ -79,20 +79,81 @@ cyber-mux worktree open ~/code/my-app.worktrees/feat-x --at workspace
 
 ### `cyber-mux worktree list`
 
-Every worktree of the repo, and the workspace each is currently open in. Table columns: `branch`
-(`(detached)` when none), `root`, `workspace`. The primary checkout is marked `(*)` after its branch;
-every other row is a linked worktree, and a `root` under your home directory is shortened to `~/…`. A
-`root` whose checkout no longer exists on disk is marked `(gone)` — git can prune it. All three are
-table-only: `--format json` carries the `linked` and `prunable` booleans and the absolute `root`.
+Every worktree of the repo, whether each is still **needed**, and the workspace each is currently
+open in. Table columns: `branch` (`(detached)` when none), `root`, `workspace`.
 
-Path, branch, linked, and prunable always come from **git**, on every backend — only the workspace
-binding comes from the multiplexer, so backends can never disagree about a worktree. Works outside a
-multiplexer, where every `workspace` is simply blank.
+Markers ride on the column they are about, so no one-bit fact spends a column of its own:
+
+| Marker | Column | Meaning |
+| --- | --- | --- |
+| `(*)` | `branch` | the primary checkout — every other row is a linked worktree |
+| `(removable)` | `branch` | the worktree looks **disposable** — see below |
+| `(gone)` | `root` | the checkout no longer exists on disk; git can prune it |
+
+A `root` under your home directory is also shortened to `~/…`. Every marker and the shortening are
+**table-only**: `--format json` carries the raw `linked`, `prunable`, `merged`, and `dirty` booleans
+and the absolute `root`, unmarked.
+
+#### `(removable)` — is this worktree still needed?
+
+A worktree is marked `(removable)` when **all** of the following hold:
+
+1. its branch is **merged** into the repo's default branch — the work has landed, so removing the
+   checkout destroys nothing the trunk does not already have;
+2. the checkout is **clean** — no uncommitted changes, tracked or untracked;
+3. **nothing is open in it** — no `workspace` holds it.
+
+The default branch is resolved, never assumed: `origin/HEAD` when it resolves, otherwise the branch
+checked out in the primary checkout. `main` is never hardcoded.
+
+Two things worth knowing:
+
+- A **squash** or rebase merge rewrites the commits, so the original branch tip is no longer an
+  ancestor and the worktree is *not* marked, even though its work landed. The signal errs toward
+  "still needed" on purpose — a missed marker costs you one manual check, a wrong one costs you work.
+- The marker is **advisory**. `worktree list` reports; it never removes, and nothing consults `(removable)`
+  before a `worktree remove`. The removal gates are unchanged.
+
+When a signal cannot be determined — a detached HEAD, a checkout already gone, no default branch to
+compare against — the field is simply **absent** in `--format json` and the row is left unmarked.
+Nothing is guessed and nothing fails.
+
+Path, branch, linked, prunable, merged, and dirty always come from **git**, on every backend — only
+the workspace binding comes from the multiplexer, so backends can never disagree about a worktree.
+Works outside a multiplexer, where every `workspace` is simply blank.
+
+**Cost.** One batched call answers `merged` for the whole repo at once. `dirty` is a property of a
+directory and git has no batched equivalent, so it costs one `git status` per checkout that is on
+disk — `4 + N` git calls in total. At ~20 worktrees the whole listing runs in well under half a
+second.
 
 **Example**
 
 ```bash
 cyber-mux worktree list
+```
+
+```
+BRANCH                   ROOT                              WORKSPACE
+-----------------------  --------------------------------  ---------
+main (*)                 ~/code/my-app                     w19
+feat/search (removable)  ~/code/my-app.worktrees/search
+feat/checkout            ~/code/my-app.worktrees/checkout  w6F
+fix/flaky-test           ~/code/my-app.worktrees/flaky
+old/spike (gone)         ~/code/my-app.worktrees/spike
+```
+
+`feat/search` is merged, clean, and unoccupied — safe to remove. `feat/checkout` is open in a
+workspace, `fix/flaky-test` has unmerged work or local edits, and `old/spike`'s checkout is already
+gone (`git worktree prune` clears it).
+
+Scripted use reads the booleans rather than the markers:
+
+```bash
+cyber-mux worktree list --format json | jq -r '
+  .worktrees[]
+  | select(.linked and (.prunable | not) and .merged and .dirty == false and .workspace == null)
+  | .root'
 ```
 
 ### `cyber-mux worktree remove <path> [--force]`

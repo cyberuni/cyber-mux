@@ -3,6 +3,7 @@ import type { Exec } from './exec.ts'
 import {
 	assertDistinctFromPrimary,
 	gitWorktreeAdapter,
+	isWorktreeRemovable,
 	listWorktreesFromGit,
 	removeWorktreeSafely,
 	resolvePrimaryRoot,
@@ -102,7 +103,26 @@ describe('spec:cyber-mux/mux', () => {
 			'',
 		].join('\n')
 
-		const listing = (out: string | null) => listWorktreesFromGit(() => out, '/repo')
+		/**
+		 * `listWorktreesFromGit` runs four DIFFERENT git commands, so a fake that answers every call with
+		 * one string would feed the porcelain dump to `status` too. Route by verb; every signal read
+		 * defaults to `null` (git could not say) so a test opts INTO a signal rather than inheriting one.
+		 */
+		const gitFake = (answers: {
+			porcelain: string | null
+			originHead?: string | null
+			merged?: string | null
+			status?: (root: string) => string | null
+		}): Exec => {
+			return (_cmd, args) => {
+				if (args.includes('symbolic-ref')) return answers.originHead ?? null
+				if (args.includes('branch')) return answers.merged ?? null
+				if (args.includes('status')) return answers.status?.(args[1]!) ?? null
+				return answers.porcelain
+			}
+		}
+
+		const listing = (out: string | null) => listWorktreesFromGit(gitFake({ porcelain: out }), '/repo')
 
 		it('reads every worktree of the repo, primary included', () => {
 			expect(listing(porcelain).map((w) => w.root)).toEqual([
@@ -136,6 +156,159 @@ describe('spec:cyber-mux/mux', () => {
 
 		it('returns nothing when git says nothing', () => {
 			expect(listing(null)).toEqual([])
+		})
+	})
+
+	describe('listWorktreesFromGit disposability signals', () => {
+		// The primary on `main`, plus one linked worktree per case the signal has to survive.
+		const porcelain = [
+			'worktree /repo',
+			'branch refs/heads/main',
+			'',
+			'worktree /repo.worktrees/landed',
+			'branch refs/heads/feat/landed',
+			'',
+			'worktree /repo.worktrees/open',
+			'branch refs/heads/feat/open',
+			'',
+			'worktree /repo.worktrees/spike',
+			'detached',
+			'',
+			'worktree /repo.worktrees/gone',
+			'branch refs/heads/feat/gone',
+			'prunable gitdir file points to non-existent location',
+			'',
+		].join('\n')
+
+		const gitFake = (answers: {
+			originHead?: string | null
+			merged?: string | null
+			status?: (root: string) => string | null
+			calls?: string[][]
+		}): Exec => {
+			return (_cmd, args) => {
+				answers.calls?.push(args)
+				if (args.includes('symbolic-ref')) return answers.originHead ?? null
+				if (args.includes('branch')) return answers.merged ?? null
+				if (args.includes('status')) return answers.status?.(args[1]!) ?? null
+				return porcelain
+			}
+		}
+
+		const byRoot = (exec: Exec) => new Map(listWorktreesFromGit(exec, '/repo').map((w) => [w.root, w]))
+
+		it('reports a merged, clean worktree as removable', () => {
+			const entries = byRoot(
+				gitFake({
+					originHead: 'origin/main',
+					merged: 'main\nfeat/landed',
+					status: () => '',
+				}),
+			)
+			expect(entries.get('/repo.worktrees/landed')).toMatchObject({ merged: true, dirty: false })
+			expect(isWorktreeRemovable(entries.get('/repo.worktrees/landed')!)).toBe(true)
+		})
+
+		it('a merged worktree with uncommitted changes is not removable', () => {
+			const entries = byRoot(
+				gitFake({
+					originHead: 'origin/main',
+					merged: 'main\nfeat/landed',
+					status: (root) => (root === '/repo.worktrees/landed' ? ' M src/a.ts' : ''),
+				}),
+			)
+			expect(entries.get('/repo.worktrees/landed')).toMatchObject({ merged: true, dirty: true })
+			expect(isWorktreeRemovable(entries.get('/repo.worktrees/landed')!)).toBe(false)
+		})
+
+		it('an unmerged worktree is not removable however clean it is', () => {
+			const entries = byRoot(gitFake({ originHead: 'origin/main', merged: 'main', status: () => '' }))
+			expect(entries.get('/repo.worktrees/open')).toMatchObject({ merged: false, dirty: false })
+			expect(isWorktreeRemovable(entries.get('/repo.worktrees/open')!)).toBe(false)
+		})
+
+		it('a detached HEAD lists with no merged verdict rather than a false one', () => {
+			const entries = byRoot(gitFake({ originHead: 'origin/main', merged: 'main', status: () => '' }))
+			const spike = entries.get('/repo.worktrees/spike')!
+			expect(spike.merged).toBeUndefined()
+			expect(spike.dirty).toBe(false)
+			expect(isWorktreeRemovable(spike)).toBe(false)
+		})
+
+		it('a prunable entry lists with no dirty verdict, and git is never asked for one', () => {
+			const calls: string[][] = []
+			const entries = byRoot(gitFake({ originHead: 'origin/main', merged: 'main\nfeat/gone', status: () => '', calls }))
+			const gone = entries.get('/repo.worktrees/gone')!
+			expect(gone.dirty).toBeUndefined()
+			// The one place the per-worktree cost is skipped: there is no directory to stat.
+			expect(calls.filter((args) => args.includes('status')).map((args) => args[1])).not.toContain(
+				'/repo.worktrees/gone',
+			)
+			// A gone checkout says `(gone)` on ROOT; it must never also claim `(removable)`.
+			expect(isWorktreeRemovable(gone)).toBe(false)
+		})
+
+		it('falls back to the primary checkout branch when origin/HEAD does not resolve', () => {
+			const calls: string[][] = []
+			byRoot(gitFake({ originHead: null, merged: 'main\nfeat/landed', status: () => '', calls }))
+			const mergedCall = calls.find((args) => args.includes('--merged'))!
+			expect(mergedCall.at(-1)).toBe('main')
+		})
+
+		it('leaves merged absent everywhere when no default branch resolves at all', () => {
+			// A detached primary with no origin: nothing to compare against, so nothing is claimed.
+			const detachedPrimary = [
+				'worktree /repo',
+				'detached',
+				'',
+				'worktree /repo.worktrees/x',
+				'branch refs/heads/x',
+				'',
+			].join('\n')
+			const entries = listWorktreesFromGit((_cmd, args) => {
+				if (args.includes('symbolic-ref')) return null
+				if (args.includes('branch')) throw new Error('git branch --merged must not run without a target')
+				if (args.includes('status')) return ''
+				return detachedPrimary
+			}, '/repo')
+			expect(entries.every((w) => w.merged === undefined)).toBe(true)
+		})
+
+		it('leaves the signal absent, never false, when git refuses to answer', () => {
+			const entries = byRoot(gitFake({ originHead: 'origin/main', merged: null, status: () => null }))
+			const landed = entries.get('/repo.worktrees/landed')!
+			expect(landed.merged).toBeUndefined()
+			expect(landed.dirty).toBeUndefined()
+			expect(isWorktreeRemovable(landed)).toBe(false)
+		})
+
+		it('reads the whole repo merge set in one batched call', () => {
+			const calls: string[][] = []
+			byRoot(gitFake({ originHead: 'origin/main', merged: 'main', status: () => '', calls }))
+			expect(calls.filter((args) => args.includes('--merged'))).toHaveLength(1)
+		})
+	})
+
+	describe('isWorktreeRemovable', () => {
+		const removable = {
+			root: '/repo.worktrees/x',
+			branch: 'x',
+			linked: true,
+			prunable: false,
+			merged: true,
+			dirty: false,
+		}
+
+		it('is false for the primary checkout, which is never disposable', () => {
+			expect(isWorktreeRemovable({ ...removable, linked: false })).toBe(false)
+		})
+
+		it('is false while a workspace still holds the worktree', () => {
+			expect(isWorktreeRemovable({ ...removable, workspace: 'ws-1' })).toBe(false)
+		})
+
+		it('is true only when merged, clean, unoccupied, and on disk', () => {
+			expect(isWorktreeRemovable(removable)).toBe(true)
 		})
 	})
 

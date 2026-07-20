@@ -31,7 +31,13 @@ import {
 	type TemplateStore,
 	templateDirs,
 } from './template-store.ts'
-import { gitWorktreeAdapter, resolvePrimaryRoot, resolveWorktreePath, WorktreeGitError } from './worktree.ts'
+import {
+	gitWorktreeAdapter,
+	isWorktreeRemovable,
+	resolvePrimaryRoot,
+	resolveWorktreePath,
+	WorktreeGitError,
+} from './worktree.ts'
 import {
 	addAndOpenWorktree,
 	listWorktrees,
@@ -1053,7 +1059,7 @@ function worktreeOpenCommand(deps: Deps): Command {
 function worktreeListCommand(deps: Deps): Command {
 	return new Command('list')
 		.description(
-			'Every worktree of the repo, and the workspace each is open in — BRANCH is marked "(*)" for the primary checkout (every other row is a linked worktree), and ROOT is marked "(gone)" when the checkout no longer exists on disk (git can prune it)',
+			'Every worktree of the repo, and the workspace each is open in — BRANCH is marked "(*)" for the primary checkout (every other row is a linked worktree) or "(removable)" when the worktree looks disposable (its branch is merged into the default branch, the checkout is clean, and nothing is open in it), and ROOT is marked "(gone)" when the checkout no longer exists on disk (git can prune it)',
 		)
 		.addOption(FORMAT_OPTION)
 		.action(() => {
@@ -1065,7 +1071,15 @@ function worktreeListCommand(deps: Deps): Command {
 						// `linked` is one BIT, so it does not earn a column: the primary checkout — the single
 						// row where it is false — is marked in BRANCH instead. The field itself stays intact in
 						// `--format json`, where a consumer reads the boolean rather than the marker.
-						{ label: 'branch', get: (w) => `${w.branch ?? '(detached)'}${w.linked ? '' : ' (*)'}` },
+						// `(removable)` is the disposability COMPOSITE — merged AND clean AND unoccupied — compressed to
+						// one word, and it rides on BRANCH because the branch is what carries the work that landed.
+						// Its inputs (`merged`, `dirty`) stay raw and unmarked in `--format json`, where a consumer
+						// composes its own policy rather than inheriting this one.
+						{
+							label: 'branch',
+							get: (w) =>
+								`${w.branch ?? '(detached)'}${w.linked ? (isWorktreeRemovable(w) ? ' (removable)' : '') : ' (*)'}`,
+						},
 						// `prunable` is likewise one bit, and a rarer one — the marker rides on ROOT because the
 						// path is the thing that is actually gone. `(gone)` is git's own word for a target that
 						// vanished (`branch -vv` prints it), where "stale" would read as merely out of date.
