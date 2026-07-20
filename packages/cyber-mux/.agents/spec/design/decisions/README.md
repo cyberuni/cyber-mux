@@ -139,3 +139,50 @@ Decisions (`36-axi-error-surface` grill — the CLI error surface vs AXI):
   operation failure. Neither is the malformed-argument family AXI puts at `2`. The stream and
   structure halves reached `layout` with **no** frozen conflict — no `layout` error was ever pinned to
   a stream — so only the exit codes needed the re-open.
+
+Decisions (`pane-command-probe` — what a backend can say about a pane's command):
+
+- **the "no multiplexer can report the command" premise was false, and is retracted** — DECIDED: the
+  corpus, the `save` help text, `template-capture.ts` and the website all asserted that no backend
+  reports a pane's command. **Probed live** (herdr 0.7.4, tmux 3.6b, wezterm 20240203, Linux/WSL2):
+  herdr's `pane process-info` returns full argv for a pane's entire foreground tree
+  (`{"argv":["claude"],...,"shell_pid":730648}`, and seven entries for a `pnpm dev` pane); tmux's
+  `#{pane_current_command}` gives a bare process **name** (`python3`, never `python3 -u -c "…"`) and
+  `#{pane_start_command}` the full launch line but **only** when tmux itself spawned it; wezterm's
+  `cli list --format json` has **no** command field at all, only a free-text `title` that was measured
+  **stale** — a pane genuinely running python still reported `"title": "zsh"`. `/proc` (tpgid →
+  `cmdline`) recovers full argv from a pid on any backend, Linux only. So the claim was true only of
+  the *launch record*, and false of what is knowable.
+
+- **the limit is PORTABILITY, and the capture still writes no command** — DECIDED: `template save`
+  keeps emitting no `command`, and every site now says why in portability terms. What a backend
+  reports is the **resolved** command line, and resolution is not invertible: `nr web dev` comes back
+  as `node /run/user/1000/fnm_multishells/4223_1784479278417/bin/nr web dev` — a uid, a pid and a
+  timestamp in one path, dead on the next machine and often on the next login. An idle pane reports
+  its shell; a `claude` pane reports exactly `claude`, the flags that made it that session already
+  gone. A template is checked in and run elsewhere, and `apply` **submits** whatever `command` says,
+  so a wrong one fails *by executing something*. Absent beats wrong, as it already does for `label`.
+  **Accepted cost:** a captured template still needs its commands filled in by hand; `template edit`
+  exists to make that cheap rather than to remove the need.
+
+- **capturing the running command behind a flag was considered and rejected** — DECIDED: not built.
+  A `--capture-commands` that wrote resolved argv would produce a file that *looks* portable, is not,
+  and executes on apply. The alternative worth having instead is a capture-time **warning** naming
+  what was observed, through the `TemplateCapture.warnings` channel that already carries the
+  out-of-root-`cwd` note — the author gets the fact next to the pane it belongs to, without it landing
+  in a file that will later be run. **Not implemented in this pass**; recorded so the option is not
+  re-litigated from scratch.
+
+- **`RegionPane.running` was designed and left unbuilt** — DECIDED: the seam, if ever pursued, is one
+  optional field on `RegionPane` filled by the herdr adapter from `pane process-info` (shallowest
+  `foreground_processes` entry, dropped when its pid equals `shell_pid` — the exact idle-shell test),
+  with tmux limited to `#{pane_current_command}` and wezterm contributing **nothing**, since reporting
+  a demonstrably stale `title` would be reporting a lie. Deliberately no `/proc` walk: it is Linux-only
+  and would put an OS-specific branch inside an adapter whose whole design is a synchronous `Exec` over
+  a CLI.
+
+- **shell history is rejected as a source** — DECIDED: never read `~/.zsh_history` or equivalent to
+  guess an idle pane's last command. It is per-**user** rather than per-pane (unattributable across
+  concurrent panes, which is this project's normal case), it is written on shell exit so a live pane's
+  most recent command is frequently absent, and it routinely contains secrets typed inline. `save`
+  writes a file the user is expected to commit; scraping history into it would exfiltrate by default.
