@@ -57,7 +57,7 @@ neither answers for the other.
   The bit becomes a **marker on the column the fact is about**: the primary checkout is marked on its
   *branch* (`<branch> (*)`), and a checkout whose directory is gone is marked on its *path*
   (`<path> (gone)` — git's own word for a target that vanished, where "stale" would read as merely
-  out of date). A home-rooted path collapses its prefix to `~`, the same shortening [`axi/`](../axi/README.md)'s
+  out of date). A home-rooted path collapses its prefix to `~`, the same shortening [`axi.md`](../../axi.md)'s
   #10 already owes the home view — matched at a path **boundary**, so a sibling directory whose name
   merely starts with the home directory's name is left whole rather than rewritten into a path the
   caller cannot `cd` to. Every marker is **human-surface only**, and the boundary is the *surface*
