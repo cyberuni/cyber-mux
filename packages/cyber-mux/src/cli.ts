@@ -568,7 +568,7 @@ function templateSaveCommand(deps: Deps): Command {
 							: captureTemplate(describeRegion!(deps.exec, target), captureOpts)
 						deps.store.write(path, `${JSON.stringify(template, null, 2)}\n`)
 						// A capture warning (a dir outside the repo root) is a diagnostic, not part of the answer —
-						// it stays on stderr, where `template.feature` pins it. The PAYLOAD is stdout.
+						// it stays on stderr, where `capture.feature` pins it. The PAYLOAD is stdout.
 						for (const warning of warnings) process.stderr.write(`${warning}\n`)
 						// save's stdout is a structured payload: a `path` field, plus a `help[N]:` block only when a
 						// bare save left tabs behind (#9's reveal-a-truncated-list, omitted otherwise). This replaces
