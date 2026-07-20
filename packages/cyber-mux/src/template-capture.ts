@@ -12,11 +12,20 @@ import type { PaneNode, SplitNode, TabNode, Template, TemplateNode } from './tem
  * the right-comb — is the evidence the schema is coherent rather than arbitrary. Exporting a region
  * that `arrange: even-horizontal` built gives back that comb, ratios and all.
  *
- * **What it recovers, and what it cannot.** Geometry, labels and dirs. NEVER commands: no backend
- * can give a launch command back. cyber-mux types commands with `submit` rather than passing them to
- * the split (herdr's `pane split` takes no command at all), so tmux's `pane_start_command` is empty
- * for every pane cyber-mux ever created, and `pane_current_command` reports `zsh` or `node` — never
- * `claude --foo`. A template out of this module is a DRAFT with `command` left for the author.
+ * **What it recovers, and what it cannot.** Geometry, labels and dirs. NEVER commands — and the
+ * reason is portability, not availability. A backend CAN often say what is running: herdr's
+ * `pane process-info` hands back full argv for a pane's whole foreground tree, and `/proc` gets there
+ * from a pid on any backend. What none of them can give back is a command worth writing into a
+ * template, because what they report is the RESOLVED command line, not the one a human typed:
+ * `nr web dev` comes back as `node /run/user/1000/fnm_multishells/4223_1784479278417/bin/nr web dev`,
+ * a path carrying a uid, a pid and a timestamp that is dead on the next machine and often on the next
+ * login. An idle pane reports its shell, and a `claude` pane reports exactly `claude` with the flags
+ * that made it that session already gone.
+ *
+ * A template is a statement about how a project is worked on, meant to be checked in and run
+ * elsewhere; a machine-local argv is the opposite of that, and `apply` SUBMITS whatever `command`
+ * says, so a wrong one fails by executing something. Absent beats wrong here, exactly as it does for
+ * a pane's `label`. A template out of this module is a DRAFT with `command` left for the author.
  */
 
 /** A partition of the region — the same shape as `TemplateNode`, before panes become `PaneNode`s. */
@@ -291,8 +300,9 @@ function toPaneNode(pane: RegionPane, ctx: CaptureContext): PaneNode {
 
 /**
  * A partition into schema nodes. `command` is never emitted and there is no branch here that could
- * emit one: no multiplexer reports the command a pane was launched with, so a capture at any tier is
- * a DRAFT with `command` left for the author.
+ * emit one: what a backend can report about a running pane is a resolved, machine-local command line
+ * rather than a portable one (the module doc has the why), so a capture at any tier is a DRAFT with
+ * `command` left for the author.
  */
 function convert(node: RegionTree, ctx: CaptureContext): TemplateNode {
 	if (node.type === 'pane') return toPaneNode(node.pane, ctx)

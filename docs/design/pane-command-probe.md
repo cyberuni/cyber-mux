@@ -273,7 +273,17 @@ things.
    one call. The reason not to capture is that argv is not a re-runnable command, not that argv is
    unavailable.
 
-### Proposed wording
+### Applied wording
+
+**Status: landed.** All four sites were reworded to the PORTABILITY framing rather than the
+availability one — the claim is no longer "no multiplexer can report it" but "what a backend reports
+is a resolved, machine-local command line, not a portable one". The `nr web dev` →
+`node /run/user/1000/fnm_multishells/…/bin/nr web dev` example carries the point at every site,
+because a uid-and-timestamp path is self-evidently not something to check in.
+
+The drafts below are what was proposed; the shipped text differs in wording but not in substance.
+
+### Proposed wording (superseded by the above)
 
 For `cli.ts:497`:
 

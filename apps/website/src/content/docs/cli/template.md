@@ -63,9 +63,13 @@ Capture an already-open pane pool as a reusable template.
   the default silently would change what `save` has always meant. A bare capture of a
   multi-tab workspace notes on stdout (a `help[N]:` block) how many tabs were left out.
 - `--description <text>` — recorded in the template; defaults to a draft warning, since a capture
-  recovers geometry, labels, and dirs but **never commands** — no multiplexer reports the command a
-  pane was launched with, so every captured pane needs one filled in before the template is
-  worth applying — `template edit` walks the panes and asks.
+  recovers geometry, labels, and dirs but **never commands**. A backend can often report what is
+  *running* — herdr's `pane process-info` gives full argv — but what it reports is the **resolved**
+  command line, not the one you typed: `nr web dev` comes back as
+  `node /run/user/1000/fnm_multishells/4223_1784479278417/bin/nr web dev`, a path carrying a uid, a
+  pid, and a timestamp that is dead on the next machine. That is not portable, and a template is
+  meant to be checked in and run elsewhere — so every captured pane needs its command filled in
+  before the template is worth applying — `template edit` below lists the panes and fills them in.
 - `--to repo|user` — which templates directory to write to; defaults to `repo`.
 - `--force` — overwrite an existing template of the same name; refused without it, so a hand-edited
   template is never silently discarded.

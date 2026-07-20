@@ -501,8 +501,9 @@ function templateValidateCommand(deps: Deps): Command {
  * nested `split` nodes nobody wants to type.
  *
  * **What it saves is a draft, and the file says so.** A capture recovers geometry, labels and dirs;
- * it can never recover commands, because no multiplexer reports the command a pane was launched with
- * (`template-capture.ts` has the why). A saved template therefore lands with no `command` on any pane
+ * it never recovers commands, because what a backend can report about a running pane is a resolved,
+ * machine-local command line rather than a portable one (`template-capture.ts` has the why). A saved
+ * template therefore lands with no `command` on any pane
  * and is immediately listed by `template list` alongside finished ones, so the draft has to announce
  * itself IN the file — hence the `description` default. Saying it only on stderr would put the
  * warning everywhere except where the reader is.
@@ -532,9 +533,13 @@ function templateSaveCommand(deps: Deps): Command {
 		.addOption(FORMAT_OPTION)
 		.addHelpText(
 			'after',
-			'\nA capture recovers geometry, labels and dirs — NOT commands: no multiplexer can report the\n' +
-				'command a pane was launched with, so every pane is saved without one. Fill them in before\n' +
-				'the template is worth applying.',
+			'\nA capture recovers geometry, labels and dirs — NOT commands. A backend can often say what is\n' +
+				'RUNNING, but it reports the resolved command line rather than the one you typed (`nr web dev`\n' +
+				'comes back as `node /run/user/1000/fnm_multishells/.../bin/nr web dev`), which is not portable\n' +
+				'to another machine — so every pane is saved without one.\n' +
+				'\nFill them in before the template is worth applying:\n' +
+				'  cyber-mux template edit <name>                  # list the panes\n' +
+				'  cyber-mux template edit <name> --set 1=claude   # fill one in',
 		)
 		.action(
 			guarded(
