@@ -38,47 +38,12 @@ panes — plus git worktrees and named templates — the same way whether you ar
 The same verbs mean the same thing on every backend; where a multiplexer lacks a tier or feature,
 cyber-mux maps onto the closest thing it has and reports honestly what it could not do.
 
-<table>
-	<thead>
-		<tr>
-			<th>Capability</th>
-			<th>tmux</th>
-			<th>herdr</th>
-			<th>WezTerm (alpha)</th>
-		</tr>
-	</thead>
-	<tbody>
-		<tr>
-			<td>Workspace tier</td>
-			<td>✗ (collapses to window)</td>
-			<td>✓</td>
-			<td>✓</td>
-		</tr>
-		<tr>
-			<td>Worktree binding</td>
-			<td>✗</td>
-			<td>✓</td>
-			<td>✗</td>
-		</tr>
-		<tr>
-			<td>Name a pane</td>
-			<td>—</td>
-			<td>✓</td>
-			<td>✗</td>
-		</tr>
-		<tr>
-			<td>Report focused pane</td>
-			<td>best-effort</td>
-			<td>best-effort</td>
-			<td>✗ (always unknown)</td>
-		</tr>
-		<tr>
-			<td>Knows the running harness</td>
-			<td>✗</td>
-			<td>✓</td>
-			<td>✗</td>
-		</tr>
-	</tbody>
-</table>
+| Capability | tmux | herdr | WezTerm (alpha) |
+| --- | --- | --- | --- |
+| Workspace tier | ✗ (collapses to window) | ✓ | ✓ |
+| Worktree binding | ✗ | ✓ | ✗ |
+| Name a pane | — | ✓ | ✗ |
+| Report focused pane | best-effort | best-effort | ✗ (always unknown) |
+| Knows the running harness | ✗ | ✓ | ✗ |
 
 See [Multiplexers](/cyber-mux/multiplexers/) for what each backend does — and does not — support.
