@@ -49,6 +49,7 @@ import {
 import {
 	gitWorktreeAdapter,
 	isWorktreeRemovable,
+	pruneWorktrees,
 	resolvePrimaryRoot,
 	resolveWorktreePath,
 	WorktreeGitError,
@@ -1477,12 +1478,67 @@ function worktreeRemoveCommand(deps: Deps): Command {
 		})
 }
 
+/**
+ * The bulk remove — every candidate `worktree list` already marks `(removable)`, gone in one call
+ * instead of one `worktree remove` per path.
+ *
+ * **Bare form previews, `--force` applies.** The gate is destructive (it discards checkouts,
+ * irreversibly), so the default has to be the side-effect-free one — a caller can run this to see
+ * what WOULD go, exactly as `template edit`'s bare form lists rather than mutates. `--force` here is
+ * "actually do it", not `removeWorktreeSafely`'s "discard uncommitted changes": prune's candidates
+ * are already clean by construction (`isWorktreeRemovable` requires `dirty === false`), so there is
+ * nothing for that meaning to apply to.
+ */
+function worktreePruneCommand(deps: Deps): Command {
+	return new Command('prune')
+		.description(
+			'Remove every disposable worktree in one call — the same gate `worktree list` marks "(removable)" with. Bare form previews the candidates; pass --force to actually remove them',
+		)
+		.option('--force', 'Remove the candidates instead of only previewing them')
+		.addOption(FORMAT_OPTION)
+		.action((opts: { force?: boolean | undefined }) => {
+			try {
+				const primaryRoot = resolvePrimaryRoot(deps.exec)
+				const result = pruneWorktrees(deps.exec, primaryRoot, { dryRun: !opts.force })
+				const removed = result.removed.map((entry) => ({ root: entry.root, branch: entry.branch ?? null }))
+				const skipped = result.skipped.map((s) => ({
+					root: s.entry.root,
+					branch: s.entry.branch ?? null,
+					reason: s.reason,
+				}))
+				output({ applied: Boolean(opts.force), removed, skipped }, () => {
+					printTable(removed, [
+						{ label: opts.force ? 'removed' : 'would remove', get: (r) => tildify(r.root) },
+						{ label: 'branch', get: (r) => r.branch ?? '(detached)' },
+					])
+					if (skipped.length > 0) {
+						printTable(skipped, [
+							{ label: 'skipped', get: (s) => tildify(s.root) },
+							{ label: 'reason', get: (s) => s.reason },
+						])
+					}
+					if (!opts.force && removed.length > 0) {
+						printHelp([
+							{
+								message: `${removed.length} worktree${removed.length === 1 ? '' : 's'} would be removed`,
+								command: 'cyber-mux worktree prune --force',
+							},
+						])
+					}
+				})
+			} catch (err) {
+				reportWorktreeFailure(err)
+			}
+		})
+}
+
 function worktreeCommand(deps: Deps): Command {
 	const cmd = new Command('worktree').description('Git worktree helpers for spawning/tearing down a session')
 	cmd.addCommand(worktreeAddCommand(deps))
 	cmd.addCommand(worktreeOpenCommand(deps))
 	cmd.addCommand(worktreeListCommand(deps))
 	cmd.addCommand(worktreeRemoveCommand(deps))
+	cmd.addCommand(worktreePruneCommand(deps))
 	return cmd
 }
 

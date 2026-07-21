@@ -5,6 +5,7 @@ import {
 	gitWorktreeAdapter,
 	isWorktreeRemovable,
 	listWorktreesFromGit,
+	pruneWorktrees,
 	removeWorktreeSafely,
 	resolvePrimaryRoot,
 	resolveWorktreePath,
@@ -317,6 +318,75 @@ describe('spec:cyber-mux/mux', () => {
 		})
 	})
 
+	describe('pruneWorktrees', () => {
+		// Primary + one linked worktree per outcome the gate has to survive: merged/clean (removable),
+		// unmerged, merged/dirty, and gone-from-git — the same porcelain shape the disposability suite
+		// above uses for `isWorktreeRemovable`.
+		const porcelain = [
+			'worktree /repo',
+			'branch refs/heads/main',
+			'',
+			'worktree /repo.worktrees/landed',
+			'branch refs/heads/feat/landed',
+			'',
+			'worktree /repo.worktrees/open',
+			'branch refs/heads/feat/open',
+			'',
+			'worktree /repo.worktrees/dirty',
+			'branch refs/heads/feat/dirty',
+			'',
+			'worktree /repo.worktrees/gone',
+			'branch refs/heads/feat/gone',
+			'prunable gitdir file points to non-existent location',
+			'',
+		].join('\n')
+
+		// A fake disk that reports every worktree path as present — the removal half is under test here,
+		// not the "already gone from the filesystem" branch `removeWorktreeSafely` already covers.
+		const fakeFs = { exists: () => true, realpath: (path: string) => path }
+
+		const gitFake =
+			(calls: string[][] = []): Exec =>
+			(_cmd, args) => {
+				calls.push(args)
+				if (args.includes('symbolic-ref')) return 'main'
+				if (args.includes('--merged')) return 'main\nfeat/landed\nfeat/dirty'
+				if (args.includes('status')) return args[1] === '/repo.worktrees/dirty' ? ' M src/a.ts' : ''
+				return porcelain
+			}
+
+		it('removes exactly the entries isWorktreeRemovable clears, sparing the primary and the rest', () => {
+			const calls: string[][] = []
+			const result = pruneWorktrees(gitFake(calls), '/repo', { fs: fakeFs })
+			expect(result.removed.map((e) => e.root)).toEqual(['/repo.worktrees/landed'])
+			expect(result.skipped.map((s) => s.entry.root)).toEqual([
+				'/repo.worktrees/open',
+				'/repo.worktrees/dirty',
+				'/repo.worktrees/gone',
+			])
+			expect(calls.some((args) => args.includes('remove') && args.includes('/repo.worktrees/landed'))).toBe(true)
+			expect(calls.some((args) => args.includes('remove') && args.includes('/repo.worktrees/open'))).toBe(false)
+			// The primary checkout is never a candidate — not removed, not reported as skipped either.
+			expect(result.removed.some((e) => e.root === '/repo')).toBe(false)
+			expect(result.skipped.some((s) => s.entry.root === '/repo')).toBe(false)
+		})
+
+		it('reports why each non-removable entry was left alone', () => {
+			const result = pruneWorktrees(gitFake(), '/repo', { fs: fakeFs })
+			const reasons = new Map(result.skipped.map((s) => [s.entry.root, s.reason]))
+			expect(reasons.get('/repo.worktrees/open')).toMatch(/not merged/)
+			expect(reasons.get('/repo.worktrees/dirty')).toMatch(/uncommitted changes/)
+			expect(reasons.get('/repo.worktrees/gone')).toMatch(/git worktree prune/)
+		})
+
+		it('dryRun reports the same candidates without removing anything', () => {
+			const calls: string[][] = []
+			const result = pruneWorktrees(gitFake(calls), '/repo', { dryRun: true, fs: fakeFs })
+			expect(result.removed.map((e) => e.root)).toEqual(['/repo.worktrees/landed'])
+			expect(calls.some((args) => args.includes('remove'))).toBe(false)
+		})
+	})
+
 	describe('removeWorktreeSafely', () => {
 		it('worktree remove tolerates a worktree already gone from disk', () => {
 			const calls: string[][] = []
@@ -513,6 +583,17 @@ describe('spec:cyber-mux/mux', () => {
 				branch: 'b',
 			})
 			expect(calls[0]).toEqual(['-C', '/repo', 'worktree', 'add', '-b', 'b', '/repo/x'])
+		})
+
+		it('prune() defaults its root to primaryRoot() and delegates', () => {
+			const calls: string[][] = []
+			const exec: Exec = (_cmd, args) => {
+				calls.push(args)
+				return args.includes('--git-common-dir') ? '/repo/.git' : ''
+			}
+			expect(worktreeApi({ exec }).prune()).toEqual({ removed: [], skipped: [] })
+			expect(calls[0]).toEqual(['rev-parse', '--path-format=absolute', '--git-common-dir'])
+			expect(calls[1]).toEqual(['-C', '/repo', 'worktree', 'list', '--porcelain'])
 		})
 	})
 })
