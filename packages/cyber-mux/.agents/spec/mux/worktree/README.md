@@ -94,6 +94,30 @@ neither answers for the other.
   The listing **reports; it never acts**. Removal keeps exactly the gates it always had and consults
   no disposability signal, and nothing here deletes or prunes of its own accord.
 
+- **`acquire` reuses a free worktree instead of always creating one — the twin of prune** — every
+  worktree-backed spawn creating a fresh checkout is real churn (disk + git) on each spawn/teardown
+  cycle. `acquire` is the pressure-relief: given a pool of worktrees, hand back a **free** one, else
+  create. It is the exact mirror of `prune` — prune **removes** disposable worktrees, acquire
+  **recycles** one — and it asks the *same* question through the *same* predicate, so the two can never
+  disagree about which worktrees are free. The **default availability gate is the disposability
+  composite** (`isWorktreeRemovable`): a reuse candidate is one prune would have deleted. It reports
+  **what it did** — `reused` or `created`, which worktree, and (on reuse) the recycled entry in full,
+  so its prior branch and its `workspace` occupancy reach the caller.
+
+  Availability is an **injected predicate**, and that is the load-bearing boundary. The clean / landed
+  / on-disk / unoccupied part is generic git and is the default here; but *"no **live agent session** is
+  attached"* is a **host** concept — a cyberlegion ship/pane — this seam must never know, so it enters
+  as a `(entry) => boolean` parameter the host composes on top. The default excludes a worktree a mux
+  workspace holds; a host may narrow it further (a live-pane check) or loosen it, because the predicate
+  *replaces* the default rather than only ANDing with it.
+
+  On reuse the candidate is reset to a **pristine tree on a fresh branch** — `switch -c <branch>
+  <base>`, then `reset --hard`, then `clean -fdx`. The safety is the gate's own: `merged` proves the old
+  branch landed (repointing it destroys nothing the trunk lacks — the very fact prune deletes on),
+  `dirty === false` proves nothing uncommitted is clobbered. `base` is the caller's, else the resolved
+  default branch, else `HEAD`. The destructive clean is a **ratified** choice, not a silent default (see
+  the `worktree-acquire` decision).
+
 - **`worktree add` is plain git until a placement is asked for** — with neither `--at` nor
   `--launch` it creates a checkout, opens nothing, and resolves no backend, so it works outside any
   multiplexer. There is nothing to group because nothing was opened. `--launch` implies
@@ -179,6 +203,17 @@ Every scenario in [`worktree.feature`](./worktree.feature), one row each, groupe
 | gate: checkout already gone → tolerated, no git removal | a path with nothing checked out there | `worktree remove tolerates a worktree already gone from disk` |
 | gate: dirty and no `--force` → refused | a worktree with uncommitted changes, no `--force` | `worktree remove refuses uncommitted changes unless --force` |
 | gate: dirty with `--force` → removed | a worktree with uncommitted changes, `--force` | `worktree remove --force discards uncommitted changes without the dirty check` |
+
+### acquire — reuse a free worktree, else create (prune's twin)
+
+| Edge | Path (Given) | Scenario |
+|---|---|---|
+| a free candidate exists → reuse it, reset to a pristine fresh branch | a pool with a merged, clean, unoccupied worktree | `acquire reuses a free worktree, resetting it to a pristine tree on a fresh branch` |
+| explicit `base` → the reused branch starts there | `acquire` with a `--base` given | `acquire branches a reused worktree from an explicit base` |
+| no candidate → create, recycling nothing | a pool with no available worktree | `acquire creates a fresh worktree when none is available` |
+| default gate is the disposability composite → an unmerged worktree is never reused | a pool whose only free-looking worktrees are unmerged | `acquire never reuses an unmerged worktree under the default gate` |
+| the injected predicate excludes a held one → the next free one is picked | a live session bound to the first candidate | `acquire never hands back a worktree the availability predicate excludes` |
+| the primary checkout is never a candidate | a predicate that would clear everything | `acquire never reuses the primary checkout` |
 
 ### worktree/workspace binding
 
