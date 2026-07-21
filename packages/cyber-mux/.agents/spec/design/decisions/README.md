@@ -218,3 +218,60 @@ Decisions (`59-suite-format-repair` — closing the `56-spec-corpus-drift` suite
     internal-call/evaluative shapes the audit named, then confirmed against `sdd:suite-format-governance`
     by hand. `check-suite`'s scenario-map binding check caught the one title rename that needed a
     README update. `pnpm verify` green after.
+
+Decisions (`45-screen-adapter` — a screen adapter, or an honest rejection):
+
+- **`screen` is DROPPED as a drivable backend, kept as a DETECTED-but-rejected value** — DECIDED after
+  an empirical probe. The `CYBER_MUX` contract, the docs, and the code disagreed: `screen` was named
+  as an accepted override value alongside `tmux`/`herdr`/`wezterm`, but no adapter stood behind it, so
+  pinning `CYBER_MUX=screen` produced the generic "run inside a multiplexer" throw — a lie, since the
+  caller had declared a real multiplexer. Issue #45 framed it as a fork: build the adapter, or drop
+  the value. **Dropped.** The value stays KNOWN (the probe still recognizes an override pinning it and
+  a screen ancestor), but `selectSessionAdapter`/`resolveMuxAdapter` reject it with a message that
+  NAMES screen and states the reason. Keeping it recognized-then-rejected is what makes the override
+  honest: pinning it tells the caller the truth immediately instead of being silently ignored and
+  fallen through to discovery.
+
+- **the probe that decided the fork — screen has no stable per-pane identity for DRIVEN panes** —
+  DECIDED against `implement`, on evidence, not on a self-imposed design limit. Probed live against
+  **GNU Screen 5.0.2** (installed via linuxbrew; no apt/root in the sandbox), driving a detached
+  session exactly as an adapter would (`screen -dmS`, `screen -X`, `-p <n> -X stuff`, `-X hardcopy`):
+  - **Windows have stable numbers, addressable for send/read.** `screen -p N -X stuff` reaches window
+    N; `screen -p N -X hardcopy <tmpfile>` captures it. So a *window*-modeled pane is externally
+    addressable — the one affordance that works.
+  - **Self-identity is broken for driver-created panes.** `$WINDOW` is set (`=0`) only for windows
+    screen itself spawns (the initial window); it is **empty** for windows created via `screen -X
+    screen` — exactly how an adapter opens a pane. `$STY` is likewise truncated to the session name
+    (not the canonical `PID.tty.host`) for remote-created windows. tmux/herdr/wezterm each guarantee a
+    per-pane env var (`$TMUX_PANE`/`$HERDR_PANE_ID`/`$WEZTERM_PANE`); screen does not, so `currentPane`
+    would have to be **synthesized** by cyber-mux (inject `CYBER_MUX_PANE` through a `bash -c 'export
+    …; exec'` launch wrapper), not read.
+  - **No enumeration primitive when driven.** `screen -Q windows` returns empty in a detached/driven
+    session; only `-Q number` (the *current* window) answers. `listPanes`/`paneExists` — and the
+    free-window-number pick a silent `-X screen` would need to know the id it just created — have no
+    clean backend query; they would have to parse a rendered `windowlist` hardcopy. Fragile.
+  - **Regions have no id at all** — screen's native split unit is positional-only (`focus
+    next/prev/up/down`), so a faithful adapter must remodel "pane" as "window" with fragile,
+    positional, ephemeral viewports, not use screen's own splits.
+  Contrast wezterm (#47), which fit cleanly: `$WEZTERM_PANE` in every pane, `list --format json`
+  returning id/tab/workspace/cwd/title, a real workspace tier. Screen fails on the **two** most
+  load-bearing seam operations — self-identity and enumeration — and the id-injection workaround for
+  the first is itself blocked by the second. That is not the "clearly favorable" probe that would
+  justify a large, empirically-unverifiable adapter build; per the seam's own preference, a
+  half-faithful adapter with unstable identity is worse than an honest rejection.
+
+- **the drop is deliberately NOT a removal of `screen` from the known set** — DECIDED, and the
+  alternative was considered and rejected. Removing `screen` from `KNOWN_MUX`/`MUX_COMM` would make
+  `CYBER_MUX=screen` an *unknown* value that falls through to ancestry discovery — silently ignoring
+  the override and driving whatever else is out there. That is the exact failure the override exists to
+  prevent (it exists to PIN detection when the ancestry walk cannot). So `screen` stays detected; only
+  the drive step rejects it. `none` is the precedent for "known but not a backend"; `screen` joins it,
+  with its own message because — unlike `none` — a screen caller *is* inside a multiplexer.
+
+- **the fork was ratified by the Council, not decided unilaterally** — DECIDED to surface the priced
+  fork rather than silently commit to either path: the probe was favorable enough on the
+  windows-have-ids axis to be worth a ratification, and DROP (the recommended default) was chosen. The
+  large-CR IMPLEMENT path (a `session.screen.ts` modeling panes as windows, synthesizing identity via
+  a launch wrapper, parsing windowlist hardcopy for enumeration, widening `LivePane.mux` +
+  consumers, omitting `regions`/`worktree`, all empirically unverifiable end-to-end) remains on record
+  here should someone ever want to reprice it — the probe is the input that would decide it again.

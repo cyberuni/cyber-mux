@@ -26,6 +26,19 @@ import { type NudgeOptions, type NudgeResult, nudge } from './nudge.ts'
  * their existing adapters; anything else throws, because a caller asking to drive panes with no
  * multiplexer has an unmet precondition, and a loud, actionable failure beats a silent no-op.
  *
+ * `screen` is a KNOWN mux — the probe detects it (ancestry) and honors it as an override (fast-path)
+ * — but it is NOT a drivable backend, so it throws its OWN message naming the reason rather than the
+ * generic "no multiplexer" one. That distinction is the whole point of issue #45: a caller who
+ * pinned `CYBER_MUX=screen` declared a real multiplexer, and telling them "run inside a multiplexer"
+ * would be a lie. The empirical probe behind the rejection is recorded in the ADR log
+ * (`.agents/spec/design/decisions`): GNU Screen addresses its split regions POSITIONALLY (no
+ * per-pane id), and `$WINDOW` is left unset in panes opened via `screen -X`, so a driver-created
+ * pane has no stable identity to send to, read from, self-identify by, or enumerate — the exact
+ * affordance `SessionTarget.id`/`currentPane`/`LivePane.id` are load-bearing on, and the exact one
+ * wezterm (#47) had and screen lacks. Keeping the value KNOWN-but-rejected honors the override's
+ * whole reason to exist: pinning it tells the caller the truth immediately instead of silently
+ * discovering something else.
+ *
  * Returns the PURE, exec-injected `MuxAdapter` seam — the one whose methods each take an `Exec`.
  * `resolveMux` binds one of these into a `MuxSession`; this is the lower layer, exported for a caller
  * that wants to thread its own runner per call rather than bind one. Not in a multiplexer? Gate on
@@ -36,6 +49,14 @@ export function resolveMuxAdapter(env: NodeJS.ProcessEnv, exec: Exec = nodeExec)
 	if (probe.mux === 'tmux') return tmuxMuxAdapter
 	if (probe.mux === 'herdr') return herdrMuxAdapter
 	if (probe.mux === 'wezterm') return weztermMuxAdapter
+	if (probe.mux === 'screen') {
+		throw new Error(
+			'cyber-mux detected GNU Screen, which it cannot drive: Screen addresses its split regions ' +
+				'positionally (no per-pane id) and leaves $WINDOW unset in panes opened via `screen -X`, so a ' +
+				'pane has no stable identity to send to, read from, or self-identify by. Run inside tmux ' +
+				'($TMUX), herdr ($HERDR_ENV=1), or wezterm ($WEZTERM_PANE set) instead.',
+		)
+	}
 	throw new Error(
 		'cyber-mux requires a session backend — run inside tmux ($TMUX), herdr ($HERDR_ENV=1), or wezterm ($WEZTERM_PANE set)',
 	)
