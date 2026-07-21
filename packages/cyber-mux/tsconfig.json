@@ -6,6 +6,10 @@
 		"types": ["node"],
 		"strict": true,
 		"exactOptionalPropertyTypes": true,
+		"verbatimModuleSyntax": true,
+		"isolatedModules": true,
+		"declaration": true,
+		"isolatedDeclarations": true,
 		"noEmit": true,
 		"allowImportingTsExtensions": true,
 		"skipLibCheck": true

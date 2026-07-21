@@ -27,7 +27,7 @@ export class CliError extends Error {
 		readonly exit: 1 | 2,
 		/** Extra structured fields the JSON form carries beside code/message/help — e.g. an ambiguity's
 		 * candidates. Never free-text; a machine reads these. */
-		readonly extra?: Record<string, unknown>,
+		readonly extra?: Record<string, unknown> | undefined,
 	) {
 		super(message)
 		this.name = 'CliError'
