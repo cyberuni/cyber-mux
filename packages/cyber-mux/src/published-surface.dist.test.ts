@@ -29,8 +29,10 @@ describe('spec:cyber-mux/library — published surface', () => {
 			expect(typeof wt.resolvePrimaryRoot).toBe('function')
 			expect(typeof wt.gitWorktreeAdapter.add).toBe('function')
 			expect(typeof wt.nodeWorktreeFs.exists).toBe('function')
+			expect(typeof wt.worktreeApi).toBe('function')
 			expect(typeof tpl.nodeTemplateStore.read).toBe('function')
 			expect(typeof tpl.resolveTemplate).toBe('function')
+			expect(typeof tpl.templateApi).toBe('function')
 		})
 
 		it('emits non-empty .d.mts declarations for every entry (dts: true actually produced types)', () => {
@@ -90,6 +92,7 @@ describe('spec:cyber-mux/library — published surface', () => {
 				'removeWorktreeSafely',
 				'resolvePrimaryRoot',
 				'resolveWorktreePath',
+				'worktreeApi',
 			])
 		})
 
@@ -105,6 +108,7 @@ describe('spec:cyber-mux/library — published surface', () => {
 				'parseTemplate',
 				'resolveTemplate',
 				'resolveTree',
+				'templateApi',
 				'templateDirs',
 				'validateTemplate',
 			])

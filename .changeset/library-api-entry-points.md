@@ -10,8 +10,10 @@ Expose a library API. `cyber-mux` now publishes real entry points beside the CLI
   `callerPane`; the tmux/herdr/wezterm adapters; `nudge`; and the `Exec`/`NewId` seams (each a type
   plus its real implementation).
 - `cyber-mux/worktree` — the git-worktree adapter (`resolvePrimaryRoot`, `assertDistinctFromPrimary`,
-  `gitWorktreeAdapter`, `listWorktreesFromGit`, `removeWorktreeSafely`, and the `WorktreeFs` seam).
-- `cyber-mux/template` — template resolution and the `TemplateStore` seam.
+  `gitWorktreeAdapter`, `listWorktreesFromGit`, `removeWorktreeSafely`, and the `WorktreeFs` seam),
+  plus `worktreeApi(deps?)` — the same helpers with `Exec`/`WorktreeFs` bound.
+- `cyber-mux/template` — template resolution and the `TemplateStore` seam, plus `templateApi(env, deps?)`
+  — resolution with `env`/`Exec`/`TemplateStore` bound.
 
 Every entry ships type declarations, and the core is pure: it takes its effects (`Exec`, `NewId`,
 `WorktreeFs`, `TemplateStore`) as parameters, with the real implementations exported as separate

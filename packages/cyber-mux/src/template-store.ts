@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir as osHomedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
-import type { Exec } from './exec.ts'
+import { type Exec, nodeExec } from './exec.ts'
 import { isValidTemplateName } from './template.ts'
 import { resolvePrimaryRoot } from './worktree.ts'
 
@@ -177,4 +177,40 @@ export function listTemplates(store: TemplateStore, dirs: TemplateDirs): Templat
 			shadowed: repoNames.has(name),
 		})),
 	]
+}
+
+/** The seams a `TemplateApi` binds. Both optional, each defaulting to its Node-backed impl. */
+export interface TemplateDeps {
+	exec?: Exec | undefined
+	store?: TemplateStore | undefined
+}
+
+/**
+ * Template resolution with `env` / `Exec` / `TemplateStore` BOUND — the ergonomic surface over the
+ * raw, seam-taking functions above. `templateApi(env, deps?)` binds once (defaulting to
+ * `nodeExec` / `nodeTemplateStore`); `env` is bound like `resolveMux(env)` because the searched
+ * directories read `$XDG_CONFIG_HOME` / `$HOME`. The raw functions stay exported for a caller
+ * threading its own; the pure schema functions (`validateTemplate`, `resolveTree`, …) never needed one.
+ */
+export interface TemplateApi {
+	/** The two searched directories — `templateDirs` bound. */
+	dirs(): TemplateDirs
+	/** Resolve a template to its bytes — `resolveTemplate` bound. */
+	resolve(opts: { name?: string | undefined; file?: string | undefined }): ResolvedTemplate
+	/** Every resolvable template, repo first; `dirs` defaults to `dirs()` — `listTemplates` bound. */
+	list(dirs?: TemplateDirs | undefined): TemplateListing[]
+}
+
+/**
+ * Bind template resolution to an environment, runner, and store once, returning a `TemplateApi` whose
+ * methods no longer take them. `deps` default to `nodeExec` / `nodeTemplateStore`.
+ */
+export function templateApi(env: NodeJS.ProcessEnv, deps?: TemplateDeps | undefined): TemplateApi {
+	const exec = deps?.exec ?? nodeExec
+	const store = deps?.store ?? nodeTemplateStore
+	return {
+		dirs: () => templateDirs(exec, env),
+		resolve: (opts) => resolveTemplate({ ...opts, store, exec, env }),
+		list: (dirs) => listTemplates(store, dirs ?? templateDirs(exec, env)),
+	}
 }

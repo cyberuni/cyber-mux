@@ -8,6 +8,7 @@ import {
 	removeWorktreeSafely,
 	resolvePrimaryRoot,
 	resolveWorktreePath,
+	worktreeApi,
 } from './worktree.ts'
 
 describe('spec:cyber-mux/mux', () => {
@@ -475,6 +476,43 @@ describe('spec:cyber-mux/mux', () => {
 
 		it('refuses even when paths differ only by trailing slash / relative segments', () => {
 			expect(() => assertDistinctFromPrimary('/repo/sub/..', '/repo')).toThrow(/primary checkout/)
+		})
+	})
+
+	describe('worktreeApi — the bound facade', () => {
+		it('binds exec: primaryRoot() resolves through the bound runner, no exec threaded', () => {
+			const calls: string[][] = []
+			const exec: Exec = (_cmd, args) => {
+				calls.push(args)
+				return args.includes('--git-common-dir') ? '/repo/.git' : ''
+			}
+			const wt = worktreeApi({ exec })
+			expect(wt.primaryRoot()).toBe('/repo')
+			expect(calls[0]).toEqual(['rev-parse', '--path-format=absolute', '--git-common-dir'])
+		})
+
+		it('list() defaults its root to primaryRoot() and delegates', () => {
+			const calls: string[][] = []
+			const exec: Exec = (_cmd, args) => {
+				calls.push(args)
+				return args.includes('--git-common-dir') ? '/repo/.git' : ''
+			}
+			expect(worktreeApi({ exec }).list()).toEqual([])
+			expect(calls[0]).toEqual(['rev-parse', '--path-format=absolute', '--git-common-dir'])
+			expect(calls[1]).toEqual(['-C', '/repo', 'worktree', 'list', '--porcelain'])
+		})
+
+		it('add() delegates to the git adapter with the bound runner', () => {
+			const calls: string[][] = []
+			const exec: Exec = (_cmd, args) => {
+				calls.push(args)
+				return ''
+			}
+			expect(worktreeApi({ exec }).add({ primaryRoot: '/repo', path: '/repo/x', branch: 'b' })).toEqual({
+				root: '/repo/x',
+				branch: 'b',
+			})
+			expect(calls[0]).toEqual(['-C', '/repo', 'worktree', 'add', '-b', 'b', '/repo/x'])
 		})
 	})
 })

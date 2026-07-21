@@ -66,6 +66,30 @@ never disagree about what a flat template means. Takes either carrier of a tree 
 Also exported: **`desugar(panes, arrange)`**, **`collectPanes(node)`** (every pane in template
 order), and **`firstPane(node)`** (the pane that lands on a subtree's existing region).
 
+## Bound facade — `templateApi`
+
+The ergonomic surface over resolution: `templateApi(env, deps?)` binds `env` + `Exec` + `TemplateStore`
+once (defaulting to `nodeExec` / `nodeTemplateStore`), returning a `TemplateApi` whose methods drop
+them. `env` is bound like [`resolveMux`](/cyber-mux/api/mux-adapter/)`(env)` because the searched
+directories read `$XDG_CONFIG_HOME` / `$HOME`.
+
+```ts
+import { templateApi } from 'cyber-mux/template'
+
+const tpl = templateApi(process.env)     // or templateApi(env, { exec, store }) to inject
+const { raw } = tpl.resolve({ name: 'dev' })
+for (const t of tpl.list()) { /* ... */ }   // list() defaults its dirs to dirs()
+```
+
+| method | binds + wraps |
+| --- | --- |
+| `tpl.dirs()` | `templateDirs` |
+| `tpl.resolve({ name?, file? })` | `resolveTemplate` |
+| `tpl.list(dirs?)` | `listTemplates` — `dirs` defaults to `dirs()` |
+
+`deps` is `TemplateDeps { exec?, store? }`. The functions below are the **raw seam** it binds; the pure
+schema functions above (`validateTemplate`, `resolveTree`, …) never took a seam at all.
+
 ## Resolution
 
 The filesystem-backed seam that finds a template's bytes across the searched directories.

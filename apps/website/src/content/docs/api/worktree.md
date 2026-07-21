@@ -19,6 +19,33 @@ import {
 } from 'cyber-mux/worktree'
 ```
 
+## Bound facade — `worktreeApi`
+
+The ergonomic surface: `worktreeApi(deps?)` binds `Exec` + `WorktreeFs` once (defaulting to
+`nodeExec` / `nodeWorktreeFs`), returning a `WorktreeApi` whose methods drop the runner — mirroring
+how [`resolveMux`](/cyber-mux/api/mux-adapter/) binds the mux adapter.
+
+```ts
+import { worktreeApi } from 'cyber-mux/worktree'
+
+const wt = worktreeApi()                       // or worktreeApi({ exec, fs }) to inject
+const root = wt.primaryRoot()
+for (const entry of wt.list()) { /* ... */ }   // list() defaults its root to primaryRoot()
+wt.removeSafely(somePath, { primaryRoot: root })
+```
+
+| method | binds + wraps |
+| --- | --- |
+| `wt.primaryRoot()` | `resolvePrimaryRoot` |
+| `wt.list(root?)` | `listWorktreesFromGit` — `root` defaults to `primaryRoot()` |
+| `wt.add(opts)` | `gitWorktreeAdapter.add` |
+| `wt.removeSafely(path, opts)` | `removeWorktreeSafely` — its `fs` supplied |
+| `wt.normalizePath(path)` | `normalizeWorktreePath` |
+
+`deps` is `WorktreeDeps { exec?, fs? }`. The functions below are the **raw seam** `worktreeApi` binds
+— call them directly to thread your own runner per call. Pure helpers (`isWorktreeRemovable`,
+`resolveWorktreePath`, `assertDistinctFromPrimary`) have no seam and stay free functions.
+
 ## Reading worktrees
 
 ### `resolvePrimaryRoot(exec)`

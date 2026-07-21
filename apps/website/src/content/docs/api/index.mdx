@@ -29,8 +29,8 @@ need.
 | Import | What it is | Page |
 | --- | --- | --- |
 | `cyber-mux` | The mux core — [`resolveMux`](/cyber-mux/api/mux-adapter/) and the [`MuxSession`](/cyber-mux/api/mux-adapter/) it returns, the raw [`MuxAdapter`](/cyber-mux/api/mux-adapter/#the-raw-seam) contract underneath, the three adapters, [`nudge`](/cyber-mux/api/nudge/), the [probe](/cyber-mux/api/probe/), and the `Exec`/`NewId` seams. | [MuxAdapter](/cyber-mux/api/mux-adapter/) |
-| `cyber-mux/worktree` | The git-worktree adapter and its read helpers — list, resolve, and remove worktrees safely. | [Worktree](/cyber-mux/api/worktree/) |
-| `cyber-mux/template` | The template schema, its validator, the flat-N desugarer, and the filesystem-backed resolution seam. | [Template](/cyber-mux/api/template/) |
+| `cyber-mux/worktree` | `worktreeApi` — the git-worktree helpers (list, resolve, remove safely) with `Exec`/`fs` bound — over the raw exec-first functions. | [Worktree](/cyber-mux/api/worktree/) |
+| `cyber-mux/template` | `templateApi` — bound resolution — plus the template schema, validator, and flat-N desugarer. | [Template](/cyber-mux/api/template/) |
 
 ## The seam pattern
 

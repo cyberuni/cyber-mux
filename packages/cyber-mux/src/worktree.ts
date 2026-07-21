@@ -1,6 +1,6 @@
 import { existsSync, realpathSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
-import type { Exec } from './exec.ts'
+import { type Exec, nodeExec } from './exec.ts'
 
 /** Generic worktree seam — no host-specific concepts. */
 
@@ -24,7 +24,7 @@ export const nodeWorktreeFs: WorktreeFs = {
 	realpath: (path) => realpathSync.native(path),
 }
 
-interface WorktreeAddOptions {
+export interface WorktreeAddOptions {
 	/** The primary checkout's root — the repo `git worktree add` runs against. */
 	primaryRoot: string
 	/** Where the new worktree should be checked out. */
@@ -332,4 +332,55 @@ export function removeWorktreeSafely(
 	}
 	opts.releaseBinding?.()
 	gitWorktreeAdapter.remove(exec, path, { primaryRoot: opts.primaryRoot })
+}
+
+/** The seams a `WorktreeApi` binds. Both optional, each defaulting to its Node-backed impl. */
+export interface WorktreeDeps {
+	exec?: Exec | undefined
+	fs?: WorktreeFs | undefined
+}
+
+/** `removeWorktreeSafely`'s options minus `fs` — the `WorktreeApi` supplies the bound one. */
+export interface RemoveWorktreeOptions {
+	primaryRoot: string
+	force?: boolean | undefined
+	releaseBinding?: (() => void) | undefined
+}
+
+/**
+ * The git-worktree helpers with their `Exec`/`WorktreeFs` BOUND — the ergonomic surface over the raw,
+ * exec-first functions above. `worktreeApi(deps?)` binds once (defaulting to
+ * `nodeExec`/`nodeWorktreeFs`); every method then drops the runner. The raw functions stay exported
+ * for a caller threading its own per call, exactly as `resolveMuxAdapter` sits under `resolveMux`.
+ *
+ * Pure helpers with no seam to bind — `isWorktreeRemovable`, `resolveWorktreePath`,
+ * `assertDistinctFromPrimary` — stay free functions.
+ */
+export interface WorktreeApi {
+	/** The primary checkout's root — `resolvePrimaryRoot` bound. */
+	primaryRoot(): string
+	/** Every worktree git reports; `primaryRoot` defaults to `primaryRoot()` — `listWorktreesFromGit` bound. */
+	list(primaryRoot?: string | undefined): WorktreeEntry[]
+	/** Create a worktree — `gitWorktreeAdapter.add` bound. */
+	add(opts: WorktreeAddOptions): Worktree
+	/** Remove a worktree under cyber-mux's gates — `removeWorktreeSafely` bound (its `fs` supplied). */
+	removeSafely(path: string, opts: RemoveWorktreeOptions): void
+	/** Symlink-resolved, native-cased path — `normalizeWorktreePath` bound. */
+	normalizePath(path: string): string
+}
+
+/**
+ * Bind the git-worktree helpers to a runner and filesystem once, returning a `WorktreeApi` whose
+ * methods no longer take an `Exec`. `deps` default to `nodeExec` / `nodeWorktreeFs`.
+ */
+export function worktreeApi(deps?: WorktreeDeps | undefined): WorktreeApi {
+	const exec = deps?.exec ?? nodeExec
+	const fs = deps?.fs ?? nodeWorktreeFs
+	return {
+		primaryRoot: () => resolvePrimaryRoot(exec),
+		list: (primaryRoot) => listWorktreesFromGit(exec, primaryRoot ?? resolvePrimaryRoot(exec), fs),
+		add: (opts) => gitWorktreeAdapter.add(exec, opts),
+		removeSafely: (path, opts) => removeWorktreeSafely(exec, path, { ...opts, fs }),
+		normalizePath: (path) => normalizeWorktreePath(path, fs),
+	}
 }
