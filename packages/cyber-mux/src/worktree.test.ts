@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Exec } from './exec.ts'
 import {
+	acquireWorktree,
 	assertDistinctFromPrimary,
 	gitWorktreeAdapter,
 	isWorktreeRemovable,
@@ -9,6 +10,7 @@ import {
 	removeWorktreeSafely,
 	resolvePrimaryRoot,
 	resolveWorktreePath,
+	type WorktreeEntry,
 	worktreeApi,
 } from './worktree.ts'
 
@@ -387,6 +389,150 @@ describe('spec:cyber-mux/mux', () => {
 		})
 	})
 
+	describe('acquireWorktree', () => {
+		// Primary on main + two landed (merged, clean) candidates and one unmerged worktree — the pool
+		// acquire recycles from, the twin of prune's own porcelain.
+		const porcelain = [
+			'worktree /repo',
+			'branch refs/heads/main',
+			'',
+			'worktree /repo.worktrees/landed',
+			'branch refs/heads/feat/landed',
+			'',
+			'worktree /repo.worktrees/landed2',
+			'branch refs/heads/feat/landed2',
+			'',
+			'worktree /repo.worktrees/open',
+			'branch refs/heads/feat/open',
+			'',
+		].join('\n')
+
+		const fakeFs = { exists: () => true, realpath: (path: string) => path }
+
+		// Route by verb so the internal `list` read and the recycle/add writes each get their own answer;
+		// `switch`/`reset`/`clean`/`add` all succeed with an empty string, never the porcelain dump.
+		const gitFake =
+			(calls: string[][], answers: { merged: string; status?: (root: string) => string | null }): Exec =>
+			(_cmd, args) => {
+				calls.push(args)
+				if (args.includes('symbolic-ref')) return 'origin/main'
+				if (args.includes('--merged')) return answers.merged
+				if (args[2] === 'status') return answers.status?.(args[1]!) ?? ''
+				if (args[2] === 'worktree' && args[3] === 'list') return porcelain
+				return ''
+			}
+
+		const bothLanded = { merged: 'main\nfeat/landed\nfeat/landed2', status: () => '' }
+
+		it('reuses the first available worktree, resetting it to a pristine tree on a fresh branch', () => {
+			const calls: string[][] = []
+			const result = acquireWorktree(gitFake(calls, bothLanded), '/repo', {
+				create: { path: '/repo.worktrees/new', branch: 'feat/new' },
+				fs: fakeFs,
+			})
+			expect(result.action).toBe('reused')
+			expect(result.worktree).toEqual({ root: '/repo.worktrees/landed', branch: 'feat/new' })
+			expect(result.reused).toMatchObject({ root: '/repo.worktrees/landed', merged: true, dirty: false })
+			// The ratified reuse semantics: fresh branch at base, then hard reset, then a full clean.
+			// base defaults to the resolved default branch (origin/HEAD → origin/main) when none is given.
+			expect(calls).toContainEqual(['-C', '/repo.worktrees/landed', 'switch', '-c', 'feat/new', 'origin/main'])
+			expect(calls).toContainEqual(['-C', '/repo.worktrees/landed', 'reset', '--hard', 'origin/main'])
+			expect(calls).toContainEqual(['-C', '/repo.worktrees/landed', 'clean', '-fdx'])
+			// Reuse means NO new checkout — the whole point.
+			expect(calls.some((a) => a[2] === 'worktree' && a[3] === 'add')).toBe(false)
+		})
+
+		it('branches the reused worktree from an explicit base when one is given', () => {
+			const calls: string[][] = []
+			acquireWorktree(gitFake(calls, bothLanded), '/repo', {
+				create: { path: '/repo.worktrees/new', branch: 'feat/new', base: 'release/1.0' },
+				fs: fakeFs,
+			})
+			expect(calls).toContainEqual(['-C', '/repo.worktrees/landed', 'switch', '-c', 'feat/new', 'release/1.0'])
+			expect(calls).toContainEqual(['-C', '/repo.worktrees/landed', 'reset', '--hard', 'release/1.0'])
+		})
+
+		it('creates a fresh worktree when none is available, recycling nothing', () => {
+			const calls: string[][] = []
+			const result = acquireWorktree(gitFake(calls, bothLanded), '/repo', {
+				create: { path: '/repo.worktrees/new', branch: 'feat/new', base: 'origin/main' },
+				available: () => false,
+				fs: fakeFs,
+			})
+			expect(result.action).toBe('created')
+			expect(result.worktree).toEqual({ root: '/repo.worktrees/new', branch: 'feat/new' })
+			expect(result.reused).toBeUndefined()
+			expect(calls).toContainEqual([
+				'-C',
+				'/repo',
+				'worktree',
+				'add',
+				'-b',
+				'feat/new',
+				'/repo.worktrees/new',
+				'origin/main',
+			])
+			expect(calls.some((a) => a[2] === 'switch')).toBe(false)
+		})
+
+		it('the default gate is isWorktreeRemovable, so an unmerged worktree is never reused', () => {
+			const calls: string[][] = []
+			// Only the primary's own branch is merged — no linked worktree qualifies, so acquire creates.
+			const result = acquireWorktree(gitFake(calls, { merged: 'main', status: () => '' }), '/repo', {
+				create: { path: '/repo.worktrees/new', branch: 'feat/new', base: 'origin/main' },
+				fs: fakeFs,
+			})
+			expect(result.action).toBe('created')
+			expect(calls.some((a) => a[2] === 'switch')).toBe(false)
+		})
+
+		it('never hands back a held worktree — the injected predicate excludes it and the next free one is picked', () => {
+			const calls: string[][] = []
+			// A host predicate standing in for "a live session is bound to /landed": it is disqualified even
+			// though the generic gate would clear it, so acquire recycles /landed2 instead.
+			const held = '/repo.worktrees/landed'
+			const result = acquireWorktree(gitFake(calls, bothLanded), '/repo', {
+				create: { path: '/repo.worktrees/new', branch: 'feat/new', base: 'origin/main' },
+				available: (entry: WorktreeEntry) => entry.root !== held && isWorktreeRemovable(entry),
+				fs: fakeFs,
+			})
+			expect(result.action).toBe('reused')
+			expect(result.reused?.root).toBe('/repo.worktrees/landed2')
+			expect(calls.some((a) => a[2] === 'switch' && a[1] === held)).toBe(false)
+			expect(calls).toContainEqual(['-C', '/repo.worktrees/landed2', 'switch', '-c', 'feat/new', 'origin/main'])
+		})
+
+		it('the primary checkout is never a reuse candidate, even under a predicate that would clear it', () => {
+			const calls: string[][] = []
+			// A predicate that says yes to everything still cannot reach the primary — it is filtered before
+			// the gate runs, matching prune's own absolute refusal.
+			const result = acquireWorktree(gitFake(calls, bothLanded), '/repo', {
+				create: { path: '/repo.worktrees/new', branch: 'feat/new', base: 'origin/main' },
+				available: () => true,
+				fs: fakeFs,
+			})
+			expect(result.reused?.root).not.toBe('/repo')
+			expect(calls.some((a) => a[2] === 'switch' && a[1] === '/repo')).toBe(false)
+		})
+
+		it('throws this module’s own error, not a bare git failure, when a recycle step fails', () => {
+			const failingSwitch: Exec = (_cmd, args) => {
+				if (args.includes('symbolic-ref')) return 'origin/main'
+				if (args.includes('--merged')) return bothLanded.merged
+				if (args[2] === 'status') return ''
+				if (args[2] === 'worktree' && args[3] === 'list') return porcelain
+				if (args[2] === 'switch') return null
+				return ''
+			}
+			expect(() =>
+				acquireWorktree(failingSwitch, '/repo', {
+					create: { path: '/repo.worktrees/new', branch: 'feat/new', base: 'origin/main' },
+					fs: fakeFs,
+				}),
+			).toThrow(/switch failed while recycling/)
+		})
+	})
+
 	describe('removeWorktreeSafely', () => {
 		it('worktree remove tolerates a worktree already gone from disk', () => {
 			const calls: string[][] = []
@@ -594,6 +740,24 @@ describe('spec:cyber-mux/mux', () => {
 			expect(worktreeApi({ exec }).prune()).toEqual({ removed: [], skipped: [] })
 			expect(calls[0]).toEqual(['rev-parse', '--path-format=absolute', '--git-common-dir'])
 			expect(calls[1]).toEqual(['-C', '/repo', 'worktree', 'list', '--porcelain'])
+		})
+
+		it('acquire() defaults its root to primaryRoot() and creates when the pool is empty', () => {
+			const calls: string[][] = []
+			const exec: Exec = (_cmd, args) => {
+				calls.push(args)
+				if (args.includes('--git-common-dir')) return '/repo/.git'
+				// An empty worktree list: nothing to reuse, so acquire falls through to add.
+				if (args[2] === 'worktree' && args[3] === 'list') return ''
+				return ''
+			}
+			const result = worktreeApi({ exec }).acquire({
+				create: { path: '/repo.worktrees/x', branch: 'b', base: 'origin/main' },
+			})
+			expect(result).toEqual({ action: 'created', worktree: { root: '/repo.worktrees/x', branch: 'b' } })
+			expect(calls[0]).toEqual(['rev-parse', '--path-format=absolute', '--git-common-dir'])
+			expect(calls[1]).toEqual(['-C', '/repo', 'worktree', 'list', '--porcelain'])
+			expect(calls.at(-1)).toEqual(['-C', '/repo', 'worktree', 'add', '-b', 'b', '/repo.worktrees/x', 'origin/main'])
 		})
 	})
 })

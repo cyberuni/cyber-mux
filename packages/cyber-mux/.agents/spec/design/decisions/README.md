@@ -358,3 +358,58 @@ Decisions (`46-zellij-adapter` — the fourth backend, and the pane-identity gat
   stdout (the viewport; `--full` plus a client-side tail for a `lines` request, Zellij having no
   trailing-N primitive); env is non-native on `new-pane`/`new-tab`, so every open rides the same
   `envFallback` prefix-or-warn compensation wezterm uses.
+
+Decisions (`worktree-acquire` — reuse a free worktree instead of always creating one, issue #79):
+
+- **`acquire` is `prune`'s twin, and shares its selection predicate** — DECIDED: the reuse-candidate set
+  is *exactly* the disposable set. `pruneWorktrees` REMOVES every worktree `isWorktreeRemovable` clears;
+  `acquireWorktree` RECYCLES one, and its **default availability gate IS `isWorktreeRemovable`** — the
+  same `linked && !prunable && merged && !dirty && !workspace` composite prune deletes on. Structured
+  identically (`acquireWorktree(exec, primaryRoot, opts)` raw + `WorktreeApi.acquire` bound, mirroring
+  `pruneWorktrees`/`prune`), so the two can never disagree about which worktrees are free — prune could
+  have deleted precisely the checkout acquire hands back. The primary checkout is filtered out
+  (`.filter(entry => entry.linked)`) **before** the gate runs, matching prune's own absolute refusal, so
+  even a host predicate that forgot the check can never return the primary.
+
+- **availability is an INJECTED predicate — the boundary is held** — DECIDED: `worktree.ts`'s rule is *no
+  host-specific concepts*, and "available" splits at exactly that line. The clean/landed/on-disk/
+  unoccupied part is generic git and stays here as the default `isWorktreeRemovable`. But "no **live agent
+  session** is attached to this worktree" is HOST semantics — a cyberlegion ship/pane this module must
+  never know — so it enters as `available?: (entry) => boolean`, a parameter, not a hardcoded rule. The
+  host (cyberlegion) composes its own predicate on top (`e => isWorktreeRemovable(e) && noLivePane(e)`, or
+  a looser one). No live-session/pane concept is hardcoded into `worktree.ts`; the seam is a plain
+  `WorktreeEntry` predicate keyed on facts already in the entry.
+
+- **occupancy: the DEFAULT excludes occupied, and it stays overridable** — DECIDED, Council-ratified. The
+  default gate is `isWorktreeRemovable`, whose `!workspace` clause excludes a worktree a mux workspace
+  holds — the safe default, and the exact mirror of prune. A host that wants to reuse an occupied-but-stale
+  worktree passes its own predicate; because availability is a *replaceable* predicate rather than an
+  always-ANDed rule, the host can genuinely LOOSEN the gate, not only narrow it. The alternative — dropping
+  the workspace clause from the generic gate and leaving occupancy entirely to the injected predicate — was
+  considered and rejected: it would make the default no longer mirror prune, and a caller who forgot the
+  predicate could reuse an occupied worktree. The result **always carries the reused entry in full**
+  (`reused: WorktreeEntry`), so its `workspace` (occupancy) and prior `branch` are reported to the caller,
+  per the Council's requirement that the response include workspace info.
+
+- **reuse-state: a reused worktree is reset to a PRISTINE tree on a fresh branch** — DECIDED,
+  Council-ratified over the two softer alternatives. On reuse the checkout is `git switch -c <branch>
+  <base>`, then `git reset --hard <base>`, then `git clean -fdx` — a fresh branch and a cold, deterministic
+  tree. The safety is *inherited from the gate*: the `merged` clause proves the old branch's work has
+  landed (repointing it destroys nothing the trunk lacks — the same fact prune leans on to delete the whole
+  checkout, here spent on reusing it), and the `dirty === false` clause proves there is nothing uncommitted
+  to clobber. Because the decision was ratified, the destructive `clean -fdx` is a **Council choice, not a
+  silent default**.
+  - **Alternatives surfaced and rejected:** *open as-is* (hand back on the existing merged branch) —
+    rejected because the caller's new commits would land on an old, landed branch, almost always the wrong
+    branch for new work; *fresh branch, warm tree* (skip `clean -fdx` to keep `node_modules`/`dist` warm as
+    the payoff over a fresh `add`) — a real contender the Council declined in favor of a guaranteed-pristine
+    tree, accepting that the reused checkout pays a reinstall.
+  - **`base` resolution:** the caller's `create.base` when given, else the resolved default branch
+    (`resolveDefaultBranchRef`, already in hand from the list — no new git plumbing), else `HEAD`. A caller
+    that wants reuse and create to land on an identical start-point passes `base` explicitly; the fallback
+    exists so a bare call is still deterministic.
+
+- **`dryRun` was NOT added, unlike prune** — DECIDED, on scope. Prune's `dryRun` exists because prune is
+  the CLI's *default* invocation and a bare run must be safe to preview; `acquire` is an *action a caller
+  asks for by name* and returns what it did (`action: 'reused' | 'created'`), so a preview mode has no
+  bare-invocation to protect. Left as a clean follow-up if a CLI `worktree acquire` verb ever wants one.

@@ -396,6 +396,95 @@ export function pruneWorktrees(
 	return { removed, skipped }
 }
 
+/** What a freshly-created worktree needs when none is free to reuse — the `add` path's inputs, minus
+ * `primaryRoot` (supplied positionally to `acquireWorktree`, exactly as it is to `pruneWorktrees`). */
+export interface WorktreeCreateSpec {
+	/** Where a fresh checkout goes — the caller's resolved path (e.g. `resolveWorktreePath`). */
+	path: string
+	/** Branch the handed-back worktree ends up on — created fresh on both paths, so reuse and create
+	 * yield the same branch for the same request. */
+	branch: string
+	/** Start-point for the new branch. Used verbatim on the create path (git's own default is HEAD);
+	 * on the reuse path it defaults to the resolved default branch, then `HEAD`, when omitted. */
+	base?: string | undefined
+}
+
+/** Whether `acquireWorktree` reused an existing checkout or created a fresh one. */
+export type WorktreeAcquireAction = 'reused' | 'created'
+
+/** What `acquireWorktree` did — the twin of `WorktreePruneResult`. `worktree` is the handed-back
+ * checkout on its new branch; `reused` is the entry that was recycled, carried in full so the caller
+ * can report the reclaim — including its prior branch and its `workspace` (occupancy). Absent when a
+ * fresh checkout was created. */
+export interface WorktreeAcquireResult {
+	action: WorktreeAcquireAction
+	worktree: Worktree
+	reused?: WorktreeEntry | undefined
+}
+
+/**
+ * Reuse a free worktree instead of creating a fresh one — the mirror of `pruneWorktrees`. Prune
+ * REMOVES every disposable worktree; acquire RECYCLES one, and both ask the same question through the
+ * same predicate, so they can never disagree about which worktrees are free.
+ *
+ * `available` is the injected availability gate, defaulting to `isWorktreeRemovable` — the exact
+ * predicate prune removes on. It is a PARAMETER, not a hardcoded rule, because "free" splits at the
+ * seam's own boundary: the clean/landed/on-disk/unoccupied part is generic git and lives here, but
+ * "no LIVE agent session is attached" is host semantics (a cyberlegion ship/pane) this module must
+ * never know. A host composes its own predicate on top; the default excludes worktrees a mux
+ * workspace holds, and a host may loosen that.
+ *
+ * When a candidate is reused, its branch and working tree are reset to a PRISTINE tree: a fresh branch
+ * at `base`, then `reset --hard`, then `clean -fdx`. The `merged` gate in the default predicate proves
+ * the old branch's work has landed, so repointing it destroys nothing the trunk does not already hold
+ * — the same safety prune leans on to delete the whole checkout, here spent on reusing it instead
+ * (see the `worktree-acquire` ADR for the ratified semantics). `base` defaults to the resolved default
+ * branch, then `HEAD`.
+ *
+ * The primary checkout is filtered out before the gate even runs, matching prune and
+ * `isWorktreeRemovable`'s own absolute refusal of it — so even a host predicate that forgot the check
+ * can never hand back the primary.
+ */
+export function acquireWorktree(
+	exec: Exec,
+	primaryRoot: string,
+	opts: {
+		create: WorktreeCreateSpec
+		available?: ((entry: WorktreeEntry) => boolean) | undefined
+		fs?: WorktreeFs | undefined
+	},
+): WorktreeAcquireResult {
+	const fs = opts.fs ?? nodeWorktreeFs
+	const available = opts.available ?? isWorktreeRemovable
+	const entries = listWorktreesFromGit(exec, primaryRoot, fs).filter((entry) => entry.linked)
+	const candidate = entries.find((entry) => available(entry))
+	if (candidate) {
+		const base = opts.create.base ?? resolveDefaultBranchRef(exec, primaryRoot, entries) ?? 'HEAD'
+		recycleWorktree(exec, candidate.root, opts.create.branch, base)
+		return { action: 'reused', worktree: { root: candidate.root, branch: opts.create.branch }, reused: candidate }
+	}
+	const worktree = gitWorktreeAdapter.add(exec, { primaryRoot, ...opts.create })
+	return { action: 'created', worktree }
+}
+
+/**
+ * Reset a reused checkout to a pristine tree on a fresh branch — the ratified reuse semantics. Each
+ * step is gated by the caller's availability predicate (merged + clean by default), so nothing here
+ * discards work that lives only in this checkout: `switch -c` repoints to the new branch at `base`,
+ * `reset --hard` pins the tree to it, and `clean -fdx` clears untracked and ignored state (a warm
+ * `node_modules` included) for a cold, deterministic start. Any failing git call throws this module's
+ * own error rather than leaving the checkout half-reset.
+ */
+function recycleWorktree(exec: Exec, root: string, branch: string, base: string): void {
+	const run = (args: string[]): void => {
+		if (exec('git', ['-C', root, ...args]) === null)
+			throw new WorktreeGitError(`git ${args[0]} failed while recycling worktree ${root}`)
+	}
+	run(['switch', '-c', branch, base])
+	run(['reset', '--hard', base])
+	run(['clean', '-fdx'])
+}
+
 /** The seams a `WorktreeApi` binds. Both optional, each defaulting to its Node-backed impl. */
 export interface WorktreeDeps {
 	exec?: Exec | undefined
@@ -429,6 +518,16 @@ export interface WorktreeApi {
 	removeSafely(path: string, opts: RemoveWorktreeOptions): void
 	/** Remove every disposable worktree; `primaryRoot` defaults to `primaryRoot()` — `pruneWorktrees` bound. */
 	prune(opts?: { primaryRoot?: string | undefined; dryRun?: boolean | undefined } | undefined): WorktreePruneResult
+	/**
+	 * Reuse a free worktree or create a fresh one; `primaryRoot` defaults to `primaryRoot()` —
+	 * `acquireWorktree` bound. `available` defaults to `isWorktreeRemovable`; a host injects its own to
+	 * add a live-session check (or to loosen occupancy).
+	 */
+	acquire(opts: {
+		primaryRoot?: string | undefined
+		create: WorktreeCreateSpec
+		available?: ((entry: WorktreeEntry) => boolean) | undefined
+	}): WorktreeAcquireResult
 	/** Symlink-resolved, native-cased path — `normalizeWorktreePath` bound. */
 	normalizePath(path: string): string
 }
@@ -446,6 +545,12 @@ export function worktreeApi(deps?: WorktreeDeps | undefined): WorktreeApi {
 		add: (opts) => gitWorktreeAdapter.add(exec, opts),
 		removeSafely: (path, opts) => removeWorktreeSafely(exec, path, { ...opts, fs }),
 		prune: (opts) => pruneWorktrees(exec, opts?.primaryRoot ?? resolvePrimaryRoot(exec), { dryRun: opts?.dryRun, fs }),
+		acquire: (opts) =>
+			acquireWorktree(exec, opts.primaryRoot ?? resolvePrimaryRoot(exec), {
+				create: opts.create,
+				available: opts.available,
+				fs,
+			}),
 		normalizePath: (path) => normalizeWorktreePath(path, fs),
 	}
 }
