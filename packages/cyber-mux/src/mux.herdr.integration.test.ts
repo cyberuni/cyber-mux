@@ -33,7 +33,7 @@ function hasHerdr(): boolean {
  * scratch repo here — and opens `--no-focus`, so like `open({at:'workspace'})` it resolves against
  * nothing the caller owns.
  */
-const insideHerdrPane = Boolean(process.env.HERDR_PANE_ID)
+const insideHerdrPane = Boolean(process.env['HERDR_PANE_ID'])
 
 /**
  * Whether herdr can resolve a CURRENT pane at all. Being outside a herdr pane is not enough to make

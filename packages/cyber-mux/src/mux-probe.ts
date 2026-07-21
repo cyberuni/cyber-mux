@@ -27,9 +27,9 @@ function isKnownMux(v: string | undefined): v is Mux {
  * table so the two never diverge on which env var a given mux uses.
  */
 const PANE_ENV: Record<PaneMux, (env: NodeJS.ProcessEnv) => string | undefined> = {
-	tmux: (env) => env.TMUX_PANE,
-	herdr: (env) => env.HERDR_PANE_ID,
-	wezterm: (env) => env.WEZTERM_PANE,
+	tmux: (env) => env['TMUX_PANE'],
+	herdr: (env) => env['HERDR_PANE_ID'],
+	wezterm: (env) => env['WEZTERM_PANE'],
 }
 
 /**
@@ -39,11 +39,11 @@ const PANE_ENV: Record<PaneMux, (env: NodeJS.ProcessEnv) => string | undefined> 
  * pane-carrying multiplexer. This is the mux-agnostic self-identity key.
  */
 export function currentPane(env: NodeJS.ProcessEnv): { mux: PaneMux; pane: string } | undefined {
-	if (env.CYBER_MUX_PANE) {
+	if (env['CYBER_MUX_PANE']) {
 		// The fast-path pane carries its mux in $CYBER_MUX (herdr/wezterm spawns tag it; tmux is the
 		// default when neither does).
-		const mux: PaneMux = env.CYBER_MUX === 'herdr' ? 'herdr' : env.CYBER_MUX === 'wezterm' ? 'wezterm' : 'tmux'
-		return { mux, pane: env.CYBER_MUX_PANE }
+		const mux: PaneMux = env['CYBER_MUX'] === 'herdr' ? 'herdr' : env['CYBER_MUX'] === 'wezterm' ? 'wezterm' : 'tmux'
+		return { mux, pane: env['CYBER_MUX_PANE'] }
 	}
 	const tmux = PANE_ENV.tmux(env)
 	if (tmux) return { mux: 'tmux', pane: tmux }
@@ -67,10 +67,10 @@ export function currentPane(env: NodeJS.ProcessEnv): { mux: PaneMux; pane: strin
  * inconclusive (e.g. `ps` unavailable), never as a substitute for it.
  */
 export function probeMultiplexer(exec: Exec, env: NodeJS.ProcessEnv, opts: { discover?: boolean } = {}): MuxProbe {
-	if (isKnownMux(env.CYBER_MUX)) {
+	if (isKnownMux(env['CYBER_MUX'])) {
 		return {
-			mux: env.CYBER_MUX,
-			...(env.CYBER_MUX_PANE ? { pane: env.CYBER_MUX_PANE } : {}),
+			mux: env['CYBER_MUX'],
+			...(env['CYBER_MUX_PANE'] ? { pane: env['CYBER_MUX_PANE'] } : {}),
 			via: 'env',
 		}
 	}
@@ -134,8 +134,8 @@ function discoverByAncestry(exec: Exec, env: NodeJS.ProcessEnv): MuxProbe {
 	// fast-positive env hint rather than declaring 'none' outright. WezTerm has no separate
 	// "inside wezterm" flag the way $TMUX/$HERDR_ENV are — $WEZTERM_PANE IS the hint, doubling as
 	// both the fast-positive signal and the pane id.
-	if (env.TMUX) return ancestryProbe('tmux', env)
-	if (env.HERDR_ENV) return ancestryProbe('herdr', env)
-	if (env.WEZTERM_PANE) return ancestryProbe('wezterm', env)
+	if (env['TMUX']) return ancestryProbe('tmux', env)
+	if (env['HERDR_ENV']) return ancestryProbe('herdr', env)
+	if (env['WEZTERM_PANE']) return ancestryProbe('wezterm', env)
 	return { mux: 'none', via: 'ancestry' }
 }

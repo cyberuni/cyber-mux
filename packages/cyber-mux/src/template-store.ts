@@ -90,7 +90,7 @@ export interface TemplateDirs {
 export function templateDirs(exec: Exec, env: NodeJS.ProcessEnv, homedir: () => string = osHomedir): TemplateDirs {
 	// The home dir is INJECTED (defaulting to node's `homedir`), never read from the ambient process at
 	// import time — so importing the library barrel reads no environment; only calling this does.
-	const configHome = env.XDG_CONFIG_HOME || join(env.HOME || homedir(), '.config')
+	const configHome = env['XDG_CONFIG_HOME'] || join(env['HOME'] || homedir(), '.config')
 	return {
 		repo: join(resolvePrimaryRoot(exec), '.cyber-mux', 'templates'),
 		user: join(configHome, 'cyber-mux', 'templates'),

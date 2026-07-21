@@ -128,20 +128,21 @@ export function validateTemplate(template: unknown, stem?: string): string[] {
 	}
 	const t = template as Record<string, unknown>
 
-	if (t.name === undefined) errors.push("name: required — it must equal the template filename's stem")
-	else if (typeof t.name !== 'string') errors.push('name: must be a string')
-	else if (stem !== undefined && t.name !== stem) {
-		errors.push(`name: filename stem is "${stem}" but the name field is "${t.name}" — they must match`)
+	if (t['name'] === undefined) errors.push("name: required — it must equal the template filename's stem")
+	else if (typeof t['name'] !== 'string') errors.push('name: must be a string')
+	else if (stem !== undefined && t['name'] !== stem) {
+		errors.push(`name: filename stem is "${stem}" but the name field is "${t['name']}" — they must match`)
 	}
 
-	if (t.description !== undefined && typeof t.description !== 'string') errors.push('description: must be a string')
+	if (t['description'] !== undefined && typeof t['description'] !== 'string')
+		errors.push('description: must be a string')
 
 	// Exactly one of root/panes/tabs. Two of them is ambiguous about which geometry wins; none of them
 	// describes no panes at all. Either way there is nothing to apply, so both are errors rather than a
 	// default. `root` and `panes` are the one-tab spelling of what `tabs` says for N.
-	const hasRoot = t.root !== undefined
-	const hasPanes = t.panes !== undefined
-	const hasTabs = t.tabs !== undefined
+	const hasRoot = t['root'] !== undefined
+	const hasPanes = t['panes'] !== undefined
+	const hasTabs = t['tabs'] !== undefined
 	const declared = [hasRoot && 'root', hasPanes && 'panes', hasTabs && 'tabs'].filter((d): d is string => Boolean(d))
 	if (declared.length > 1) {
 		errors.push(
@@ -159,11 +160,11 @@ export function validateTemplate(template: unknown, stem?: string): string[] {
 	validateTree(t, '', errors)
 
 	if (hasTabs) {
-		if (!Array.isArray(t.tabs)) errors.push('tabs: must be an array of tab objects')
+		if (!Array.isArray(t['tabs'])) errors.push('tabs: must be an array of tab objects')
 		// A workspace of no tabs is not a workspace — there is nothing to open.
-		else if (t.tabs.length === 0) errors.push('tabs: must name at least one tab — a workspace of no tabs is not one')
+		else if (t['tabs'].length === 0) errors.push('tabs: must name at least one tab — a workspace of no tabs is not one')
 		else {
-			t.tabs.forEach((tab, i) => {
+			t['tabs'].forEach((tab, i) => {
 				validateTab(tab, `tabs[${i}]`, errors)
 			})
 		}
@@ -185,19 +186,19 @@ function validateTab(tab: unknown, path: string, errors: string[]): void {
 	const n = tab as Record<string, unknown>
 
 	// The rule the whole capability exists to enforce does not weaken because a level was added.
-	if (n.cwd !== undefined) {
+	if (n['cwd'] !== undefined) {
 		errors.push(
 			`${path}.cwd: a template must never set cwd — pass --cwd at apply time, or use "dir" for a subdirectory under it`,
 		)
 	}
 
-	if (n.label !== undefined && (typeof n.label !== 'string' || n.label === '')) {
+	if (n['label'] !== undefined && (typeof n['label'] !== 'string' || n['label'] === '')) {
 		errors.push(`${path}.label: must be a non-empty string`)
 	}
 
 	// Exactly one of root/panes, the same as the template itself, and for the same reasons.
-	const hasRoot = n.root !== undefined
-	const hasPanes = n.panes !== undefined
+	const hasRoot = n['root'] !== undefined
+	const hasPanes = n['panes'] !== undefined
 	if (hasRoot && hasPanes) errors.push(`${path}: exactly one of "root" or "panes" may be set — this tab sets both`)
 	else if (!hasRoot && !hasPanes)
 		errors.push(`${path}: exactly one of "root" or "panes" must be set — this tab sets neither`)
@@ -214,16 +215,16 @@ function validateTab(tab: unknown, path: string, errors: string[]): void {
 function validateTree(t: Record<string, unknown>, path: string, errors: string[]): void {
 	const at = (key: string) => (path === '' ? key : `${path}.${key}`)
 
-	if (t.arrange !== undefined && (typeof t.arrange !== 'string' || !ARRANGES.includes(t.arrange))) {
+	if (t['arrange'] !== undefined && (typeof t['arrange'] !== 'string' || !ARRANGES.includes(t['arrange']))) {
 		errors.push(`${at('arrange')}: must be one of ${ARRANGES.join(', ')}`)
 	}
 
-	if (t.root !== undefined) validateNode(t.root, at('root'), errors)
-	if (t.panes !== undefined) {
-		if (!Array.isArray(t.panes)) errors.push(`${at('panes')}: must be an array of pane objects`)
-		else if (t.panes.length === 0) errors.push(`${at('panes')}: must name at least one pane`)
+	if (t['root'] !== undefined) validateNode(t['root'], at('root'), errors)
+	if (t['panes'] !== undefined) {
+		if (!Array.isArray(t['panes'])) errors.push(`${at('panes')}: must be an array of pane objects`)
+		else if (t['panes'].length === 0) errors.push(`${at('panes')}: must name at least one pane`)
 		else {
-			t.panes.forEach((pane, i) => {
+			t['panes'].forEach((pane, i) => {
 				validatePaneFields(pane, `${at('panes')}[${i}]`, errors)
 			})
 		}
@@ -238,28 +239,28 @@ function validateNode(node: unknown, path: string, errors: string[]): void {
 	const n = node as Record<string, unknown>
 	// `type` is an explicit discriminant rather than inferred from which keys are present: an inferred
 	// union produces terrible errors on a typo (a misspelled `frist` silently becomes a pane node).
-	if (n.type === 'pane') {
+	if (n['type'] === 'pane') {
 		validatePaneFields(n, path, errors)
 		return
 	}
-	if (n.type !== 'split') {
+	if (n['type'] !== 'split') {
 		errors.push(`${path}.type: must be "pane" or "split"`)
 		return
 	}
-	if (n.direction !== 'right' && n.direction !== 'down') {
+	if (n['direction'] !== 'right' && n['direction'] !== 'down') {
 		errors.push(`${path}.direction: must be "right" or "down"`)
 	}
-	if (n.ratio !== undefined) {
+	if (n['ratio'] !== undefined) {
 		// 0 and 1 are degenerate — one side gets the whole region and the other gets nothing, which is a
 		// mistake rather than an intent worth honoring.
-		if (typeof n.ratio !== 'number' || !Number.isFinite(n.ratio) || n.ratio <= 0 || n.ratio >= 1) {
-			errors.push(`${path}.ratio: must be a number strictly between 0 and 1 — got ${JSON.stringify(n.ratio)}`)
+		if (typeof n['ratio'] !== 'number' || !Number.isFinite(n['ratio']) || n['ratio'] <= 0 || n['ratio'] >= 1) {
+			errors.push(`${path}.ratio: must be a number strictly between 0 and 1 — got ${JSON.stringify(n['ratio'])}`)
 		}
 	}
-	if (n.first === undefined) errors.push(`${path}.first: required`)
-	else validateNode(n.first, `${path}.first`, errors)
-	if (n.second === undefined) errors.push(`${path}.second: required`)
-	else validateNode(n.second, `${path}.second`, errors)
+	if (n['first'] === undefined) errors.push(`${path}.first: required`)
+	else validateNode(n['first'], `${path}.first`, errors)
+	if (n['second'] === undefined) errors.push(`${path}.second: required`)
+	else validateNode(n['second'], `${path}.second`, errors)
 }
 
 function validatePaneFields(pane: unknown, path: string, errors: string[]): void {
@@ -272,31 +273,31 @@ function validatePaneFields(pane: unknown, path: string, errors: string[]): void
 	// The single rule the whole capability exists to enforce. A hard error, not an ignored key: a
 	// template that pins a target directory is not reusable, and silently dropping it would let one
 	// look like it worked.
-	if (p.cwd !== undefined) {
+	if (p['cwd'] !== undefined) {
 		errors.push(
 			`${path}.cwd: a template must never set cwd — pass --cwd at apply time, or use "dir" for a subdirectory under it`,
 		)
 	}
 
-	if (p.label !== undefined && (typeof p.label !== 'string' || p.label === '')) {
+	if (p['label'] !== undefined && (typeof p['label'] !== 'string' || p['label'] === '')) {
 		errors.push(`${path}.label: must be a non-empty string`)
 	}
-	if (p.command !== undefined && typeof p.command !== 'string') errors.push(`${path}.command: must be a string`)
+	if (p['command'] !== undefined && typeof p['command'] !== 'string') errors.push(`${path}.command: must be a string`)
 
-	if (p.env !== undefined) {
-		if (typeof p.env !== 'object' || p.env === null || Array.isArray(p.env)) {
+	if (p['env'] !== undefined) {
+		if (typeof p['env'] !== 'object' || p['env'] === null || Array.isArray(p['env'])) {
 			errors.push(`${path}.env: must be an object of string values`)
 		} else {
-			for (const [key, value] of Object.entries(p.env)) {
+			for (const [key, value] of Object.entries(p['env'])) {
 				if (typeof value !== 'string') errors.push(`${path}.env.${key}: must be a string`)
 			}
 		}
 	}
 
-	if (p.dir !== undefined) {
-		if (typeof p.dir !== 'string' || p.dir === '') errors.push(`${path}.dir: must be a non-empty string`)
-		else if (dirEscapes(p.dir)) {
-			errors.push(`${path}.dir: must be a relative subdirectory under the apply-time target — "${p.dir}" escapes it`)
+	if (p['dir'] !== undefined) {
+		if (typeof p['dir'] !== 'string' || p['dir'] === '') errors.push(`${path}.dir: must be a non-empty string`)
+		else if (dirEscapes(p['dir'])) {
+			errors.push(`${path}.dir: must be a relative subdirectory under the apply-time target — "${p['dir']}" escapes it`)
 		}
 	}
 }

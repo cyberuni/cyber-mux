@@ -343,7 +343,12 @@ function herdrRegionPanes(exec: Exec, paneId: string, details: Map<string, Herdr
 				id: p.pane_id,
 				// Screen-absolute, unlike tmux's window-relative origin — which is why nothing downstream
 				// may assume a region starts at 0,0. See `PaneRect`.
-				rect: { x: p.rect?.x ?? 0, y: p.rect?.y ?? 0, width: p.rect?.width ?? 0, height: p.rect?.height ?? 0 },
+				rect: {
+					x: p.rect?.['x'] ?? 0,
+					y: p.rect?.['y'] ?? 0,
+					width: p.rect?.['width'] ?? 0,
+					height: p.rect?.['height'] ?? 0,
+				},
 			}
 			if (detail?.cwd) pane.cwd = detail.cwd
 			// herdr has no default label — the key is absent until `pane rename`, so whatever is here

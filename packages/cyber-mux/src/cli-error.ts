@@ -91,7 +91,7 @@ export function reportError(e: CliError): never {
 		// belongs where a person reads as much as where a script matches — not hidden in the JSON alone.
 		console.log(`error: ${e.code}: ${e.message}`)
 		console.log(`help: ${e.help}`)
-		const candidates = e.extra?.candidates as PaneCandidate[] | undefined
+		const candidates = e.extra?.['candidates'] as PaneCandidate[] | undefined
 		if (candidates) {
 			for (const c of candidates) console.log(`  ${c.id}  ${c.label ?? ''}  ${c.cwd ?? ''}`)
 		}

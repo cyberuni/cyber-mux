@@ -219,7 +219,7 @@ describe('spec:cyber-mux/mux', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'new-window': '%9\t@1' })
 			tmuxMuxAdapter.open(exec, { cwd: '/unit', at, ratio: 0.3 })
-			expect(calls[0][0]).toBe('new-window')
+			expect(calls[0]![0]).toBe('new-window')
 			expect(calls[0]).not.toContain('-l')
 			// neither the number as given nor its inversion — the two ways a leak would look.
 			expect(calls[0]).not.toContain('30%')

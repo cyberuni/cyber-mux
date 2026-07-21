@@ -10,6 +10,10 @@
 		"isolatedModules": true,
 		"declaration": true,
 		"isolatedDeclarations": true,
+		"noUncheckedIndexedAccess": true,
+		"noPropertyAccessFromIndexSignature": true,
+		"noUnusedLocals": true,
+		"noUnusedParameters": true,
 		"noEmit": true,
 		"allowImportingTsExtensions": true,
 		"skipLibCheck": true
