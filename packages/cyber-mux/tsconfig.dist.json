@@ -1,0 +1,11 @@
+{
+	"//": "Typechecks the published-surface suite against the BUILT package types (dist/*.d.mts, resolved through package.json exports). This is what proves `dts: true` emitted usable declarations — importing the same names a consumer would. Run by `test:dist`, which depends on a build. isolatedDeclarations/declaration are off here: this config consumes types, it does not emit them.",
+	"extends": "./tsconfig.json",
+	"compilerOptions": {
+		"declaration": false,
+		"isolatedDeclarations": false,
+		"allowImportingTsExtensions": false
+	},
+	"include": ["src/**/*.dist.test.ts"],
+	"exclude": []
+}

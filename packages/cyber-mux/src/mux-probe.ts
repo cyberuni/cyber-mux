@@ -7,9 +7,22 @@ export type PaneMux = 'tmux' | 'herdr' | 'wezterm'
 
 export interface MuxProbe {
 	mux: Mux
-	pane?: string
+	pane?: string | undefined
 	/** 'env' — trusted the $CYBER_MUX fast-path/override. 'ancestry' — walked the process tree. */
 	via: 'env' | 'ancestry'
+}
+
+export interface ProbeOptions {
+	/** Set `false` to skip the process-ancestry walk and answer `none` when the env fast-path misses —
+	 * for a caller that only trusts the explicit override. */
+	discover?: boolean | undefined
+	/**
+	 * The environment-variable namespace the fast-path reads, without the trailing `_PANE`. Defaults to
+	 * `CYBER_MUX`, so `<prefix>` names the mux (`tmux|herdr|screen|none`) and `<prefix>_PANE` the pane.
+	 * A host embedding cyber-mux under its OWN namespace passes its prefix here and adopts the same
+	 * fast-path without forking detection.
+	 */
+	envPrefix?: string | undefined
 }
 
 const KNOWN_MUX: readonly Mux[] = ['tmux', 'herdr', 'wezterm', 'screen', 'none']
@@ -66,11 +79,17 @@ export function currentPane(env: NodeJS.ProcessEnv): { mux: PaneMux; pane: strin
  * are used only as a fast-positive hint the ancestry walk falls back to when the walk itself is
  * inconclusive (e.g. `ps` unavailable), never as a substitute for it.
  */
-export function probeMultiplexer(exec: Exec, env: NodeJS.ProcessEnv, opts: { discover?: boolean } = {}): MuxProbe {
-	if (isKnownMux(env['CYBER_MUX'])) {
+export function probeMultiplexer(exec: Exec, env: NodeJS.ProcessEnv, opts: ProbeOptions = {}): MuxProbe {
+	// A host with its own namespace ADOPTS the fast-path by passing its prefix — `<prefix>` names the
+	// mux and `<prefix>_PANE` the pane — rather than forking the probe. Defaults to `CYBER_MUX`, so an
+	// unset `envPrefix` is exactly today's behavior. NOT an alias list: one prefix per call, the host's.
+	const prefix = opts.envPrefix ?? 'CYBER_MUX'
+	const override = env[prefix]
+	const pane = env[`${prefix}_PANE`]
+	if (isKnownMux(override)) {
 		return {
-			mux: env['CYBER_MUX'],
-			...(env['CYBER_MUX_PANE'] ? { pane: env['CYBER_MUX_PANE'] } : {}),
+			mux: override,
+			...(pane ? { pane } : {}),
 			via: 'env',
 		}
 	}

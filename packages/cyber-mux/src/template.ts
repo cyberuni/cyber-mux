@@ -19,13 +19,13 @@ export interface PaneNode {
 	 * keys on this, so two panes may share one. A pool of workers all named `worker` is a legitimate
 	 * thing to mean, and neither backend requires otherwise.
 	 */
-	label?: string
+	label?: string | undefined
 	/** Submitted after the geometry is built; omit for a blank shell. */
-	command?: string
+	command?: string | undefined
 	/** Set in the pane's environment at birth. Valid with or without `command`. */
-	env?: Record<string, string>
+	env?: Record<string, string> | undefined
 	/** A RELATIVE subdirectory joined onto the apply-time cwd. Absolute or `..`-escaping is invalid. */
-	dir?: string
+	dir?: string | undefined
 }
 
 /**
@@ -38,7 +38,7 @@ export interface SplitNode {
 	type: 'split'
 	direction: 'right' | 'down'
 	/** Fraction kept by `first` — the ORIGINAL pane. `0 < ratio < 1`; omitted means an even split. */
-	ratio?: number
+	ratio?: number | undefined
 	/** Keeps the region's existing pane. */
 	first: TemplateNode
 	/** Gets the newly split-off pane. */
@@ -63,11 +63,11 @@ export type FlatPane = Omit<PaneNode, 'type'>
  */
 export interface TemplateTree {
 	/** The split tree. Exactly one of `root` / `panes`. */
-	root?: TemplateNode
+	root?: TemplateNode | undefined
 	/** The flat sugar's pane pool. Exactly one of `root` / `panes`. */
-	panes?: FlatPane[]
+	panes?: FlatPane[] | undefined
 	/** How `panes` is arranged; defaults to `tiled`. Ignored (and invalid) alongside `root`. */
-	arrange?: Arrange
+	arrange?: Arrange | undefined
 }
 
 /**
@@ -80,17 +80,17 @@ export interface TabNode extends TemplateTree {
 	 * own id at the seam and the manifest reports a pane's tab by INDEX, so two tabs may share a label.
 	 * Omit to leave the tab's name to the backend's own default.
 	 */
-	label?: string
+	label?: string | undefined
 }
 
 export interface Template extends TemplateTree {
 	name: string
-	description?: string
+	description?: string | undefined
 	/**
 	 * The two-level form: a workspace of N tabs, each its own tree. Exactly one of `root` / `panes` /
 	 * `tabs` — `root` and `panes` are the one-tab spelling.
 	 */
-	tabs?: TabNode[]
+	tabs?: TabNode[] | undefined
 }
 
 /**
@@ -121,7 +121,7 @@ export function parseTemplate(raw: string): unknown {
  * `stem` is the filename's stem when there is a file to compare against; the `name` field must equal
  * it. The redundancy is the point: a copied template that kept its old name fails loudly.
  */
-export function validateTemplate(template: unknown, stem?: string): string[] {
+export function validateTemplate(template: unknown, stem?: string | undefined): string[] {
 	const errors: string[] = []
 	if (typeof template !== 'object' || template === null || Array.isArray(template)) {
 		return ['template: must be a JSON object']
@@ -421,3 +421,9 @@ export function collectPanes(node: TemplateNode, acc: PaneNode[] = []): PaneNode
 export function firstPane(node: TemplateNode): PaneNode {
 	return node.type === 'pane' ? node : firstPane(node.first)
 }
+
+// The `cyber-mux/template` subpath surface: the schema/validation above PLUS the filesystem-backed
+// resolution seam (TemplateStore + realTemplateStore, resolveTemplate, listTemplates, templateDirs).
+// The apply engine (template-session/template-capture) stays internal — no consumer exercises it yet,
+// and exporting it would freeze a much larger contract.
+export * from './template-store.ts'

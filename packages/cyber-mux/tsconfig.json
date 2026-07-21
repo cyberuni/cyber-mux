@@ -18,5 +18,7 @@
 		"allowImportingTsExtensions": true,
 		"skipLibCheck": true
 	},
-	"include": ["src/**/*.ts", "src/**/*.mts"]
+	"include": ["src/**/*.ts", "src/**/*.mts"],
+	"//": "The *.dist.test.ts suite imports the package by name (built dist), so it is typechecked against the built types by tsconfig.dist.json inside `test:dist` (after a build) — not here, which must not depend on this package's own dist.",
+	"exclude": ["src/**/*.dist.test.ts"]
 }
