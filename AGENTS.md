@@ -52,8 +52,6 @@ and integrates its result.
 - `commit` / `commit-work` skills — staging, splitting, and message authoring
 - `add-changeset` skill — adding a changeset for a published-package change
 - `init-commit-discipline` skill — regenerate these rules and hooks
-- `.agents/plans/README.md` — required frontmatter keys + status vocabulary for a *new* SDD mission
-  plan brief
 
 ## Architecture
 
