@@ -25,12 +25,23 @@ environment and the process table and nothing else.
   `$HERDR_ENV` is set and `$TMUX` is not; an environment with neither throws asking for one.
 
 - **Multiplexer detection is two-mode** — `probeMultiplexer` first trusts `$CYBER_MUX`
-  (`tmux`|`herdr`|`screen`|`none`) outright — this doubles as an override (`=none` forces no-mux even
-  inside a real multiplexer). Failing that it walks the process ancestry from `$$` looking for a
-  `tmux`/`tmux: server`, `herdr`, or `screen` ancestor; `$TMUX`/`$HERDR_ENV` are used only as a
-  fast-positive hint the walk falls back to when it is itself inconclusive, never trusted alone.
-  `doctor` runs discovery and prints an `export CYBER_MUX=<m> CYBER_MUX_PANE=<p>` hint so a caller
-  can pin the fast-path.
+  (`tmux`|`herdr`|`wezterm`|`screen`|`none`) outright — this doubles as an override (`=none` forces
+  no-mux even inside a real multiplexer). Failing that it walks the process ancestry from `$$`
+  looking for a `tmux`/`tmux: server`, `herdr`, `wezterm`, or `screen` ancestor; `$TMUX`/`$HERDR_ENV`
+  are used only as a fast-positive hint the walk falls back to when it is itself inconclusive, never
+  trusted alone. `doctor` runs discovery and prints an `export CYBER_MUX=<m> CYBER_MUX_PANE=<p>` hint
+  so a caller can pin the fast-path.
+
+- **`screen` is DETECTED but not DRIVABLE** — the probe recognizes `screen` (an override pinning it,
+  or a real screen ancestor) so it is reported truthfully, but `selectSessionAdapter` rejects it with
+  a reason rather than returning an adapter. Detection is not support: a caller who pinned
+  `CYBER_MUX=screen` declared a real multiplexer, so the honest answer is a named rejection, not the
+  generic "run inside a multiplexer" throw. Why screen and not the other three: empirically (screen
+  5.0.2) its split regions are addressed positionally (no per-pane id) and `$WINDOW` is unset in
+  panes opened via `screen -X`, so a driver-created pane has no stable identity — the affordance
+  `SessionTarget.id`/`currentPane`/`LivePane.id` are load-bearing on, and the one wezterm (#47) had
+  and screen lacks. Full probe + decision: the ADR log
+  ([`design/decisions`](../../design/decisions/README.md)).
 ## Logic
 
 ### Detection and backend selection
@@ -68,6 +79,7 @@ Every scenario in [`detection.feature`](./detection.feature), one row each, grou
 |---|---|---|
 | env names a backend → that adapter | `$TMUX`, `$HERDR_ENV` without `$TMUX`, or `$WEZTERM_PANE` set | `the session backend is selected by environment` |
 | none of the three → throw before opening | no `$TMUX`, `$HERDR_ENV`, or `$WEZTERM_PANE` | `no backend detected errors before opening anything` |
+| detected screen → rejected by name, with the reason | `$CYBER_MUX=screen`, or a screen ancestor | `a detected screen is rejected by name, not with the generic no-backend error` |
 
 ### Multiplexer detection is two-mode
 

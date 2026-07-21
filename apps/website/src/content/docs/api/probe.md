@@ -31,7 +31,9 @@ Two-mode detection:
 
 1. **Fast-path** — `$CYBER_MUX` (`tmux | herdr | wezterm | screen | none`) is trusted outright, and
    also serves as an **override** (`=none` forces no-mux even inside a real multiplexer).
-   `$CYBER_MUX_PANE` carries the pane id.
+   `$CYBER_MUX_PANE` carries the pane id. `screen` is **recognized** here but is **not a drivable
+   backend** — `probeMultiplexer` reports `mux: 'screen'`, and `resolveMux`/`resolveMuxAdapter` then
+   reject it with a named error rather than returning an adapter. Recognition is not support.
 2. **Discovery** — otherwise, walk the process ancestry from `$$`, falling back to the
    `$TMUX`/`$HERDR_ENV`/`$WEZTERM_PANE` hint only when the walk is inconclusive.
 

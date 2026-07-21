@@ -93,3 +93,16 @@ against — so its gaps are real, spec'd limitations rather than forced parity:
 Each multiplexer answers its **own** liveness and focus probes, so a herdr pane id is never queried
 with a tmux command or vice versa. Anything a multiplexer cannot determine — a missing pane, an
 unreadable focus state — is reported as *unknown*, never a false negative.
+
+## GNU Screen — detected, not driven
+
+`cyber-mux` **detects** GNU Screen (a `CYBER_MUX=screen` override, or a `screen` ancestor) so it can
+say so honestly, but it does **not** drive it: pinning `CYBER_MUX=screen` yields a named error, not a
+backend. The blocker is identity, which is load-bearing across the whole contract
+(`SessionTarget.id`, `currentPane`, `LivePane.id`). Screen addresses its split **regions**
+positionally — there is no per-region id to send to or read from — and `$WINDOW` is left **unset** in
+windows opened via `screen -X`, exactly the panes a driver creates, so a pane cannot even identify
+*itself*. Every backend above ships a stable per-pane id (tmux `$TMUX_PANE`, herdr `$HERDR_PANE_ID`,
+WezTerm `$WEZTERM_PANE`); screen has no equivalent for driven panes. Rather than ship a half-faithful
+adapter whose pane identity is unstable, `cyber-mux` rejects the value with the reason — an honest "no"
+beats a backend that silently drives the wrong pane.

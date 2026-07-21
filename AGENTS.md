@@ -73,9 +73,13 @@ pnpm + turbo monorepo.
 - `exec.ts` — the synchronous `Exec` command-runner seam every adapter takes
 - `cli.ts` — commander entry; `output.ts` / `cli-options.ts` — shared output + option conventions
 
-**Environment contract:** `CYBER_MUX` (override: `tmux|herdr|screen|none`) and `CYBER_MUX_PANE`
-(pane id) form the fast-path; otherwise detection walks the process ancestry, falling back to
-`$TMUX` / `$HERDR_ENV` hints.
+**Environment contract:** `CYBER_MUX` (override: `tmux|herdr|wezterm|screen|none`) and
+`CYBER_MUX_PANE` (pane id) form the fast-path; otherwise detection walks the process ancestry,
+falling back to `$TMUX` / `$HERDR_ENV` / `$WEZTERM_PANE` hints. The drivable backends are
+`tmux`, `herdr`, and `wezterm`; `screen` is **recognized but not drivable** — it is detected and
+honored as an override so the value is reported truthfully, then rejected with a named error rather
+than driven (GNU Screen has no stable per-pane identity for driver-created panes — see the
+`45-screen-adapter` ADR).
 
 ## Test harness
 
