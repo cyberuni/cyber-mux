@@ -73,9 +73,10 @@ Feature: template capture — read a live region back into a template
       | tmux    |
       | herdr   |
 
-    # no multiplexer reports the command a pane was launched with: the walk types commands with
-    # submit rather than passing them to the split, so tmux's pane_start_command is empty for every
-    # pane cyber-mux creates and pane_current_command reports the shell or interpreter instead
+    # a command a backend can report is not a command worth capturing: what it reports is the
+    # RESOLVED command line, not the one a human typed (`nr web dev` comes back as
+    # `node /run/user/1000/fnm_multishells/.../bin/nr web dev`), which is machine-local and so not
+    # portable into a template meant to be checked in and run elsewhere
 
   Scenario: a captured template records in its own description that it is geometry only
     Given a caller running cyber-mux template save pool-3 with no --description
@@ -195,8 +196,8 @@ Feature: template capture — read a live region back into a template
     When it is captured with --workspace
     Then no pane in any tab carries a command
     And the template records in its own description that it is geometry only
-    # unchanged and for the unchanged reason: no multiplexer reports the command a pane was launched
-    # with, and adding a level does not add that fact
+    # unchanged and for the unchanged reason: a running pane's command line is machine-local rather
+    # than portable, and adding a level does not change what is worth writing into a template
 
   Scenario: on a backend with no workspace tier, an untagged region captures as a single-tab workspace
     Given a caller in a tmux window carrying no grouping tag
