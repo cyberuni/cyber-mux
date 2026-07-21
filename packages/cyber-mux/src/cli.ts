@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import { Command, CommanderError, Option } from 'commander'
-import { callerPane, selectMuxAdapter } from './backend.ts'
+import { callerPane, resolveMuxAdapter } from './backend.ts'
 import { AmbiguousPaneError, CliError, reportError } from './cli-error.ts'
 import { AT_OPTION, ENV_OPTION, FORMAT_OPTION, LABEL_OPTION } from './cli-options.ts'
 import { type Exec, nodeExec } from './exec.ts'
@@ -72,13 +72,13 @@ const DEFAULT_DEPS: CliDeps = { env: process.env, exec: nodeExec, store: nodeTem
 
 /**
  * Resolve the adapter for the multiplexer this process is inside, failing with a coded `no-mux` error
- * when there is none. The underlying throw is TRANSLATED, never forwarded — `selectMuxAdapter`
+ * when there is none. The underlying throw is TRANSLATED, never forwarded — `resolveMuxAdapter`
  * names `$TMUX`/`$HERDR_ENV`, which is backend plumbing an agent driving cyber-mux cannot act on; the
  * help names how to get a backend through this CLI instead.
  */
 function adapter(deps: Deps): MuxAdapter {
 	try {
-		return selectMuxAdapter(deps.env, deps.exec)
+		return resolveMuxAdapter(deps.env, deps.exec)
 	} catch {
 		throw noMux()
 	}
@@ -235,7 +235,7 @@ function paneVerb(locator: string, body: () => void): void {
  */
 function optionalAdapter(deps: Deps): MuxAdapter | undefined {
 	try {
-		return selectMuxAdapter(deps.env, deps.exec)
+		return resolveMuxAdapter(deps.env, deps.exec)
 	} catch {
 		return undefined
 	}
@@ -672,7 +672,7 @@ function doctorCommand(deps: Deps): Command {
 			const self = currentPane(deps.env)
 			let backend = 'none'
 			try {
-				backend = selectMuxAdapter(deps.env, deps.exec).name
+				backend = resolveMuxAdapter(deps.env, deps.exec).name
 			} catch {
 				// no backend — reported as 'none'
 			}
@@ -705,7 +705,7 @@ function modeCommand(deps: Deps): Command {
 		.action(() => {
 			let name = 'none'
 			try {
-				name = selectMuxAdapter(deps.env, deps.exec).name
+				name = resolveMuxAdapter(deps.env, deps.exec).name
 			} catch {
 				// no backend — reported as 'none'
 			}

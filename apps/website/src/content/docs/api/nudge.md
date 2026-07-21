@@ -8,14 +8,28 @@ description: Submit a message and verify the peer actually took its turn — rec
 call reports success. `nudge` sends the message, reads the pane back, and — if the text is still
 sitting staged — flushes it with bare Enters until the turn is taken or a cap is hit.
 
-```ts
-import { nudge, type NudgeResult } from 'cyber-mux'
+The preferred call is the `MuxSession` method, `Exec` already bound:
 
+```ts
+import { resolveMux, type NudgeResult } from 'cyber-mux'
+
+const mux = resolveMux(process.env)
+const result = await mux.nudge(target, 'run the tests')
+// result: { taken: true, resubmits: 2 }
+```
+
+`nudge` also stays exported as a free function over the raw, exec-first
+[`MuxAdapter`](/cyber-mux/api/mux-adapter/#the-raw-seam), for a caller threading its own runner:
+
+```ts
+import { nudge, resolveMuxAdapter, nodeExec, type NudgeResult } from 'cyber-mux'
+
+const adapter = resolveMuxAdapter(process.env)
 const result = await nudge(adapter, nodeExec, target, 'run the tests')
 // result: { taken: true, resubmits: 2 }
 ```
 
-## `nudge(adapter, exec, target, message, opts?)`
+## `mux.nudge(target, message, opts?, deps?)` / `nudge(adapter, exec, target, message, opts?)`
 
 Types `message` **exactly once**. A swallowed Enter is recovered by flushing the staged buffer (a
 bare-Enter `submit`, never a re-type), so a repeated flush can never duplicate the message. Returns

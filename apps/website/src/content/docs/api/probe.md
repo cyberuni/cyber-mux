@@ -3,9 +3,23 @@ title: Detection
 description: The multiplexer probe and self-identity helper — and adopting the env fast-path under your own namespace.
 ---
 
-`selectMuxAdapter` picks a backend for you. When you want the *detection result* itself — the backend
-name, the pane, and how it was found — call the probe directly. See
+[`resolveMux`](/cyber-mux/api/mux-adapter/) picks a backend for you, and throws if the process is in
+no supported multiplexer. When you want the *detection result* itself — the backend name, the pane,
+and how it was found, without the throw — call the probe directly. See
 [Detection](/cyber-mux/concepts/detection/) for the two-mode algorithm this implements.
+
+`probeMultiplexer` is unchanged by `resolveMux`/`MuxSession`: it stays the raw, **exec-first** call
+below (it is what a session's own detection runs internally, before there is a session to bind
+`exec` to). It is the non-throwing gate for a caller that runs with-or-without a multiplexer:
+
+```ts
+import { probeMultiplexer, resolveMux, nodeExec } from 'cyber-mux'
+
+if (probeMultiplexer(nodeExec, process.env).mux !== 'none') {
+  const mux = resolveMux(process.env)
+  // ...
+}
+```
 
 ```ts
 import { probeMultiplexer, currentPane, nodeExec, type MuxProbe } from 'cyber-mux'
@@ -41,8 +55,8 @@ const probe = probeMultiplexer(nodeExec, process.env)
 This session's own pane, resolved from **env alone** (no `ps` walk): the `$CYBER_MUX_PANE` fast-path,
 then `$TMUX_PANE`, `$HERDR_PANE_ID`, `$WEZTERM_PANE`. Returns `{ mux, pane }` tagged with the
 multiplexer, or `undefined` when the session is in no pane-carrying multiplexer. This is the
-mux-agnostic self-identity key that [`callerPane`](/cyber-mux/api/mux-adapter/#callerpaneadapter-env)
-is built on.
+mux-agnostic self-identity key that [`mux.callerPane()`](/cyber-mux/api/mux-adapter/#muxcallerpane)
+(and the raw [`callerPane`](/cyber-mux/api/mux-adapter/#callerpaneadapter-env)) is built on.
 
 ## Embedding under your own namespace
 

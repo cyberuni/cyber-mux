@@ -89,6 +89,6 @@ the default over the filesystem.
 :::note
 The **apply engine** (building a live region from a template) stays internal — no consumer exercises
 it yet, and exporting it would freeze a much larger contract. The library gives you the schema,
-validation, and resolution; drive the geometry through [`adapter.open`](/cyber-mux/api/mux-adapter/#opening-panes)
+validation, and resolution; drive the geometry through [`mux.open`](/cyber-mux/api/mux-adapter/#opening-panes)
 or the [`template` CLI](/cyber-mux/cli/template/).
 :::

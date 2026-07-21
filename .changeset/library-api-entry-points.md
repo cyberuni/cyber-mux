@@ -4,10 +4,11 @@
 
 Expose a library API. `cyber-mux` now publishes real entry points beside the CLI:
 
-- `cyber-mux` — the multiplexer core: the `MuxAdapter` contract and its types, the mux probe
-  (`probeMultiplexer`, `currentPane`), backend selection (`selectMuxAdapter`, `callerPane`), the
-  tmux/herdr/wezterm adapters, `nudge`, and the `Exec`/`NewId` seams (each a type plus its real
-  implementation).
+- `cyber-mux` — the multiplexer core: `resolveMux`, which returns a `MuxSession` with `Exec` bound
+  (`mux.open(opts)`, no runner threaded per call), over the raw exec-injected `MuxAdapter` contract
+  and its types reached via `resolveMuxAdapter`; the mux probe (`probeMultiplexer`, `currentPane`);
+  `callerPane`; the tmux/herdr/wezterm adapters; `nudge`; and the `Exec`/`NewId` seams (each a type
+  plus its real implementation).
 - `cyber-mux/worktree` — the git-worktree adapter (`resolvePrimaryRoot`, `assertDistinctFromPrimary`,
   `gitWorktreeAdapter`, `listWorktreesFromGit`, `removeWorktreeSafely`, and the `WorktreeFs` seam).
 - `cyber-mux/template` — template resolution and the `TemplateStore` seam.

@@ -1,36 +1,36 @@
 import { describe, expect, it } from 'vitest'
-import { callerPane, selectMuxAdapter } from './backend.ts'
+import { callerPane, resolveMuxAdapter } from './backend.ts'
 import type { Exec } from './exec.ts'
 import { herdrMuxAdapter } from './mux.herdr.ts'
 import { tmuxMuxAdapter } from './mux.tmux.ts'
 import { weztermMuxAdapter } from './mux.wezterm.ts'
 
-// selectMuxAdapter consults the ancestry-discovery mux probe by default (see mux-probe.ts).
+// resolveMuxAdapter consults the ancestry-discovery mux probe by default (see mux-probe.ts).
 // These tests pin `exec` to a stub that reports no ancestry (ps unavailable), so the outcome is
 // deterministic — driven only by the $TMUX/$HERDR_ENV env hint — regardless of the real multiplexer
 // the test runner itself happens to be running under.
 const noAncestry: Exec = () => null
 
 describe('spec:cyber-mux/mux', () => {
-	describe('selectMuxAdapter', () => {
+	describe('resolveMuxAdapter', () => {
 		it('the session backend is selected by environment', () => {
-			expect(selectMuxAdapter({ TMUX: 't' }, noAncestry)).toBe(tmuxMuxAdapter)
+			expect(resolveMuxAdapter({ TMUX: 't' }, noAncestry)).toBe(tmuxMuxAdapter)
 		})
 
 		it('the session backend is selected by environment', () => {
-			expect(selectMuxAdapter({ HERDR_ENV: '1' }, noAncestry)).toBe(herdrMuxAdapter)
+			expect(resolveMuxAdapter({ HERDR_ENV: '1' }, noAncestry)).toBe(herdrMuxAdapter)
 		})
 
 		it('prefers tmux when both are set', () => {
-			expect(selectMuxAdapter({ TMUX: 't', HERDR_ENV: '1' }, noAncestry)).toBe(tmuxMuxAdapter)
+			expect(resolveMuxAdapter({ TMUX: 't', HERDR_ENV: '1' }, noAncestry)).toBe(tmuxMuxAdapter)
 		})
 
 		it('the session backend is selected by environment', () => {
-			expect(selectMuxAdapter({ WEZTERM_PANE: '9' }, noAncestry)).toBe(weztermMuxAdapter)
+			expect(resolveMuxAdapter({ WEZTERM_PANE: '9' }, noAncestry)).toBe(weztermMuxAdapter)
 		})
 
 		it('neither tmux, herdr, nor wezterm detected errors before opening anything', () => {
-			expect(() => selectMuxAdapter({}, noAncestry)).toThrow(/tmux.*herdr.*wezterm|wezterm.*herdr.*tmux/)
+			expect(() => resolveMuxAdapter({}, noAncestry)).toThrow(/tmux.*herdr.*wezterm|wezterm.*herdr.*tmux/)
 		})
 
 		it('an ancestry-verified mux wins over a stale env hint', () => {
@@ -40,7 +40,7 @@ describe('spec:cyber-mux/mux', () => {
 				return pid === process.pid ? '1 tmux: server' : null
 			}
 			// $HERDR_ENV hints herdr, but the ancestry walk conclusively finds tmux — tmux wins.
-			expect(selectMuxAdapter({ HERDR_ENV: '1' }, psChain)).toBe(tmuxMuxAdapter)
+			expect(resolveMuxAdapter({ HERDR_ENV: '1' }, psChain)).toBe(tmuxMuxAdapter)
 		})
 	})
 

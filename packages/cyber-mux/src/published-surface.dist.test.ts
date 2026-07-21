@@ -15,7 +15,7 @@ import { describe, expect, it } from 'vitest'
 describe('spec:cyber-mux/library — published surface', () => {
 	describe('built-package smoke: entries import and key values are real', () => {
 		it('the . barrel yields the mux core as live values', () => {
-			expect(typeof lib.selectMuxAdapter).toBe('function')
+			expect(typeof lib.resolveMux).toBe('function')
 			expect(typeof lib.probeMultiplexer).toBe('function')
 			expect(typeof lib.nudge).toBe('function')
 			expect(typeof lib.nodeExec).toBe('function')
@@ -54,7 +54,8 @@ describe('spec:cyber-mux/library — published surface', () => {
 				'nodeNewId',
 				'nudge',
 				'probeMultiplexer',
-				'selectMuxAdapter',
+				'resolveMux',
+				'resolveMuxAdapter',
 				'tmuxMuxAdapter',
 				'weztermMuxAdapter',
 				'withReason',
@@ -139,16 +140,17 @@ describe('spec:cyber-mux/library — published surface', () => {
 				if (args.includes('capture-pane')) return 'pane output'
 				return ''
 			}
-			// Backend chosen from injected env alone — no ambient detection, no `ps` walk.
-			const adapter = lib.selectMuxAdapter({ CYBER_MUX: 'tmux' }, exec)
-			expect(adapter.name).toBe('tmux')
+			// Backend resolved from injected env alone — no ambient detection, no `ps` walk — and the
+			// recording `exec` BOUND into the session, so the driving calls carry no exec of their own.
+			const mux = lib.resolveMux({ CYBER_MUX: 'tmux' }, { exec })
+			expect(mux.name).toBe('tmux')
 
-			const opened = adapter.open(exec, { cwd: '/work', at: 'workspace' })
+			const opened = mux.open({ cwd: '/work', at: 'workspace' })
 			expect(opened.id).toBe('%7')
-			adapter.submit(exec, opened, 'echo hello')
-			const view = adapter.read(exec, opened)
+			mux.submit(opened, 'echo hello')
+			const view = mux.read(opened)
 			expect(view).toBe('pane output')
-			adapter.teardown(exec, opened)
+			mux.teardown(opened)
 
 			// The recorded command stream: a window opened, keys submitted, the pane captured and killed —
 			// all as argv handed to the injected Exec, never executed.

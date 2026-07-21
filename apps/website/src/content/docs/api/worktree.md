@@ -69,20 +69,33 @@ verbatim).
 
 ## Binding a worktree to a workspace
 
-The `WorktreeWorkspaceCapability` — reached as [`adapter.worktree`](/cyber-mux/api/mux-adapter/#optional-capabilities),
-present on herdr and `undefined` on tmux — is the one part a *multiplexer* owns: binding a worktree
-to a workspace as a first-class record the UI groups a repo's checkouts by. Empirically, plain
-`git worktree add` + `workspace create` yields **no** binding; only routing through herdr's own
-`worktree create`/`open` produces it.
+The worktree-workspace capability — present on herdr and `undefined` on tmux — is the one part a
+*multiplexer* owns: binding a worktree to a workspace as a first-class record the UI groups a repo's
+checkouts by. Empirically, plain `git worktree add` + `workspace create` yields **no** binding; only
+routing through herdr's own `worktree create`/`open` produces it.
 
-- **`createInWorkspace(exec, opts)`** — create a worktree *and* open it in a bound workspace.
-- **`openInWorkspace(exec, opts)`** — open an existing worktree in a bound workspace (the remedy that
-  groups a worktree plain git created earlier).
-- **`bindings(exec, { primaryRoot })`** → `Map<path, workspace>` — which workspace each worktree is
-  open in; the one fact git cannot answer.
-- **`releaseWorkspace(exec, workspace)`** — close the workspace, releasing the binding **without**
-  touching the checkout on disk.
+Reach it bound, off a resolved `MuxSession`, as `mux.worktree` (a `BoundWorktreeWorkspaceCapability`
+— methods take `deps?` instead of a leading `exec`) — this is the preferred, ergonomic route:
+
+```ts
+const mux = resolveMux(process.env)
+if (mux.worktree) {
+  mux.worktree.createInWorkspace({ /* ... */ })
+}
+```
+
+Or reach it raw, off the exec-first [`MuxAdapter`](/cyber-mux/api/mux-adapter/#the-raw-seam), as
+`adapter.worktree` — the same capability, exec-first:
+
+- **`createInWorkspace(opts, deps?)`** / **`createInWorkspace(exec, opts)`** — create a worktree *and*
+  open it in a bound workspace.
+- **`openInWorkspace(opts, deps?)`** / **`openInWorkspace(exec, opts)`** — open an existing worktree
+  in a bound workspace (the remedy that groups a worktree plain git created earlier).
+- **`bindings({ primaryRoot }, deps?)`** / **`bindings(exec, { primaryRoot })`** → `Map<path, workspace>`
+  — which workspace each worktree is open in; the one fact git cannot answer.
+- **`releaseWorkspace(workspace, deps?)`** / **`releaseWorkspace(exec, workspace)`** — close the
+  workspace, releasing the binding **without** touching the checkout on disk.
 
 Every member here *opens* a workspace; none is a route for a bare worktree add — that is always plain
-git. On tmux (`adapter.worktree === undefined`) callers fall back to plain git plus a placement-
-appropriate [`open`](/cyber-mux/api/mux-adapter/#opening-panes).
+git. On tmux (`mux.worktree`/`adapter.worktree === undefined`) callers fall back to plain git plus a
+placement-appropriate [`mux.open`](/cyber-mux/api/mux-adapter/#opening-panes).
