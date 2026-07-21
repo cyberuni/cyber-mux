@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { Exec } from './exec.ts'
-import { tmuxSessionAdapter } from './session.tmux.ts'
+import { tmuxMuxAdapter } from './mux.tmux.ts'
 
 function hasTmux(): boolean {
 	try {
@@ -30,7 +30,7 @@ async function pollUntil(read: () => string, done: (out: string) => boolean, tim
 const SOCKET = `cyber-mux-itest-${process.pid}`
 
 describe.skipIf(!hasTmux())('spec:cyber-mux/mux', () => {
-	describe('tmuxSessionAdapter — real tmux boundary', () => {
+	describe('tmuxMuxAdapter — real tmux boundary', () => {
 		let cwd: string
 		let exec: Exec
 
@@ -67,30 +67,30 @@ describe.skipIf(!hasTmux())('spec:cyber-mux/mux', () => {
 		})
 
 		it('open() actually creates a real pane the real tmux binary reports back', () => {
-			const target = tmuxSessionAdapter.open(exec, { cwd, launch: 'sh', at: 'pane:right' })
+			const target = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'pane:right' })
 			expect(target.id).toMatch(/^%\d+$/)
-			expect(tmuxSessionAdapter.paneExists(exec, target)).toBe(true)
+			expect(tmuxMuxAdapter.paneExists(exec, target)).toBe(true)
 		})
 
 		it('listPanes() sees the real pane, cwd and all', () => {
-			const target = tmuxSessionAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
-			const panes = tmuxSessionAdapter.listPanes(exec)
+			const target = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
+			const panes = tmuxMuxAdapter.listPanes(exec)
 			expect(panes.some((p) => p.id === target.id && p.cwd === cwd)).toBe(true)
 		})
 
 		it('teardown() actually kills the real pane', () => {
-			const target = tmuxSessionAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
-			expect(tmuxSessionAdapter.paneExists(exec, target)).toBe(true)
-			tmuxSessionAdapter.teardown(exec, target)
-			expect(tmuxSessionAdapter.paneExists(exec, target)).toBe(false)
+			const target = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
+			expect(tmuxMuxAdapter.paneExists(exec, target)).toBe(true)
+			tmuxMuxAdapter.teardown(exec, target)
+			expect(tmuxMuxAdapter.paneExists(exec, target)).toBe(false)
 		})
 
 		it('submit()/read() actually run a command in and capture from a real pane', async () => {
-			const target = tmuxSessionAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
+			const target = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
 			// submit, not sendText: the marker has to RUN, which needs the Enter submit supplies.
-			tmuxSessionAdapter.submit(exec, target, 'echo cyber-mux-itest-marker')
+			tmuxMuxAdapter.submit(exec, target, 'echo cyber-mux-itest-marker')
 			const output = await pollUntil(
-				() => tmuxSessionAdapter.read(exec, target),
+				() => tmuxMuxAdapter.read(exec, target),
 				(out) => out.includes('cyber-mux-itest-marker'),
 			)
 			expect(output).toContain('cyber-mux-itest-marker')

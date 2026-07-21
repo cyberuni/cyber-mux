@@ -29,7 +29,7 @@ export interface PaneNode {
 }
 
 /**
- * A binary split. `direction` is deliberately `SessionPlacement`'s vocabulary rather than
+ * A binary split. `direction` is deliberately `MuxPlacement`'s vocabulary rather than
  * horizontal/vertical: tmux's `-h` means "side by side" while most readers take "horizontal" to mean
  * "a horizontal divider", and that ambiguity has burned every tool that shipped it. `right`/`down`
  * say where the new pane goes and cannot be misread.

@@ -28,7 +28,7 @@ export const ENV_OPTION = new Option('--env <pair>', 'Environment variable KEY=V
 	.argParser(collectEnv)
 	.conflicts('template')
 
-/** Placement for a newly opened pane, matching `SessionPlacement`. */
+/** Placement for a newly opened pane, matching `MuxPlacement`. */
 export const AT_OPTION = new Option('--at <placement>', 'Where to place the new pane').choices([
 	'pane:right',
 	'pane:down',

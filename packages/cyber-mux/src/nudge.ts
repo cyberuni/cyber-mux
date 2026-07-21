@@ -1,5 +1,5 @@
 import type { Exec } from './exec.ts'
-import type { SessionAdapter, SessionTarget } from './session.ts'
+import type { MuxAdapter, MuxTarget } from './mux.ts'
 
 /** Max flush re-submits after the initial submit, before nudge fails loud. */
 const DEFAULT_ATTEMPTS = 10
@@ -55,9 +55,9 @@ export function isStaged(visible: string | null | undefined, message: string): b
  * "never took the turn" — a boot-race shape — and buries the real cause.
  */
 export async function nudge(
-	adapter: SessionAdapter,
+	adapter: MuxAdapter,
 	exec: Exec,
-	target: SessionTarget,
+	target: MuxTarget,
 	message: string,
 	opts: NudgeOptions = {},
 ): Promise<NudgeResult> {

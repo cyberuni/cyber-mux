@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { envFallback } from './env-fallback.ts'
 import type { Exec } from './exec.ts'
-import type { OpenedPane, SessionAdapter, SessionPlacement, SessionTarget } from './session.ts'
+import type { MuxAdapter, MuxPlacement, MuxTarget, OpenedPane } from './mux.ts'
 import {
 	collectPanes,
 	firstPane,
@@ -20,12 +20,12 @@ import {
  * `worktree-session.ts` is to `worktree.ts` + `session.ts`.
  *
  * The engine is cyber-mux's own: a tree-walk emitting `open`/`submit` against the PORTABLE
- * `SessionAdapter` verbs, never a backend's native template primitive. herdr's `template.apply` drops
+ * `MuxAdapter` verbs, never a backend's native template primitive. herdr's `template.apply` drops
  * out entirely rather than being deferred — it is a socket verb (this codebase speaks herdr's CLI,
  * synchronously, on purpose) and, more importantly, it is unique in the field: tmux, cmux, WezTerm
  * and screen have nothing equivalent. Leaning on it would mean the good path existing on exactly one
  * backend while every other backend needs this walk anyway. The capability a multiplexer must supply
- * is "split THIS pane, that way" — that is the whole ask, and it is `SessionOpenOptions.from`.
+ * is "split THIS pane, that way" — that is the whole ask, and it is `MuxOpenOptions.from`.
  */
 
 /** One pane the apply created — `label` is the key a higher layer addresses it by. */
@@ -84,7 +84,7 @@ export class TemplateApplyError extends Error {
 
 interface WalkContext {
 	exec: Exec
-	adapter: SessionAdapter
+	adapter: MuxAdapter
 	cwd: string
 	name: string
 	workspace: string | null
@@ -107,7 +107,7 @@ interface TabState {
 	/** The tab's index in the template; `null` for a single-tab template, which has no tab tier. */
 	index: number | null
 	/** The pane the tab's tree is built AGAINST — its own root region, never another tab's pane. */
-	root: SessionTarget
+	root: MuxTarget
 	/**
 	 * Where the root pane ACTUALLY sits. Not derived — supplied by whoever opened the region, because
 	 * only they know. The root leaf is the one pane no split ever births, so `open --template` can place
@@ -135,7 +135,7 @@ interface TabState {
 function tabState(
 	tree: TemplateNode,
 	index: number | null,
-	root: SessionTarget,
+	root: MuxTarget,
 	rootDir: string,
 	rootEnvHonored: boolean,
 ): TabState {
@@ -179,11 +179,11 @@ export interface OpenTemplateOptions {
 	/** The injected target directory. */
 	cwd: string
 	/** Defaults to `workspace` — a fresh space is empty by construction. */
-	at?: SessionPlacement
+	at?: MuxPlacement
 	label?: string
 	dirExists: (path: string) => boolean
-	/** Passed to the region's own `open` for a `pane:*` placement; see `SessionOpenOptions.from`. */
-	from?: SessionTarget
+	/** Passed to the region's own `open` for a `pane:*` placement; see `MuxOpenOptions.from`. */
+	from?: MuxTarget
 }
 
 /**
@@ -201,7 +201,7 @@ export interface OpenTemplateOptions {
  */
 export function openTemplate(
 	exec: Exec,
-	adapter: SessionAdapter,
+	adapter: MuxAdapter,
 	template: Template,
 	opts: OpenTemplateOptions,
 ): TemplateManifest {
@@ -353,7 +353,7 @@ function walkTabs(
 /** `open --template` with a tabs template: the first tab opens the workspace the rest live in. */
 function openTabsTemplate(
 	exec: Exec,
-	adapter: SessionAdapter,
+	adapter: MuxAdapter,
 	template: Template,
 	tabs: TabNode[],
 	opts: OpenTemplateOptions,
@@ -474,7 +474,7 @@ export interface ApplyTemplateOptions {
  */
 export function applyTemplateToRegion(
 	exec: Exec,
-	adapter: SessionAdapter,
+	adapter: MuxAdapter,
 	template: Template,
 	opts: ApplyTemplateOptions,
 ): TemplateManifest {
@@ -513,7 +513,7 @@ export function applyTemplateToRegion(
  */
 function applyTabsToRegion(
 	exec: Exec,
-	adapter: SessionAdapter,
+	adapter: MuxAdapter,
 	template: Template,
 	tabs: TabNode[],
 	opts: ApplyTemplateOptions,

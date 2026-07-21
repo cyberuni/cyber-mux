@@ -1,5 +1,5 @@
 import { relative, sep } from 'node:path'
-import type { PaneRect, RegionPane, WorkspaceTab } from './session.ts'
+import type { PaneRect, RegionPane, WorkspaceTab } from './mux.ts'
 import type { PaneNode, SplitNode, TabNode, Template, TemplateNode } from './template.ts'
 
 /**

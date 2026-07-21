@@ -1,12 +1,12 @@
 import { join } from 'node:path'
 import { Command, CommanderError, Option } from 'commander'
-import { callerPane, selectSessionAdapter } from './backend.ts'
+import { callerPane, selectMuxAdapter } from './backend.ts'
 import { AmbiguousPaneError, CliError, reportError } from './cli-error.ts'
 import { AT_OPTION, ENV_OPTION, FORMAT_OPTION, LABEL_OPTION } from './cli-options.ts'
 import { type Exec, realExec } from './exec.ts'
+import type { LivePane, MuxAdapter, MuxPlacement, MuxTarget } from './mux.ts'
 import { currentPane, probeMultiplexer } from './mux-probe.ts'
 import { type HelpEntry, output, printFields, printHelp, printTable, tildify } from './output.ts'
-import type { LivePane, SessionAdapter, SessionPlacement, SessionTarget } from './session.ts'
 import {
 	collectPanes,
 	isValidTemplateName,
@@ -71,13 +71,13 @@ const REAL_DEPS: CliDeps = { env: process.env, exec: realExec, store: realTempla
 
 /**
  * Resolve the adapter for the multiplexer this process is inside, failing with a coded `no-mux` error
- * when there is none. The underlying throw is TRANSLATED, never forwarded — `selectSessionAdapter`
+ * when there is none. The underlying throw is TRANSLATED, never forwarded — `selectMuxAdapter`
  * names `$TMUX`/`$HERDR_ENV`, which is backend plumbing an agent driving cyber-mux cannot act on; the
  * help names how to get a backend through this CLI instead.
  */
-function adapter(deps: Deps): SessionAdapter {
+function adapter(deps: Deps): MuxAdapter {
 	try {
-		return selectSessionAdapter(deps.env, deps.exec)
+		return selectMuxAdapter(deps.env, deps.exec)
 	} catch {
 		throw noMux()
 	}
@@ -165,7 +165,7 @@ function reportWorktreeFailure(err: unknown): never {
  * and takes the verb's existing not-found path (exit 1). Failing here instead would make every verb's
  * "no such pane" message this function's to write.
  */
-function resolveTarget(deps: Deps, a: SessionAdapter, locator: string): SessionTarget {
+function resolveTarget(deps: Deps, a: MuxAdapter, locator: string): MuxTarget {
 	let panes: LivePane[]
 	try {
 		panes = a.listPanes(deps.exec)
@@ -232,9 +232,9 @@ function paneVerb(locator: string, body: () => void): void {
  * verbs whose subject is git (`worktree list`/`remove`): a multiplexer can only ever add to the
  * answer, so its absence must not deny one.
  */
-function optionalAdapter(deps: Deps): SessionAdapter | undefined {
+function optionalAdapter(deps: Deps): MuxAdapter | undefined {
 	try {
-		return selectSessionAdapter(deps.env, deps.exec)
+		return selectMuxAdapter(deps.env, deps.exec)
 	} catch {
 		return undefined
 	}
@@ -611,7 +611,7 @@ function templateSaveCommand(deps: Deps): Command {
  * right — a window nobody grouped is a workspace of one, and nothing was left out. The `command`
  * re-states the caller's own `name` with `--workspace`, the flag that captures every tab.
  */
-function noteTabsLeftOut(deps: Deps, adapter: SessionAdapter, target: SessionTarget, name: string): HelpEntry | null {
+function noteTabsLeftOut(deps: Deps, adapter: MuxAdapter, target: MuxTarget, name: string): HelpEntry | null {
 	if (!adapter.describeWorkspace) return null
 	let tabs: number
 	try {
@@ -664,7 +664,7 @@ function doctorCommand(deps: Deps): Command {
 			const self = currentPane(deps.env)
 			let backend = 'none'
 			try {
-				backend = selectSessionAdapter(deps.env, deps.exec).name
+				backend = selectMuxAdapter(deps.env, deps.exec).name
 			} catch {
 				// no backend — reported as 'none'
 			}
@@ -697,7 +697,7 @@ function modeCommand(deps: Deps): Command {
 		.action(() => {
 			let name = 'none'
 			try {
-				name = selectSessionAdapter(deps.env, deps.exec).name
+				name = selectMuxAdapter(deps.env, deps.exec).name
 			} catch {
 				// no backend — reported as 'none'
 			}
@@ -721,7 +721,7 @@ function openCommand(deps: Deps): Command {
 					launch?: string
 					template?: string
 					cwd: string
-					at?: SessionPlacement
+					at?: MuxPlacement
 					env?: Record<string, string>
 					label?: string
 				}) => {
@@ -934,7 +934,7 @@ function worktreeAddCommand(deps: Deps): Command {
 				base?: string
 				launch?: string
 				template?: string
-				at?: SessionPlacement
+				at?: MuxPlacement
 				env?: Record<string, string>
 				label?: string
 			}) => {
@@ -1030,10 +1030,7 @@ function worktreeOpenCommand(deps: Deps): Command {
 		.addOption(LABEL_OPTION)
 		.addOption(FORMAT_OPTION)
 		.action(
-			(
-				path: string,
-				opts: { launch?: string; at?: SessionPlacement; env?: Record<string, string>; label?: string },
-			) => {
+			(path: string, opts: { launch?: string; at?: MuxPlacement; env?: Record<string, string>; label?: string }) => {
 				try {
 					const primaryRoot = resolvePrimaryRoot(deps.exec)
 					const a = adapter(deps)

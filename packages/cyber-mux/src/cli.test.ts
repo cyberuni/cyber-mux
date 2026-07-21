@@ -3,8 +3,8 @@ import type { Command } from 'commander'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildProgram } from './cli.ts'
 import type { Exec } from './exec.ts'
-import { tmuxSessionAdapter } from './session.tmux.ts'
-import type { PaneRect } from './session.ts'
+import { tmuxMuxAdapter } from './mux.tmux.ts'
+import type { PaneRect } from './mux.ts'
 import { collectPanes, resolveTree, type Template } from './template.ts'
 import { captureWorkspaceTemplate } from './template-capture.ts'
 import type { TemplateStore } from './template-store.ts'
@@ -2390,7 +2390,7 @@ describe('spec:cyber-mux/template', () => {
 			// ONE and a 3-tab workspace round-trips as 1.
 			// Captured from the region's own root pane — the pane the worktree open returned, exactly what
 			// a caller sitting in that workspace would run `template save --workspace` from.
-			const tabs = tmuxSessionAdapter.describeWorkspace!(exec, { id: '%0' })
+			const tabs = tmuxMuxAdapter.describeWorkspace!(exec, { id: '%0' })
 			expect(tabs).toHaveLength(3)
 			// Each tab's OWN name comes back, in template order — every tab it was built with.
 			expect(captureWorkspaceTemplate(tabs, { name: 'captured' }).template.tabs?.map((t) => t.label)).toEqual([
@@ -2673,13 +2673,13 @@ describe('spec:cyber-mux/template', () => {
 			catchExit()
 			captureStderr()
 			const store = fakeStore({})
-			const original = tmuxSessionAdapter.describeRegion
+			const original = tmuxMuxAdapter.describeRegion
 			try {
-				delete (tmuxSessionAdapter as { describeRegion?: unknown }).describeRegion
+				delete (tmuxMuxAdapter as { describeRegion?: unknown }).describeRegion
 				const program = buildProgram({ env: SAVE_ENV, exec: saveExec([]), store })
 				await expect(run(program, ['template', 'save', 'pool-3'])).rejects.toThrow('exit:1')
 			} finally {
-				tmuxSessionAdapter.describeRegion = original
+				tmuxMuxAdapter.describeRegion = original
 			}
 			// Names the backend on stdout, so the reader knows WHICH mux cannot do this rather than that save broke.
 			expect(logs.join('\n')).toContain('tmux')
@@ -2934,9 +2934,9 @@ describe('spec:cyber-mux/template', () => {
 			catchExit()
 			captureStderr()
 			const store = fakeStore({})
-			const original = tmuxSessionAdapter.describeWorkspace
+			const original = tmuxMuxAdapter.describeWorkspace
 			try {
-				delete (tmuxSessionAdapter as { describeWorkspace?: unknown }).describeWorkspace
+				delete (tmuxMuxAdapter as { describeWorkspace?: unknown }).describeWorkspace
 				const program = buildProgram({
 					env: { ...XDG, CYBER_MUX: 'tmux', CYBER_MUX_PANE: '%0' },
 					exec: untaggedTmuxExec([]),
@@ -2944,7 +2944,7 @@ describe('spec:cyber-mux/template', () => {
 				})
 				await expect(run(program, ['template', 'save', 'pool', '--workspace'])).rejects.toThrow('exit:1')
 			} finally {
-				tmuxSessionAdapter.describeWorkspace = original
+				tmuxMuxAdapter.describeWorkspace = original
 			}
 			// Names the backend on stdout, so the reader learns WHICH mux cannot do this rather than that save broke.
 			expect(logs.join('\n')).toContain('tmux')

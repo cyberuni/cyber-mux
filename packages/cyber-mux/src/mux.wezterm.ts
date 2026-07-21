@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { envFallback } from './env-fallback.ts'
 import { type Exec, withReason } from './exec.ts'
-import type { LivePane, OpenedPane, SessionAdapter, SessionReadOptions } from './session.ts'
+import type { LivePane, MuxAdapter, MuxReadOptions, OpenedPane } from './mux.ts'
 
 /**
  * WezTerm backend — detected via `$WEZTERM_PANE`. Drives WezTerm's built-in multiplexer through
@@ -36,7 +36,7 @@ import type { LivePane, OpenedPane, SessionAdapter, SessionReadOptions } from '.
  * (and workspace) in the same `-F`/JSON envelope the pane id rides out on. So `OpenedPane.tab` costs
  * a follow-up `wezterm cli list --format json` lookup here, not a free read of output already held.
  */
-export const weztermSessionAdapter: SessionAdapter = {
+export const weztermMuxAdapter: MuxAdapter = {
 	name: 'wezterm',
 
 	// `split-pane --percent` sizes a split. Verified only against the issue's own probe note and the
@@ -75,7 +75,7 @@ export const weztermSessionAdapter: SessionAdapter = {
 			// `spawn` has no title flag at all (unlike tmux `-n`/herdr `--label`), so a tab's own label
 			// is always a post-birth rename — not just the one root-tab case herdr has. Addressed by
 			// TAB id, not the pane id `opened` itself carries — `rename`'s 'tab' tier takes a tab id.
-			if (opts.label) weztermSessionAdapter.rename(exec, { id: opened.tab }, 'tab', opts.label)
+			if (opts.label) weztermMuxAdapter.rename(exec, { id: opened.tab }, 'tab', opts.label)
 			runLaunch(exec, opened, opts.env, opts.launch)
 			return opened
 		}
@@ -142,14 +142,14 @@ export const weztermSessionAdapter: SessionAdapter = {
 		// bare-flush case presses Enter alone, typing nothing; otherwise the literal text first, then
 		// Enter as its own key.
 		if (!text) {
-			weztermSessionAdapter.sendKeys(exec, target, ['Enter'])
+			weztermMuxAdapter.sendKeys(exec, target, ['Enter'])
 			return
 		}
-		weztermSessionAdapter.sendText(exec, target, text)
-		weztermSessionAdapter.sendKeys(exec, target, ['Enter'])
+		weztermMuxAdapter.sendText(exec, target, text)
+		weztermMuxAdapter.sendKeys(exec, target, ['Enter'])
 	},
 
-	read(exec, target, opts?: SessionReadOptions) {
+	read(exec, target, opts?: MuxReadOptions) {
 		const args = ['cli', 'get-text', '--pane-id', target.id]
 		// `--start-line` counts backward into scrollback from 0 (the top of the visible screen); the
 		// end defaults to the bottom of the screen. Negative-N approximates "last N lines" the way
@@ -262,7 +262,7 @@ function runLaunch(
 		)
 		return
 	}
-	if (fallback.command !== undefined) weztermSessionAdapter.submit(exec, target, fallback.command)
+	if (fallback.command !== undefined) weztermMuxAdapter.submit(exec, target, fallback.command)
 }
 
 interface WeztermListEntry {

@@ -1,9 +1,9 @@
 import type { Exec } from './exec.ts'
 import { withReason } from './exec.ts'
-import type { LivePane, OpenedPane, RegionPane, SessionAdapter, SessionReadOptions, WorkspaceTab } from './session.ts'
+import type { LivePane, MuxAdapter, MuxReadOptions, OpenedPane, RegionPane, WorkspaceTab } from './mux.ts'
 
 /**
- * The tmux window user option `SessionOpenOptions.workspaceGroup` is stored in. A user option (the
+ * The tmux window user option `MuxOpenOptions.workspaceGroup` is stored in. A user option (the
  * `@` prefix) is tmux's own mechanism for a value it stores but never interprets, so tmux carries
  * the tag without cyber-mux teaching it anything: it survives a window rename, and `list-windows`
  * both reads it back (`#{@cm_ws}`) and filters on it server-side (`-f '#{==:#{@cm_ws},<id>}'`).
@@ -32,7 +32,7 @@ export const TMUX_WORKSPACE_GROUP_OPTION = '@cm_ws'
 export const TMUX_TAB_NAME_OPTION = '@cm_tab'
 
 /** tmux backend — detected via `$TMUX`. */
-export const tmuxSessionAdapter: SessionAdapter = {
+export const tmuxMuxAdapter: MuxAdapter = {
 	name: 'tmux',
 
 	// `split-window -l N%` sizes a split; see `toTmuxSize` for the inversion it needs.
@@ -121,14 +121,14 @@ export const tmuxSessionAdapter: SessionAdapter = {
 		// composed name that must never be stored as the space's own. A caller that composed one knows
 		// the original and calls `group` itself with it; one that did not compose has nothing to store,
 		// its display name already being its own name.
-		if (group && windowId) tmuxSessionAdapter.group(exec, { id: windowId }, opts.workspaceGroup!)
+		if (group && windowId) tmuxMuxAdapter.group(exec, { id: windowId }, opts.workspaceGroup!)
 		// Through `rename`, not a second `select-pane -T` spelled here: post-birth pane naming and the
 		// seam's rename are the same act, so one spelling per backend is the only way the two cannot
 		// drift. A window took its name at birth via `-n` above and needs nothing here.
-		if (!window && opts.label) tmuxSessionAdapter.rename(exec, target, 'pane', opts.label)
+		if (!window && opts.label) tmuxMuxAdapter.rename(exec, target, 'pane', opts.label)
 		// `submit`, not `sendText` — a launch command has to actually run, and `submit` is the only
 		// verb that supplies the Enter.
-		if (opts.launch) tmuxSessionAdapter.submit(exec, target, opts.launch)
+		if (opts.launch) tmuxMuxAdapter.submit(exec, target, opts.launch)
 		return target
 	},
 
@@ -184,11 +184,11 @@ export const tmuxSessionAdapter: SessionAdapter = {
 		// the whole argument list, so `send-keys -l <text> Enter` would type a literal "Enter" after the
 		// text rather than pressing it. The composed path is what `submit`'s outcome-not-command
 		// contract exists to permit.
-		tmuxSessionAdapter.sendText(exec, target, text)
+		tmuxMuxAdapter.sendText(exec, target, text)
 		exec('tmux', ['send-keys', '-t', target.id, 'Enter'])
 	},
 
-	read(exec, target, opts?: SessionReadOptions) {
+	read(exec, target, opts?: MuxReadOptions) {
 		const args = ['capture-pane', '-p', '-t', target.id]
 		if (opts?.lines != null) args.push('-S', `-${opts.lines}`)
 		return exec('tmux', args) ?? ''
@@ -274,7 +274,7 @@ export const tmuxSessionAdapter: SessionAdapter = {
 	/**
 	 * tmux has NO workspace tier — `workspace` and `tab` both collapse onto a Window — so a workspace
 	 * is not a fact this backend holds. What it holds is the grouping TAG the walk wrote
-	 * (`SessionOpenOptions.workspaceGroup`, stored in a window user option), so the read here is
+	 * (`MuxOpenOptions.workspaceGroup`, stored in a window user option), so the read here is
 	 * literally *"which windows carry this group id"*.
 	 *
 	 * The tag, never the label. `list-windows -a` spans SESSIONS, so a bare name match would

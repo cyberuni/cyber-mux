@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { Exec } from './exec.ts'
-import { herdrSessionAdapter } from './session.herdr.ts'
+import { herdrMuxAdapter } from './mux.herdr.ts'
 
 function hasHerdr(): boolean {
 	try {
@@ -81,20 +81,20 @@ async function pollUntil(read: () => string, done: (out: string) => boolean, tim
 }
 
 describe.skipIf(!hasHerdr())('spec:cyber-mux/mux', () => {
-	describe('herdrSessionAdapter — real herdr boundary (isolated workspace, always safe)', () => {
+	describe('herdrMuxAdapter — real herdr boundary (isolated workspace, always safe)', () => {
 		let cwd: string
 		let target: { id: string }
 		let workspaceId: string | undefined
 
 		beforeAll(() => {
 			cwd = mkdtempSync(join(tmpdir(), 'cyber-mux-itest-'))
-			target = herdrSessionAdapter.open(realExec, { cwd, launch: 'sh', at: 'workspace' })
+			target = herdrMuxAdapter.open(realExec, { cwd, launch: 'sh', at: 'workspace' })
 			workspaceId = paneLocation(target.id).workspaceId
 		})
 
 		afterAll(() => {
 			try {
-				herdrSessionAdapter.teardown(realExec, target)
+				herdrMuxAdapter.teardown(realExec, target)
 			} catch {
 				// already gone
 			}
@@ -110,32 +110,32 @@ describe.skipIf(!hasHerdr())('spec:cyber-mux/mux', () => {
 
 		it("open({at:'workspace'}) actually creates a real, separate workspace the real herdr binary reports back", () => {
 			expect(target.id).toMatch(/^w\S+:p\S+$/)
-			expect(herdrSessionAdapter.paneExists(realExec, target)).toBe(true)
+			expect(herdrMuxAdapter.paneExists(realExec, target)).toBe(true)
 		})
 
 		it('listPanes() runs against the real server and returns the live shape', () => {
-			const panes = herdrSessionAdapter.listPanes(realExec)
+			const panes = herdrMuxAdapter.listPanes(realExec)
 			expect(Array.isArray(panes)).toBe(true)
 		})
 
 		it('submit()/read() actually run a command in and capture from a real pane', async () => {
 			// submit, not sendText: the marker has to RUN, which needs the Enter submit supplies.
-			herdrSessionAdapter.submit(realExec, target, 'echo cyber-mux-itest-marker')
+			herdrMuxAdapter.submit(realExec, target, 'echo cyber-mux-itest-marker')
 			const output = await pollUntil(
-				() => herdrSessionAdapter.read(realExec, target),
+				() => herdrMuxAdapter.read(realExec, target),
 				(out) => out.includes('cyber-mux-itest-marker'),
 			)
 			expect(output).toContain('cyber-mux-itest-marker')
 		})
 
 		it('teardown() actually closes the real pane', () => {
-			herdrSessionAdapter.teardown(realExec, target)
-			expect(herdrSessionAdapter.paneExists(realExec, target)).toBe(false)
+			herdrMuxAdapter.teardown(realExec, target)
+			expect(herdrMuxAdapter.paneExists(realExec, target)).toBe(false)
 		})
 	})
 
 	describe.skipIf(insideHerdrPane || !hasCurrentPane())(
-		'herdrSessionAdapter — real herdr boundary (current-pane context, run outside a herdr pane only)',
+		'herdrMuxAdapter — real herdr boundary (current-pane context, run outside a herdr pane only)',
 		() => {
 			let cwd: string
 
@@ -148,11 +148,11 @@ describe.skipIf(!hasHerdr())('spec:cyber-mux/mux', () => {
 			})
 
 			it("open({at:'tab'}) actually creates a real tab", () => {
-				const target = herdrSessionAdapter.open(realExec, { cwd, launch: 'sh', at: 'tab' })
+				const target = herdrMuxAdapter.open(realExec, { cwd, launch: 'sh', at: 'tab' })
 				expect(target.id).toMatch(/^w\S+:p\S+$/)
-				expect(herdrSessionAdapter.paneExists(realExec, target)).toBe(true)
+				expect(herdrMuxAdapter.paneExists(realExec, target)).toBe(true)
 				const { tabId } = paneLocation(target.id)
-				herdrSessionAdapter.teardown(realExec, target)
+				herdrMuxAdapter.teardown(realExec, target)
 				if (tabId) {
 					try {
 						execFileSync('herdr', ['tab', 'close', tabId], { stdio: 'ignore' })
@@ -163,10 +163,10 @@ describe.skipIf(!hasHerdr())('spec:cyber-mux/mux', () => {
 			})
 
 			it("open({at:'pane:right'}) actually splits the caller's current pane", () => {
-				const target = herdrSessionAdapter.open(realExec, { cwd, launch: 'sh', at: 'pane:right' })
+				const target = herdrMuxAdapter.open(realExec, { cwd, launch: 'sh', at: 'pane:right' })
 				expect(target.id).toMatch(/^w\S+:p\S+$/)
-				expect(herdrSessionAdapter.paneExists(realExec, target)).toBe(true)
-				herdrSessionAdapter.teardown(realExec, target)
+				expect(herdrMuxAdapter.paneExists(realExec, target)).toBe(true)
+				herdrMuxAdapter.teardown(realExec, target)
 			})
 		},
 	)
@@ -177,8 +177,8 @@ describe.skipIf(!hasHerdr())('spec:cyber-mux/mux', () => {
 	 * WITHOUT deleting the checkout (which is what lets `removeWorktree` keep its own gates and still
 	 * hand the removal to git). Pin them here as executable facts rather than as prose.
 	 */
-	describe('herdrSessionAdapter.worktree — real herdr boundary (scratch repo, no caller context)', () => {
-		const worktree = herdrSessionAdapter.worktree
+	describe('herdrMuxAdapter.worktree — real herdr boundary (scratch repo, no caller context)', () => {
+		const worktree = herdrMuxAdapter.worktree
 
 		function scratchRepo(): string {
 			const repoRoot = mkdtempSync(join(tmpdir(), 'cyber-mux-itest-repo-'))

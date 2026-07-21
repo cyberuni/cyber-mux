@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import type { Exec } from './exec.ts'
+import type { MuxAdapter, MuxTarget } from './mux.ts'
 import { isStaged, nudge } from './nudge.ts'
-import type { SessionAdapter, SessionTarget } from './session.ts'
 
-const target: SessionTarget = { id: 'p-1' }
+const target: MuxTarget = { id: 'p-1' }
 const MESSAGE = 'You have a new turn waiting — please check your pane now.'
 const noopSleep = async () => {}
 
@@ -11,7 +11,7 @@ const noopSleep = async () => {}
 function fakeAdapter(
 	reads: string[],
 	opts: { paneExists?: boolean } = {},
-): { adapter: SessionAdapter; sendCalls: string[]; submitCalls: number[] } {
+): { adapter: MuxAdapter; sendCalls: string[]; submitCalls: number[] } {
 	// `sendCalls` = every message nudge TYPED (submit with text). `submitCalls` = every bare flush
 	// (submit with no text). Both now arrive through `submit`, so the stub splits them on the
 	// presence of `text` — which is exactly the distinction nudge's no-duplicate guarantee rests on.
@@ -19,7 +19,7 @@ function fakeAdapter(
 	let submitCount = 0
 	const submitCalls: number[] = []
 	let readIndex = 0
-	const adapter: SessionAdapter = {
+	const adapter: MuxAdapter = {
 		name: 'fake',
 		open: () => {
 			throw new Error('not used')

@@ -3,14 +3,14 @@ import { envFallback } from './env-fallback.ts'
 import { type Exec, withReason } from './exec.ts'
 import type {
 	LivePane,
+	MuxAdapter,
+	MuxReadOptions,
 	OpenedPane,
 	RegionPane,
-	SessionAdapter,
-	SessionReadOptions,
 	WorkspaceTab,
 	WorktreeWorkspace,
 	WorktreeWorkspaceCapability,
-} from './session.ts'
+} from './mux.ts'
 import { normalizeWorktreePath } from './worktree.ts'
 
 /**
@@ -23,7 +23,7 @@ import { normalizeWorktreePath } from './worktree.ts'
  * The pane lifecycle (split/run/read/close) is verified against a live herdr binary; `pane split`
  * returns a JSON `pane_info` envelope whose id is extracted in `parsePaneId`.
  */
-export const herdrSessionAdapter: SessionAdapter = {
+export const herdrMuxAdapter: MuxAdapter = {
 	name: 'herdr',
 
 	// `pane split --ratio` sizes a split — and sizes the ORIGINAL pane, which is the seam's own
@@ -98,11 +98,11 @@ export const herdrSessionAdapter: SessionAdapter = {
 			// Through `rename`, not a second `pane rename` spelled here: post-birth pane naming and the
 			// seam's rename are the same act, so one spelling per backend is the only way the two cannot
 			// drift.
-			if (opts.label) herdrSessionAdapter.rename(exec, opened, 'pane', opts.label)
+			if (opts.label) herdrMuxAdapter.rename(exec, opened, 'pane', opts.label)
 		}
 		// `submit`, not `sendText` — a launch command has to actually run, and `submit` is the only
 		// verb that supplies the Enter.
-		if (opts.launch) herdrSessionAdapter.submit(exec, opened, opts.launch)
+		if (opts.launch) herdrMuxAdapter.submit(exec, opened, opts.launch)
 		return opened
 	},
 
@@ -157,7 +157,7 @@ export const herdrSessionAdapter: SessionAdapter = {
 		exec('herdr', ['pane', 'run', target.id, text])
 	},
 
-	read(exec, target, opts?: SessionReadOptions) {
+	read(exec, target, opts?: MuxReadOptions) {
 		const args = ['pane', 'read', target.id, '--source', 'visible']
 		if (opts?.lines != null) args.push('--lines', String(opts.lines))
 		return exec('herdr', args) ?? ''
@@ -408,7 +408,7 @@ function carryLaunch(exec: Exec, target: OpenedPane, env: Record<string, string>
 		)
 		return
 	}
-	if (fallback.command !== undefined) herdrSessionAdapter.submit(exec, target, fallback.command)
+	if (fallback.command !== undefined) herdrMuxAdapter.submit(exec, target, fallback.command)
 }
 
 /**

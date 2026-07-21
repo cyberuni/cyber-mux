@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Exec } from './exec.ts'
-import { TMUX_TAB_NAME_OPTION, TMUX_WORKSPACE_GROUP_OPTION, tmuxSessionAdapter } from './session.tmux.ts'
-import type { SessionPlacement, SessionSpaceTier } from './session.ts'
+import { TMUX_TAB_NAME_OPTION, TMUX_WORKSPACE_GROUP_OPTION, tmuxMuxAdapter } from './mux.tmux.ts'
+import type { MuxPlacement, MuxSpaceTier } from './mux.ts'
 
 function fakeExec(calls: string[][], responses: Record<string, string | null> = {}): Exec {
 	return (_cmd, args) => {
@@ -15,15 +15,15 @@ function fakeExec(calls: string[][], responses: Record<string, string | null> = 
  * it entirely. The tmux adapter must implement it, so bind it once here: if it ever goes missing
  * these tests fail loudly on that fact rather than silently skipping every case below.
  */
-const describeRegion = tmuxSessionAdapter.describeRegion
+const describeRegion = tmuxMuxAdapter.describeRegion
 if (!describeRegion) throw new Error('the tmux adapter must implement describeRegion')
 
 describe('spec:cyber-mux/mux', () => {
-	describe('tmuxSessionAdapter', () => {
+	describe('tmuxMuxAdapter', () => {
 		it('open() splits a pane at the given cwd and launches the command in it', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'split-window': '%9\t@1' })
-			const target = tmuxSessionAdapter.open(exec, { cwd: '/unit', launch: 'claude', at: 'pane:right' })
+			const target = tmuxMuxAdapter.open(exec, { cwd: '/unit', launch: 'claude', at: 'pane:right' })
 			expect(target).toEqual({ id: '%9', tab: '@1' })
 			expect(calls[0]).toEqual(['split-window', '-h', '-c', '/unit', '-P', '-F', '#{pane_id}\t#{window_id}'])
 			// --launch SUBMITS: typed literally, then Enter — so the command actually runs rather than
@@ -36,14 +36,14 @@ describe('spec:cyber-mux/mux', () => {
 		// Tab is its Window, so 'workspace' and 'tab' report the same KIND of thing (the window just
 		// opened) even though they are the tier distinction tmux collapses — which is fine here, because
 		// this outline is about the tab FIELD, not about that distinction.
-		it.each<{ at: SessionPlacement; response: Record<string, string>; tab: string }>([
+		it.each<{ at: MuxPlacement; response: Record<string, string>; tab: string }>([
 			{ at: 'tab', response: { 'new-window': '%2\t@2' }, tab: '@2' },
 			{ at: 'workspace', response: { 'new-window': '%2\t@2' }, tab: '@2' },
 			// A split opens no window of its own, so tmux reports the window it LANDED in — the caller's.
 			{ at: 'pane:right', response: { 'split-window': '%9\t@1' }, tab: '@1' },
 		])('open reports the tab the new pane landed in', ({ at, response, tab }) => {
 			const calls: string[][] = []
-			const opened = tmuxSessionAdapter.open(fakeExec(calls, response), { cwd: '/unit', at })
+			const opened = tmuxMuxAdapter.open(fakeExec(calls, response), { cwd: '/unit', at })
 			expect(opened.tab).toBe(tab)
 			// Read from the output the pane id already comes from — the SAME `-F` on the SAME call, which
 			// is what makes it cost nothing. One call, and that call asked for both ids together.
@@ -54,14 +54,14 @@ describe('spec:cyber-mux/mux', () => {
 		// The outline is ONE key, so both of tmux's Examples rows fold under this one static title.
 		// tmux's two tiers are two DIFFERENT verbs rather than one verb with a noun (unlike herdr), so
 		// the rows assert the whole argv each tier emits — that is the entire content of the claim.
-		it.each<{ tier: SessionSpaceTier; id: string; expected: string[] }>([
+		it.each<{ tier: MuxSpaceTier; id: string; expected: string[] }>([
 			// A tab is a Window on tmux, so it is `rename-window` — not a "tab" verb tmux does not have.
 			{ tier: 'tab', id: '@4', expected: ['rename-window', '-t', '@4', 'ledger'] },
 			// A pane has no rename verb at all; its name IS its title.
 			{ tier: 'pane', id: '%7', expected: ['select-pane', '-t', '%7', '-T', 'ledger'] },
 		])('a space is named after birth on every backend', ({ tier, id, expected }) => {
 			const calls: string[][] = []
-			tmuxSessionAdapter.rename(fakeExec(calls), { id }, tier, 'ledger')
+			tmuxMuxAdapter.rename(fakeExec(calls), { id }, tier, 'ledger')
 			expect(calls).toEqual([expected])
 		})
 
@@ -72,19 +72,19 @@ describe('spec:cyber-mux/mux', () => {
 		it('a rename moves no focus and opens nothing', () => {
 			const calls: string[][] = []
 			// A window the caller is not in — the rename addresses it by id, never by visiting it.
-			tmuxSessionAdapter.rename(fakeExec(calls), { id: '@9' }, 'tab', 'ledger')
+			tmuxMuxAdapter.rename(fakeExec(calls), { id: '@9' }, 'tab', 'ledger')
 			expect(calls).toEqual([['rename-window', '-t', '@9', 'ledger']])
 		})
 
 		// tmux carries env natively via `-e` at every tier, so the launch command it submits must be the
 		// bare command — never `env KEY=VALUE claude` prefixed on top of the env it already set.
-		it.each<{ at: SessionPlacement; response: Record<string, string> }>([
+		it.each<{ at: MuxPlacement; response: Record<string, string> }>([
 			{ at: 'pane:right', response: { 'split-window': '%9\t@1' } },
 			{ at: 'tab', response: { 'new-window': '%2\t@2' } },
 			{ at: 'workspace', response: { 'new-window': '%2\t@2' } },
 		])('a route that set env natively never prefixes it on top', ({ at, response }) => {
 			const calls: string[][] = []
-			tmuxSessionAdapter.open(fakeExec(calls, response), {
+			tmuxMuxAdapter.open(fakeExec(calls, response), {
 				cwd: '/unit',
 				at,
 				env: { ROLE: 'worker' },
@@ -101,9 +101,9 @@ describe('spec:cyber-mux/mux', () => {
 		it('open() defaults to tab and honors pane:right / pane:down / tab placement', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'split-window': '%1\t@1', 'new-window': '%2\t@1' })
-			tmuxSessionAdapter.open(exec, { cwd: '/u', launch: 'x', at: 'pane:right' })
-			tmuxSessionAdapter.open(exec, { cwd: '/u', launch: 'x', at: 'pane:down' })
-			tmuxSessionAdapter.open(exec, { cwd: '/u', launch: 'x', at: 'tab' })
+			tmuxMuxAdapter.open(exec, { cwd: '/u', launch: 'x', at: 'pane:right' })
+			tmuxMuxAdapter.open(exec, { cwd: '/u', launch: 'x', at: 'pane:down' })
+			tmuxMuxAdapter.open(exec, { cwd: '/u', launch: 'x', at: 'tab' })
 			// Assert on the placement calls themselves rather than fixed offsets into `calls`: a
 			// `--launch` now costs two send-keys calls (literal text, then Enter), so positional
 			// indexing would break on a change that has nothing to do with placement.
@@ -123,8 +123,8 @@ describe('spec:cyber-mux/mux', () => {
 		it('from names the pane a pane:* split targets', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'split-window': '%9\t@1' })
-			tmuxSessionAdapter.open(exec, { cwd: '/u', at: 'pane:right', from: { id: '%3' } })
-			tmuxSessionAdapter.open(exec, { cwd: '/u', at: 'pane:down', from: { id: '%3' } })
+			tmuxMuxAdapter.open(exec, { cwd: '/u', at: 'pane:right', from: { id: '%3' } })
+			tmuxMuxAdapter.open(exec, { cwd: '/u', at: 'pane:down', from: { id: '%3' } })
 			expect(calls.filter((c) => c[0] === 'split-window')).toEqual([
 				['split-window', '-h', '-t', '%3', '-c', '/u', '-P', '-F', '#{pane_id}\t#{window_id}'],
 				['split-window', '-v', '-t', '%3', '-c', '/u', '-P', '-F', '#{pane_id}\t#{window_id}'],
@@ -134,8 +134,8 @@ describe('spec:cyber-mux/mux', () => {
 		it('from is ignored by tab and workspace, which split nothing', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'new-window': '%2\t@1' })
-			tmuxSessionAdapter.open(exec, { cwd: '/u', at: 'tab', from: { id: '%3' } })
-			tmuxSessionAdapter.open(exec, { cwd: '/u', at: 'workspace', from: { id: '%3' } })
+			tmuxMuxAdapter.open(exec, { cwd: '/u', at: 'tab', from: { id: '%3' } })
+			tmuxMuxAdapter.open(exec, { cwd: '/u', at: 'workspace', from: { id: '%3' } })
 			// No `-t`: a window is not placed relative to a pane, so leaking `from` here would target
 			// the new window at an unrelated pane's session.
 			expect(calls.filter((c) => c[0] === 'new-window')).toEqual([
@@ -150,7 +150,7 @@ describe('spec:cyber-mux/mux', () => {
 		it('the ratio sign convention converts in opposite directions per backend', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'split-window': '%9\t@1' })
-			tmuxSessionAdapter.open(exec, { cwd: '/u', at: 'pane:right', from: { id: '%3' }, ratio: 0.333 })
+			tmuxMuxAdapter.open(exec, { cwd: '/u', at: 'pane:right', from: { id: '%3' }, ratio: 0.333 })
 			expect(calls[0]).toEqual([
 				'split-window',
 				'-h',
@@ -174,7 +174,7 @@ describe('spec:cyber-mux/mux', () => {
 		// the one that proves least. Pin it so it at least cannot silently stop being 50%.
 		it('an even split converts to half regardless of the inversion', () => {
 			const calls: string[][] = []
-			tmuxSessionAdapter.open(fakeExec(calls, { 'split-window': '%9\t@1' }), {
+			tmuxMuxAdapter.open(fakeExec(calls, { 'split-window': '%9\t@1' }), {
 				cwd: '/u',
 				at: 'pane:right',
 				from: { id: '%3' },
@@ -188,7 +188,7 @@ describe('spec:cyber-mux/mux', () => {
 		// half-up to 88%; truncating would say 87%.
 		it('a ratio on the rounding boundary rounds half up', () => {
 			const calls: string[][] = []
-			tmuxSessionAdapter.open(fakeExec(calls, { 'split-window': '%9\t@1' }), {
+			tmuxMuxAdapter.open(fakeExec(calls, { 'split-window': '%9\t@1' }), {
 				cwd: '/u',
 				at: 'pane:right',
 				from: { id: '%3' },
@@ -199,7 +199,7 @@ describe('spec:cyber-mux/mux', () => {
 
 		it('ratio omitted leaves each backend its own even default', () => {
 			const calls: string[][] = []
-			tmuxSessionAdapter.open(fakeExec(calls, { 'split-window': '%9\t@1' }), { cwd: '/u', at: 'pane:right' })
+			tmuxMuxAdapter.open(fakeExec(calls, { 'split-window': '%9\t@1' }), { cwd: '/u', at: 'pane:right' })
 			expect(calls[0]).not.toContain('-l')
 		})
 
@@ -218,7 +218,7 @@ describe('spec:cyber-mux/mux', () => {
 		] as const)('ratio is a split concept — a tab or workspace is never sized against a pane', (at) => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'new-window': '%9\t@1' })
-			tmuxSessionAdapter.open(exec, { cwd: '/unit', at, ratio: 0.3 })
+			tmuxMuxAdapter.open(exec, { cwd: '/unit', at, ratio: 0.3 })
 			expect(calls[0][0]).toBe('new-window')
 			expect(calls[0]).not.toContain('-l')
 			// neither the number as given nor its inversion — the two ways a leak would look.
@@ -229,7 +229,7 @@ describe('spec:cyber-mux/mux', () => {
 		it('each env variable gets its own flag, in the order given', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'split-window': '%9\t@1' })
-			tmuxSessionAdapter.open(exec, { cwd: '/u', at: 'pane:right', env: { ROLE: 'worker', TIER: 'gpu' } })
+			tmuxMuxAdapter.open(exec, { cwd: '/u', at: 'pane:right', env: { ROLE: 'worker', TIER: 'gpu' } })
 			expect(calls[0]).toEqual([
 				'split-window',
 				'-h',
@@ -248,13 +248,13 @@ describe('spec:cyber-mux/mux', () => {
 		it('env with no launch opens a blank shell carrying the env', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'split-window': '%9\t@1' })
-			tmuxSessionAdapter.open(exec, { cwd: '/u', at: 'pane:right', env: { ROLE: 'worker' } })
+			tmuxMuxAdapter.open(exec, { cwd: '/u', at: 'pane:right', env: { ROLE: 'worker' } })
 			expect(calls[0]).toContain('ROLE=worker')
 			expect(calls.some((c) => c[0] === 'send-keys')).toBe(false)
 		})
 
 		it('a backend declares whether it can size a split', () => {
-			expect(tmuxSessionAdapter.canSizeSplits).toBe(true)
+			expect(tmuxMuxAdapter.canSizeSplits).toBe(true)
 		})
 
 		// ── the workspace group ──
@@ -266,7 +266,7 @@ describe('spec:cyber-mux/mux', () => {
 		it('the open contract carries an opaque workspace group id', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'new-window': '%4\t@8' })
-			tmuxSessionAdapter.open(exec, {
+			tmuxMuxAdapter.open(exec, {
 				cwd: '/quarry',
 				at: 'tab',
 				label: 'oak - ridge - mill',
@@ -289,7 +289,7 @@ describe('spec:cyber-mux/mux', () => {
 		it('a backend with no workspace tier stores the group id natively', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'new-window': '%4\t@8' })
-			tmuxSessionAdapter.open(exec, { cwd: '/quarry', at: 'tab', workspaceGroup: 'shift-a' })
+			tmuxMuxAdapter.open(exec, { cwd: '/quarry', at: 'tab', workspaceGroup: 'shift-a' })
 			// `-w` scopes the option to the WINDOW, targeted by the window id the open itself reported —
 			// so the tag lands on the window this call created and no other.
 			expect(calls).toContainEqual(['set-option', '-w', '-t', '@8', TMUX_WORKSPACE_GROUP_OPTION, 'shift-a'])
@@ -309,7 +309,7 @@ describe('spec:cyber-mux/mux', () => {
 		it('a space already open is grouped by the same verb open uses', () => {
 			const direct: string[][] = []
 			// A window that already exists — nothing opens it here, which is the whole point.
-			tmuxSessionAdapter.group(fakeExec(direct), { id: '@8' }, 'shift-a')
+			tmuxMuxAdapter.group(fakeExec(direct), { id: '@8' }, 'shift-a')
 			// The backend stores the id ON THAT SPACE: `-w` scopes it to the window, targeted by id.
 			expect(direct).toEqual([['set-option', '-w', '-t', '@8', TMUX_WORKSPACE_GROUP_OPTION, 'shift-a']])
 
@@ -318,7 +318,7 @@ describe('spec:cyber-mux/mux', () => {
 			// second `set-option` hand-written inside `open` would pass a per-call check while being free
 			// to diverge on the next edit.
 			const viaOpen: string[][] = []
-			tmuxSessionAdapter.open(fakeExec(viaOpen, { 'new-window': '%4\t@8' }), {
+			tmuxMuxAdapter.open(fakeExec(viaOpen, { 'new-window': '%4\t@8' }), {
 				cwd: '/quarry',
 				at: 'tab',
 				workspaceGroup: 'shift-a',
@@ -335,7 +335,7 @@ describe('spec:cyber-mux/mux', () => {
 		// beside the group — the same rule the group id follows, one tier down.
 		it("a backend whose display name is composed stores the space's own name beside the group", () => {
 			const calls: string[][] = []
-			tmuxSessionAdapter.group(fakeExec(calls), { id: '@8' }, 'shift-a', 'editor')
+			tmuxMuxAdapter.group(fakeExec(calls), { id: '@8' }, 'shift-a', 'editor')
 			// Stored as the space's own name, verbatim.
 			expect(calls).toContainEqual(['set-option', '-w', '-t', '@8', TMUX_TAB_NAME_OPTION, 'editor'])
 			// SEPARATELY from its display name: the display name is tmux's `window_name`, and this write
@@ -355,7 +355,7 @@ describe('spec:cyber-mux/mux', () => {
 		it('a group id is never invented for a caller that did not ask for one', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'new-window': '%4\t@1' })
-			tmuxSessionAdapter.open(exec, { cwd: '/quarry', at: 'tab', label: 'oak - ridge - mill' })
+			tmuxMuxAdapter.open(exec, { cwd: '/quarry', at: 'tab', label: 'oak - ridge - mill' })
 			// Not "no id derived from the label" — no window option AT ALL. A window nobody grouped stays
 			// ungrouped, and reads back as a workspace of one.
 			expect(calls.some((c) => c[0] === 'set-option')).toBe(false)
@@ -380,7 +380,7 @@ describe('spec:cyber-mux/mux', () => {
 		it('the group id is not a workspace, and open never reports it as one', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'new-window': '%4\t@8' })
-			const opened = tmuxSessionAdapter.open(exec, { cwd: '/quarry', at: 'tab', workspaceGroup: 'shift-a' })
+			const opened = tmuxMuxAdapter.open(exec, { cwd: '/quarry', at: 'tab', workspaceGroup: 'shift-a' })
 			// The tag WAS written — this is the grouped case, not a vacuous pass.
 			expect(calls.some((c) => c[0] === 'set-option')).toBe(true)
 			// Absent, and not merely `!== 'shift-a'`: no `workspace` key at all, so no consumer reading
@@ -446,14 +446,14 @@ describe('spec:cyber-mux/mux', () => {
 		])('env is set natively at the birth of whatever tier is opened', (at, expected) => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'new-window': '%9\t@1', 'split-window': '%9\t@1' })
-			tmuxSessionAdapter.open(exec, { cwd: '/unit', at, env: { ROLE: 'planner', TIER: 'cpu' } })
+			tmuxMuxAdapter.open(exec, { cwd: '/unit', at, env: { ROLE: 'planner', TIER: 'cpu' } })
 			expect(calls[0]).toEqual(expected)
 		})
 
 		it('open({at:workspace, env, label}) names the window and sets its env together', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'new-window': '%9\t@1' })
-			tmuxSessionAdapter.open(exec, { cwd: '/unit', at: 'workspace', label: 'render-farm', env: { ROLE: 'planner' } })
+			tmuxMuxAdapter.open(exec, { cwd: '/unit', at: 'workspace', label: 'render-farm', env: { ROLE: 'planner' } })
 			expect(calls[0]).toEqual([
 				'new-window',
 				'-n',
@@ -474,7 +474,7 @@ describe('spec:cyber-mux/mux', () => {
 		it("from omitted leaves each backend its own default, which tracks the USER's focus", () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'split-window': '%9\t@1' })
-			tmuxSessionAdapter.open(exec, { cwd: '/u', at: 'pane:right' })
+			tmuxMuxAdapter.open(exec, { cwd: '/u', at: 'pane:right' })
 			// The pre-`from` behavior, kept for a caller that cannot identify itself: tmux's active
 			// pane is a guess, but it is a better outcome than refusing to open at all.
 			expect(calls[0]).toEqual(['split-window', '-h', '-c', '/u', '-P', '-F', '#{pane_id}\t#{window_id}'])
@@ -484,7 +484,7 @@ describe('spec:cyber-mux/mux', () => {
 		it('--at omitted falls back to tab', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'new-window': '%2\t@1' })
-			const target = tmuxSessionAdapter.open(exec, { cwd: '/u', launch: 'x' })
+			const target = tmuxMuxAdapter.open(exec, { cwd: '/u', launch: 'x' })
 			expect(target).toEqual({ id: '%2', tab: '@1' })
 			expect(calls[0]).toEqual(['new-window', '-d', '-c', '/u', '-P', '-F', '#{pane_id}\t#{window_id}'])
 		})
@@ -501,7 +501,7 @@ describe('spec:cyber-mux/mux', () => {
 		] as const)('a backend with no workspace tier returns no workspace at all', (at) => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'new-window': '%20\t@1', 'split-window': '%20\t@1' })
-			const target = tmuxSessionAdapter.open(exec, { cwd: '/unit', at })
+			const target = tmuxMuxAdapter.open(exec, { cwd: '/unit', at })
 			expect(target).toEqual({ id: '%20', tab: '@1' })
 			expect('workspace' in target).toBe(false)
 		})
@@ -509,7 +509,7 @@ describe('spec:cyber-mux/mux', () => {
 		it('tmux --at workspace opens a visible window in the current session, never a detached session', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'new-window': '%20\t@1' })
-			const target = tmuxSessionAdapter.open(exec, { cwd: '/unit', launch: 'claude', at: 'workspace' })
+			const target = tmuxMuxAdapter.open(exec, { cwd: '/unit', launch: 'claude', at: 'workspace' })
 			expect(target).toEqual({ id: '%20', tab: '@1' })
 			// A window (visible in the status bar, select-window-able), not a new-session -d detached
 			// session that the attached client can't see or beam to.
@@ -522,7 +522,7 @@ describe('spec:cyber-mux/mux', () => {
 		it('open() with no launch creates a blank pane and sends nothing', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'split-window': '%9\t@1' })
-			const target = tmuxSessionAdapter.open(exec, { cwd: '/unit', at: 'pane:right' })
+			const target = tmuxMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right' })
 			expect(target).toEqual({ id: '%9', tab: '@1' })
 			expect(calls).toHaveLength(1)
 			expect(calls.some((c) => c[0] === 'send-keys')).toBe(false)
@@ -530,11 +530,9 @@ describe('spec:cyber-mux/mux', () => {
 
 		it('open() throws when tmux reports no pane', () => {
 			const exec: Exec = () => null
-			expect(() => tmuxSessionAdapter.open(exec, { cwd: '/unit', launch: 'claude' })).toThrow(/new-window/)
+			expect(() => tmuxMuxAdapter.open(exec, { cwd: '/unit', launch: 'claude' })).toThrow(/new-window/)
 			// A runner that cannot say why yields the bare failure — no dangling em-dash, no guess.
-			expect(() => tmuxSessionAdapter.open(exec, { cwd: '/unit', launch: 'claude' })).toThrow(
-				/^tmux new-window failed$/,
-			)
+			expect(() => tmuxMuxAdapter.open(exec, { cwd: '/unit', launch: 'claude' })).toThrow(/^tmux new-window failed$/)
 		})
 
 		it('open() carries the backend’s own reason for refusing a split', () => {
@@ -543,7 +541,7 @@ describe('spec:cyber-mux/mux', () => {
 			// "tmux split-window failed" to act on.
 			const exec: Exec = () => null
 			exec.lastError = 'no space for new pane'
-			expect(() => tmuxSessionAdapter.open(exec, { cwd: '/unit', at: 'pane:down', from: { id: '%4' } })).toThrow(
+			expect(() => tmuxMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:down', from: { id: '%4' } })).toThrow(
 				/^tmux split-window failed — no space for new pane$/,
 			)
 		})
@@ -551,7 +549,7 @@ describe('spec:cyber-mux/mux', () => {
 		it('sendText() types literal text and presses no Enter', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls)
-			tmuxSessionAdapter.sendText(exec, { id: '%3' }, 'hello')
+			tmuxMuxAdapter.sendText(exec, { id: '%3' }, 'hello')
 			expect(calls).toEqual([['send-keys', '-t', '%3', '-l', 'hello']])
 		})
 
@@ -560,14 +558,14 @@ describe('spec:cyber-mux/mux', () => {
 			// history) instead of typing the word.
 			const calls: string[][] = []
 			const exec = fakeExec(calls)
-			tmuxSessionAdapter.sendText(exec, { id: '%3' }, 'Up')
+			tmuxMuxAdapter.sendText(exec, { id: '%3' }, 'Up')
 			expect(calls[0]).toEqual(['send-keys', '-t', '%3', '-l', 'Up'])
 		})
 
 		it('sendKeys() presses each key in order, typing nothing', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls)
-			tmuxSessionAdapter.sendKeys(exec, { id: '%3' }, ['Escape', 'Up', 'C-c'])
+			tmuxMuxAdapter.sendKeys(exec, { id: '%3' }, ['Escape', 'Up', 'C-c'])
 			expect(calls).toEqual([['send-keys', '-t', '%3', 'Escape', 'Up', 'C-c']])
 		})
 
@@ -575,7 +573,7 @@ describe('spec:cyber-mux/mux', () => {
 			// tmux has no 'Backspace' key name and would type the word; BSpace is its name for the key.
 			const calls: string[][] = []
 			const exec = fakeExec(calls)
-			tmuxSessionAdapter.sendKeys(exec, { id: '%3' }, ['Backspace'])
+			tmuxMuxAdapter.sendKeys(exec, { id: '%3' }, ['Backspace'])
 			// The WHOLE call list, not just the first: the scenario's "never delivered as literal
 			// characters" is a claim about every call, and a stray `send-keys -l Backspace` after
 			// this one would satisfy an assertion that only looked at calls[0].
@@ -585,7 +583,7 @@ describe('spec:cyber-mux/mux', () => {
 		it('a non-core key that the backend does know is pressed', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls)
-			tmuxSessionAdapter.sendKeys(exec, { id: '%3' }, ['Home', 'M-x'])
+			tmuxMuxAdapter.sendKeys(exec, { id: '%3' }, ['Home', 'M-x'])
 			// No -l anywhere: tmux PRESSES Home rather than typing the word.
 			expect(calls).toEqual([['send-keys', '-t', '%3', 'Home', 'M-x']])
 		})
@@ -593,7 +591,7 @@ describe('spec:cyber-mux/mux', () => {
 		it('sendKeys() Enter presses Enter, because the caller asked for it', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls)
-			tmuxSessionAdapter.sendKeys(exec, { id: '%3' }, ['Enter'])
+			tmuxMuxAdapter.sendKeys(exec, { id: '%3' }, ['Enter'])
 			expect(calls[0]).toEqual(['send-keys', '-t', '%3', 'Enter'])
 		})
 
@@ -602,7 +600,7 @@ describe('spec:cyber-mux/mux', () => {
 			// "Enter". The text must be typed literally and the Enter pressed as a key: two calls.
 			const calls: string[][] = []
 			const exec = fakeExec(calls)
-			tmuxSessionAdapter.submit(exec, { id: '%3' }, 'echo hi')
+			tmuxMuxAdapter.submit(exec, { id: '%3' }, 'echo hi')
 			expect(calls).toEqual([
 				['send-keys', '-t', '%3', '-l', 'echo hi'],
 				['send-keys', '-t', '%3', 'Enter'],
@@ -614,7 +612,7 @@ describe('spec:cyber-mux/mux', () => {
 			// previous command) and then Enter, RE-RUNNING it. Verified live against tmux 3.6b.
 			const calls: string[][] = []
 			const exec = fakeExec(calls)
-			tmuxSessionAdapter.submit(exec, { id: '%3' }, 'Up')
+			tmuxMuxAdapter.submit(exec, { id: '%3' }, 'Up')
 			expect(calls).toEqual([
 				['send-keys', '-t', '%3', '-l', 'Up'],
 				['send-keys', '-t', '%3', 'Enter'],
@@ -625,31 +623,31 @@ describe('spec:cyber-mux/mux', () => {
 		it('submit() with no text flushes the staged buffer with a bare Enter, never re-typing it', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls)
-			tmuxSessionAdapter.submit(exec, { id: '%3' })
+			tmuxMuxAdapter.submit(exec, { id: '%3' })
 			expect(calls).toEqual([['send-keys', '-t', '%3', 'Enter']])
 		})
 
 		it('submit() with empty text is the bare flush, not a second contract', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls)
-			tmuxSessionAdapter.submit(exec, { id: '%3' }, '')
+			tmuxMuxAdapter.submit(exec, { id: '%3' }, '')
 			expect(calls).toEqual([['send-keys', '-t', '%3', 'Enter']])
 		})
 
 		it('read() captures pane output, optionally scoped to N lines', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'capture-pane': 'line1\nline2' })
-			expect(tmuxSessionAdapter.read(exec, { id: '%3' })).toBe('line1\nline2')
+			expect(tmuxMuxAdapter.read(exec, { id: '%3' })).toBe('line1\nline2')
 			expect(calls[0]).toEqual(['capture-pane', '-p', '-t', '%3'])
 
-			tmuxSessionAdapter.read(exec, { id: '%3' }, { lines: 50 })
+			tmuxMuxAdapter.read(exec, { id: '%3' }, { lines: 50 })
 			expect(calls[1]).toEqual(['capture-pane', '-p', '-t', '%3', '-S', '-50'])
 		})
 
 		it("focus() beams the attached client to the pane's own session and window, in order", () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'list-panes': '%1 sess-a @1\n%3 sess-b @9\n%7 sess-a @1' })
-			tmuxSessionAdapter.focus(exec, { id: '%3' })
+			tmuxMuxAdapter.focus(exec, { id: '%3' })
 			expect(calls).toEqual([
 				['list-panes', '-a', '-F', '#{pane_id} #{session_name} #{window_id}'],
 				['switch-client', '-t', 'sess-b'],
@@ -661,40 +659,40 @@ describe('spec:cyber-mux/mux', () => {
 		it('focus() throws instead of a false success when the recorded pane no longer resolves, and switches nothing', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'list-panes': '%1 sess-a @1\n%7 sess-a @1' })
-			expect(() => tmuxSessionAdapter.focus(exec, { id: '%3' })).toThrow(/could not be resolved to beam to/)
+			expect(() => tmuxMuxAdapter.focus(exec, { id: '%3' })).toThrow(/could not be resolved to beam to/)
 			expect(calls).toEqual([['list-panes', '-a', '-F', '#{pane_id} #{session_name} #{window_id}']])
 		})
 
 		it('teardown() kills the pane', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls)
-			tmuxSessionAdapter.teardown(exec, { id: '%3' })
+			tmuxMuxAdapter.teardown(exec, { id: '%3' })
 			expect(calls[0]).toEqual(['kill-pane', '-t', '%3'])
 		})
 
 		it('paneExists() is true when list-panes includes the id, false when it is gone', () => {
 			// has-session misses (not a session name); list-panes lists the pane → exists
-			expect(tmuxSessionAdapter.paneExists(fakeExec([], { 'list-panes': '%1\n%3\n%7' }), { id: '%3' })).toBe(true)
+			expect(tmuxMuxAdapter.paneExists(fakeExec([], { 'list-panes': '%1\n%3\n%7' }), { id: '%3' })).toBe(true)
 			// list-panes omits it → gone
-			expect(tmuxSessionAdapter.paneExists(fakeExec([], { 'list-panes': '%1\n%7' }), { id: '%3' })).toBe(false)
+			expect(tmuxMuxAdapter.paneExists(fakeExec([], { 'list-panes': '%1\n%7' }), { id: '%3' })).toBe(false)
 		})
 
 		it('tmux reports a pane focused when an attached client is currently viewing it', () => {
 			const exec = fakeExec([], { 'list-panes': '%1 0 1 1\n%3 1 1 1\n%7 0 0 0' })
-			expect(tmuxSessionAdapter.isPaneFocused(exec, { id: '%3' })).toBe(true)
+			expect(tmuxMuxAdapter.isPaneFocused(exec, { id: '%3' })).toBe(true)
 		})
 
 		it('tmux reports a pane not focused when no attached client is viewing it', () => {
 			const exec = fakeExec([], { 'list-panes': '%1 0 1 1\n%3 0 1 1\n%7 1 0 1\n%9 1 1 0' })
-			expect(tmuxSessionAdapter.isPaneFocused(exec, { id: '%3' })).toBe(false)
-			expect(tmuxSessionAdapter.isPaneFocused(exec, { id: '%7' })).toBe(false)
-			expect(tmuxSessionAdapter.isPaneFocused(exec, { id: '%9' })).toBe(false)
+			expect(tmuxMuxAdapter.isPaneFocused(exec, { id: '%3' })).toBe(false)
+			expect(tmuxMuxAdapter.isPaneFocused(exec, { id: '%7' })).toBe(false)
+			expect(tmuxMuxAdapter.isPaneFocused(exec, { id: '%9' })).toBe(false)
 		})
 
 		it('a focus query that cannot be answered is unknown, not a boolean', () => {
 			const exec = fakeExec([], { 'list-panes': '%1 1 1 1' })
-			expect(tmuxSessionAdapter.isPaneFocused(exec, { id: '%3' })).toBeUndefined()
-			expect(tmuxSessionAdapter.isPaneFocused(() => null, { id: '%3' })).toBeUndefined()
+			expect(tmuxMuxAdapter.isPaneFocused(exec, { id: '%3' })).toBeUndefined()
+			expect(tmuxMuxAdapter.isPaneFocused(() => null, { id: '%3' })).toBeUndefined()
 		})
 
 		it('listPanes() reports every live pane with its id and cwd, no harness', () => {
@@ -704,7 +702,7 @@ describe('spec:cyber-mux/mux', () => {
 			const exec = fakeExec(calls, {
 				'list-panes': '%1\tclaude\t/repo/a\tworker\tzeta\n%3\tzsh\t/repo/b\tsidebar\tzeta',
 			})
-			expect(tmuxSessionAdapter.listPanes(exec)).toEqual([
+			expect(tmuxMuxAdapter.listPanes(exec)).toEqual([
 				{ id: '%1', mux: 'tmux', cwd: '/repo/a', label: 'worker' },
 				{ id: '%3', mux: 'tmux', cwd: '/repo/b', label: 'sidebar' },
 			])
@@ -717,7 +715,7 @@ describe('spec:cyber-mux/mux', () => {
 		})
 
 		it('listPanes() returns empty when tmux reports nothing', () => {
-			expect(tmuxSessionAdapter.listPanes(() => null)).toEqual([])
+			expect(tmuxMuxAdapter.listPanes(() => null)).toEqual([])
 		})
 
 		// The tmux half of the outline; the herdr row lives in session.herdr.test.ts.
@@ -725,7 +723,7 @@ describe('spec:cyber-mux/mux', () => {
 			// A person named this pane `worker` — its title differs from the host, which is what makes it
 			// a name someone chose rather than the one tmux handed it.
 			const exec = fakeExec([], { 'list-panes': '%1\tclaude\t/repo/a\tworker\tzeta' })
-			expect(tmuxSessionAdapter.listPanes(exec)).toEqual([{ id: '%1', mux: 'tmux', cwd: '/repo/a', label: 'worker' }])
+			expect(tmuxMuxAdapter.listPanes(exec)).toEqual([{ id: '%1', mux: 'tmux', cwd: '/repo/a', label: 'worker' }])
 		})
 
 		// tmux has no unset title — it defaults `pane_title` to the hostname. Exporting that would label
@@ -735,7 +733,7 @@ describe('spec:cyber-mux/mux', () => {
 			const exec = fakeExec([], {
 				'list-panes': '%1\tzsh\t/repo/a\tzeta\tzeta\n%2\tzsh\t/repo/b\tzeta\tzeta\n%3\tzsh\t/repo/c\tzeta\tzeta',
 			})
-			const panes = tmuxSessionAdapter.listPanes(exec)
+			const panes = tmuxMuxAdapter.listPanes(exec)
 			// That pane reports NO label — absent, not the hostname.
 			for (const pane of panes) expect(pane.label).toBeUndefined()
 			// So the hostname resolves to no pane, rather than colliding with every pane in the session.
@@ -746,7 +744,7 @@ describe('spec:cyber-mux/mux', () => {
 			// A label with a space, and a cwd with one too — the pair the old space-separated format could
 			// not tell apart, and the reason this read is tab-separated.
 			const exec = fakeExec([], { 'list-panes': '%1\tzsh\t/repo/my dir\tmy worker\tzeta' })
-			const panes = tmuxSessionAdapter.listPanes(exec)
+			const panes = tmuxMuxAdapter.listPanes(exec)
 			// The label and the working directory are each read WHOLE — neither truncated at its space,
 			// and neither bleeding into the other.
 			expect(panes).toEqual([{ id: '%1', mux: 'tmux', cwd: '/repo/my dir', label: 'my worker' }])
@@ -756,13 +754,13 @@ describe('spec:cyber-mux/mux', () => {
 		})
 
 		it('binds no worktree to a workspace — tmux has no workspace tier to bind one to', () => {
-			expect(tmuxSessionAdapter.worktree).toBeUndefined()
+			expect(tmuxMuxAdapter.worktree).toBeUndefined()
 		})
 
 		it.each(['workspace', 'tab'] as const)('open({at:%s}) names the window with --label', (at) => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'new-window': '%9\t@1' })
-			tmuxSessionAdapter.open(exec, { cwd: '/unit', at, label: 'my-name' })
+			tmuxMuxAdapter.open(exec, { cwd: '/unit', at, label: 'my-name' })
 			// `-n` at birth also turns tmux's automatic-rename off, so the name survives what the pane runs.
 			expect(calls[0]).toEqual([
 				'new-window',
@@ -780,14 +778,14 @@ describe('spec:cyber-mux/mux', () => {
 		it('open({at:pane:right}) titles the pane after the split — tmux has no name flag there', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'split-window': '%9\t@1' })
-			tmuxSessionAdapter.open(exec, { cwd: '/unit', at: 'pane:right', label: 'my-name' })
+			tmuxMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right', label: 'my-name' })
 			expect(calls[0]).toEqual(['split-window', '-h', '-c', '/unit', '-P', '-F', '#{pane_id}\t#{window_id}'])
 			expect(calls[1]).toEqual(['select-pane', '-t', '%9', '-T', 'my-name'])
 		})
 
 		it('open() names nothing when no label is given', () => {
 			const calls: string[][] = []
-			tmuxSessionAdapter.open(fakeExec(calls, { 'new-window': '%9\t@1' }), { cwd: '/unit', at: 'tab' })
+			tmuxMuxAdapter.open(fakeExec(calls, { 'new-window': '%9\t@1' }), { cwd: '/unit', at: 'tab' })
 			expect(calls[0]).not.toContain('-n')
 			expect(calls.some((c) => c[0] === 'select-pane')).toBe(false)
 		})
@@ -868,7 +866,7 @@ describe('spec:cyber-mux/mux', () => {
 		 * what it holds is the grouping TAG the walk wrote into a window user option. The read is
 		 * therefore literally "which windows carry this group id", filtered server-side on the tag.
 		 */
-		const describeWorkspace = tmuxSessionAdapter.describeWorkspace
+		const describeWorkspace = tmuxMuxAdapter.describeWorkspace
 		if (!describeWorkspace) throw new Error('the tmux adapter must implement describeWorkspace')
 
 		it('describeWorkspace() reads the caller’s window and its tag in one call, then the tagged windows', () => {

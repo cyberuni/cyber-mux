@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Exec } from './exec.ts'
-import { herdrSessionAdapter } from './session.herdr.ts'
-import { TMUX_WORKSPACE_GROUP_OPTION, tmuxSessionAdapter } from './session.tmux.ts'
-import type { OpenedPane, SessionAdapter, SessionOpenOptions } from './session.ts'
+import { herdrMuxAdapter } from './mux.herdr.ts'
+import { TMUX_WORKSPACE_GROUP_OPTION, tmuxMuxAdapter } from './mux.tmux.ts'
+import type { MuxAdapter, MuxOpenOptions, OpenedPane } from './mux.ts'
 import type { Template } from './template.ts'
 import { applyTemplateToRegion, openTemplate, TemplateApplyError } from './template-session.ts'
 
@@ -53,7 +53,7 @@ function herdrExec(calls: string[][]): Exec {
 }
 
 interface Recorded {
-	opens: SessionOpenOptions[]
+	opens: MuxOpenOptions[]
 	submits: { pane: string; text: string | undefined }[]
 	teardowns: string[]
 	focuses: string[]
@@ -78,7 +78,7 @@ interface Recorded {
 function fakeAdapter(opts: { canSizeSplits?: boolean; failOnOpen?: number; workspace?: string } = {}) {
 	const calls: Recorded = { opens: [], submits: [], teardowns: [], focuses: [], groups: [], log: [] }
 	let n = 0
-	const adapter: SessionAdapter = {
+	const adapter: MuxAdapter = {
 		name: 'fake',
 		...(opts.canSizeSplits === false ? {} : { canSizeSplits: true }),
 		rename: () => {
@@ -214,7 +214,7 @@ describe('spec:cyber-mux/template', () => {
 		it('builds every split before the first command is submitted', () => {
 			const calls: string[][] = []
 			const exec = tmuxExec(calls)
-			openTemplate(exec, tmuxSessionAdapter, agentPool3, { cwd: '/target', dirExists: anyDir })
+			openTemplate(exec, tmuxMuxAdapter, agentPool3, { cwd: '/target', dirExists: anyDir })
 			const lastSplit = calls.map((c) => c[0]).lastIndexOf('split-window')
 			const firstSubmit = calls.map((c) => c[0]).indexOf('send-keys')
 			expect(lastSplit).toBeGreaterThanOrEqual(0)
@@ -337,11 +337,11 @@ describe('spec:cyber-mux/template', () => {
 				panes: [{ label: 'dispatcher', env: { TIER: 'gpu' } }, { label: 'spare' }],
 			}
 			const tmuxCalls: string[][] = []
-			openTemplate(tmuxExec(tmuxCalls), tmuxSessionAdapter, template, { cwd: '/target', dirExists: anyDir })
+			openTemplate(tmuxExec(tmuxCalls), tmuxMuxAdapter, template, { cwd: '/target', dirExists: anyDir })
 			expect(tmuxCalls.find((c) => c[0] === 'new-window')!.join(' ')).toContain('-e TIER=gpu')
 
 			const herdrCalls: string[][] = []
-			openTemplate(herdrExec(herdrCalls), herdrSessionAdapter, template, { cwd: '/target', dirExists: anyDir })
+			openTemplate(herdrExec(herdrCalls), herdrMuxAdapter, template, { cwd: '/target', dirExists: anyDir })
 			expect(herdrCalls.find((c) => c[0] === 'workspace' && c[1] === 'create')!.join(' ')).toContain('--env TIER=gpu')
 		})
 	})
@@ -388,7 +388,7 @@ describe('spec:cyber-mux/template', () => {
 		it('herdr names the workspace on every later tab create', () => {
 			// At the argv, on the backend the bug was reported on: `tab create --workspace <id>`.
 			const calls: string[][] = []
-			openTemplate(herdrExec(calls), herdrSessionAdapter, tabs3, { cwd: '/target', dirExists: anyDir })
+			openTemplate(herdrExec(calls), herdrMuxAdapter, tabs3, { cwd: '/target', dirExists: anyDir })
 			const creates = calls.filter((c) => c[0] === 'tab' && c[1] === 'create')
 			expect(creates).toHaveLength(2)
 			for (const create of creates) expect(create.slice(0, 4)).toEqual(['tab', 'create', '--workspace', 'w1'])
@@ -550,7 +550,7 @@ describe('spec:cyber-mux/template', () => {
 			// tmux collapses workspace and tab onto the same Window, so a template's tabs would otherwise be
 			// an unlabeled pile — the prefix is what keeps them recognizable as a group in the status bar.
 			const calls: string[][] = []
-			openTemplate(tmuxExec(calls), tmuxSessionAdapter, pool, { cwd: '/target', dirExists: anyDir })
+			openTemplate(tmuxExec(calls), tmuxMuxAdapter, pool, { cwd: '/target', dirExists: anyDir })
 			// The first tab's window is named after birth — at its birth the name went to the workspace,
 			// which on tmux is the same Window.
 			expect(calls.filter((c) => c[0] === 'rename-window')).toEqual([['rename-window', '-t', '@0', 'pool - editor']])
@@ -569,7 +569,7 @@ describe('spec:cyber-mux/template', () => {
 			// herdr's UI already groups by the real workspace label, so a prefix would be redundant noise —
 			// the concept maps onto what the backend actually has.
 			const calls: string[][] = []
-			openTemplate(herdrExec(calls), herdrSessionAdapter, pool, { cwd: '/target', dirExists: anyDir })
+			openTemplate(herdrExec(calls), herdrMuxAdapter, pool, { cwd: '/target', dirExists: anyDir })
 			// The workspace carries the workspace's name...
 			expect(calls.find((c) => c[0] === 'workspace' && c[1] === 'create')).toEqual(
 				expect.arrayContaining(['--label', 'pool']),
@@ -598,7 +598,7 @@ describe('spec:cyber-mux/template', () => {
 			it('on a backend with no workspace tier, a tab is labeled with its workspace and its own name', () => {
 				const calls: string[][] = []
 				// The region already exists — the worktree's own workspace, opened under the label `pool`.
-				applyTemplateToRegion(tmuxExec(calls), tmuxSessionAdapter, pool, {
+				applyTemplateToRegion(tmuxExec(calls), tmuxMuxAdapter, pool, {
 					root: { id: '%0', tab: '@0' },
 					cwd: '/repo.worktrees/feat-x',
 					// tmux: no workspace tier, so the workspace must be carried into every tab's name.
@@ -616,7 +616,7 @@ describe('spec:cyber-mux/template', () => {
 
 			it('on a backend with a real workspace tier, a tab carries its own label unprefixed', () => {
 				const calls: string[][] = []
-				applyTemplateToRegion(herdrExec(calls), herdrSessionAdapter, pool, {
+				applyTemplateToRegion(herdrExec(calls), herdrMuxAdapter, pool, {
 					root: { id: 'w1:p0', tab: 'w1:t1' },
 					cwd: '/repo.worktrees/feat-x',
 					// herdr: the tier IS the group, so its UI already shows the workspace and no tab is
@@ -643,7 +643,7 @@ describe('spec:cyber-mux/template', () => {
 			const labels = ['acme-platform-migration-2026-phase-two', 'acme-platform-migration-2026-phase-three']
 			const named = labels.map((label) => {
 				const calls: string[][] = []
-				openTemplate(tmuxExec(calls), tmuxSessionAdapter, pool, { cwd: '/target', label, dirExists: anyDir })
+				openTemplate(tmuxExec(calls), tmuxMuxAdapter, pool, { cwd: '/target', label, dirExists: anyDir })
 				return calls.find((c) => c[0] === 'rename-window')![3]!
 			})
 			// Each workspace label appears in its tab's label IN FULL, verbatim...
@@ -657,7 +657,7 @@ describe('spec:cyber-mux/template', () => {
 			// herdr labels a new workspace's root tab `1` with no flag to change it; `tab create --label`
 			// names every subsequent tab at birth.
 			const calls: string[][] = []
-			openTemplate(herdrExec(calls), herdrSessionAdapter, pool, { cwd: '/target', dirExists: anyDir })
+			openTemplate(herdrExec(calls), herdrMuxAdapter, pool, { cwd: '/target', dirExists: anyDir })
 			const verbs = calls.map((c) => c.slice(0, 2).join(' '))
 			// The workspace is created, and its own create names the WORKSPACE — never the tab under it.
 			const create = calls.find((c) => c[0] === 'workspace' && c[1] === 'create')!
@@ -681,7 +681,7 @@ describe('spec:cyber-mux/template', () => {
 			// The grouping tag is cyber-mux's own bookkeeping, not a workspace tier. Reporting it as the
 			// workspace would claim a tier tmux does not have.
 			const calls: string[][] = []
-			const manifest = openTemplate(tmuxExec(calls), tmuxSessionAdapter, tabs3, { cwd: '/target', dirExists: anyDir })
+			const manifest = openTemplate(tmuxExec(calls), tmuxMuxAdapter, tabs3, { cwd: '/target', dirExists: anyDir })
 			expect(manifest.workspace).toBeNull()
 			// The tabs really WERE grouped — so the null is the convention holding, not the tag missing.
 			const tagged = calls.filter((c) => c[0] === 'set-option' && c.includes(TMUX_WORKSPACE_GROUP_OPTION))
@@ -711,14 +711,14 @@ describe('spec:cyber-mux/template', () => {
 
 		it('herdr receives --ratio 0.333 — its flag sizes the original pane, so it is unconverted', () => {
 			const calls: string[][] = []
-			openTemplate(herdrExec(calls), herdrSessionAdapter, skewed, { cwd: '/target', dirExists: anyDir })
+			openTemplate(herdrExec(calls), herdrMuxAdapter, skewed, { cwd: '/target', dirExists: anyDir })
 			const split = calls.find((c) => c[0] === 'pane' && c[1] === 'split')!
 			expect(split.join(' ')).toContain('--ratio 0.333')
 		})
 
 		it('tmux receives -l 67% — its flag sizes the new pane, so it inverts', () => {
 			const calls: string[][] = []
-			openTemplate(tmuxExec(calls), tmuxSessionAdapter, skewed, { cwd: '/target', dirExists: anyDir })
+			openTemplate(tmuxExec(calls), tmuxMuxAdapter, skewed, { cwd: '/target', dirExists: anyDir })
 			const split = calls.find((c) => c[0] === 'split-window')!
 			expect(split.join(' ')).toContain('-l 67%')
 			// Never the un-inverted number, which is what a double- or missing inversion would emit.
@@ -736,11 +736,11 @@ describe('spec:cyber-mux/template', () => {
 					second: { type: 'pane', label: 'tests' },
 				},
 			}
-			openTemplate(tmuxExec(calls), tmuxSessionAdapter, even, { cwd: '/target', dirExists: anyDir })
+			openTemplate(tmuxExec(calls), tmuxMuxAdapter, even, { cwd: '/target', dirExists: anyDir })
 			expect(calls.find((c) => c[0] === 'split-window')).not.toContain('-l')
 
 			const herdrCalls: string[][] = []
-			openTemplate(herdrExec(herdrCalls), herdrSessionAdapter, even, { cwd: '/target', dirExists: anyDir })
+			openTemplate(herdrExec(herdrCalls), herdrMuxAdapter, even, { cwd: '/target', dirExists: anyDir })
 			expect(herdrCalls.find((c) => c[0] === 'pane' && c[1] === 'split')).not.toContain('--ratio')
 		})
 
@@ -756,13 +756,13 @@ describe('spec:cyber-mux/template', () => {
 
 		it('herdr sets env natively at the pane’s birth via --env', () => {
 			const calls: string[][] = []
-			openTemplate(herdrExec(calls), herdrSessionAdapter, withEnv, { cwd: '/target', dirExists: anyDir })
+			openTemplate(herdrExec(calls), herdrMuxAdapter, withEnv, { cwd: '/target', dirExists: anyDir })
 			expect(calls.find((c) => c[0] === 'pane' && c[1] === 'split')!.join(' ')).toContain('--env ROLE=worker')
 		})
 
 		it('tmux sets env natively at the pane’s birth via -e', () => {
 			const calls: string[][] = []
-			openTemplate(tmuxExec(calls), tmuxSessionAdapter, withEnv, { cwd: '/target', dirExists: anyDir })
+			openTemplate(tmuxExec(calls), tmuxMuxAdapter, withEnv, { cwd: '/target', dirExists: anyDir })
 			expect(calls.find((c) => c[0] === 'split-window')!.join(' ')).toContain('-e ROLE=worker')
 		})
 
@@ -779,7 +779,7 @@ describe('spec:cyber-mux/template', () => {
 				},
 			}
 			const calls: string[][] = []
-			const manifest = openTemplate(herdrExec(calls), herdrSessionAdapter, template, {
+			const manifest = openTemplate(herdrExec(calls), herdrMuxAdapter, template, {
 				cwd: '/target',
 				dirExists: anyDir,
 			})
@@ -822,9 +822,9 @@ describe('spec:cyber-mux/template', () => {
 	describe('one template, one geometry, every backend', () => {
 		it('tmux and herdr receive the same splits, in the same order, with the same directions and ratios', () => {
 			const tmuxCalls: string[][] = []
-			openTemplate(tmuxExec(tmuxCalls), tmuxSessionAdapter, pool4, { cwd: '/target', dirExists: anyDir })
+			openTemplate(tmuxExec(tmuxCalls), tmuxMuxAdapter, pool4, { cwd: '/target', dirExists: anyDir })
 			const herdrCalls: string[][] = []
-			openTemplate(herdrExec(herdrCalls), herdrSessionAdapter, pool4, { cwd: '/target', dirExists: anyDir })
+			openTemplate(herdrExec(herdrCalls), herdrMuxAdapter, pool4, { cwd: '/target', dirExists: anyDir })
 
 			const expected = [
 				{ direction: 'right', ratio: 0.5 },
@@ -840,7 +840,7 @@ describe('spec:cyber-mux/template', () => {
 			// It implements tmux's grid algorithm, which herdr has no equivalent of — using it would give
 			// the same template a different geometry per backend.
 			const calls: string[][] = []
-			openTemplate(tmuxExec(calls), tmuxSessionAdapter, pool4, { cwd: '/target', dirExists: anyDir })
+			openTemplate(tmuxExec(calls), tmuxMuxAdapter, pool4, { cwd: '/target', dirExists: anyDir })
 			expect(calls.some((c) => c[0] === 'select-template')).toBe(false)
 		})
 	})
@@ -1052,8 +1052,8 @@ describe('spec:cyber-mux/template', () => {
 
 			it('open --template sets env natively and prefixes nothing, on either backend', () => {
 				for (const [adapter, exec] of [
-					[tmuxSessionAdapter, tmuxExec([])],
-					[herdrSessionAdapter, herdrExec([])],
+					[tmuxMuxAdapter, tmuxExec([])],
+					[herdrMuxAdapter, herdrExec([])],
 				] as const) {
 					const calls: string[][] = []
 					const recording: Exec = (cmd, args) => {

@@ -7,28 +7,28 @@ import type { Worktree } from './worktree.ts'
  * `'workspace'` opens a genuinely separate workspace/session (herdr: `workspace create`; tmux: a
  * new detached session) — the caller's current workspace/session is left untouched, unlike every
  * other placement, which adds a pane/window inside it. */
-export type SessionPlacement = 'pane:right' | 'pane:down' | 'tab' | 'workspace'
+export type MuxPlacement = 'pane:right' | 'pane:down' | 'tab' | 'workspace'
 
 /**
  * The tier a `rename` names — which SPACE is being named, not where one is opened, so this is its
- * own vocabulary rather than a reuse of `SessionPlacement`. The caller must say, because the two
+ * own vocabulary rather than a reuse of `MuxPlacement`. The caller must say, because the two
  * tiers are different commands on both backends (tmux `rename-window` vs `select-pane -T`; herdr
  * `tab rename` vs `pane rename`) and neither backend can infer one from the other's id.
  *
- * `pane` collapses `SessionPlacement`'s two split directions — a direction is how a pane is BORN and
+ * `pane` collapses `MuxPlacement`'s two split directions — a direction is how a pane is BORN and
  * says nothing about naming one that already exists. There is no `workspace` member: renaming exists
  * for the one tier birth cannot name (a new workspace's root tab, which is a `tab`), and every
  * backend that has a workspace tier already takes its label at birth (`workspace create --label`).
  */
-export type SessionSpaceTier = 'pane' | 'tab'
+export type MuxSpaceTier = 'pane' | 'tab'
 
-export interface SessionOpenOptions {
+export interface MuxOpenOptions {
 	/** Working directory the new pane/window/session should start in. */
 	cwd: string
 	/** Command line to launch inside the new pane once it is open; omit for a blank pane. */
 	launch?: string
 	/** Placement relative to the caller; defaults to 'tab'. */
-	at?: SessionPlacement
+	at?: MuxPlacement
 	/**
 	 * The pane a `pane:*` placement splits. Ignored by `tab`/`workspace`, which split nothing.
 	 *
@@ -40,7 +40,7 @@ export interface SessionOpenOptions {
 	 * human is typing and diverge exactly when a program is driving. Naming the pane is the only way
 	 * `pane:right` means the same thing on both backends.
 	 */
-	from?: SessionTarget
+	from?: MuxTarget
 	/**
 	 * The workspace a `tab` placement opens INSIDE — a backend workspace id, exactly the value
 	 * `OpenedPane.workspace` reports. Ignored by `pane:*` (a split lands in its pane's own space) and
@@ -129,7 +129,7 @@ export interface SessionOpenOptions {
 }
 
 /** Opaque handle to an open pane/window/session; backend-specific id lives in `id`. */
-export interface SessionTarget {
+export interface MuxTarget {
 	id: string
 }
 
@@ -142,12 +142,12 @@ export interface SessionTarget {
  * reported by separate outputs and neither answers for the other, so a caller must never read this
  * as evidence that a worktree was grouped — that fact is `WorktreeWorkspaceCapability`'s alone.
  *
- * Widened from a bare `SessionTarget` because `open` returning only a pane id left nothing
+ * Widened from a bare `MuxTarget` because `open` returning only a pane id left nothing
  * downstream able to report a workspace: the template manifest is framed as the complete
  * machine-readable answer to "which panes exist and what are they for", and a consumer grouping
  * panes by workspace had nothing to group on.
  */
-export interface OpenedPane extends SessionTarget {
+export interface OpenedPane extends MuxTarget {
 	/**
 	 * The tab the new pane landed in — a tab id, addressable by `rename(exec, { id: tab }, 'tab', …)`.
 	 *
@@ -208,7 +208,7 @@ export interface LivePane {
 	label?: string
 }
 
-export interface SessionReadOptions {
+export interface MuxReadOptions {
 	/** How many trailing lines of output to capture; omit for the backend's default. */
 	lines?: number
 }
@@ -369,20 +369,20 @@ export interface WorktreeWorkspaceCapability {
 	releaseWorkspace(exec: Exec, workspace: string): void
 }
 
-export interface SessionAdapter {
+export interface MuxAdapter {
 	/** Backend name, e.g. "tmux" or "herdr". */
 	readonly name: string
 	/**
 	 * Create a new pane/window in `opts.cwd`, running `opts.launch` if given; returns its handle plus
 	 * the workspace it landed in (absent on a backend with no workspace tier — see `OpenedPane`).
 	 */
-	open(exec: Exec, opts: SessionOpenOptions): OpenedPane
+	open(exec: Exec, opts: MuxOpenOptions): OpenedPane
 	/**
 	 * Name an ALREADY-OPEN space at `tier`, addressed by that tier's own id (`target.id` is a tab id
 	 * for `'tab'`, a pane id for `'pane'`).
 	 *
 	 * This is the naming route for the one case birth cannot serve, NOT a second way to do what
-	 * `SessionOpenOptions.label` does: `label` names a space at birth wherever the backend's CLI
+	 * `MuxOpenOptions.label` does: `label` names a space at birth wherever the backend's CLI
 	 * allows, and exactly one tier does not allow it — herdr labels a new workspace's ROOT TAB `1` and
 	 * offers no flag to change it, only `tab rename` afterwards. Every later tab takes `label` at birth
 	 * like any other space, so the whole cost of this member is one rename on herdr's first tab.
@@ -400,20 +400,20 @@ export interface SessionAdapter {
 	 * As read-only in its side effects as `isPaneFocused` is: it moves no focus and opens nothing.
 	 * Naming a space is not visiting it.
 	 */
-	rename(exec: Exec, target: SessionTarget, tier: SessionSpaceTier, name: string): void
+	rename(exec: Exec, target: MuxTarget, tier: MuxSpaceTier, name: string): void
 	/**
 	 * Group an ALREADY-OPEN space into `group`, and store the space's own `name` beside it.
 	 * `target.id` is a TAB id — the tier a workspace groups, which is why this takes no
-	 * `SessionSpaceTier`: `rename` needs one because both its tiers are nameable and neither can be
+	 * `MuxSpaceTier`: `rename` needs one because both its tiers are nameable and neither can be
 	 * inferred, while grouping has exactly one meaningful tier. A `pane` is not a member of a
 	 * workspace; the tab it sits in is. A tier parameter here would buy a branch every caller must
-	 * write and no caller could ever take — the same argument `SessionSpaceTier` itself makes for
+	 * write and no caller could ever take — the same argument `MuxSpaceTier` itself makes for
 	 * having no `workspace` member.
 	 *
 	 * **`open` cannot be the only way in.** A caller that did not open the space still has to group it
 	 * — `worktree add --template` has its region opened by the worktree verbs before the walk ever runs
 	 * — and it holds that space's own id the moment the open returns. So this is its own member acting
-	 * on an already-open space, exactly as `rename` does, and `SessionOpenOptions.workspaceGroup`
+	 * on an already-open space, exactly as `rename` does, and `MuxOpenOptions.workspaceGroup`
 	 * ROUTES THROUGH it, so there is one spelling per backend rather than two that can drift. Routing
 	 * costs no call: tmux has no birth flag for a window option, so grouping was ALREADY a second call
 	 * after the window exists.
@@ -438,9 +438,9 @@ export interface SessionAdapter {
 	 * is no other way to group a space it did not open. As read-only in its side effects as `rename`
 	 * is — it moves no focus and opens nothing.
 	 */
-	group(exec: Exec, target: SessionTarget, group: string, name?: string): void
+	group(exec: Exec, target: MuxTarget, group: string, name?: string): void
 	/**
-	 * Whether this backend can size a split — i.e. whether it honors `SessionOpenOptions.ratio`. Both
+	 * Whether this backend can size a split — i.e. whether it honors `MuxOpenOptions.ratio`. Both
 	 * real backends can (herdr `--ratio`, tmux `-l`), so both declare it. Absent/`false` means a
 	 * caller asking for a ratio gets the backend's own even default instead, which callers DEGRADE to
 	 * (with one warning) rather than reject: the template schema is backend-agnostic, so a template's
@@ -460,7 +460,7 @@ export interface SessionAdapter {
 	 * ambiguous token by *guessing* which was meant ("if the string is not recognised as a key, it is
 	 * sent as a series of characters"), so only the explicit literal form is safe.
 	 */
-	sendText(exec: Exec, target: SessionTarget, text: string): void
+	sendText(exec: Exec, target: MuxTarget, text: string): void
 	/**
 	 * Press each named key in order, typing nothing. Keys are named in the portable core vocabulary —
 	 * `Up` `Down` `Left` `Right` `Enter` `Escape` `Tab` `Space` `Backspace` `C-c` `F1`–`F12` — which
@@ -473,7 +473,7 @@ export interface SessionAdapter {
 	 * pane's turn — because the caller asked for it. What this method never does is *add* an Enter
 	 * the caller did not write. Supplying one is `submit`'s job alone.
 	 */
-	sendKeys(exec: Exec, target: SessionTarget, keys: string[]): void
+	sendKeys(exec: Exec, target: MuxTarget, keys: string[]): void
 	/**
 	 * Take the target's turn: type `text` if given, then **always** press Enter.
 	 *
@@ -486,31 +486,31 @@ export interface SessionAdapter {
 	 * booting harness swallowed the Enter of an earlier submit and left the text staged unsent;
 	 * because flushing never re-types, a repeated flush cannot duplicate the message.
 	 */
-	submit(exec: Exec, target: SessionTarget, text?: string): void
+	submit(exec: Exec, target: MuxTarget, text?: string): void
 	/** Capture the target session's current output. */
-	read(exec: Exec, target: SessionTarget, opts?: SessionReadOptions): string
+	read(exec: Exec, target: MuxTarget, opts?: MuxReadOptions): string
 	/**
 	 * Beam the attached client's view all the way to the target pane — across workspace and tab, not
 	 * just within the current one. Resolves the pane's own workspace/tab from the backend and drives
 	 * the full switch chain; best-effort within (the backend owns the actual move), but throws rather
 	 * than reporting a false success when the recorded pane no longer resolves to a live pane.
 	 */
-	focus(exec: Exec, target: SessionTarget): void
+	focus(exec: Exec, target: MuxTarget): void
 	/** Close the target session. */
-	teardown(exec: Exec, target: SessionTarget): void
+	teardown(exec: Exec, target: MuxTarget): void
 	/**
 	 * Whether the target pane still exists in this backend — the liveness check `prune` runs against a
 	 * record's pane locator. Each backend answers with its own primitive so a herdr pane id is never
 	 * probed with a tmux query (or vice versa).
 	 */
-	paneExists(exec: Exec, target: SessionTarget): boolean
+	paneExists(exec: Exec, target: MuxTarget): boolean
 	/**
 	 * Whether the attached client is currently viewing this pane — a read-only focus probe. `true` =
 	 * positively focused, `false` = positively not focused, `undefined` = the backend cannot report
 	 * focus or the query could not be answered (callers FAIL OPEN on undefined). Read-only: moves no
 	 * focus, opens nothing (unlike `focus`).
 	 */
-	isPaneFocused(exec: Exec, target: SessionTarget): boolean | undefined
+	isPaneFocused(exec: Exec, target: MuxTarget): boolean | undefined
 	/**
 	 * Enumerate every live pane this backend can currently see — the bulk counterpart to
 	 * `paneExists`'s single targeted query. `reconcile` uses this to cull dead records in one pass
@@ -550,7 +550,7 @@ export interface SessionAdapter {
 	 * Throws rather than returning empty when the region cannot be read: an export built from a
 	 * region the backend could not describe would be a confident lie about the user's screen.
 	 */
-	describeRegion?(exec: Exec, target: SessionTarget): RegionPane[]
+	describeRegion?(exec: Exec, target: MuxTarget): RegionPane[]
 	/**
 	 * Report every tab of the workspace the target pane sits in, each with its own region's geometry —
 	 * the workspace-wide read beside `describeRegion`'s one-region read. `template save --workspace` runs
@@ -566,7 +566,7 @@ export interface SessionAdapter {
 	 * **The grouping is read from the tag, never off the label.** On a backend with a real workspace
 	 * tier the tier IS the answer (herdr: the caller's `workspace_id`, whose tabs and panes the backend
 	 * already stamps). On one without, the workspace is not a fact the backend holds at all, so the
-	 * read is *"which spaces carry this group id"* — the tag `SessionOpenOptions.workspaceGroup` wrote,
+	 * read is *"which spaces carry this group id"* — the tag `MuxOpenOptions.workspaceGroup` wrote,
 	 * which is opaque and survives a rename. Parsing `<workspace> - <tab>` back apart is unsound
 	 * (`acme - beta - main` splits two ways, both legal), which is the whole reason the tag exists.
 	 *
@@ -577,5 +577,5 @@ export interface SessionAdapter {
 	 * a template built from a workspace the backend could not describe would be a confident lie about
 	 * the user's screen.
 	 */
-	describeWorkspace?(exec: Exec, target: SessionTarget): WorkspaceTab[]
+	describeWorkspace?(exec: Exec, target: MuxTarget): WorkspaceTab[]
 }
