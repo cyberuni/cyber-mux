@@ -6,7 +6,8 @@ description: What a pane is, and how a <pane> argument is resolved — id first,
 A **pane** is the one addressable unit every pane-driving command targets: a single terminal
 region a backend can send text to, read output from, or close. Every multiplexer surfaces this
 concept, however it names its own layers above it (tmux windows, herdr tabs and workspaces, WezTerm
-tabs and workspaces) — a `<pane>` argument always names a leaf pane, never one of those containers.
+tabs and workspaces, Zellij tabs and sessions) — a `<pane>` argument always names a leaf pane, never
+one of those containers.
 
 Discover the panes you can address with [`list`](/cyber-mux/cli/list/), which prints each pane's
 `id`, `label`, `harness`, and `cwd`.
@@ -15,8 +16,9 @@ Discover the panes you can address with [`list`](/cyber-mux/cli/list/), which pr
 
 A `<pane>` argument accepts either form, resolved by one rule: **id first, then label.**
 
-1. **Id.** Every pane has a backend-assigned id (tmux `%3`, herdr's own pane id, …). If the locator
-   matches a live pane's id, that pane wins — before labels are even considered.
+1. **Id.** Every pane has a backend-assigned id (tmux `%3`, herdr's own pane id, Zellij's
+   `terminal_N`, …). If the locator matches a live pane's id, that pane wins — before labels are even
+   considered.
 2. **Label.** A pane may also carry a human-assigned label (set with `--label` on
    [`open`](/cyber-mux/cli/open/) or `worktree add`/`worktree open`). If the locator matches no id, it
    is checked against every pane's label instead.

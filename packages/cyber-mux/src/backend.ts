@@ -16,15 +16,21 @@ import type {
 	WorktreeWorkspace,
 } from './mux.ts'
 import { weztermMuxAdapter } from './mux.wezterm.ts'
+import { createZellijAdapter } from './mux.zellij.ts'
 import { currentPane, probeMultiplexer } from './mux-probe.ts'
 import { type NudgeOptions, type NudgeResult, nudge } from './nudge.ts'
 
 /**
  * Resolve the raw backend for the multiplexer this process is inside, via the two-mode mux probe
  * (`$CYBER_MUX` fast-path/override, else ancestry discovery from `$$` falling back to the
- * `$TMUX`/`$HERDR_ENV`/`$WEZTERM_PANE` hint when the walk is inconclusive) — tmux/herdr/wezterm map to
- * their existing adapters; anything else throws, because a caller asking to drive panes with no
- * multiplexer has an unmet precondition, and a loud, actionable failure beats a silent no-op.
+ * `$TMUX`/`$HERDR_ENV`/`$WEZTERM_PANE`/`$ZELLIJ` hint when the walk is inconclusive) —
+ * tmux/herdr/wezterm/zellij map to their adapters; anything else throws, because a caller asking to
+ * drive panes with no multiplexer has an unmet precondition, and a loud, actionable failure beats a
+ * silent no-op.
+ *
+ * The zellij adapter is bound to the ambient session name (`$ZELLIJ_SESSION_NAME`) at resolution — it
+ * reports that as `OpenedPane.workspace`, so the session name has to come from the SAME `env` the
+ * probe reads. A missing name simply omits `workspace`; see `createZellijAdapter`.
  *
  * `screen` is a KNOWN mux — the probe detects it (ancestry) and honors it as an override (fast-path)
  * — but it is NOT a drivable backend, so it throws its OWN message naming the reason rather than the
@@ -49,16 +55,17 @@ export function resolveMuxAdapter(env: NodeJS.ProcessEnv, exec: Exec = nodeExec)
 	if (probe.mux === 'tmux') return tmuxMuxAdapter
 	if (probe.mux === 'herdr') return herdrMuxAdapter
 	if (probe.mux === 'wezterm') return weztermMuxAdapter
+	if (probe.mux === 'zellij') return createZellijAdapter({ session: env['ZELLIJ_SESSION_NAME'] })
 	if (probe.mux === 'screen') {
 		throw new Error(
 			'cyber-mux detected GNU Screen, which it cannot drive: Screen addresses its split regions ' +
 				'positionally (no per-pane id) and leaves $WINDOW unset in panes opened via `screen -X`, so a ' +
 				'pane has no stable identity to send to, read from, or self-identify by. Run inside tmux ' +
-				'($TMUX), herdr ($HERDR_ENV=1), or wezterm ($WEZTERM_PANE set) instead.',
+				'($TMUX), herdr ($HERDR_ENV=1), wezterm ($WEZTERM_PANE set), or zellij ($ZELLIJ set) instead.',
 		)
 	}
 	throw new Error(
-		'cyber-mux requires a session backend — run inside tmux ($TMUX), herdr ($HERDR_ENV=1), or wezterm ($WEZTERM_PANE set)',
+		'cyber-mux requires a session backend — run inside tmux ($TMUX), herdr ($HERDR_ENV=1), wezterm ($WEZTERM_PANE set), or zellij ($ZELLIJ set)',
 	)
 }
 

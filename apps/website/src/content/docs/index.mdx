@@ -1,6 +1,6 @@
 ---
 title: cyber-mux
-description: Cross-multiplexer pane control — one contract over tmux, herdr, and WezTerm.
+description: Cross-multiplexer pane control — one contract over tmux, herdr, WezTerm, and Zellij.
 template: splash
 hero:
   tagline: Drive terminal panes without caring which multiplexer you are inside.
@@ -18,7 +18,7 @@ import { CardGrid, LinkCard } from '@astrojs/starlight/components'
 
 `cyber-mux` is a CLI for cross-multiplexer pane control. Open, send, submit, read, focus, and close
 panes — plus git worktrees and named templates — the same way whether you are running under **tmux**,
-**herdr**, or **WezTerm** (alpha).
+**herdr**, **WezTerm** (alpha), or **Zellij** (alpha).
 
 ## One command surface
 
@@ -33,17 +33,17 @@ panes — plus git worktrees and named templates — the same way whether you ar
 	<LinkCard title="template" href="/cyber-mux/cli/template/" description="Capture and replay named pane pools." />
 </CardGrid>
 
-## One contract, three multiplexers
+## One contract, four multiplexers
 
 The same verbs mean the same thing on every backend; where a multiplexer lacks a tier or feature,
 cyber-mux maps onto the closest thing it has and reports honestly what it could not do.
 
-| Capability | tmux | herdr | WezTerm (alpha) |
-| --- | --- | --- | --- |
-| Workspace tier | ✗ (collapses to window) | ✓ | ✓ |
-| Worktree binding | ✗ | ✓ | ✗ |
-| Name a pane | — | ✓ | ✗ |
-| Report focused pane | best-effort | best-effort | ✗ (always unknown) |
-| Knows the running harness | ✗ | ✓ | ✗ |
+| Capability | tmux | herdr | WezTerm (alpha) | Zellij (alpha) |
+| --- | --- | --- | --- | --- |
+| Workspace tier | ✗ (collapses to window) | ✓ | ✓ | ✗ (collapses to tab, but occupancy is reported) |
+| Worktree binding | ✗ | ✓ | ✗ | ✗ |
+| Name a pane | — | ✓ | ✗ | ✓ |
+| Report focused pane | best-effort | best-effort | ✗ (always unknown) | ✓ |
+| Knows the running harness | ✗ | ✓ | ✗ | ✗ |
 
 See [Multiplexers](/cyber-mux/multiplexers/) for what each backend does — and does not — support.

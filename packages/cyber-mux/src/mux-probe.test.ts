@@ -85,6 +85,19 @@ describe('spec:cyber-mux/mux', () => {
 			expect(probeMultiplexer(exec, {}).mux).toBe('wezterm')
 		})
 
+		it('detects a zellij ancestor', () => {
+			const pid = process.pid
+			const exec = psChain({
+				[pid]: [pid + 1, 'node'],
+				[pid + 1]: [1, 'zellij'],
+			})
+			expect(probeMultiplexer(exec, { ZELLIJ_PANE_ID: 'terminal_3' })).toEqual({
+				mux: 'zellij',
+				pane: 'terminal_3',
+				via: 'ancestry',
+			})
+		})
+
 		it('detects a screen ancestor', () => {
 			const pid = process.pid
 			const exec = psChain({ [pid]: [1, 'screen'] })
@@ -123,6 +136,15 @@ describe('spec:cyber-mux/mux', () => {
 			expect(probeMultiplexer(noPs, { WEZTERM_PANE: '9' })).toEqual({ mux: 'wezterm', pane: '9', via: 'ancestry' })
 		})
 
+		it('$ZELLIJ alone is a fast-positive hint the walk falls back to, attaching the separate $ZELLIJ_PANE_ID', () => {
+			const noPs: Exec = () => null
+			expect(probeMultiplexer(noPs, { ZELLIJ: '0', ZELLIJ_PANE_ID: 'terminal_3' })).toEqual({
+				mux: 'zellij',
+				pane: 'terminal_3',
+				via: 'ancestry',
+			})
+		})
+
 		it('reports none when neither ancestry nor an env hint finds a multiplexer', () => {
 			const noPs: Exec = () => null
 			expect(probeMultiplexer(noPs, {})).toEqual({ mux: 'none', via: 'ancestry' })
@@ -157,6 +179,17 @@ describe('spec:cyber-mux/mux', () => {
 			expect(currentPane({ CYBER_MUX: 'wezterm', CYBER_MUX_PANE: '9', TMUX_PANE: '%3' })).toEqual({
 				mux: 'wezterm',
 				pane: '9',
+			})
+		})
+
+		it('reads $ZELLIJ_PANE_ID as a zellij pane', () => {
+			expect(currentPane({ ZELLIJ_PANE_ID: 'terminal_3' })).toEqual({ mux: 'zellij', pane: 'terminal_3' })
+		})
+
+		it('tags the $CYBER_MUX_PANE fast-path zellij when $CYBER_MUX=zellij', () => {
+			expect(currentPane({ CYBER_MUX: 'zellij', CYBER_MUX_PANE: 'terminal_3', TMUX_PANE: '%3' })).toEqual({
+				mux: 'zellij',
+				pane: 'terminal_3',
 			})
 		})
 

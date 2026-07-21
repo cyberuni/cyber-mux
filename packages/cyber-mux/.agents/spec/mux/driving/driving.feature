@@ -139,6 +139,7 @@ Feature: mux driving — taking a pane's turn
       | $TMUX set                   | tmux    |
       | $HERDR_ENV set and no $TMUX | herdr   |
       | $WEZTERM_PANE set           | wezterm |
+      | $ZELLIJ set                 | zellij  |
 
   Scenario: submit with no pane is rejected
     Given a caller running cyber-mux submit naming no pane

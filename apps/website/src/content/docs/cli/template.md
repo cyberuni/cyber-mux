@@ -75,7 +75,8 @@ Capture an already-open pane pool as a reusable template.
   template is never silently discarded.
 
 Refuses (exit 1) when the backend cannot report the geometry `save` needs: plain `save` needs
-`describeRegion`; `--workspace` needs `describeWorkspace`. Both tmux and herdr support both.
+`describeRegion`; `--workspace` needs `describeWorkspace`. Both tmux and herdr support both; WezTerm
+and Zellij support neither, and `save` refuses on them by naming the backend.
 
 **Examples**
 

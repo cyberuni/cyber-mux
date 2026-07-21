@@ -96,10 +96,10 @@ verbatim).
 
 ## Binding a worktree to a workspace
 
-The worktree-workspace capability — present on herdr and `undefined` on tmux — is the one part a
-*multiplexer* owns: binding a worktree to a workspace as a first-class record the UI groups a repo's
-checkouts by. Empirically, plain `git worktree add` + `workspace create` yields **no** binding; only
-routing through herdr's own `worktree create`/`open` produces it.
+The worktree-workspace capability — present on herdr and `undefined` on tmux, WezTerm, and Zellij — is
+the one part a *multiplexer* owns: binding a worktree to a workspace as a first-class record the UI
+groups a repo's checkouts by. Empirically, plain `git worktree add` + `workspace create` yields **no**
+binding; only routing through herdr's own `worktree create`/`open` produces it.
 
 Reach it bound, off a resolved `MuxSession`, as `mux.worktree` (a `BoundWorktreeWorkspaceCapability`
 — methods take `deps?` instead of a leading `exec`) — this is the preferred, ergonomic route:
