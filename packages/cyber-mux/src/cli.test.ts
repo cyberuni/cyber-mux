@@ -672,6 +672,68 @@ describe('spec:cyber-mux/mux', () => {
 				await run(program, ['worktree', 'list'])
 				expect(logs.join('\n')).toContain('main')
 			})
+
+			describe('worktree prune', () => {
+				// This module's own directory stands in for "a worktree that exists on disk" — the CLI's
+				// remove path checks existence for real (no injected fs at this boundary), so the removal
+				// half needs a real path; the primary and every git answer are still fully faked.
+				// realpathSync (which normalization runs through) strips the trailing slash `import.meta.url`
+				// leaves on a directory, so the normalized form is the one every later comparison uses.
+				const realExistingDir = new URL('.', import.meta.url).pathname.replace(/\/$/, '')
+
+				const porcelain = [
+					'worktree /repo',
+					'branch refs/heads/main',
+					'',
+					`worktree ${realExistingDir}`,
+					'branch refs/heads/feat/landed',
+					'',
+					'worktree /repo.worktrees/open',
+					'branch refs/heads/feat/open',
+					'',
+				].join('\n')
+				const disposable = { originHead: 'origin/main', merged: 'main\nfeat/landed', dirty: () => '' }
+
+				it('bare form previews the removable candidate and removes nothing', async () => {
+					const calls: string[][] = []
+					const gitExec = gitListExec(porcelain, disposable)
+					const exec: Exec = (cmd, args) => {
+						calls.push(args)
+						return gitExec(cmd, args)
+					}
+					const program = buildProgram({ env: {}, exec })
+					await run(program, ['worktree', 'prune'])
+					expect(logs.join('\n')).toContain('feat/landed')
+					expect(logs.join('\n')).not.toContain('feat/open')
+					expect(calls.some((args) => args.includes('remove'))).toBe(false)
+				})
+
+				it('--force removes the previewed candidate', async () => {
+					const calls: string[][] = []
+					const gitExec = gitListExec(porcelain, disposable)
+					const exec: Exec = (cmd, args) => {
+						calls.push(args)
+						return gitExec(cmd, args)
+					}
+					const program = buildProgram({ env: {}, exec })
+					await run(program, ['worktree', 'prune', '--force'])
+					expect(calls.at(-1)).toEqual(['-C', '/repo', 'worktree', 'remove', realExistingDir, '--force'])
+				})
+
+				it('reports the skip reason for a candidate left behind', async () => {
+					const exec = gitListExec(porcelain, disposable)
+					const program = buildProgram({ env: {}, exec })
+					await withArgv(['worktree', 'prune', '--format', 'json'], () =>
+						run(program, ['worktree', 'prune', '--format', 'json']),
+					)
+					const payload = JSON.parse(logs.join('\n'))
+					expect(payload.applied).toBe(false)
+					expect(payload.removed).toHaveLength(1)
+					expect(payload.skipped).toHaveLength(1)
+					expect(payload.skipped[0].root).toBe('/repo.worktrees/open')
+					expect(payload.skipped[0].reason).toMatch(/not merged/)
+				})
+			})
 		})
 
 		it('open --launch submits the command, so it actually runs', async () => {

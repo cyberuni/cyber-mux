@@ -113,7 +113,7 @@ Feature: template apply — resolve a template and build the panes it describes
   Scenario: two panes may share a label, because a label is a name rather than a key
     Given a template with two pane nodes both labeled worker
     When the template is validated
-    Then it is valid
+    Then it exits 0
     # neither backend requires a unique name — tmux titles three panes worker without complaint and
     # herdr's pane rename takes no uniqueness constraint — and the manifest's unique handle is the
     # pane id, never the label. A pool of workers all named worker is a legitimate thing to mean.
@@ -145,7 +145,7 @@ Feature: template apply — resolve a template and build the panes it describes
   Scenario: a tab carries its own tree, in the same shape a single-tab template uses
     Given a template declaring tabs, the first with a root split and the second with a single pane
     When the template is validated
-    Then it is valid
+    Then it exits 0
     And each tab's tree is the same node shape a top-level root accepts
 
   Scenario: a tab may use the flat sugar, desugared exactly as a single-tab template is
@@ -173,7 +173,7 @@ Feature: template apply — resolve a template and build the panes it describes
   Scenario: two tabs may share a label, and so may panes in different tabs
     Given a template declaring two tabs both labeled editor, each carrying a pane labeled worker
     When the template is validated
-    Then it is valid
+    Then it exits 0
     # nothing keys on either name. The manifest reports a pane's tab by INDEX, not by label, and a tab
     # is addressed by its own id at the seam — herdr labels EVERY new workspace's root tab 1, so a
     # backend that manufactures duplicates by default cannot be one a uniqueness rule describes.
@@ -181,7 +181,7 @@ Feature: template apply — resolve a template and build the panes it describes
   Scenario: a tab may leave its label to the backend
     Given a template declaring two tabs, neither carrying a label
     When the template is validated
-    Then it is valid
+    Then it exits 0
     # matching --label omitted everywhere else: the backend's own default stands
 
   Scenario: a tab cannot carry a cwd any more than a pane can
@@ -244,13 +244,13 @@ Feature: template apply — resolve a template and build the panes it describes
   Scenario: the region is opened blank and its pane becomes the tree's root
     Given a template whose first pane carries the command claude
     When it is applied
-    Then open is called with no launch
-    And the pane open returns is the tree's root region rather than a pane to close
+    Then the region is opened with no command submitted, leaving claude to be sent later
+    And the opened pane becomes the tree's root region rather than a pane to close
 
   Scenario: geometry is built before any command is submitted
     Given a template with 3 panes each carrying a command
     When it is applied
-    Then every split is issued before the first submit
+    Then every pane's split lands before any pane receives its command text
     # splitting a pane already running an interactive agent lands the split mid-render, and
     # computes the ratio against a pane whose child is reflowing
 
@@ -265,13 +265,13 @@ Feature: template apply — resolve a template and build the panes it describes
   Scenario: commands are submitted last, in template order
     Given a template whose panes carry commands in the order planner, worker-a, worker-b
     When it is applied
-    Then submit is called for those panes in that order, after the geometry is built
+    Then those panes receive their commands in that order, after every split is in place
 
   Scenario: a pane with no command opens a blank shell
     Given a pane node carrying no command
     When it is applied
     Then the pane is created
-    And no submit is issued for it
+    And no command text is ever sent to it
 
   Scenario: dir is joined onto the apply-time cwd
     Given a pane node whose dir is services/api/logs
@@ -414,7 +414,7 @@ Feature: template apply — resolve a template and build the panes it describes
     Given a pane node with env ROLE=worker and no command
     When it is applied
     Then the pane is created with ROLE set in its environment
-    And no submit is issued for it
+    And no command text is ever sent to it
     # a coherent warm pane for something to attach to later
 
   Scenario: a backend that cannot size a split warns once and takes its own default

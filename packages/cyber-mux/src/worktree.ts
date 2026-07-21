@@ -334,6 +334,68 @@ export function removeWorktreeSafely(
 	gitWorktreeAdapter.remove(exec, path, { primaryRoot: opts.primaryRoot })
 }
 
+/** One worktree `pruneWorktrees` declined to remove, and why — so a caller can report the reason
+ * rather than just the fact of a skip. */
+export interface WorktreePruneSkip {
+	entry: WorktreeEntry
+	reason: string
+}
+
+/** What `pruneWorktrees` did (or, on a dry run, would do) — every linked worktree it removed, and
+ * every one it left alone with a reason. The primary checkout is never in either list: it is not a
+ * candidate, not a skip, just absent. */
+export interface WorktreePruneResult {
+	removed: WorktreeEntry[]
+	skipped: WorktreePruneSkip[]
+}
+
+/**
+ * Why `isWorktreeRemovable` said no, in prose — the first failing clause, in the same order the gate
+ * checks them. `entry.prunable` is deliberately not folded into "not merged": a checkout git already
+ * calls gone needs `git worktree prune`, a different remedy than the others here.
+ */
+function worktreePruneSkipReason(entry: WorktreeEntry): string {
+	if (entry.prunable) return 'checkout already gone from disk — run `git worktree prune` to clear it'
+	if (entry.workspace) return `open in workspace ${entry.workspace}`
+	if (entry.dirty !== false)
+		return entry.dirty === undefined ? 'uncommitted changes could not be determined' : 'has uncommitted changes'
+	if (entry.merged !== true)
+		return entry.merged === undefined
+			? 'merge status could not be determined'
+			: 'branch is not merged into the default branch'
+	return 'not removable'
+}
+
+/**
+ * The bulk remove — every worktree `isWorktreeRemovable` clears, gone in one call. No new git
+ * plumbing: this composes `listWorktreesFromGit`, `isWorktreeRemovable`, and `removeWorktreeSafely`,
+ * the same primitives `worktree list`'s `(removable)` marker and `worktree remove` already use, so
+ * prune can never disagree with what the listing promised.
+ *
+ * `dryRun` reports exactly what a live run would do without removing anything — the CLI's default,
+ * so a bare invocation is always safe to run. The primary checkout is filtered out before the gate
+ * even runs, matching `isWorktreeRemovable`'s own absolute refusal of it.
+ */
+export function pruneWorktrees(
+	exec: Exec,
+	primaryRoot: string,
+	opts?: { dryRun?: boolean | undefined; fs?: WorktreeFs | undefined },
+): WorktreePruneResult {
+	const fs = opts?.fs ?? nodeWorktreeFs
+	const entries = listWorktreesFromGit(exec, primaryRoot, fs).filter((entry) => entry.linked)
+	const removed: WorktreeEntry[] = []
+	const skipped: WorktreePruneSkip[] = []
+	for (const entry of entries) {
+		if (!isWorktreeRemovable(entry)) {
+			skipped.push({ entry, reason: worktreePruneSkipReason(entry) })
+			continue
+		}
+		if (!opts?.dryRun) removeWorktreeSafely(exec, entry.root, { primaryRoot, fs })
+		removed.push(entry)
+	}
+	return { removed, skipped }
+}
+
 /** The seams a `WorktreeApi` binds. Both optional, each defaulting to its Node-backed impl. */
 export interface WorktreeDeps {
 	exec?: Exec | undefined
@@ -365,6 +427,8 @@ export interface WorktreeApi {
 	add(opts: WorktreeAddOptions): Worktree
 	/** Remove a worktree under cyber-mux's gates — `removeWorktreeSafely` bound (its `fs` supplied). */
 	removeSafely(path: string, opts: RemoveWorktreeOptions): void
+	/** Remove every disposable worktree; `primaryRoot` defaults to `primaryRoot()` — `pruneWorktrees` bound. */
+	prune(opts?: { primaryRoot?: string | undefined; dryRun?: boolean | undefined } | undefined): WorktreePruneResult
 	/** Symlink-resolved, native-cased path — `normalizeWorktreePath` bound. */
 	normalizePath(path: string): string
 }
@@ -381,6 +445,7 @@ export function worktreeApi(deps?: WorktreeDeps | undefined): WorktreeApi {
 		list: (primaryRoot) => listWorktreesFromGit(exec, primaryRoot ?? resolvePrimaryRoot(exec), fs),
 		add: (opts) => gitWorktreeAdapter.add(exec, opts),
 		removeSafely: (path, opts) => removeWorktreeSafely(exec, path, { ...opts, fs }),
+		prune: (opts) => pruneWorktrees(exec, opts?.primaryRoot ?? resolvePrimaryRoot(exec), { dryRun: opts?.dryRun, fs }),
 		normalizePath: (path) => normalizeWorktreePath(path, fs),
 	}
 }
