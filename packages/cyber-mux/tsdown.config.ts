@@ -14,5 +14,7 @@ export default defineConfig({
 	format: 'esm',
 	platform: 'node',
 	clean: true,
-	dts: true,
+	// Declaration maps point the bundled `.d.mts` back at `src/*.ts`, so a consumer's go-to-definition
+	// lands in real source — which is why `src` (minus tests) ships in `package.json#files`.
+	dts: { sourcemap: true },
 })

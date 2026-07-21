@@ -18,4 +18,7 @@ named values, so a host binds them once and tests drive fakes. `probeMultiplexer
 `envPrefix` option so a host embedding cyber-mux under its own namespace adopts the env fast-path
 without forking detection. The CLI bin is unchanged.
 
+The package also ships its TypeScript source (tests excluded) alongside declaration maps, so
+go-to-definition on any exported symbol lands in real source rather than a generated `.d.ts`.
+
 Pre-1.0, depend on this with a caret range (`^0.2.0`); a 0.x minor may still carry breaking changes.

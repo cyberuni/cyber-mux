@@ -39,7 +39,9 @@
 	},
 	"files": [
 		"bin",
-		"dist"
+		"dist",
+		"src",
+		"!**/*.{spec,test,unit,accept,integrate,system,perf,stress,stories,study}.*"
 	],
 	"scripts": {
 		"build": "tsdown",
