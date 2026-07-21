@@ -17,7 +17,8 @@ Today it supports three backends:
   unverified until confirmed against a real WezTerm session.
 
 It is kept deliberately narrow: it drives panes and nothing else. No mail, no dispatch, no agent
-registry — those live in the tools that build *on top of* it.
+registry — those live in the tools that build *on top of* it. Those tools can skip the CLI and import
+the same core directly — see the [Library API](/cyber-mux/api/).
 
 ## Try it
 
@@ -40,4 +41,5 @@ skip detection entirely.
 - [Templates](/cyber-mux/concepts/templates/) — named, reusable pane pools.
 - [Worktrees](/cyber-mux/concepts/worktrees/) — git worktrees bound to a workspace.
 - [AXI](/cyber-mux/concepts/axi/) — the agent-facing output contract every command follows.
+- [Library API](/cyber-mux/api/) — import the core directly instead of shelling out to the CLI.
 - [CLI Reference](/cyber-mux/cli/) — the full verb surface, one page per command.

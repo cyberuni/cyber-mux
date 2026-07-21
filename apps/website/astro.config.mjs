@@ -46,6 +46,17 @@ export default defineConfig({
           ],
         },
         {
+          label: "Library API",
+          items: [
+            { label: "Overview", slug: "api" },
+            { label: "MuxAdapter", slug: "api/mux-adapter" },
+            { label: "nudge", slug: "api/nudge" },
+            { label: "Detection", slug: "api/probe" },
+            { label: "Worktree", slug: "api/worktree" },
+            { label: "Template", slug: "api/template" },
+          ],
+        },
+        {
           label: "CLI Reference",
           items: [
             { label: "Overview", slug: "cli" },
