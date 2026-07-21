@@ -1,8 +1,8 @@
-import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { envFallback } from './env-fallback.ts'
 import type { Exec } from './exec.ts'
-import type { OpenedPane, SessionAdapter, SessionPlacement, SessionTarget } from './session.ts'
+import type { MuxAdapter, MuxPlacement, MuxTarget, OpenedPane } from './mux.ts'
+import type { NewId } from './new-id.ts'
 import {
 	collectPanes,
 	firstPane,
@@ -15,17 +15,17 @@ import {
 
 /**
  * Templates × sessions — the walk, and the only module that knows both halves. `template.ts` stays pure
- * and owes nothing to the mux; `session.ts` stays a pure mux seam that owes nothing to templates.
+ * and owes nothing to the mux; `mux.ts` stays a pure mux seam that owes nothing to templates.
  * Compiling one into the other is a third concern, and it lives here — exactly what
- * `worktree-session.ts` is to `worktree.ts` + `session.ts`.
+ * `worktree-session.ts` is to `worktree.ts` + `mux.ts`.
  *
  * The engine is cyber-mux's own: a tree-walk emitting `open`/`submit` against the PORTABLE
- * `SessionAdapter` verbs, never a backend's native template primitive. herdr's `template.apply` drops
+ * `MuxAdapter` verbs, never a backend's native template primitive. herdr's `template.apply` drops
  * out entirely rather than being deferred — it is a socket verb (this codebase speaks herdr's CLI,
  * synchronously, on purpose) and, more importantly, it is unique in the field: tmux, cmux, WezTerm
  * and screen have nothing equivalent. Leaning on it would mean the good path existing on exactly one
  * backend while every other backend needs this walk anyway. The capability a multiplexer must supply
- * is "split THIS pane, that way" — that is the whole ask, and it is `SessionOpenOptions.from`.
+ * is "split THIS pane, that way" — that is the whole ask, and it is `MuxOpenOptions.from`.
  */
 
 /** One pane the apply created — `label` is the key a higher layer addresses it by. */
@@ -84,7 +84,7 @@ export class TemplateApplyError extends Error {
 
 interface WalkContext {
 	exec: Exec
-	adapter: SessionAdapter
+	adapter: MuxAdapter
 	cwd: string
 	name: string
 	workspace: string | null
@@ -107,7 +107,7 @@ interface TabState {
 	/** The tab's index in the template; `null` for a single-tab template, which has no tab tier. */
 	index: number | null
 	/** The pane the tab's tree is built AGAINST — its own root region, never another tab's pane. */
-	root: SessionTarget
+	root: MuxTarget
 	/**
 	 * Where the root pane ACTUALLY sits. Not derived — supplied by whoever opened the region, because
 	 * only they know. The root leaf is the one pane no split ever births, so `open --template` can place
@@ -135,7 +135,7 @@ interface TabState {
 function tabState(
 	tree: TemplateNode,
 	index: number | null,
-	root: SessionTarget,
+	root: MuxTarget,
 	rootDir: string,
 	rootEnvHonored: boolean,
 ): TabState {
@@ -179,11 +179,14 @@ export interface OpenTemplateOptions {
 	/** The injected target directory. */
 	cwd: string
 	/** Defaults to `workspace` — a fresh space is empty by construction. */
-	at?: SessionPlacement
-	label?: string
+	at?: MuxPlacement | undefined
+	label?: string | undefined
 	dirExists: (path: string) => boolean
-	/** Passed to the region's own `open` for a `pane:*` placement; see `SessionOpenOptions.from`. */
-	from?: SessionTarget
+	/** Injected id source for the opaque tab-grouping id a `tabs` template mints — the seam that keeps
+	 * this a pure function rather than a caller of `node:crypto`. Unused by a single-region template. */
+	newId: NewId
+	/** Passed to the region's own `open` for a `pane:*` placement; see `MuxOpenOptions.from`. */
+	from?: MuxTarget | undefined
 }
 
 /**
@@ -201,7 +204,7 @@ export interface OpenTemplateOptions {
  */
 export function openTemplate(
 	exec: Exec,
-	adapter: SessionAdapter,
+	adapter: MuxAdapter,
 	template: Template,
 	opts: OpenTemplateOptions,
 ): TemplateManifest {
@@ -353,7 +356,7 @@ function walkTabs(
 /** `open --template` with a tabs template: the first tab opens the workspace the rest live in. */
 function openTabsTemplate(
 	exec: Exec,
-	adapter: SessionAdapter,
+	adapter: MuxAdapter,
 	template: Template,
 	tabs: TabNode[],
 	opts: OpenTemplateOptions,
@@ -366,7 +369,7 @@ function openTabsTemplate(
 	// The machine's carrier for the grouping, and the reason the label never has to be parsed back:
 	// an opaque id no one reads FOR its content. A backend with a real workspace tier ignores it, that
 	// tier already being the group.
-	const group = randomUUID()
+	const group = opts.newId()
 	const workspaceLabel = workspaceLabelOf(template, opts.label)
 	const ctx: WalkContext = {
 		exec,
@@ -459,13 +462,16 @@ export interface ApplyTemplateOptions {
 	 */
 	rootEnvHonored: boolean
 	dirExists: (path: string) => boolean
+	/** Injected id source for the opaque tab-grouping id a `tabs` template mints; see
+	 * `OpenTemplateOptions.newId`. Unused by a single-region apply. */
+	newId: NewId
 	/**
 	 * The label the region was opened under — the workspace's name, which a tabs template carries into
 	 * each later tab's label on a backend with no workspace tier. Only the caller that opened the region
 	 * knows what it named it; omitted, the template's own name stands, matching `open --template`'s
 	 * default.
 	 */
-	label?: string
+	label?: string | undefined
 }
 
 /**
@@ -474,7 +480,7 @@ export interface ApplyTemplateOptions {
  */
 export function applyTemplateToRegion(
 	exec: Exec,
-	adapter: SessionAdapter,
+	adapter: MuxAdapter,
 	template: Template,
 	opts: ApplyTemplateOptions,
 ): TemplateManifest {
@@ -513,7 +519,7 @@ export function applyTemplateToRegion(
  */
 function applyTabsToRegion(
 	exec: Exec,
-	adapter: SessionAdapter,
+	adapter: MuxAdapter,
 	template: Template,
 	tabs: TabNode[],
 	opts: ApplyTemplateOptions,
@@ -548,7 +554,7 @@ function applyTabsToRegion(
 	// cannot change what the template means. Nothing has to be threaded through the worktree verbs to
 	// make this work — `opts.root` is the region they opened, and it carries its own tab, which is all
 	// grouping an already-open space needs.
-	return walkTabs(ctx, tabs, trees, workspaceLabelOf(template, opts.label), randomUUID(), () => ({
+	return walkTabs(ctx, tabs, trees, workspaceLabelOf(template, opts.label), opts.newId(), () => ({
 		// The region that already exists. Where it actually is, not where the template asked for.
 		root: opts.root,
 		rootDir: opts.cwd,

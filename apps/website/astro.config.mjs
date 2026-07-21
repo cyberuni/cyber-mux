@@ -2,10 +2,17 @@
 import starlight from "@astrojs/starlight";
 import tailwindcss from "@tailwindcss/vite";
 import { defineConfig } from "astro/config";
+import remarkGfm from "remark-gfm";
 
 export default defineConfig({
   site: "https://cyberuni.github.io",
   base: "/cyber-mux/",
+  // GFM is on by default for `.md`, but Starlight's bundled MDX does not inherit it, so pipe tables
+  // rendered as literal text in `.mdx` (which is why index.mdx fell back to a raw <table>). Declaring
+  // remark-gfm here applies it to both, so tables render the same in every page.
+  markdown: {
+    remarkPlugins: [remarkGfm],
+  },
   vite: {
     plugins: [tailwindcss()],
   },
@@ -61,6 +68,17 @@ export default defineConfig({
             { label: "exists", slug: "cli/exists" },
             { label: "worktree", slug: "cli/worktree" },
             { label: "template", slug: "cli/template" },
+          ],
+        },
+        {
+          label: "Library API",
+          items: [
+            { label: "Overview", slug: "api" },
+            { label: "MuxAdapter", slug: "api/mux-adapter" },
+            { label: "nudge", slug: "api/nudge" },
+            { label: "Detection", slug: "api/probe" },
+            { label: "Worktree", slug: "api/worktree" },
+            { label: "Template", slug: "api/template" },
           ],
         },
       ],

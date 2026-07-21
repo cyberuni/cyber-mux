@@ -8,6 +8,7 @@ import {
 	removeWorktreeSafely,
 	resolvePrimaryRoot,
 	resolveWorktreePath,
+	worktreeApi,
 } from './worktree.ts'
 
 describe('spec:cyber-mux/mux', () => {
@@ -142,7 +143,11 @@ describe('spec:cyber-mux/mux', () => {
 		})
 
 		it('reports a detached HEAD as a worktree with no branch', () => {
-			expect(listing(porcelain)[2]).toMatchObject({ branch: undefined, linked: true })
+			// The `branch` key is OMITTED (absent), not carried as an explicit `undefined` — a detached
+			// HEAD has no branch, and under exactOptionalPropertyTypes `branch?` is an absent-or-present field.
+			const detached = listing(porcelain)[2]!
+			expect(detached).toMatchObject({ linked: true })
+			expect(detached).not.toHaveProperty('branch')
 		})
 
 		it('reports a stale entry as prunable', () => {
@@ -355,6 +360,39 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls.at(-1)).toEqual(['-C', '/repo', 'worktree', 'remove', realExistingDir, '--force'])
 		})
 
+		it('reads existence through the INJECTED fs seam, so a purely-fictional path can be driven', () => {
+			// The seam: existence is asked of the injected WorktreeFs, never `node:fs` — so a fake disk
+			// stands in and no real directory is needed to exercise the exists→remove path.
+			const calls: string[][] = []
+			const exec: Exec = (_cmd, args) => {
+				calls.push(args)
+				return ''
+			}
+			const fs = { exists: (p: string) => p === '/fake/wt', realpath: (p: string) => p }
+			removeWorktreeSafely(exec, '/fake/wt', { primaryRoot: '/repo', fs })
+			expect(calls.at(-1)).toEqual(['-C', '/repo', 'worktree', 'remove', '/fake/wt', '--force'])
+
+			// And when the fake disk reports the checkout gone, git is never called — releaseBinding runs.
+			let released = false
+			const gitCalls: string[][] = []
+			removeWorktreeSafely(
+				(_cmd, args) => {
+					gitCalls.push(args)
+					return ''
+				},
+				'/fake/wt',
+				{
+					primaryRoot: '/repo',
+					fs: { exists: () => false, realpath: (p: string) => p },
+					releaseBinding: () => {
+						released = true
+					},
+				},
+			)
+			expect(released).toBe(true)
+			expect(gitCalls).toEqual([])
+		})
+
 		it('worktree remove --force discards uncommitted changes without the dirty check', () => {
 			const calls: string[][] = []
 			const exec: Exec = (_cmd, args) => {
@@ -438,6 +476,43 @@ describe('spec:cyber-mux/mux', () => {
 
 		it('refuses even when paths differ only by trailing slash / relative segments', () => {
 			expect(() => assertDistinctFromPrimary('/repo/sub/..', '/repo')).toThrow(/primary checkout/)
+		})
+	})
+
+	describe('worktreeApi — the bound facade', () => {
+		it('binds exec: primaryRoot() resolves through the bound runner, no exec threaded', () => {
+			const calls: string[][] = []
+			const exec: Exec = (_cmd, args) => {
+				calls.push(args)
+				return args.includes('--git-common-dir') ? '/repo/.git' : ''
+			}
+			const wt = worktreeApi({ exec })
+			expect(wt.primaryRoot()).toBe('/repo')
+			expect(calls[0]).toEqual(['rev-parse', '--path-format=absolute', '--git-common-dir'])
+		})
+
+		it('list() defaults its root to primaryRoot() and delegates', () => {
+			const calls: string[][] = []
+			const exec: Exec = (_cmd, args) => {
+				calls.push(args)
+				return args.includes('--git-common-dir') ? '/repo/.git' : ''
+			}
+			expect(worktreeApi({ exec }).list()).toEqual([])
+			expect(calls[0]).toEqual(['rev-parse', '--path-format=absolute', '--git-common-dir'])
+			expect(calls[1]).toEqual(['-C', '/repo', 'worktree', 'list', '--porcelain'])
+		})
+
+		it('add() delegates to the git adapter with the bound runner', () => {
+			const calls: string[][] = []
+			const exec: Exec = (_cmd, args) => {
+				calls.push(args)
+				return ''
+			}
+			expect(worktreeApi({ exec }).add({ primaryRoot: '/repo', path: '/repo/x', branch: 'b' })).toEqual({
+				root: '/repo/x',
+				branch: 'b',
+			})
+			expect(calls[0]).toEqual(['-C', '/repo', 'worktree', 'add', '-b', 'b', '/repo/x'])
 		})
 	})
 })

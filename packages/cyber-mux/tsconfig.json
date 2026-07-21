@@ -5,9 +5,20 @@
 		"moduleResolution": "NodeNext",
 		"types": ["node"],
 		"strict": true,
+		"exactOptionalPropertyTypes": true,
+		"verbatimModuleSyntax": true,
+		"isolatedModules": true,
+		"declaration": true,
+		"isolatedDeclarations": true,
+		"noUncheckedIndexedAccess": true,
+		"noPropertyAccessFromIndexSignature": true,
+		"noUnusedLocals": true,
+		"noUnusedParameters": true,
 		"noEmit": true,
 		"allowImportingTsExtensions": true,
 		"skipLibCheck": true
 	},
-	"include": ["src/**/*.ts", "src/**/*.mts"]
+	"include": ["src/**/*.ts", "src/**/*.mts"],
+	"//": "The *.dist.test.ts suite imports the package by name (built dist), so it is typechecked against the built types by tsconfig.dist.json inside `test:dist` (after a build) — not here, which must not depend on this package's own dist.",
+	"exclude": ["src/**/*.dist.test.ts"]
 }

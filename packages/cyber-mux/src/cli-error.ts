@@ -27,7 +27,7 @@ export class CliError extends Error {
 		readonly exit: 1 | 2,
 		/** Extra structured fields the JSON form carries beside code/message/help — e.g. an ambiguity's
 		 * candidates. Never free-text; a machine reads these. */
-		readonly extra?: Record<string, unknown>,
+		readonly extra?: Record<string, unknown> | undefined,
 	) {
 		super(message)
 		this.name = 'CliError'
@@ -91,7 +91,7 @@ export function reportError(e: CliError): never {
 		// belongs where a person reads as much as where a script matches — not hidden in the JSON alone.
 		console.log(`error: ${e.code}: ${e.message}`)
 		console.log(`help: ${e.help}`)
-		const candidates = e.extra?.candidates as PaneCandidate[] | undefined
+		const candidates = e.extra?.['candidates'] as PaneCandidate[] | undefined
 		if (candidates) {
 			for (const c of candidates) console.log(`  ${c.id}  ${c.label ?? ''}  ${c.cwd ?? ''}`)
 		}

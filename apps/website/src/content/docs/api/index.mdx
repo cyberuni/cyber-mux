@@ -1,0 +1,91 @@
+---
+title: Library API
+description: Use cyber-mux as a library — the same cross-multiplexer core the CLI drives, importable directly.
+---
+
+Everything the [CLI](/cyber-mux/cli/) does is a thin shell over a pure core, and that core ships as a
+library. Import it when you are building a tool *on top of* cyber-mux — a dispatcher, an agent
+harness, a workspace manager — rather than shelling out to the `cyber-mux` binary and parsing its
+output.
+
+The library is the seam and nothing else: it contains **no** `console.log` and **no** `process.exit`.
+Those live only in the CLI modules, which the library entries deliberately do not re-export, so the
+process-owning surface is structurally unreachable from every import path below.
+
+## Install
+
+```bash
+npm install cyber-mux
+```
+
+`cyber-mux` is ESM-only and ships its own types (`.d.mts`). It has one runtime dependency
+(`commander`, used by the CLI); the library entries pull in none of it.
+
+## Entry points
+
+Three subpaths, each a different slice of the core. Import from the narrowest one that covers your
+need.
+
+| Import | What it is | Page |
+| --- | --- | --- |
+| `cyber-mux` | The mux core — [`resolveMux`](/cyber-mux/api/mux-adapter/) and the [`MuxSession`](/cyber-mux/api/mux-adapter/) it returns, the raw [`MuxAdapter`](/cyber-mux/api/mux-adapter/#the-raw-seam) contract underneath, the three adapters, [`nudge`](/cyber-mux/api/nudge/), the [probe](/cyber-mux/api/probe/), and the `Exec`/`NewId` seams. | [MuxAdapter](/cyber-mux/api/mux-adapter/) |
+| `cyber-mux/worktree` | `worktreeApi` — the git-worktree helpers (list, resolve, remove safely) with `Exec`/`fs` bound — over the raw exec-first functions. | [Worktree](/cyber-mux/api/worktree/) |
+| `cyber-mux/template` | `templateApi` — bound resolution — plus the template schema, validator, and flat-N desugarer. | [Template](/cyber-mux/api/template/) |
+
+## The seam pattern
+
+Every core function takes its side effects as parameters rather than reaching for `node:child_process`
+or `node:fs` directly. The two you will meet most often:
+
+- **`Exec`** — the synchronous command runner every adapter uses. The real one is `nodeExec`. Rather
+  than threading it through every call, [`resolveMux`](/cyber-mux/api/mux-adapter/) **binds** it once
+  when it resolves the session — a test binds a fake instead (`resolveMux(env, { exec: fake })`), so a
+  session is drivable with no real multiplexer. A single call can still override the bound runner with
+  a trailing `deps` argument (`mux.open(opts, { exec })`).
+- **`NewId`** — the id-minting seam. The real one is `nodeNewId` (a v4 UUID); a test passes a
+  deterministic counter.
+
+Bind the real implementations at the edge of your program — that is exactly what the CLI does.
+
+## Quick start
+
+Resolve the session for whatever multiplexer this process is inside, open a pane, hand it its turn,
+and read the result back:
+
+```ts
+import { resolveMux } from 'cyber-mux'
+
+// Resolve the session for whatever multiplexer this process is inside — binds nodeExec once.
+// Throws if the process is in no supported multiplexer.
+const mux = resolveMux(process.env)
+
+// Open a pane to the right of THIS one, running a command.
+const pane = mux.open({
+  cwd: process.cwd(),
+  at: 'pane:right',
+  from: mux.callerPane(), // split the caller, not the user's focused pane
+  launch: 'claude',
+})
+
+// Submit a message and verify the peer actually took its turn.
+const { taken, resubmits } = await mux.nudge(pane, 'run the tests')
+console.log({ taken, resubmits })
+
+// Read the pane's current output.
+console.log(mux.read(pane, { lines: 40 }))
+```
+
+`resolveMux` throws if the process is in no supported multiplexer. To run with-or-without one, gate
+first with the non-throwing [probe](/cyber-mux/api/probe/):
+
+```ts
+import { probeMultiplexer, resolveMux, nodeExec } from 'cyber-mux'
+
+if (probeMultiplexer(nodeExec, process.env).mux !== 'none') {
+  const mux = resolveMux(process.env)
+  // ...
+}
+```
+
+A caller threading its own runner per call instead of binding one reaches for the raw, exec-first
+[`resolveMuxAdapter`](/cyber-mux/api/mux-adapter/#the-raw-seam) seam underneath.

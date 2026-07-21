@@ -280,7 +280,7 @@ describe('spec:cyber-mux/template', () => {
 			// lifted verbatim to the top level, is a valid template and resolves to the identical tree.
 			for (const tab of template.tabs!) {
 				expect(validateTemplate({ name: 'render-farm', root: tab.root }, 'render-farm')).toEqual([])
-				expect(resolveTree(tab)).toEqual(resolveTree({ name: 'render-farm', root: tab.root }))
+				expect(resolveTree(tab)).toEqual(resolveTree({ name: 'render-farm', root: tab.root! }))
 			}
 			expect(resolveTree(template.tabs![0]!)).toBe(split)
 			expect(resolveTree(template.tabs![1]!)).toBe(solo)

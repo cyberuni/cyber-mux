@@ -1,13 +1,14 @@
 import { join } from 'node:path'
 import { Command, CommanderError, Option } from 'commander'
-import { callerPane, selectSessionAdapter } from './backend.ts'
+import { callerPane, resolveMuxAdapter } from './backend.ts'
 import { AmbiguousPaneError, CliError, reportError } from './cli-error.ts'
 import { AT_OPTION, ENV_OPTION, FORMAT_OPTION, LABEL_OPTION } from './cli-options.ts'
-import { type Exec, realExec } from './exec.ts'
+import { type Exec, nodeExec } from './exec.ts'
+import type { LivePane, MuxAdapter, MuxPlacement, MuxTarget } from './mux.ts'
 import { currentPane, probeMultiplexer } from './mux-probe.ts'
+import { nodeNewId } from './new-id.ts'
 import { type HelpEntry, isAutomatedOutput, output, printFields, printHelp, printTable, tildify } from './output.ts'
 import { type OpenPrompt, realPrompt } from './prompt.ts'
-import type { LivePane, SessionAdapter, SessionPlacement, SessionTarget } from './session.ts'
 import {
 	collectPanes,
 	isValidTemplateName,
@@ -39,8 +40,8 @@ import {
 } from './template-session.ts'
 import {
 	listTemplates,
+	nodeTemplateStore,
 	type ResolvedTemplate,
-	realTemplateStore,
 	resolveTemplate as resolveTemplateSource,
 	type TemplateStore,
 	templateDirs,
@@ -71,11 +72,11 @@ export interface CliDeps {
 	/** The filesystem half, for the `template` group — injected for the same reason `exec` is: it is the
 	 * only way `template` can be driven hermetically in tests, with no real templates on disk. Optional
 	 * at this boundary so a caller that drives no template command need not know the seam exists. */
-	store?: TemplateStore
+	store?: TemplateStore | undefined
 	/** The interactive half, for `template edit` — injected for the same reason `store` is, and a
 	 * FACTORY rather than a live prompt so no other verb pays stdin for its existence (`prompt.ts`
 	 * has the why). */
-	prompt?: OpenPrompt
+	prompt?: OpenPrompt | undefined
 }
 
 /** `CliDeps` with every optional dep resolved — what each command is actually handed. */
@@ -86,17 +87,17 @@ interface Deps {
 	prompt: OpenPrompt
 }
 
-const REAL_DEPS: CliDeps = { env: process.env, exec: realExec, store: realTemplateStore, prompt: realPrompt }
+const DEFAULT_DEPS: CliDeps = { env: process.env, exec: nodeExec, store: nodeTemplateStore, prompt: realPrompt }
 
 /**
  * Resolve the adapter for the multiplexer this process is inside, failing with a coded `no-mux` error
- * when there is none. The underlying throw is TRANSLATED, never forwarded — `selectSessionAdapter`
+ * when there is none. The underlying throw is TRANSLATED, never forwarded — `resolveMuxAdapter`
  * names `$TMUX`/`$HERDR_ENV`, which is backend plumbing an agent driving cyber-mux cannot act on; the
  * help names how to get a backend through this CLI instead.
  */
-function adapter(deps: Deps): SessionAdapter {
+function adapter(deps: Deps): MuxAdapter {
 	try {
-		return selectSessionAdapter(deps.env, deps.exec)
+		return resolveMuxAdapter(deps.env, deps.exec)
 	} catch {
 		throw noMux()
 	}
@@ -184,7 +185,7 @@ function reportWorktreeFailure(err: unknown): never {
  * and takes the verb's existing not-found path (exit 1). Failing here instead would make every verb's
  * "no such pane" message this function's to write.
  */
-function resolveTarget(deps: Deps, a: SessionAdapter, locator: string): SessionTarget {
+function resolveTarget(deps: Deps, a: MuxAdapter, locator: string): MuxTarget {
 	let panes: LivePane[]
 	try {
 		panes = a.listPanes(deps.exec)
@@ -270,9 +271,9 @@ function paneVerb(locator: string, body: () => void): void {
  * verbs whose subject is git (`worktree list`/`remove`): a multiplexer can only ever add to the
  * answer, so its absence must not deny one.
  */
-function optionalAdapter(deps: Deps): SessionAdapter | undefined {
+function optionalAdapter(deps: Deps): MuxAdapter | undefined {
 	try {
-		return selectSessionAdapter(deps.env, deps.exec)
+		return resolveMuxAdapter(deps.env, deps.exec)
 	} catch {
 		return undefined
 	}
@@ -332,7 +333,7 @@ function templateOption(): Option {
  */
 function resolveTemplate(
 	deps: Deps,
-	opts: { name?: string; file?: string },
+	opts: { name?: string | undefined; file?: string | undefined },
 ): ResolvedTemplate & { template: Template } {
 	// A malformed NAME is a usage error (exit 2), and it is caught HERE — before `resolveTemplateSource` reads —
 	// so it is told apart from a well-formed name that simply resolves nowhere (exit 1, below). The name
@@ -456,7 +457,7 @@ function templateShowCommand(deps: Deps): Command {
 		.option('--file <path>', 'Read this path instead, skipping resolution entirely')
 		.option('--desugar', 'Print the canonical tree panes/arrange expands to — exactly what apply builds')
 		.action(
-			guarded((name: string | undefined, opts: { file?: string; desugar?: boolean }) => {
+			guarded((name: string | undefined, opts: { file?: string | undefined; desugar?: boolean | undefined }) => {
 				if (!name && !opts.file) {
 					throw new CliError(
 						'missing-argument',
@@ -478,7 +479,7 @@ function templateValidateCommand(deps: Deps): Command {
 		.argument('[name]', 'Template name')
 		.option('--file <path>', 'Validate this path instead, skipping resolution entirely')
 		.action(
-			guarded((name: string | undefined, opts: { file?: string }) => {
+			guarded((name: string | undefined, opts: { file?: string | undefined }) => {
 				if (!name && !opts.file) {
 					throw new CliError(
 						'missing-argument',
@@ -545,7 +546,13 @@ function templateSaveCommand(deps: Deps): Command {
 			guarded(
 				(
 					name: string,
-					opts: { from?: string; workspace?: boolean; description?: string; to: 'repo' | 'user'; force?: boolean },
+					opts: {
+						from?: string | undefined
+						workspace?: boolean | undefined
+						description?: string | undefined
+						to: 'repo' | 'user'
+						force?: boolean | undefined
+					},
 				) => {
 					// Before the multiplexer is touched: a name is a lookup key that must also be a filename, so an
 					// unusable one should not cost a region read to find out. A usage error (exit 2), the same
@@ -570,7 +577,7 @@ function templateSaveCommand(deps: Deps): Command {
 						// member this run would not have called. A backend that cannot answer cannot be captured
 						// and there is nothing to degrade to, so this refuses NAMING the backend rather than
 						// guessing a tree.
-						const describeRegion = a.describeRegion
+						const describeRegion = a.regions?.describeRegion
 						if (!opts.workspace && !describeRegion) {
 							throw new CliError(
 								'backend-unsupported',
@@ -579,7 +586,7 @@ function templateSaveCommand(deps: Deps): Command {
 								1,
 							)
 						}
-						const describeWorkspace = a.describeWorkspace
+						const describeWorkspace = a.regions?.describeWorkspace
 						if (opts.workspace && !describeWorkspace) {
 							throw new CliError(
 								'backend-unsupported',
@@ -654,11 +661,12 @@ function templateSaveCommand(deps: Deps): Command {
  * right — a window nobody grouped is a workspace of one, and nothing was left out. The `command`
  * re-states the caller's own `name` with `--workspace`, the flag that captures every tab.
  */
-function noteTabsLeftOut(deps: Deps, adapter: SessionAdapter, target: SessionTarget, name: string): HelpEntry | null {
-	if (!adapter.describeWorkspace) return null
+function noteTabsLeftOut(deps: Deps, adapter: MuxAdapter, target: MuxTarget, name: string): HelpEntry | null {
+	const describeWorkspace = adapter.regions?.describeWorkspace
+	if (!describeWorkspace) return null
 	let tabs: number
 	try {
-		tabs = adapter.describeWorkspace(deps.exec, target).length
+		tabs = describeWorkspace(deps.exec, target).length
 	} catch {
 		return null
 	}
@@ -1018,7 +1026,7 @@ function doctorCommand(deps: Deps): Command {
 			const self = currentPane(deps.env)
 			let backend = 'none'
 			try {
-				backend = selectSessionAdapter(deps.env, deps.exec).name
+				backend = resolveMuxAdapter(deps.env, deps.exec).name
 			} catch {
 				// no backend — reported as 'none'
 			}
@@ -1051,7 +1059,7 @@ function modeCommand(deps: Deps): Command {
 		.action(() => {
 			let name = 'none'
 			try {
-				name = selectSessionAdapter(deps.env, deps.exec).name
+				name = resolveMuxAdapter(deps.env, deps.exec).name
 			} catch {
 				// no backend — reported as 'none'
 			}
@@ -1072,12 +1080,12 @@ function openCommand(deps: Deps): Command {
 		.action(
 			guarded(
 				(opts: {
-					launch?: string
-					template?: string
+					launch?: string | undefined
+					template?: string | undefined
 					cwd: string
-					at?: SessionPlacement
-					env?: Record<string, string>
-					label?: string
+					at?: MuxPlacement | undefined
+					env?: Record<string, string> | undefined
+					label?: string | undefined
 				}) => {
 					if (opts.template) {
 						// Resolve and validate BEFORE touching a backend, so an unresolvable name opens nothing.
@@ -1091,6 +1099,7 @@ function openCommand(deps: Deps): Command {
 									at: opts.at ?? 'workspace',
 									label: opts.label ?? template.name,
 									dirExists: deps.store.dirExists,
+									newId: nodeNewId,
 									from: callerPane(a, deps.env),
 								}),
 							)
@@ -1185,7 +1194,7 @@ function readCommand(deps: Deps): Command {
 		.option('--lines <n>', 'Trailing lines to capture', (v) => Number.parseInt(v, 10))
 		.addOption(FORMAT_OPTION)
 		.action(
-			guarded((pane: string, opts: { lines?: number }) => {
+			guarded((pane: string, opts: { lines?: number | undefined }) => {
 				paneVerb(pane, () => {
 					const a = adapter(deps)
 					const t = resolveTarget(deps, a, pane)
@@ -1284,13 +1293,13 @@ function worktreeAddCommand(deps: Deps): Command {
 		.action(
 			(opts: {
 				branch: string
-				path?: string
-				base?: string
-				launch?: string
-				template?: string
-				at?: SessionPlacement
-				env?: Record<string, string>
-				label?: string
+				path?: string | undefined
+				base?: string | undefined
+				launch?: string | undefined
+				template?: string | undefined
+				at?: MuxPlacement | undefined
+				env?: Record<string, string> | undefined
+				label?: string | undefined
 			}) => {
 				try {
 					const primaryRoot = resolvePrimaryRoot(deps.exec)
@@ -1328,6 +1337,7 @@ function worktreeAddCommand(deps: Deps): Command {
 									// could carry the root pane's env; the walk falls back to a prefix when not.
 									rootEnvHonored: opened.envHonored,
 									dirExists: deps.store.dirExists,
+									newId: nodeNewId,
 								}),
 								extra,
 							)
@@ -1386,7 +1396,12 @@ function worktreeOpenCommand(deps: Deps): Command {
 		.action(
 			(
 				path: string,
-				opts: { launch?: string; at?: SessionPlacement; env?: Record<string, string>; label?: string },
+				opts: {
+					launch?: string | undefined
+					at?: MuxPlacement | undefined
+					env?: Record<string, string> | undefined
+					label?: string | undefined
+				},
 			) => {
 				try {
 					const primaryRoot = resolvePrimaryRoot(deps.exec)
@@ -1452,7 +1467,7 @@ function worktreeRemoveCommand(deps: Deps): Command {
 		.description('Remove a git worktree — refuses the primary checkout and uncommitted changes unless --force')
 		.argument('<path>', 'Worktree path to remove')
 		.option('--force', 'Discard uncommitted changes in the worktree')
-		.action((path: string, opts: { force?: boolean }) => {
+		.action((path: string, opts: { force?: boolean | undefined }) => {
 			try {
 				const primaryRoot = resolvePrimaryRoot(deps.exec)
 				removeWorktree(deps.exec, optionalAdapter(deps), path, { primaryRoot, force: opts.force })
@@ -1552,11 +1567,11 @@ function exitOverrideTree(command: Command): Command {
  * instead of calling `process.exit` directly and a rejection (an invalid `--at` choice, a missing
  * argument, a bare `send`) is catchable both here and in tests, rather than killing the test
  * runner's own process. */
-export function buildProgram(cliDeps: CliDeps = REAL_DEPS): Command {
+export function buildProgram(cliDeps: CliDeps = DEFAULT_DEPS): Command {
 	const deps: Deps = {
 		env: cliDeps.env,
 		exec: cliDeps.exec,
-		store: cliDeps.store ?? realTemplateStore,
+		store: cliDeps.store ?? nodeTemplateStore,
 		prompt: cliDeps.prompt ?? realPrompt,
 	}
 	const program = new Command()

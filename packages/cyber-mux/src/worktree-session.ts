@@ -1,5 +1,5 @@
 import type { Exec } from './exec.ts'
-import type { OpenedPane, SessionAdapter, SessionPlacement, SessionTarget } from './session.ts'
+import type { MuxAdapter, MuxPlacement, MuxTarget, OpenedPane } from './mux.ts'
 import {
 	gitWorktreeAdapter,
 	listWorktreesFromGit,
@@ -11,7 +11,7 @@ import {
 
 /**
  * Worktrees × sessions — the routing policy, and the only module that knows both halves. `worktree.ts`
- * stays a pure git adapter that owes nothing to the session seam; `session.ts` stays a pure mux seam
+ * stays a pure git adapter that owes nothing to the session seam; `mux.ts` stays a pure mux seam
  * that owes nothing to git. Deciding between them is a third concern, and it lives here.
  */
 
@@ -26,7 +26,7 @@ export interface OpenedWorktree {
 	 */
 	target: OpenedPane
 	/** The workspace bound to the worktree; absent when it opened ungrouped. */
-	workspace?: string
+	workspace?: string | undefined
 	/**
 	 * The backend COULD have bound this worktree to a workspace, but the route taken did not — i.e. a
 	 * caller on herdr asked for a pane or tab placement, which its `worktree create` cannot serve.
@@ -50,12 +50,12 @@ export interface OpenedWorktree {
  * Grouping is possible only where the backend binds AND the caller asked for a workspace — herdr's
  * `worktree create` ALWAYS opens a workspace, so it cannot serve a pane or tab placement.
  */
-function canBind(adapter: SessionAdapter, at: SessionPlacement | undefined): boolean {
+function canBind(adapter: MuxAdapter, at: MuxPlacement | undefined): boolean {
 	return Boolean(adapter.worktree) && at === 'workspace'
 }
 
 /** True only where a group was on offer and the placement is what cost us it. */
-function isDegraded(adapter: SessionAdapter, at: SessionPlacement | undefined): boolean {
+function isDegraded(adapter: MuxAdapter, at: MuxPlacement | undefined): boolean {
 	return Boolean(adapter.worktree) && !canBind(adapter, at)
 }
 
@@ -70,19 +70,19 @@ function isDegraded(adapter: SessionAdapter, at: SessionPlacement | undefined): 
  */
 export function addAndOpenWorktree(
 	exec: Exec,
-	adapter: SessionAdapter,
+	adapter: MuxAdapter,
 	opts: {
 		primaryRoot: string
 		branch: string
 		path: string
-		base?: string
-		launch?: string
+		base?: string | undefined
+		launch?: string | undefined
 		/** Environment set in the opened root pane at birth — native at every tier on both backends. */
-		env?: Record<string, string>
-		at?: SessionPlacement
-		label?: string
-		/** Passed to `open` for a `pane:*` placement; see `SessionOpenOptions.from`. */
-		from?: SessionTarget
+		env?: Record<string, string> | undefined
+		at?: MuxPlacement | undefined
+		label?: string | undefined
+		/** Passed to `open` for a `pane:*` placement; see `MuxOpenOptions.from`. */
+		from?: MuxTarget | undefined
 	},
 ): OpenedWorktree {
 	if (canBind(adapter, opts.at)) {
@@ -123,17 +123,17 @@ export function addAndOpenWorktree(
  */
 export function openExistingWorktree(
 	exec: Exec,
-	adapter: SessionAdapter,
+	adapter: MuxAdapter,
 	opts: {
 		primaryRoot: string
 		path: string
-		launch?: string
+		launch?: string | undefined
 		/** Environment set in the opened root pane; honored natively on the `open` route, compensated on the bind route. */
-		env?: Record<string, string>
-		at?: SessionPlacement
-		label?: string
-		/** Passed to `open` for a `pane:*` placement; see `SessionOpenOptions.from`. */
-		from?: SessionTarget
+		env?: Record<string, string> | undefined
+		at?: MuxPlacement | undefined
+		label?: string | undefined
+		/** Passed to `open` for a `pane:*` placement; see `MuxOpenOptions.from`. */
+		from?: MuxTarget | undefined
 	},
 ): OpenedWorktree {
 	const at = opts.at ?? 'workspace'
@@ -174,7 +174,7 @@ export function openExistingWorktree(
  */
 export function listWorktrees(
 	exec: Exec,
-	adapter: SessionAdapter | undefined,
+	adapter: MuxAdapter | undefined,
 	opts: { primaryRoot: string },
 ): WorktreeEntry[] {
 	const bindings = adapter?.worktree?.bindings(exec, { primaryRoot: opts.primaryRoot })
@@ -194,9 +194,9 @@ export function listWorktrees(
  */
 export function removeWorktree(
 	exec: Exec,
-	adapter: SessionAdapter | undefined,
+	adapter: MuxAdapter | undefined,
 	path: string,
-	opts: { primaryRoot: string; force?: boolean },
+	opts: { primaryRoot: string; force?: boolean | undefined },
 ): void {
 	const capability = adapter?.worktree
 	const workspace = capability?.bindings(exec, { primaryRoot: opts.primaryRoot }).get(normalizeWorktreePath(path))

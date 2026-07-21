@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import type { Exec } from './exec.ts'
-import { herdrSessionAdapter } from './session.herdr.ts'
-import { tmuxSessionAdapter } from './session.tmux.ts'
-import type { SessionAdapter, SessionPlacement } from './session.ts'
+import { herdrMuxAdapter } from './mux.herdr.ts'
+import { tmuxMuxAdapter } from './mux.tmux.ts'
+import type { MuxAdapter, MuxPlacement } from './mux.ts'
 import { addAndOpenWorktree, listWorktrees, openExistingWorktree, removeWorktree } from './worktree-session.ts'
 
 /**
@@ -55,7 +55,7 @@ describe('spec:cyber-mux/mux', () => {
 		it('herdr --at workspace routes through the backend, binding the worktree to its workspace', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'herdr worktree create': HERDR_WORKTREE_OUT })
-			const opened = addAndOpenWorktree(exec, herdrSessionAdapter, { ...addOpts, at: 'workspace' })
+			const opened = addAndOpenWorktree(exec, herdrMuxAdapter, { ...addOpts, at: 'workspace' })
 
 			expect(opened.workspace).toBe('w9')
 			expect(opened.degraded).toBe(false)
@@ -74,7 +74,7 @@ describe('spec:cyber-mux/mux', () => {
 				'herdr pane split': '{"result":{"pane":{"pane_id":"w3:pB","tab_id":"w3:t1"}}}',
 				'herdr tab create': '{"result":{"root_pane":{"pane_id":"w3:pB","tab_id":"w3:t1"}}}',
 			})
-			const opened = addAndOpenWorktree(exec, herdrSessionAdapter, { ...addOpts, at: at as SessionPlacement })
+			const opened = addAndOpenWorktree(exec, herdrMuxAdapter, { ...addOpts, at: at as MuxPlacement })
 
 			// A complete, useful outcome — a worktree open in a pane/tab — just not a grouped one.
 			expect(opened.worktree).toEqual({ root: '/repo.worktrees/x', branch: 'feat/x' })
@@ -97,7 +97,7 @@ describe('spec:cyber-mux/mux', () => {
 				// The live envelope: herdr reports the split's own workspace_id — the caller's workspace.
 				'herdr pane split': '{"result":{"pane":{"pane_id":"w3:pB","tab_id":"w3:t1","workspace_id":"w3"}}}',
 			})
-			const opened = addAndOpenWorktree(exec, herdrSessionAdapter, { ...addOpts, at: 'pane:right' })
+			const opened = addAndOpenWorktree(exec, herdrMuxAdapter, { ...addOpts, at: 'pane:right' })
 
 			// The pane knows where it landed...
 			expect(opened.target).toEqual({ id: 'w3:pB', tab: 'w3:t1', workspace: 'w3' })
@@ -115,7 +115,7 @@ describe('spec:cyber-mux/mux', () => {
 		] as const)('a backend that binds nothing falls back without reporting a lost grouping', (at) => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'tmux split-window': '%9\t@1', 'tmux new-window': '%9\t@1' })
-			const opened = addAndOpenWorktree(exec, tmuxSessionAdapter, { ...addOpts, at })
+			const opened = addAndOpenWorktree(exec, tmuxMuxAdapter, { ...addOpts, at })
 
 			expect(opened.workspace).toBeUndefined()
 			expect(opened.degraded).toBe(false)
@@ -125,7 +125,7 @@ describe('spec:cyber-mux/mux', () => {
 		it('passes a label through both routes — each backend names the tier it opened', () => {
 			// herdr, grouped: the label names the bound workspace.
 			const herdrCalls: string[][] = []
-			addAndOpenWorktree(fakeExec(herdrCalls, { 'herdr worktree create': HERDR_WORKTREE_OUT }), herdrSessionAdapter, {
+			addAndOpenWorktree(fakeExec(herdrCalls, { 'herdr worktree create': HERDR_WORKTREE_OUT }), herdrMuxAdapter, {
 				...addOpts,
 				at: 'workspace',
 				label: 'my-name',
@@ -134,7 +134,7 @@ describe('spec:cyber-mux/mux', () => {
 
 			// tmux, no binding: the same label names the window `workspace` collapses to.
 			const tmuxCalls: string[][] = []
-			addAndOpenWorktree(fakeExec(tmuxCalls, { 'tmux new-window': '%9\t@1' }), tmuxSessionAdapter, {
+			addAndOpenWorktree(fakeExec(tmuxCalls, { 'tmux new-window': '%9\t@1' }), tmuxMuxAdapter, {
 				...addOpts,
 				at: 'workspace',
 				label: 'my-name',
@@ -144,7 +144,7 @@ describe('spec:cyber-mux/mux', () => {
 
 		it('passes a base through both routes', () => {
 			const herdrCalls: string[][] = []
-			addAndOpenWorktree(fakeExec(herdrCalls, { 'herdr worktree create': HERDR_WORKTREE_OUT }), herdrSessionAdapter, {
+			addAndOpenWorktree(fakeExec(herdrCalls, { 'herdr worktree create': HERDR_WORKTREE_OUT }), herdrMuxAdapter, {
 				...addOpts,
 				at: 'workspace',
 				base: 'origin/main',
@@ -152,7 +152,7 @@ describe('spec:cyber-mux/mux', () => {
 			expect(herdrCalls[0]).toContain('--base')
 
 			const tmuxCalls: string[][] = []
-			addAndOpenWorktree(fakeExec(tmuxCalls, { 'tmux new-window': '%9\t@1' }), tmuxSessionAdapter, {
+			addAndOpenWorktree(fakeExec(tmuxCalls, { 'tmux new-window': '%9\t@1' }), tmuxMuxAdapter, {
 				...addOpts,
 				at: 'workspace',
 				base: 'origin/main',
@@ -175,8 +175,7 @@ describe('spec:cyber-mux/mux', () => {
 		}>([
 			{
 				route: "herdr's worktree bind",
-				call: (exec) =>
-					addAndOpenWorktree(exec, herdrSessionAdapter, { ...base, branch: 'feat/x', env, at: 'workspace' }),
+				call: (exec) => addAndOpenWorktree(exec, herdrMuxAdapter, { ...base, branch: 'feat/x', env, at: 'workspace' }),
 				responses: { 'herdr worktree create': HERDR_WORKTREE_OUT },
 				envHonored: false,
 			},
@@ -185,20 +184,19 @@ describe('spec:cyber-mux/mux', () => {
 				// identically (herdr's `worktree open` takes no env either), so it must report the drop too.
 				// Covered so the report is not wired on one worktree verb and silently forgotten on its sibling.
 				route: "herdr's worktree bind, via open",
-				call: (exec) => openExistingWorktree(exec, herdrSessionAdapter, { ...base, env, at: 'workspace' }),
+				call: (exec) => openExistingWorktree(exec, herdrMuxAdapter, { ...base, env, at: 'workspace' }),
 				responses: { 'herdr worktree open': HERDR_WORKTREE_OUT },
 				envHonored: false,
 			},
 			{
 				route: 'the plain git worktree fallback',
-				call: (exec) =>
-					addAndOpenWorktree(exec, tmuxSessionAdapter, { ...base, branch: 'feat/x', env, at: 'workspace' }),
+				call: (exec) => addAndOpenWorktree(exec, tmuxMuxAdapter, { ...base, branch: 'feat/x', env, at: 'workspace' }),
 				responses: { 'tmux new-window': '%9\t@1' },
 				envHonored: true,
 			},
 			{
 				route: 'a direct open on herdr',
-				call: (exec) => openExistingWorktree(exec, herdrSessionAdapter, { ...base, env, at: 'pane:right' }),
+				call: (exec) => openExistingWorktree(exec, herdrMuxAdapter, { ...base, env, at: 'pane:right' }),
 				responses: {
 					'herdr pane split': '{"result":{"pane":{"pane_id":"w3:pB","tab_id":"w3:t1"}}}',
 					'git -C /repo': GIT_PORCELAIN,
@@ -207,7 +205,7 @@ describe('spec:cyber-mux/mux', () => {
 			},
 			{
 				route: 'a direct open on tmux',
-				call: (exec) => openExistingWorktree(exec, tmuxSessionAdapter, { ...base, env }),
+				call: (exec) => openExistingWorktree(exec, tmuxMuxAdapter, { ...base, env }),
 				responses: { 'tmux new-window': '%9\t@1', 'git -C /repo': GIT_PORCELAIN },
 				envHonored: true,
 			},
@@ -225,7 +223,7 @@ describe('spec:cyber-mux/mux', () => {
 		it('worktree open groups a worktree that plain git created earlier', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'herdr worktree open': HERDR_WORKTREE_OUT })
-			const opened = openExistingWorktree(exec, herdrSessionAdapter, {
+			const opened = openExistingWorktree(exec, herdrMuxAdapter, {
 				primaryRoot: '/repo',
 				path: '/repo.worktrees/x',
 			})
@@ -239,7 +237,7 @@ describe('spec:cyber-mux/mux', () => {
 
 		it('defaults the placement to workspace — the only one that can bind', () => {
 			const calls: string[][] = []
-			openExistingWorktree(fakeExec(calls, { 'herdr worktree open': HERDR_WORKTREE_OUT }), herdrSessionAdapter, {
+			openExistingWorktree(fakeExec(calls, { 'herdr worktree open': HERDR_WORKTREE_OUT }), herdrMuxAdapter, {
 				primaryRoot: '/repo',
 				path: '/repo.worktrees/x',
 			})
@@ -249,7 +247,7 @@ describe('spec:cyber-mux/mux', () => {
 		it('falls back to a plain open on a backend that cannot bind, reading the branch from git', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'tmux new-window': '%9\t@1', 'git -C /repo': GIT_PORCELAIN })
-			const opened = openExistingWorktree(exec, tmuxSessionAdapter, { primaryRoot: '/repo', path: '/repo.worktrees/x' })
+			const opened = openExistingWorktree(exec, tmuxMuxAdapter, { primaryRoot: '/repo', path: '/repo.worktrees/x' })
 
 			expect(opened.worktree).toEqual({ root: '/repo.worktrees/x', branch: 'feat/x' })
 			expect(opened.workspace).toBeUndefined()
@@ -279,7 +277,7 @@ describe('spec:cyber-mux/mux', () => {
 				result: { worktrees: [{ path: '/repo.worktrees/x', open_workspace_id: 'w21' }] },
 			})
 			const exec = fakeExec([], { ...GIT_FACTS, 'herdr worktree list': listOut })
-			expect(listWorktrees(exec, herdrSessionAdapter, { primaryRoot: '/repo' })).toEqual([
+			expect(listWorktrees(exec, herdrMuxAdapter, { primaryRoot: '/repo' })).toEqual([
 				{ ...GIT_ANSWER[0], workspace: undefined },
 				{ ...GIT_ANSWER[1], workspace: 'w21' },
 			])
@@ -302,7 +300,7 @@ describe('spec:cyber-mux/mux', () => {
 				},
 			})
 			const exec = fakeExec([], { ...GIT_FACTS, 'herdr worktree list': listOut })
-			const entries = listWorktrees(exec, herdrSessionAdapter, { primaryRoot: '/repo' })
+			const entries = listWorktrees(exec, herdrMuxAdapter, { primaryRoot: '/repo' })
 			// Path, branch, linked, prunable, merged and dirty are ALL git's answer — asserting the branch
 			// alone would leave the backend free to win on the rest. `workspace` is the one and only fact
 			// the backend contributes.
@@ -315,7 +313,7 @@ describe('spec:cyber-mux/mux', () => {
 		it('reports no workspace on a backend with no binding, and asks it nothing', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'git -C /repo': GIT_PORCELAIN })
-			const entries = listWorktrees(exec, tmuxSessionAdapter, { primaryRoot: '/repo' })
+			const entries = listWorktrees(exec, tmuxMuxAdapter, { primaryRoot: '/repo' })
 			expect(entries.every((e) => e.workspace === undefined)).toBe(true)
 			expect(calls.every((c) => c[0] === 'git')).toBe(true)
 		})
@@ -335,7 +333,7 @@ describe('spec:cyber-mux/mux', () => {
 		it('worktree remove releases the workspace before git removes the checkout', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'herdr worktree list': bindingOut(realExistingDir) })
-			removeWorktree(exec, herdrSessionAdapter, realExistingDir, { primaryRoot: '/repo' })
+			removeWorktree(exec, herdrMuxAdapter, realExistingDir, { primaryRoot: '/repo' })
 
 			const closed = calls.findIndex((c) => c[0] === 'herdr' && c[1] === 'workspace' && c[2] === 'close')
 			const removed = calls.findIndex((c) => c[0] === 'git' && c[3] === 'worktree' && c[4] === 'remove')
@@ -352,7 +350,7 @@ describe('spec:cyber-mux/mux', () => {
 				return args[2] === 'status' ? ' M some/file' : ''
 			}
 			// The refusal must NAME --force as the way to discard them, not merely report the dirt.
-			expect(() => removeWorktree(exec, herdrSessionAdapter, realExistingDir, { primaryRoot: '/repo' })).toThrow(
+			expect(() => removeWorktree(exec, herdrMuxAdapter, realExistingDir, { primaryRoot: '/repo' })).toThrow(
 				/uncommitted changes[\s\S]*--force/,
 			)
 			// A refused removal has no side effect — the workspace is still open.
@@ -361,13 +359,13 @@ describe('spec:cyber-mux/mux', () => {
 
 		it('refuses uncommitted changes identically on a backend with no binding', () => {
 			const exec: Exec = (_cmd, args) => (args[2] === 'status' ? ' M some/file' : '')
-			expect(() => removeWorktree(exec, tmuxSessionAdapter, realExistingDir, { primaryRoot: '/repo' })).toThrow(
+			expect(() => removeWorktree(exec, tmuxMuxAdapter, realExistingDir, { primaryRoot: '/repo' })).toThrow(
 				/uncommitted changes/,
 			)
 		})
 
 		it('worktree remove refuses the primary checkout, even with --force', () => {
-			for (const adapter of [herdrSessionAdapter, tmuxSessionAdapter, undefined] as (SessionAdapter | undefined)[]) {
+			for (const adapter of [herdrMuxAdapter, tmuxMuxAdapter, undefined] as (MuxAdapter | undefined)[]) {
 				const calls: string[][] = []
 				// A primary checkout that REALLY EXISTS on disk. A fake path would let the removal hide
 				// behind the not-on-disk early return, so "removes nothing" would hold for a reason that
@@ -385,7 +383,7 @@ describe('spec:cyber-mux/mux', () => {
 			const calls: string[][] = []
 			const gone = '/repo.worktrees/does-not-exist'
 			const exec = fakeExec(calls, { 'herdr worktree list': bindingOut(gone) })
-			removeWorktree(exec, herdrSessionAdapter, gone, { primaryRoot: '/repo' })
+			removeWorktree(exec, herdrMuxAdapter, gone, { primaryRoot: '/repo' })
 
 			expect(ran(calls, 'herdr', 'workspace', 'close')).toBe(true)
 			expect(ran(calls, 'git', '-C', '/repo', 'worktree', 'remove')).toBe(false)
@@ -394,7 +392,7 @@ describe('spec:cyber-mux/mux', () => {
 		it('removes an unbound worktree with plain git, asking the backend for nothing to close', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'herdr worktree list': JSON.stringify({ result: { worktrees: [] } }) })
-			removeWorktree(exec, herdrSessionAdapter, realExistingDir, { primaryRoot: '/repo' })
+			removeWorktree(exec, herdrMuxAdapter, realExistingDir, { primaryRoot: '/repo' })
 
 			expect(ran(calls, 'herdr', 'workspace', 'close')).toBe(false)
 			expect(ran(calls, 'git', '-C', '/repo', 'worktree', 'remove')).toBe(true)

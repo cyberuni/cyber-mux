@@ -1,7 +1,7 @@
 import { InvalidArgumentError, Option } from 'commander'
 
 /** Output format shared by every command: `text` (human), `json`, or `agent`. */
-export const FORMAT_OPTION = new Option('--format <format>', 'Output format').choices(['text', 'json', 'agent'])
+export const FORMAT_OPTION: Option = new Option('--format <format>', 'Output format').choices(['text', 'json', 'agent'])
 
 /**
  * Accumulate one `--env KEY=VALUE` into the running map. Repeatable: commander calls this once per
@@ -24,12 +24,12 @@ function collectEnv(pair: string, previous: Record<string, string> = {}): Record
  * every verb inherits them, the way `AT_OPTION`/`LABEL_OPTION` are shared. Conflicts with `--template`,
  * whose template owns its own panes' env; the two verbs that carry `--template` refuse the pair.
  */
-export const ENV_OPTION = new Option('--env <pair>', 'Environment variable KEY=VALUE (repeatable)')
+export const ENV_OPTION: Option = new Option('--env <pair>', 'Environment variable KEY=VALUE (repeatable)')
 	.argParser(collectEnv)
 	.conflicts('template')
 
-/** Placement for a newly opened pane, matching `SessionPlacement`. */
-export const AT_OPTION = new Option('--at <placement>', 'Where to place the new pane').choices([
+/** Placement for a newly opened pane, matching `MuxPlacement`. */
+export const AT_OPTION: Option = new Option('--at <placement>', 'Where to place the new pane').choices([
 	'pane:right',
 	'pane:down',
 	'tab',
@@ -41,4 +41,4 @@ export const AT_OPTION = new Option('--at <placement>', 'Where to place the new 
  * workspace/tab/pane label, on tmux a window name (where `workspace` and `tab` both collapse to a
  * Window) or a pane title.
  */
-export const LABEL_OPTION = new Option('--label <label>', 'Name for the opened workspace/tab/pane')
+export const LABEL_OPTION: Option = new Option('--label <label>', 'Name for the opened workspace/tab/pane')

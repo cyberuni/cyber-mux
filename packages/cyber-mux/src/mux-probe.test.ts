@@ -35,6 +35,19 @@ describe('spec:cyber-mux/mux', () => {
 			expect(probe.mux).toBe('none')
 			expect(probe.via).toBe('ancestry')
 		})
+
+		it('reads a host-provided envPrefix: <prefix> and <prefix>_PANE, not CYBER_MUX', () => {
+			const noExec: Exec = () => null
+			// A host embedding cyber-mux under its own namespace adopts the fast-path by passing its prefix.
+			expect(probeMultiplexer(noExec, { ACME_MUX: 'herdr', ACME_MUX_PANE: 'p9' }, { envPrefix: 'ACME_MUX' })).toEqual({
+				mux: 'herdr',
+				pane: 'p9',
+				via: 'env',
+			})
+			// And the default namespace is inert under a custom prefix — CYBER_MUX is not consulted.
+			const probe = probeMultiplexer(noExec, { CYBER_MUX: 'tmux' }, { discover: false, envPrefix: 'ACME_MUX' })
+			expect(probe).toEqual({ mux: 'none', via: 'ancestry' })
+		})
 	})
 
 	describe('probeMultiplexer — ancestry discovery', () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Exec } from './exec.ts'
-import { listTemplates, resolveTemplate, type TemplateStore, templateDirs } from './template-store.ts'
+import { listTemplates, resolveTemplate, type TemplateStore, templateApi, templateDirs } from './template-store.ts'
 
 const REPO_DIR = '/primary/.cyber-mux/templates'
 const USER_DIR = '/home/u/.config/cyber-mux/templates'
@@ -172,6 +172,25 @@ describe('spec:cyber-mux/template', () => {
 
 		it('reports nothing when neither directory holds a template', () => {
 			expect(listTemplates(fakeStore({}), { repo: REPO_DIR, user: USER_DIR })).toEqual([])
+		})
+	})
+
+	describe('templateApi — the bound facade', () => {
+		it('binds env + exec: dirs() reports both searched directories', () => {
+			const tpl = templateApi(ENV, { exec: gitExec, store: fakeStore({}) })
+			expect(tpl.dirs()).toEqual({ repo: REPO_DIR, user: USER_DIR })
+		})
+
+		it('resolve() finds a repo template through the bound seams, nothing threaded', () => {
+			const tpl = templateApi(ENV, { exec: gitExec, store: fakeStore({ [`${REPO_DIR}/dev.json`]: template('dev') }) })
+			const resolved = tpl.resolve({ name: 'dev' })
+			expect(resolved.source).toBe('repo')
+			expect(resolved.stem).toBe('dev')
+		})
+
+		it('list() defaults its dirs to dirs() and delegates', () => {
+			const tpl = templateApi(ENV, { exec: gitExec, store: fakeStore({ [`${REPO_DIR}/dev.json`]: template('dev') }) })
+			expect(tpl.list().map((t) => t.name)).toEqual(['dev'])
 		})
 	})
 })

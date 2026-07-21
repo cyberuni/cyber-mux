@@ -1,6 +1,6 @@
 {
 	"name": "cyber-mux",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"description": "Cross-multiplexer pane control — one contract over tmux and herdr",
 	"keywords": [
 		"tmux",
@@ -23,17 +23,32 @@
 		"cyber-mux": "bin/cyber-mux.mjs"
 	},
 	"exports": {
+		".": {
+			"types": "./dist/index.d.mts",
+			"default": "./dist/index.mjs"
+		},
+		"./worktree": {
+			"types": "./dist/worktree.d.mts",
+			"default": "./dist/worktree.mjs"
+		},
+		"./template": {
+			"types": "./dist/template.d.mts",
+			"default": "./dist/template.mjs"
+		},
 		"./package.json": "./package.json"
 	},
 	"files": [
 		"bin",
-		"dist"
+		"dist",
+		"src",
+		"!**/*.{spec,test,unit,accept,integrate,system,perf,stress,stories,study}.*"
 	],
 	"scripts": {
 		"build": "tsdown",
 		"dev": "tsx bin/cyber-mux.mjs",
 		"prepack": "pnpm build",
 		"test": "vitest run src",
+		"test:dist": "tsc --noEmit -p tsconfig.dist.json && vitest run --config vitest.dist.config.ts",
 		"test:integration": "vitest run src --config vitest.integration.config.ts",
 		"test:watch": "vitest",
 		"typecheck": "tsc --noEmit"

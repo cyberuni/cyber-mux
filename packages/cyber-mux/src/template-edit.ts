@@ -44,7 +44,7 @@ export interface EditSlot {
 	/** Which tab, for a `tabs` template; absent for a single-region one. */
 	tab?: number
 	/** The tab's own label, carried so a prompt can show it without re-walking the template. */
-	tabLabel?: string
+	tabLabel?: string | undefined
 	/** Ordinal within this tab, in apply order. */
 	index: number
 	/**

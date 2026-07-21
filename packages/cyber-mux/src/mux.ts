@@ -7,28 +7,28 @@ import type { Worktree } from './worktree.ts'
  * `'workspace'` opens a genuinely separate workspace/session (herdr: `workspace create`; tmux: a
  * new detached session) — the caller's current workspace/session is left untouched, unlike every
  * other placement, which adds a pane/window inside it. */
-export type SessionPlacement = 'pane:right' | 'pane:down' | 'tab' | 'workspace'
+export type MuxPlacement = 'pane:right' | 'pane:down' | 'tab' | 'workspace'
 
 /**
  * The tier a `rename` names — which SPACE is being named, not where one is opened, so this is its
- * own vocabulary rather than a reuse of `SessionPlacement`. The caller must say, because the two
+ * own vocabulary rather than a reuse of `MuxPlacement`. The caller must say, because the two
  * tiers are different commands on both backends (tmux `rename-window` vs `select-pane -T`; herdr
  * `tab rename` vs `pane rename`) and neither backend can infer one from the other's id.
  *
- * `pane` collapses `SessionPlacement`'s two split directions — a direction is how a pane is BORN and
+ * `pane` collapses `MuxPlacement`'s two split directions — a direction is how a pane is BORN and
  * says nothing about naming one that already exists. There is no `workspace` member: renaming exists
  * for the one tier birth cannot name (a new workspace's root tab, which is a `tab`), and every
  * backend that has a workspace tier already takes its label at birth (`workspace create --label`).
  */
-export type SessionSpaceTier = 'pane' | 'tab'
+export type MuxSpaceTier = 'pane' | 'tab'
 
-export interface SessionOpenOptions {
+export interface MuxOpenOptions {
 	/** Working directory the new pane/window/session should start in. */
 	cwd: string
 	/** Command line to launch inside the new pane once it is open; omit for a blank pane. */
-	launch?: string
+	launch?: string | undefined
 	/** Placement relative to the caller; defaults to 'tab'. */
-	at?: SessionPlacement
+	at?: MuxPlacement | undefined
 	/**
 	 * The pane a `pane:*` placement splits. Ignored by `tab`/`workspace`, which split nothing.
 	 *
@@ -40,7 +40,7 @@ export interface SessionOpenOptions {
 	 * human is typing and diverge exactly when a program is driving. Naming the pane is the only way
 	 * `pane:right` means the same thing on both backends.
 	 */
-	from?: SessionTarget
+	from?: MuxTarget | undefined
 	/**
 	 * The workspace a `tab` placement opens INSIDE — a backend workspace id, exactly the value
 	 * `OpenedPane.workspace` reports. Ignored by `pane:*` (a split lands in its pane's own space) and
@@ -58,7 +58,7 @@ export interface SessionOpenOptions {
 	 * a Window): an adapter with nothing to resolve it against ignores it, which still satisfies the
 	 * contract — there is no second space for a tab to land in the wrong one of.
 	 */
-	within?: string
+	within?: string | undefined
 	/**
 	 * Fraction of the split region kept by `first` — the ORIGINAL pane, not the new one. Only
 	 * meaningful for a `pane:*` placement; `0 < ratio < 1`, and omitting it takes the backend's own
@@ -69,7 +69,7 @@ export interface SessionOpenOptions {
 	 * unconverted; tmux's `-l` sizes the NEW pane, so it takes `1 - ratio`. Applying the inversion to
 	 * both, or to neither, is the single most likely way to get a split backwards.
 	 */
-	ratio?: number
+	ratio?: number | undefined
 	/**
 	 * Environment variables set at the birth of whatever tier `at` opens — NOT just a split. Native
 	 * on both real backends, which take a repeatable flag on every space-creating command (herdr
@@ -87,14 +87,14 @@ export interface SessionOpenOptions {
 	 * ANY route at all (`session.wezterm.ts`), so every one of its opens takes this same fallback path
 	 * rather than just the one.
 	 */
-	env?: Record<string, string>
+	env?: Record<string, string> | undefined
 	/**
 	 * Name for the space this opens, at whatever tier `at` opens it — every backend can name every
 	 * tier, so this is host-neutral: on herdr a workspace/tab/pane label, on tmux a window name
 	 * (`workspace` and `tab` both collapse to a Window there) or a pane title. Omit for the backend's
 	 * own default.
 	 */
-	label?: string
+	label?: string | undefined
 	/**
 	 * An OPAQUE id grouping the spaces one caller opens, for a backend with no workspace tier to group
 	 * them in. A caller opening several tabs as one workspace needs them recognizable as a group
@@ -125,11 +125,11 @@ export interface SessionOpenOptions {
 	 * did not open the space calls `group` directly; this option is only the shorthand for a caller
 	 * that did.
 	 */
-	workspaceGroup?: string
+	workspaceGroup?: string | undefined
 }
 
 /** Opaque handle to an open pane/window/session; backend-specific id lives in `id`. */
-export interface SessionTarget {
+export interface MuxTarget {
 	id: string
 }
 
@@ -142,12 +142,12 @@ export interface SessionTarget {
  * reported by separate outputs and neither answers for the other, so a caller must never read this
  * as evidence that a worktree was grouped — that fact is `WorktreeWorkspaceCapability`'s alone.
  *
- * Widened from a bare `SessionTarget` because `open` returning only a pane id left nothing
+ * Widened from a bare `MuxTarget` because `open` returning only a pane id left nothing
  * downstream able to report a workspace: the template manifest is framed as the complete
  * machine-readable answer to "which panes exist and what are they for", and a consumer grouping
  * panes by workspace had nothing to group on.
  */
-export interface OpenedPane extends SessionTarget {
+export interface OpenedPane extends MuxTarget {
 	/**
 	 * The tab the new pane landed in — a tab id, addressable by `rename(exec, { id: tab }, 'tab', …)`.
 	 *
@@ -178,7 +178,7 @@ export interface OpenedPane extends SessionTarget {
 	 * tmux, where `workspace` and `tab` both collapse to a Window, has nothing to report here, which
 	 * is not the same as reporting that nothing is there.
 	 */
-	workspace?: string
+	workspace?: string | undefined
 }
 
 /** A pane the backend can currently see, as reported by `listPanes` (bulk enumeration). */
@@ -188,9 +188,9 @@ export interface LivePane {
 	/** Which multiplexer this pane belongs to. */
 	mux: 'tmux' | 'herdr' | 'wezterm'
 	/** The harness running in this pane, when the backend can report it (herdr only). */
-	harness?: string
+	harness?: string | undefined
 	/** The pane's working directory, when the backend reports it. */
-	cwd?: string
+	cwd?: string | undefined
 	/**
 	 * The human name a person gave this pane, when there is one — what lets a caller address the pane
 	 * by name instead of by id.
@@ -205,12 +205,12 @@ export interface LivePane {
 	 * **A name, not a key.** Neither backend requires one unique, so duplicates are ordinary and are
 	 * resolved where the caller is — at lookup — rather than refused at authoring time.
 	 */
-	label?: string
+	label?: string | undefined
 }
 
-export interface SessionReadOptions {
+export interface MuxReadOptions {
 	/** How many trailing lines of output to capture; omit for the backend's default. */
-	lines?: number
+	lines?: number | undefined
 }
 
 /**
@@ -233,9 +233,9 @@ export interface RegionPane {
 	id: string
 	rect: PaneRect
 	/** The pane's working directory. */
-	cwd?: string
+	cwd?: string | undefined
 	/** The pane's label, when it has one the AUTHOR set — see `describeRegion` on the tmux caveat. */
-	label?: string
+	label?: string | undefined
 }
 
 /**
@@ -266,7 +266,7 @@ export interface WorkspaceTab {
 	 * it already IS the tab's own name. A backend whose label is never composed (herdr) reports that
 	 * label unchanged and stores nothing.
 	 */
-	label?: string
+	label?: string | undefined
 	/** Every pane in this tab, with its rectangle — `describeRegion`'s answer for this tab. */
 	panes: RegionPane[]
 }
@@ -279,13 +279,13 @@ export interface CreateWorktreeWorkspaceOptions {
 	/** Where the new worktree should be checked out. */
 	path: string
 	/** Start point for the new branch; omit for the backend's own default (the current HEAD). */
-	base?: string
+	base?: string | undefined
 	/** Command line to launch inside the new workspace's root pane; omit for a blank pane. */
-	launch?: string
+	launch?: string | undefined
 	/** Environment variables set in the new workspace's root pane at birth. */
-	env?: Record<string, string>
+	env?: Record<string, string> | undefined
 	/** Name for the bound workspace; omit for the backend's own default. */
-	label?: string
+	label?: string | undefined
 }
 
 export interface OpenWorktreeWorkspaceOptions {
@@ -294,11 +294,11 @@ export interface OpenWorktreeWorkspaceOptions {
 	/** An EXISTING worktree's checkout path. */
 	path: string
 	/** Command line to launch inside the new workspace's root pane; omit for a blank pane. */
-	launch?: string
+	launch?: string | undefined
 	/** Environment variables set in the new workspace's root pane at birth. */
-	env?: Record<string, string>
+	env?: Record<string, string> | undefined
 	/** Name for the bound workspace; omit for the backend's own default. */
-	label?: string
+	label?: string | undefined
 }
 
 /** A worktree open in a workspace bound to it — the capability's whole product. */
@@ -369,162 +369,20 @@ export interface WorktreeWorkspaceCapability {
 	releaseWorkspace(exec: Exec, workspace: string): void
 }
 
-export interface SessionAdapter {
-	/** Backend name, e.g. "tmux" or "herdr". */
-	readonly name: string
-	/**
-	 * Create a new pane/window in `opts.cwd`, running `opts.launch` if given; returns its handle plus
-	 * the workspace it landed in (absent on a backend with no workspace tier — see `OpenedPane`).
-	 */
-	open(exec: Exec, opts: SessionOpenOptions): OpenedPane
-	/**
-	 * Name an ALREADY-OPEN space at `tier`, addressed by that tier's own id (`target.id` is a tab id
-	 * for `'tab'`, a pane id for `'pane'`).
-	 *
-	 * This is the naming route for the one case birth cannot serve, NOT a second way to do what
-	 * `SessionOpenOptions.label` does: `label` names a space at birth wherever the backend's CLI
-	 * allows, and exactly one tier does not allow it — herdr labels a new workspace's ROOT TAB `1` and
-	 * offers no flag to change it, only `tab rename` afterwards. Every later tab takes `label` at birth
-	 * like any other space, so the whole cost of this member is one rename on herdr's first tab.
-	 *
-	 * REQUIRED rather than optional, unlike `describeRegion`/`worktree`. Those are optional because a
-	 * backend may genuinely lack the concept, leaving a caller something to do about it (refuse, or
-	 * fall back to plain git). Naming has neither property: every backend names every tier — the same
-	 * breadth `label` already relies on at birth (tmux a window name or a pane title, herdr a tab or a
-	 * pane rename) — and a caller that found this missing could not degrade, because a rename is the
-	 * ONLY way to name a root tab. An optional member here would buy a branch every caller must write
-	 * and no caller could ever take. Declaring it required is the adapter author's debt instead, which
-	 * is the honest place for it. (`canSizeSplits` is the other precedent, and the contrast holds: a
-	 * ratio has a real degrade — the backend's own even default — so it is DECLARED; a name has none.)
-	 *
-	 * As read-only in its side effects as `isPaneFocused` is: it moves no focus and opens nothing.
-	 * Naming a space is not visiting it.
-	 */
-	rename(exec: Exec, target: SessionTarget, tier: SessionSpaceTier, name: string): void
-	/**
-	 * Group an ALREADY-OPEN space into `group`, and store the space's own `name` beside it.
-	 * `target.id` is a TAB id — the tier a workspace groups, which is why this takes no
-	 * `SessionSpaceTier`: `rename` needs one because both its tiers are nameable and neither can be
-	 * inferred, while grouping has exactly one meaningful tier. A `pane` is not a member of a
-	 * workspace; the tab it sits in is. A tier parameter here would buy a branch every caller must
-	 * write and no caller could ever take — the same argument `SessionSpaceTier` itself makes for
-	 * having no `workspace` member.
-	 *
-	 * **`open` cannot be the only way in.** A caller that did not open the space still has to group it
-	 * — `worktree add --template` has its region opened by the worktree verbs before the walk ever runs
-	 * — and it holds that space's own id the moment the open returns. So this is its own member acting
-	 * on an already-open space, exactly as `rename` does, and `SessionOpenOptions.workspaceGroup`
-	 * ROUTES THROUGH it, so there is one spelling per backend rather than two that can drift. Routing
-	 * costs no call: tmux has no birth flag for a window option, so grouping was ALREADY a second call
-	 * after the window exists.
-	 *
-	 * **`name` is the space's OWN name, never its display name**, and storing it is not optional
-	 * bookkeeping — it is the same rule the group id follows, one tier down. A backend with one name
-	 * field per space (tmux) whose caller composes a display name out of the tab's name has DESTROYED
-	 * the original: the field holds `pool - editor`, and `editor` is gone. Recovering it would mean
-	 * splitting on a separator already proven ambiguous (`acme - beta - main` splits two legal ways),
-	 * and taking the display name verbatim would re-prefix it on every round trip
-	 * (`pool - pool - editor`). So the caller that composed the name stores the original here, and a
-	 * reader takes it from there. The display name is a human's to read; an opaque option carries what
-	 * a machine reads back. Omit it when the caller named nothing — there is no own name to store, and
-	 * no adapter invents one.
-	 *
-	 * **A backend with a real workspace tier stores NEITHER**, and that is a complete answer rather
-	 * than a stub: its tier IS the group (herdr stamps every pane and tab record with its
-	 * `workspace_id`), and its tab label IS the tab's own name, never composed — so both are facts the
-	 * backend already holds, and storing them again would duplicate what it never reads.
-	 *
-	 * REQUIRED, for `rename`'s reason: a caller finding this missing could not degrade, because there
-	 * is no other way to group a space it did not open. As read-only in its side effects as `rename`
-	 * is — it moves no focus and opens nothing.
-	 */
-	group(exec: Exec, target: SessionTarget, group: string, name?: string): void
-	/**
-	 * Whether this backend can size a split — i.e. whether it honors `SessionOpenOptions.ratio`. Both
-	 * real backends can (herdr `--ratio`, tmux `-l`), so both declare it. Absent/`false` means a
-	 * caller asking for a ratio gets the backend's own even default instead, which callers DEGRADE to
-	 * (with one warning) rather than reject: the template schema is backend-agnostic, so a template's
-	 * validity must never depend on which multiplexer happens to be running.
-	 */
-	readonly canSizeSplits?: boolean
-	/**
-	 * Present only on a backend that binds a git worktree to a workspace (herdr); `undefined` on one
-	 * with no such concept (tmux), where callers fall back to plain git plus `open()`.
-	 */
-	readonly worktree?: WorktreeWorkspaceCapability
-	/**
-	 * Type `text` into the target as literal characters, pressing **no** Enter — the text is left
-	 * staged in the pane's input box. Literal means literal: text that happens to name a key
-	 * (`Enter`, `Up`) is typed as those characters, never interpreted as that key. That guarantee is
-	 * why this is its own method rather than a mode of `sendKeys` — tmux's `send-keys` resolves an
-	 * ambiguous token by *guessing* which was meant ("if the string is not recognised as a key, it is
-	 * sent as a series of characters"), so only the explicit literal form is safe.
-	 */
-	sendText(exec: Exec, target: SessionTarget, text: string): void
-	/**
-	 * Press each named key in order, typing nothing. Keys are named in the portable core vocabulary —
-	 * `Up` `Down` `Left` `Right` `Enter` `Escape` `Tab` `Space` `Backspace` `C-c` `F1`–`F12` — which
-	 * each adapter maps onto whatever its backend calls them. A token *outside* the core is forwarded
-	 * verbatim, reaching backend-specific keys at the cost of portability; whether it is honored or
-	 * refused is then the backend's own answer, and the two differ (herdr refuses an unknown key;
-	 * tmux cannot refuse one and types it instead).
-	 *
-	 * `Enter` is a key like any other here: `sendKeys(exec, t, ['Enter'])` presses it and takes the
-	 * pane's turn — because the caller asked for it. What this method never does is *add* an Enter
-	 * the caller did not write. Supplying one is `submit`'s job alone.
-	 */
-	sendKeys(exec: Exec, target: SessionTarget, keys: string[]): void
-	/**
-	 * Take the target's turn: type `text` if given, then **always** press Enter.
-	 *
-	 * With `text`, the guarantee is the observable outcome — the text typed *literally* (same bar as
-	 * `sendText`), then Enter — never a particular backend command: a backend with a native
-	 * text-plus-Enter primitive uses it, one without composes typing and Enter.
-	 *
-	 * Without `text` (or with an empty one), it sends a **bare Enter only**, flushing an
-	 * already-staged input buffer without re-typing it. That is how a turn is completed when a
-	 * booting harness swallowed the Enter of an earlier submit and left the text staged unsent;
-	 * because flushing never re-types, a repeated flush cannot duplicate the message.
-	 */
-	submit(exec: Exec, target: SessionTarget, text?: string): void
-	/** Capture the target session's current output. */
-	read(exec: Exec, target: SessionTarget, opts?: SessionReadOptions): string
-	/**
-	 * Beam the attached client's view all the way to the target pane — across workspace and tab, not
-	 * just within the current one. Resolves the pane's own workspace/tab from the backend and drives
-	 * the full switch chain; best-effort within (the backend owns the actual move), but throws rather
-	 * than reporting a false success when the recorded pane no longer resolves to a live pane.
-	 */
-	focus(exec: Exec, target: SessionTarget): void
-	/** Close the target session. */
-	teardown(exec: Exec, target: SessionTarget): void
-	/**
-	 * Whether the target pane still exists in this backend — the liveness check `prune` runs against a
-	 * record's pane locator. Each backend answers with its own primitive so a herdr pane id is never
-	 * probed with a tmux query (or vice versa).
-	 */
-	paneExists(exec: Exec, target: SessionTarget): boolean
-	/**
-	 * Whether the attached client is currently viewing this pane — a read-only focus probe. `true` =
-	 * positively focused, `false` = positively not focused, `undefined` = the backend cannot report
-	 * focus or the query could not be answered (callers FAIL OPEN on undefined). Read-only: moves no
-	 * focus, opens nothing (unlike `focus`).
-	 */
-	isPaneFocused(exec: Exec, target: SessionTarget): boolean | undefined
-	/**
-	 * Enumerate every live pane this backend can currently see — the bulk counterpart to
-	 * `paneExists`'s single targeted query. `reconcile` uses this to cull dead records in one pass
-	 * against the mux the caller is actually inside; it never enumerates the other mux.
-	 */
-	listPanes(exec: Exec): LivePane[]
+/**
+ * The optional capability a backend implements when its pane listing reports pane GEOMETRY —
+ * position, not merely size. That one fact is what both members are derived from, and the single
+ * all-or-nothing precondition that bundles them into ONE object rather than two separate optional
+ * methods (mirroring `WorktreeWorkspaceCapability`): a backend either reports pane rects or it does
+ * not, and neither read is possible without them. tmux (`#{window_layout}`) and herdr (`pane
+ * layout`'s rects) both report position, so both ship this; WezTerm's `list` reports a pane's size
+ * but no position — nothing to build a `PaneRect` from — so it omits this entirely. A caller that
+ * finds this absent refuses (`template save` exits naming the backend) rather than guessing a tree.
+ */
+export interface RegionInspector {
 	/**
 	 * Report the geometry of the region (tab/window) the target pane sits in — every pane in it, with
 	 * its rectangle. `template save` runs this backwards into a template.
-	 *
-	 * **Optional, exactly as `worktree` is** — present on a backend that can describe its own region,
-	 * absent on one that cannot. Both real backends can, so both declare it; a caller that finds it
-	 * missing refuses (`template save` exits naming the backend) rather than degrading, because there is
-	 * nothing to degrade to: no geometry, no capture.
 	 *
 	 * **Rects, not a tree, and that is the whole design of this verb.** Both backends can answer
 	 * "what does this region look like", and both answer in a DIFFERENT structure: tmux hands back a
@@ -550,23 +408,19 @@ export interface SessionAdapter {
 	 * Throws rather than returning empty when the region cannot be read: an export built from a
 	 * region the backend could not describe would be a confident lie about the user's screen.
 	 */
-	describeRegion?(exec: Exec, target: SessionTarget): RegionPane[]
+	describeRegion(exec: Exec, target: MuxTarget): RegionPane[]
 	/**
 	 * Report every tab of the workspace the target pane sits in, each with its own region's geometry —
 	 * the workspace-wide read beside `describeRegion`'s one-region read. `template save --workspace` runs
 	 * this backwards into a `tabs` template, and it is the exact inverse of the tabs walk.
 	 *
-	 * **Optional, exactly as `describeRegion` is**, and for the same reason: a backend that cannot
-	 * enumerate a workspace's tabs leaves a caller something to DO about it — `template save --workspace`
-	 * exits naming the backend and writes nothing. An absent optional member is a refusal, never a
-	 * guess. (Contrast `rename`, which is required precisely because a caller finding it missing could
-	 * not degrade.) `save`'s default subject is unaffected: a bare `save` reads `describeRegion` and
-	 * captures one region, whatever this member does or does not do.
+	 * `save`'s default subject is unaffected by this member: a bare `save` reads `describeRegion` and
+	 * captures one region.
 	 *
 	 * **The grouping is read from the tag, never off the label.** On a backend with a real workspace
 	 * tier the tier IS the answer (herdr: the caller's `workspace_id`, whose tabs and panes the backend
 	 * already stamps). On one without, the workspace is not a fact the backend holds at all, so the
-	 * read is *"which spaces carry this group id"* — the tag `SessionOpenOptions.workspaceGroup` wrote,
+	 * read is *"which spaces carry this group id"* — the tag `MuxOpenOptions.workspaceGroup` wrote,
 	 * which is opaque and survives a rename. Parsing `<workspace> - <tab>` back apart is unsound
 	 * (`acme - beta - main` splits two ways, both legal), which is the whole reason the tag exists.
 	 *
@@ -577,5 +431,164 @@ export interface SessionAdapter {
 	 * a template built from a workspace the backend could not describe would be a confident lie about
 	 * the user's screen.
 	 */
-	describeWorkspace?(exec: Exec, target: SessionTarget): WorkspaceTab[]
+	describeWorkspace(exec: Exec, target: MuxTarget): WorkspaceTab[]
+}
+
+export interface MuxAdapter {
+	/** Backend name, e.g. "tmux" or "herdr". */
+	readonly name: string
+	/**
+	 * Create a new pane/window in `opts.cwd`, running `opts.launch` if given; returns its handle plus
+	 * the workspace it landed in (absent on a backend with no workspace tier — see `OpenedPane`).
+	 */
+	open(exec: Exec, opts: MuxOpenOptions): OpenedPane
+	/**
+	 * Name an ALREADY-OPEN space at `tier`, addressed by that tier's own id (`target.id` is a tab id
+	 * for `'tab'`, a pane id for `'pane'`).
+	 *
+	 * This is the naming route for the one case birth cannot serve, NOT a second way to do what
+	 * `MuxOpenOptions.label` does: `label` names a space at birth wherever the backend's CLI
+	 * allows, and exactly one tier does not allow it — herdr labels a new workspace's ROOT TAB `1` and
+	 * offers no flag to change it, only `tab rename` afterwards. Every later tab takes `label` at birth
+	 * like any other space, so the whole cost of this member is one rename on herdr's first tab.
+	 *
+	 * REQUIRED rather than optional, unlike `regions`/`worktree`. Those are optional because a
+	 * backend may genuinely lack the concept, leaving a caller something to do about it (refuse, or
+	 * fall back to plain git). Naming has neither property: every backend names every tier — the same
+	 * breadth `label` already relies on at birth (tmux a window name or a pane title, herdr a tab or a
+	 * pane rename) — and a caller that found this missing could not degrade, because a rename is the
+	 * ONLY way to name a root tab. An optional member here would buy a branch every caller must write
+	 * and no caller could ever take. Declaring it required is the adapter author's debt instead, which
+	 * is the honest place for it. (`canSizeSplits` is the other precedent, and the contrast holds: a
+	 * ratio has a real degrade — the backend's own even default — so it is DECLARED; a name has none.)
+	 *
+	 * As read-only in its side effects as `isPaneFocused` is: it moves no focus and opens nothing.
+	 * Naming a space is not visiting it.
+	 */
+	rename(exec: Exec, target: MuxTarget, tier: MuxSpaceTier, name: string): void
+	/**
+	 * Group an ALREADY-OPEN space into `group`, and store the space's own `name` beside it.
+	 * `target.id` is a TAB id — the tier a workspace groups, which is why this takes no
+	 * `MuxSpaceTier`: `rename` needs one because both its tiers are nameable and neither can be
+	 * inferred, while grouping has exactly one meaningful tier. A `pane` is not a member of a
+	 * workspace; the tab it sits in is. A tier parameter here would buy a branch every caller must
+	 * write and no caller could ever take — the same argument `MuxSpaceTier` itself makes for
+	 * having no `workspace` member.
+	 *
+	 * **`open` cannot be the only way in.** A caller that did not open the space still has to group it
+	 * — `worktree add --template` has its region opened by the worktree verbs before the walk ever runs
+	 * — and it holds that space's own id the moment the open returns. So this is its own member acting
+	 * on an already-open space, exactly as `rename` does, and `MuxOpenOptions.workspaceGroup`
+	 * ROUTES THROUGH it, so there is one spelling per backend rather than two that can drift. Routing
+	 * costs no call: tmux has no birth flag for a window option, so grouping was ALREADY a second call
+	 * after the window exists.
+	 *
+	 * **`name` is the space's OWN name, never its display name**, and storing it is not optional
+	 * bookkeeping — it is the same rule the group id follows, one tier down. A backend with one name
+	 * field per space (tmux) whose caller composes a display name out of the tab's name has DESTROYED
+	 * the original: the field holds `pool - editor`, and `editor` is gone. Recovering it would mean
+	 * splitting on a separator already proven ambiguous (`acme - beta - main` splits two legal ways),
+	 * and taking the display name verbatim would re-prefix it on every round trip
+	 * (`pool - pool - editor`). So the caller that composed the name stores the original here, and a
+	 * reader takes it from there. The display name is a human's to read; an opaque option carries what
+	 * a machine reads back. Omit it when the caller named nothing — there is no own name to store, and
+	 * no adapter invents one.
+	 *
+	 * **A backend with a real workspace tier stores NEITHER**, and that is a complete answer rather
+	 * than a stub: its tier IS the group (herdr stamps every pane and tab record with its
+	 * `workspace_id`), and its tab label IS the tab's own name, never composed — so both are facts the
+	 * backend already holds, and storing them again would duplicate what it never reads.
+	 *
+	 * REQUIRED, for `rename`'s reason: a caller finding this missing could not degrade, because there
+	 * is no other way to group a space it did not open. As read-only in its side effects as `rename`
+	 * is — it moves no focus and opens nothing.
+	 */
+	group(exec: Exec, target: MuxTarget, group: string, name?: string | undefined): void
+	/**
+	 * Whether this backend can size a split — i.e. whether it honors `MuxOpenOptions.ratio`. Both
+	 * real backends can (herdr `--ratio`, tmux `-l`), so both declare it. Absent/`false` means a
+	 * caller asking for a ratio gets the backend's own even default instead, which callers DEGRADE to
+	 * (with one warning) rather than reject: the template schema is backend-agnostic, so a template's
+	 * validity must never depend on which multiplexer happens to be running.
+	 */
+	readonly canSizeSplits?: boolean | undefined
+	/**
+	 * Present only on a backend that binds a git worktree to a workspace (herdr); `undefined` on one
+	 * with no such concept (tmux), where callers fall back to plain git plus `open()`.
+	 */
+	readonly worktree?: WorktreeWorkspaceCapability | undefined
+	/**
+	 * Type `text` into the target as literal characters, pressing **no** Enter — the text is left
+	 * staged in the pane's input box. Literal means literal: text that happens to name a key
+	 * (`Enter`, `Up`) is typed as those characters, never interpreted as that key. That guarantee is
+	 * why this is its own method rather than a mode of `sendKeys` — tmux's `send-keys` resolves an
+	 * ambiguous token by *guessing* which was meant ("if the string is not recognised as a key, it is
+	 * sent as a series of characters"), so only the explicit literal form is safe.
+	 */
+	sendText(exec: Exec, target: MuxTarget, text: string): void
+	/**
+	 * Press each named key in order, typing nothing. Keys are named in the portable core vocabulary —
+	 * `Up` `Down` `Left` `Right` `Enter` `Escape` `Tab` `Space` `Backspace` `C-c` `F1`–`F12` — which
+	 * each adapter maps onto whatever its backend calls them. A token *outside* the core is forwarded
+	 * verbatim, reaching backend-specific keys at the cost of portability; whether it is honored or
+	 * refused is then the backend's own answer, and the two differ (herdr refuses an unknown key;
+	 * tmux cannot refuse one and types it instead).
+	 *
+	 * `Enter` is a key like any other here: `sendKeys(exec, t, ['Enter'])` presses it and takes the
+	 * pane's turn — because the caller asked for it. What this method never does is *add* an Enter
+	 * the caller did not write. Supplying one is `submit`'s job alone.
+	 */
+	sendKeys(exec: Exec, target: MuxTarget, keys: string[]): void
+	/**
+	 * Take the target's turn: type `text` if given, then **always** press Enter.
+	 *
+	 * With `text`, the guarantee is the observable outcome — the text typed *literally* (same bar as
+	 * `sendText`), then Enter — never a particular backend command: a backend with a native
+	 * text-plus-Enter primitive uses it, one without composes typing and Enter.
+	 *
+	 * Without `text` (or with an empty one), it sends a **bare Enter only**, flushing an
+	 * already-staged input buffer without re-typing it. That is how a turn is completed when a
+	 * booting harness swallowed the Enter of an earlier submit and left the text staged unsent;
+	 * because flushing never re-types, a repeated flush cannot duplicate the message.
+	 */
+	submit(exec: Exec, target: MuxTarget, text?: string | undefined): void
+	/** Capture the target session's current output. */
+	read(exec: Exec, target: MuxTarget, opts?: MuxReadOptions | undefined): string
+	/**
+	 * Beam the attached client's view all the way to the target pane — across workspace and tab, not
+	 * just within the current one. Resolves the pane's own workspace/tab from the backend and drives
+	 * the full switch chain; best-effort within (the backend owns the actual move), but throws rather
+	 * than reporting a false success when the recorded pane no longer resolves to a live pane.
+	 */
+	focus(exec: Exec, target: MuxTarget): void
+	/** Close the target session. */
+	teardown(exec: Exec, target: MuxTarget): void
+	/**
+	 * Whether the target pane still exists in this backend — the liveness check `prune` runs against a
+	 * record's pane locator. Each backend answers with its own primitive so a herdr pane id is never
+	 * probed with a tmux query (or vice versa).
+	 */
+	paneExists(exec: Exec, target: MuxTarget): boolean
+	/**
+	 * Whether the attached client is currently viewing this pane — a read-only focus probe. `true` =
+	 * positively focused, `false` = positively not focused, `undefined` = the backend cannot report
+	 * focus or the query could not be answered (callers FAIL OPEN on undefined). Read-only: moves no
+	 * focus, opens nothing (unlike `focus`).
+	 */
+	isPaneFocused(exec: Exec, target: MuxTarget): boolean | undefined
+	/**
+	 * Enumerate every live pane this backend can currently see — the bulk counterpart to
+	 * `paneExists`'s single targeted query. `reconcile` uses this to cull dead records in one pass
+	 * against the mux the caller is actually inside; it never enumerates the other mux.
+	 */
+	listPanes(exec: Exec): LivePane[]
+	/**
+	 * The optional geometry-introspection capability — `describeRegion` and `describeWorkspace` bundled
+	 * as one object (see `RegionInspector`), present on a backend whose pane listing reports pane
+	 * POSITION and absent on one that cannot. `template save` gates on it — refusing by NAMING the
+	 * backend rather than degrading, because a region the backend cannot describe has nothing to degrade
+	 * to. Bundled rather than shipped as two loose optional methods for the same reason `worktree` is
+	 * one object: the two reads share a single all-or-nothing precondition.
+	 */
+	readonly regions?: RegionInspector | undefined
 }

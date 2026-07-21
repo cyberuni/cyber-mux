@@ -1,10 +1,30 @@
 import { existsSync, realpathSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
-import type { Exec } from './exec.ts'
+import { type Exec, nodeExec } from './exec.ts'
 
 /** Generic worktree seam — no host-specific concepts. */
 
-interface WorktreeAddOptions {
+/**
+ * The filesystem half of the worktree adapter — the one seam here that is NOT `Exec`, exactly as
+ * `TemplateStore` is for templates. `normalizeWorktreePath` and the remove gate reach for the disk,
+ * and reading it through bare `node:fs` would make those the one worktree path a consumer cannot
+ * drive hermetically. Injected (defaulting to `nodeWorktreeFs`), so #339's callers are unchanged and
+ * a test can stand in a fake disk.
+ */
+export interface WorktreeFs {
+	/** Whether a path exists on disk — the apply-time check behind the remove gate. */
+	exists(path: string): boolean
+	/** The path with symlinks resolved, native-cased — the normalization every matched path goes
+	 * through. Throws for a path not on disk, exactly as `realpathSync.native` does; callers fall back. */
+	realpath(path: string): string
+}
+
+export const nodeWorktreeFs: WorktreeFs = {
+	exists: existsSync,
+	realpath: (path) => realpathSync.native(path),
+}
+
+export interface WorktreeAddOptions {
 	/** The primary checkout's root — the repo `git worktree add` runs against. */
 	primaryRoot: string
 	/** Where the new worktree should be checked out. */
@@ -12,7 +32,7 @@ interface WorktreeAddOptions {
 	/** Branch to create the worktree on. */
 	branch: string
 	/** Start point for the new branch; omit for git's own default (the current HEAD). */
-	base?: string
+	base?: string | undefined
 }
 
 export interface Worktree {
@@ -30,7 +50,7 @@ export interface WorktreeEntry {
 	/** Absolute checkout path, normalized. */
 	root: string
 	/** Branch checked out there; absent for a detached HEAD or a bare entry. */
-	branch?: string
+	branch?: string | undefined
 	/** `false` for the primary checkout, `true` for a linked worktree. */
 	linked: boolean
 	/** git considers the entry stale — its checkout is gone from disk. */
@@ -46,20 +66,20 @@ export interface WorktreeEntry {
 	 * under-reporting a disposal candidate costs the reader one manual check, over-reporting costs them
 	 * work. See `docs/design/worktree-disposability.md` §3.
 	 */
-	merged?: boolean
+	merged?: boolean | undefined
 	/**
 	 * The checkout has uncommitted changes — tracked or untracked. Merged is not sufficient on its own:
 	 * a merged branch whose checkout carries edits is not disposable, because those edits exist nowhere
 	 * else and `removeWorktreeSafely` is going to refuse them. Absent when there is no working tree to
 	 * read (a `prunable` entry) or when git could not answer.
 	 */
-	dirty?: boolean
+	dirty?: boolean | undefined
 	/**
 	 * The multiplexer workspace this worktree is currently open in. Joined in by the caller from a
 	 * backend's binding; always absent on a backend that has no worktree/workspace binding, and when
 	 * nothing is open on the worktree.
 	 */
-	workspace?: string
+	workspace?: string | undefined
 }
 
 interface WorktreeRemoveOptions {
@@ -113,9 +133,9 @@ export function resolvePrimaryRoot(exec: Exec): string {
  * same way (a symlinked repo, or macOS's `/tmp` → `/private/tmp`, otherwise silently fails to
  * match). Falls back to `resolve` for a path that isn't on disk, where there is no link to follow.
  */
-export function normalizeWorktreePath(path: string): string {
+export function normalizeWorktreePath(path: string, fs: WorktreeFs = nodeWorktreeFs): string {
 	try {
-		return realpathSync.native(path)
+		return fs.realpath(path)
 	} catch {
 		return resolve(path)
 	}
@@ -128,10 +148,14 @@ export function normalizeWorktreePath(path: string): string {
  * same worktree. The one fact git cannot answer — which workspace a worktree is open in — is joined
  * in by the caller.
  */
-export function listWorktreesFromGit(exec: Exec, primaryRoot: string): WorktreeEntry[] {
+export function listWorktreesFromGit(
+	exec: Exec,
+	primaryRoot: string,
+	fs: WorktreeFs = nodeWorktreeFs,
+): WorktreeEntry[] {
 	const out = exec('git', ['-C', primaryRoot, 'worktree', 'list', '--porcelain'])
 	if (!out) return []
-	const normalizedPrimary = normalizeWorktreePath(primaryRoot)
+	const normalizedPrimary = normalizeWorktreePath(primaryRoot, fs)
 	// Porcelain emits one blank-line-separated record per worktree, each opening with `worktree <path>`.
 	const entries = out
 		.split('\n\n')
@@ -139,12 +163,15 @@ export function listWorktreesFromGit(exec: Exec, primaryRoot: string): WorktreeE
 		.filter((record) => record.startsWith('worktree '))
 		.map((record): WorktreeEntry => {
 			const lines = record.split('\n')
-			const root = normalizeWorktreePath(lines[0]!.slice('worktree '.length))
+			const root = normalizeWorktreePath(lines[0]!.slice('worktree '.length), fs)
 			// `branch refs/heads/<name>`; absent entirely when detached or bare.
 			const branchLine = lines.find((line) => line.startsWith('branch '))
+			const branch = branchLine?.slice('branch '.length).replace(/^refs\/heads\//, '')
 			return {
 				root,
-				branch: branchLine?.slice('branch '.length).replace(/^refs\/heads\//, ''),
+				// Omitted, never carried as an explicit `undefined`: a detached/bare entry has no branch,
+				// and `WorktreeEntry.branch` is an absent-or-present field.
+				...(branch !== undefined ? { branch } : {}),
 				// Derived from the path rather than record order — git lists the primary first today,
 				// but that ordering is not something to depend on.
 				linked: root !== normalizedPrimary,
@@ -155,8 +182,12 @@ export function listWorktreesFromGit(exec: Exec, primaryRoot: string): WorktreeE
 	for (const entry of entries) {
 		if (merged && entry.branch) entry.merged = merged.has(entry.branch)
 		// No directory to stat for an entry git already calls stale — and skipping it is the one place
-		// the per-worktree cost can be avoided honestly.
-		if (!entry.prunable) entry.dirty = readDirty(exec, entry.root)
+		// the per-worktree cost can be avoided honestly. Assigned only when git answered, so `dirty`
+		// stays absent (never explicit `undefined`) for a checkout git could not read.
+		if (!entry.prunable) {
+			const dirty = readDirty(exec, entry.root)
+			if (dirty !== undefined) entry.dirty = dirty
+		}
 	}
 	return entries
 }
@@ -281,10 +312,16 @@ function isDirty(exec: Exec, worktreeRoot: string): boolean {
 export function removeWorktreeSafely(
 	exec: Exec,
 	path: string,
-	opts: { primaryRoot: string; force?: boolean; releaseBinding?: () => void },
+	opts: {
+		primaryRoot: string
+		force?: boolean | undefined
+		releaseBinding?: (() => void) | undefined
+		fs?: WorktreeFs | undefined
+	},
 ): void {
+	const fs = opts.fs ?? nodeWorktreeFs
 	assertDistinctFromPrimary(path, opts.primaryRoot)
-	if (!existsSync(path)) {
+	if (!fs.exists(path)) {
 		// A checkout already gone but still bound is exactly the orphan this releases; git has nothing
 		// left to remove, so the "no git removal command" promise still holds.
 		opts.releaseBinding?.()
@@ -295,4 +332,55 @@ export function removeWorktreeSafely(
 	}
 	opts.releaseBinding?.()
 	gitWorktreeAdapter.remove(exec, path, { primaryRoot: opts.primaryRoot })
+}
+
+/** The seams a `WorktreeApi` binds. Both optional, each defaulting to its Node-backed impl. */
+export interface WorktreeDeps {
+	exec?: Exec | undefined
+	fs?: WorktreeFs | undefined
+}
+
+/** `removeWorktreeSafely`'s options minus `fs` — the `WorktreeApi` supplies the bound one. */
+export interface RemoveWorktreeOptions {
+	primaryRoot: string
+	force?: boolean | undefined
+	releaseBinding?: (() => void) | undefined
+}
+
+/**
+ * The git-worktree helpers with their `Exec`/`WorktreeFs` BOUND — the ergonomic surface over the raw,
+ * exec-first functions above. `worktreeApi(deps?)` binds once (defaulting to
+ * `nodeExec`/`nodeWorktreeFs`); every method then drops the runner. The raw functions stay exported
+ * for a caller threading its own per call, exactly as `resolveMuxAdapter` sits under `resolveMux`.
+ *
+ * Pure helpers with no seam to bind — `isWorktreeRemovable`, `resolveWorktreePath`,
+ * `assertDistinctFromPrimary` — stay free functions.
+ */
+export interface WorktreeApi {
+	/** The primary checkout's root — `resolvePrimaryRoot` bound. */
+	primaryRoot(): string
+	/** Every worktree git reports; `primaryRoot` defaults to `primaryRoot()` — `listWorktreesFromGit` bound. */
+	list(primaryRoot?: string | undefined): WorktreeEntry[]
+	/** Create a worktree — `gitWorktreeAdapter.add` bound. */
+	add(opts: WorktreeAddOptions): Worktree
+	/** Remove a worktree under cyber-mux's gates — `removeWorktreeSafely` bound (its `fs` supplied). */
+	removeSafely(path: string, opts: RemoveWorktreeOptions): void
+	/** Symlink-resolved, native-cased path — `normalizeWorktreePath` bound. */
+	normalizePath(path: string): string
+}
+
+/**
+ * Bind the git-worktree helpers to a runner and filesystem once, returning a `WorktreeApi` whose
+ * methods no longer take an `Exec`. `deps` default to `nodeExec` / `nodeWorktreeFs`.
+ */
+export function worktreeApi(deps?: WorktreeDeps | undefined): WorktreeApi {
+	const exec = deps?.exec ?? nodeExec
+	const fs = deps?.fs ?? nodeWorktreeFs
+	return {
+		primaryRoot: () => resolvePrimaryRoot(exec),
+		list: (primaryRoot) => listWorktreesFromGit(exec, primaryRoot ?? resolvePrimaryRoot(exec), fs),
+		add: (opts) => gitWorktreeAdapter.add(exec, opts),
+		removeSafely: (path, opts) => removeWorktreeSafely(exec, path, { ...opts, fs }),
+		normalizePath: (path) => normalizeWorktreePath(path, fs),
+	}
 }

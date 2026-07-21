@@ -23,7 +23,7 @@ function printJson(data: unknown) {
 	console.log(JSON.stringify(data, null, 2))
 }
 
-export function printFields(fields: Record<string, string | null | undefined>) {
+export function printFields(fields: Record<string, string | null | undefined>): void {
 	const entries = Object.entries(fields).filter(([, v]) => v != null) as [string, string][]
 	if (entries.length === 0) return
 	const width = Math.max(...entries.map(([k]) => k.length))
@@ -46,14 +46,14 @@ export type HelpEntry = { message: string; command: string }
  * it. Prints NOTHING for an empty list: a self-contained result owes no suggestion (#9's
  * omit-when-self-contained rule), so the block never appears as noise.
  */
-export function printHelp(entries: HelpEntry[]) {
+export function printHelp(entries: HelpEntry[]): void {
 	entries.forEach((entry, i) => {
 		console.log(`help[${i}]: ${entry.message}`)
 		console.log(`  -> ${entry.command}`)
 	})
 }
 
-export function printTable<T>(items: T[], cols: { label: string; get: (item: T) => string }[]) {
+export function printTable<T>(items: T[], cols: { label: string; get: (item: T) => string }[]): void {
 	if (items.length === 0) {
 		console.log('(none)')
 		return
@@ -90,7 +90,7 @@ export function isAutomatedOutput(): boolean {
 	return fmt === 'json' || fmt === 'agent'
 }
 
-export function output(data: unknown, readable: () => void) {
+export function output(data: unknown, readable: () => void): void {
 	if (isJsonOutput()) printJson(data)
 	else readable()
 }

@@ -7,9 +7,22 @@ export type PaneMux = 'tmux' | 'herdr' | 'wezterm'
 
 export interface MuxProbe {
 	mux: Mux
-	pane?: string
+	pane?: string | undefined
 	/** 'env' — trusted the $CYBER_MUX fast-path/override. 'ancestry' — walked the process tree. */
 	via: 'env' | 'ancestry'
+}
+
+export interface ProbeOptions {
+	/** Set `false` to skip the process-ancestry walk and answer `none` when the env fast-path misses —
+	 * for a caller that only trusts the explicit override. */
+	discover?: boolean | undefined
+	/**
+	 * The environment-variable namespace the fast-path reads, without the trailing `_PANE`. Defaults to
+	 * `CYBER_MUX`, so `<prefix>` names the mux (`tmux|herdr|screen|none`) and `<prefix>_PANE` the pane.
+	 * A host embedding cyber-mux under its OWN namespace passes its prefix here and adopts the same
+	 * fast-path without forking detection.
+	 */
+	envPrefix?: string | undefined
 }
 
 const KNOWN_MUX: readonly Mux[] = ['tmux', 'herdr', 'wezterm', 'screen', 'none']
@@ -27,9 +40,9 @@ function isKnownMux(v: string | undefined): v is Mux {
  * table so the two never diverge on which env var a given mux uses.
  */
 const PANE_ENV: Record<PaneMux, (env: NodeJS.ProcessEnv) => string | undefined> = {
-	tmux: (env) => env.TMUX_PANE,
-	herdr: (env) => env.HERDR_PANE_ID,
-	wezterm: (env) => env.WEZTERM_PANE,
+	tmux: (env) => env['TMUX_PANE'],
+	herdr: (env) => env['HERDR_PANE_ID'],
+	wezterm: (env) => env['WEZTERM_PANE'],
 }
 
 /**
@@ -39,11 +52,11 @@ const PANE_ENV: Record<PaneMux, (env: NodeJS.ProcessEnv) => string | undefined> 
  * pane-carrying multiplexer. This is the mux-agnostic self-identity key.
  */
 export function currentPane(env: NodeJS.ProcessEnv): { mux: PaneMux; pane: string } | undefined {
-	if (env.CYBER_MUX_PANE) {
+	if (env['CYBER_MUX_PANE']) {
 		// The fast-path pane carries its mux in $CYBER_MUX (herdr/wezterm spawns tag it; tmux is the
 		// default when neither does).
-		const mux: PaneMux = env.CYBER_MUX === 'herdr' ? 'herdr' : env.CYBER_MUX === 'wezterm' ? 'wezterm' : 'tmux'
-		return { mux, pane: env.CYBER_MUX_PANE }
+		const mux: PaneMux = env['CYBER_MUX'] === 'herdr' ? 'herdr' : env['CYBER_MUX'] === 'wezterm' ? 'wezterm' : 'tmux'
+		return { mux, pane: env['CYBER_MUX_PANE'] }
 	}
 	const tmux = PANE_ENV.tmux(env)
 	if (tmux) return { mux: 'tmux', pane: tmux }
@@ -66,11 +79,17 @@ export function currentPane(env: NodeJS.ProcessEnv): { mux: PaneMux; pane: strin
  * are used only as a fast-positive hint the ancestry walk falls back to when the walk itself is
  * inconclusive (e.g. `ps` unavailable), never as a substitute for it.
  */
-export function probeMultiplexer(exec: Exec, env: NodeJS.ProcessEnv, opts: { discover?: boolean } = {}): MuxProbe {
-	if (isKnownMux(env.CYBER_MUX)) {
+export function probeMultiplexer(exec: Exec, env: NodeJS.ProcessEnv, opts: ProbeOptions = {}): MuxProbe {
+	// A host with its own namespace ADOPTS the fast-path by passing its prefix — `<prefix>` names the
+	// mux and `<prefix>_PANE` the pane — rather than forking the probe. Defaults to `CYBER_MUX`, so an
+	// unset `envPrefix` is exactly today's behavior. NOT an alias list: one prefix per call, the host's.
+	const prefix = opts.envPrefix ?? 'CYBER_MUX'
+	const override = env[prefix]
+	const pane = env[`${prefix}_PANE`]
+	if (isKnownMux(override)) {
 		return {
-			mux: env.CYBER_MUX,
-			...(env.CYBER_MUX_PANE ? { pane: env.CYBER_MUX_PANE } : {}),
+			mux: override,
+			...(pane ? { pane } : {}),
 			via: 'env',
 		}
 	}
@@ -93,6 +112,16 @@ function paneFor(mux: Mux, env: NodeJS.ProcessEnv): string | undefined {
 	return mux === 'tmux' || mux === 'herdr' || mux === 'wezterm' ? PANE_ENV[mux](env) : undefined
 }
 
+/**
+ * An ancestry-discovered probe, OMITTING `pane` when the mux carries none — never carrying it as an
+ * explicit `undefined`, so `MuxProbe.pane` stays an absent-or-present field (the same conditional
+ * shape the `$CYBER_MUX_PANE` fast-path uses above).
+ */
+function ancestryProbe(mux: Mux, env: NodeJS.ProcessEnv): MuxProbe {
+	const pane = paneFor(mux, env)
+	return { mux, ...(pane !== undefined ? { pane } : {}), via: 'ancestry' }
+}
+
 const MAX_ANCESTORS = 32
 
 function walkAncestry(exec: Exec, env: NodeJS.ProcessEnv): MuxProbe | undefined {
@@ -109,7 +138,7 @@ function walkAncestry(exec: Exec, env: NodeJS.ProcessEnv): MuxProbe | undefined 
 		const comm = spaceIdx === -1 ? '' : trimmed.slice(spaceIdx + 1).trim()
 		const ppid = Number.parseInt(ppidStr, 10)
 		for (const entry of MUX_COMM) {
-			if (entry.re.test(comm)) return { mux: entry.mux, pane: paneFor(entry.mux, env), via: 'ancestry' }
+			if (entry.re.test(comm)) return ancestryProbe(entry.mux, env)
 		}
 		if (!Number.isFinite(ppid) || ppid <= 1) break
 		pid = ppid
@@ -124,8 +153,8 @@ function discoverByAncestry(exec: Exec, env: NodeJS.ProcessEnv): MuxProbe {
 	// fast-positive env hint rather than declaring 'none' outright. WezTerm has no separate
 	// "inside wezterm" flag the way $TMUX/$HERDR_ENV are — $WEZTERM_PANE IS the hint, doubling as
 	// both the fast-positive signal and the pane id.
-	if (env.TMUX) return { mux: 'tmux', pane: paneFor('tmux', env), via: 'ancestry' }
-	if (env.HERDR_ENV) return { mux: 'herdr', pane: paneFor('herdr', env), via: 'ancestry' }
-	if (env.WEZTERM_PANE) return { mux: 'wezterm', pane: paneFor('wezterm', env), via: 'ancestry' }
+	if (env['TMUX']) return ancestryProbe('tmux', env)
+	if (env['HERDR_ENV']) return ancestryProbe('herdr', env)
+	if (env['WEZTERM_PANE']) return ancestryProbe('wezterm', env)
 	return { mux: 'none', via: 'ancestry' }
 }

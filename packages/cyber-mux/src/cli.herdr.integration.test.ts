@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, describe, expect, it } from 'vitest'
 import type { Exec } from './exec.ts'
-import { herdrSessionAdapter } from './session.herdr.ts'
+import { herdrMuxAdapter } from './mux.herdr.ts'
 
 /**
  * The CLI-level half of the real-herdr boundary. `session.herdr.integration.test.ts` drives the
@@ -79,7 +79,7 @@ describe.skipIf(!runnable)('spec:cyber-mux/mux', () => {
 		afterAll(() => {
 			for (const id of opened) {
 				try {
-					herdrSessionAdapter.teardown(realExec, { id })
+					herdrMuxAdapter.teardown(realExec, { id })
 				} catch {
 					// A pane the run never opened, or one herdr already reclaimed. Cleanup, not a contract.
 				}
@@ -96,7 +96,7 @@ describe.skipIf(!runnable)('spec:cyber-mux/mux', () => {
 			// pane (running from inside herdr) or the UI-focused one — someone else's work in both
 			// readings — and is nothing at all with no client attached, which is why this failed in CI
 			// as `herdr pane split failed`.
-			const host = herdrSessionAdapter.open(realExec, { cwd: repoRoot, launch: 'sh', at: 'workspace' })
+			const host = herdrMuxAdapter.open(realExec, { cwd: repoRoot, launch: 'sh', at: 'workspace' })
 			opened.push(host.id)
 
 			// `CYBER_MUX` + `CYBER_MUX_PANE` is the documented fast-path: it pins the backend AND this

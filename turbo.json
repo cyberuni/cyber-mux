@@ -21,12 +21,15 @@
 		"test": {
 			"dependsOn": ["^build", "build"]
 		},
+		"test:dist": {
+			"dependsOn": ["build"]
+		},
 		"dev": {
 			"cache": false,
 			"persistent": true
 		},
 		"verify": {
-			"dependsOn": ["//#check:ci", "//#check:features", "build", "typecheck", "lint", "test"]
+			"dependsOn": ["//#check:ci", "//#check:features", "build", "typecheck", "lint", "test", "test:dist"]
 		}
 	}
 }
