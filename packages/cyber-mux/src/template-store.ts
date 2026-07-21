@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { homedir as osHomedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import type { Exec } from './exec.ts'
 import { isValidTemplateName } from './template.ts'
@@ -87,7 +87,9 @@ export interface TemplateDirs {
  * otherwise silently see a stale template, or none at all. Resolving through the primary checkout
  * gives one canonical answer from every worktree.
  */
-export function templateDirs(exec: Exec, env: NodeJS.ProcessEnv): TemplateDirs {
+export function templateDirs(exec: Exec, env: NodeJS.ProcessEnv, homedir: () => string = osHomedir): TemplateDirs {
+	// The home dir is INJECTED (defaulting to node's `homedir`), never read from the ambient process at
+	// import time — so importing the library barrel reads no environment; only calling this does.
 	const configHome = env.XDG_CONFIG_HOME || join(env.HOME || homedir(), '.config')
 	return {
 		repo: join(resolvePrimaryRoot(exec), '.cyber-mux', 'templates'),

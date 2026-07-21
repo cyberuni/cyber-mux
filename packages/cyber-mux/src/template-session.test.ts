@@ -8,6 +8,7 @@ import { applyTemplateToRegion, openTemplate, TemplateApplyError } from './templ
 
 /** Every dir the walk asks about exists, unless a test says otherwise. */
 const anyDir = () => true
+const fakeNewId = () => 'grp-0000'
 
 /** tmux, handing out a fresh pane id per window/split so geometry is traceable in the argv. */
 function tmuxExec(calls: string[][]): Exec {
@@ -182,7 +183,11 @@ describe('spec:cyber-mux/template', () => {
 			// already running an interactive agent — the split lands mid-render. The root pane is not a
 			// wasted pane either: it is the region the walk splits INTO.
 			const { adapter, calls } = fakeAdapter()
-			const manifest = openTemplate(noExec, adapter, agentPool3, { cwd: '/target', dirExists: anyDir })
+			const manifest = openTemplate(noExec, adapter, agentPool3, {
+				cwd: '/target',
+				dirExists: anyDir,
+				newId: fakeNewId,
+			})
 			expect(calls.opens[0]?.launch).toBeUndefined()
 			expect(calls.opens[0]?.at).toBe('workspace')
 			// The pane the region open returned IS the first leaf's pane, and it is never torn down.
@@ -196,7 +201,11 @@ describe('spec:cyber-mux/template', () => {
 		// just opened a real workspace and said so.
 		it('the manifest carries the workspace the region opened in', () => {
 			const { adapter } = fakeAdapter({ workspace: 'w45' })
-			const manifest = openTemplate(noExec, adapter, agentPool3, { cwd: '/target', dirExists: anyDir })
+			const manifest = openTemplate(noExec, adapter, agentPool3, {
+				cwd: '/target',
+				dirExists: anyDir,
+				newId: fakeNewId,
+			})
 			expect(manifest.workspace).toBe('w45')
 		})
 
@@ -204,14 +213,18 @@ describe('spec:cyber-mux/template', () => {
 		// `null` is the manifest's JSON-boundary spelling of that — the one place absent becomes null.
 		it('the manifest’s workspace is null on a backend with no workspace tier', () => {
 			const { adapter } = fakeAdapter()
-			const manifest = openTemplate(noExec, adapter, agentPool3, { cwd: '/target', dirExists: anyDir })
+			const manifest = openTemplate(noExec, adapter, agentPool3, {
+				cwd: '/target',
+				dirExists: anyDir,
+				newId: fakeNewId,
+			})
 			expect(manifest.workspace).toBeNull()
 		})
 
 		it('builds every split before the first command is submitted', () => {
 			const calls: string[][] = []
 			const exec = tmuxExec(calls)
-			openTemplate(exec, tmuxMuxAdapter, agentPool3, { cwd: '/target', dirExists: anyDir })
+			openTemplate(exec, tmuxMuxAdapter, agentPool3, { cwd: '/target', dirExists: anyDir, newId: fakeNewId })
 			const lastSplit = calls.map((c) => c[0]).lastIndexOf('split-window')
 			const firstSubmit = calls.map((c) => c[0]).indexOf('send-keys')
 			expect(lastSplit).toBeGreaterThanOrEqual(0)
@@ -224,7 +237,7 @@ describe('spec:cyber-mux/template', () => {
 			// UI-focused pane, tmux always splits the session's active pane. A tree walk must also split a
 			// pane created two steps earlier, which no default can express.
 			const { adapter, calls } = fakeAdapter()
-			openTemplate(noExec, adapter, agentPool3, { cwd: '/target', dirExists: anyDir })
+			openTemplate(noExec, adapter, agentPool3, { cwd: '/target', dirExists: anyDir, newId: fakeNewId })
 			const splits = calls.opens.filter((o) => o.at === 'pane:right' || o.at === 'pane:down')
 			expect(splits).toHaveLength(2)
 			for (const split of splits) expect(split.from).toBeDefined()
@@ -235,7 +248,7 @@ describe('spec:cyber-mux/template', () => {
 
 		it('submits commands last, in template order', () => {
 			const { adapter, calls } = fakeAdapter()
-			openTemplate(noExec, adapter, agentPool3, { cwd: '/target', dirExists: anyDir })
+			openTemplate(noExec, adapter, agentPool3, { cwd: '/target', dirExists: anyDir, newId: fakeNewId })
 			expect(calls.submits).toEqual([
 				{ pane: 'p1', text: 'claude' },
 				{ pane: 'p2', text: 'claude' },
@@ -254,7 +267,7 @@ describe('spec:cyber-mux/template', () => {
 					second: { type: 'pane', label: 'spare' },
 				},
 			}
-			const manifest = openTemplate(noExec, adapter, template, { cwd: '/target', dirExists: anyDir })
+			const manifest = openTemplate(noExec, adapter, template, { cwd: '/target', dirExists: anyDir, newId: fakeNewId })
 			// Created — it is in the manifest with a real pane id...
 			expect(manifest.panes.map((p) => p.label)).toEqual(['editor', 'spare'])
 			expect(manifest.panes[1]?.command).toBeNull()
@@ -273,7 +286,11 @@ describe('spec:cyber-mux/template', () => {
 					second: { type: 'pane', label: 'watcher', dir: 'services/api/logs' },
 				},
 			}
-			const manifest = openTemplate(noExec, adapter, template, { cwd: '/target/root', dirExists: anyDir })
+			const manifest = openTemplate(noExec, adapter, template, {
+				cwd: '/target/root',
+				dirExists: anyDir,
+				newId: fakeNewId,
+			})
 			// The pane OPENS there — the split carries the joined path as its cwd...
 			expect(calls.opens[1]?.cwd).toBe('/target/root/services/api/logs')
 			// ...and the manifest reports the same resolved path.
@@ -292,7 +309,7 @@ describe('spec:cyber-mux/template', () => {
 				panes: [{ label: 'editor' }, { label: 'watcher', dir: 'services/api/logs' }],
 			}
 			const dirExists = (path: string) => path === '/target'
-			expect(() => openTemplate(noExec, adapter, template, { cwd: '/target', dirExists })).toThrow(
+			expect(() => openTemplate(noExec, adapter, template, { cwd: '/target', dirExists, newId: fakeNewId })).toThrow(
 				/"watcher".*\/target\/services\/api\/logs/,
 			)
 			// Checked before the region is opened, so a predictable error costs no half-built pool.
@@ -305,7 +322,7 @@ describe('spec:cyber-mux/template', () => {
 				name: 'build-trio',
 				panes: [{ label: 'editor', dir: 'apps/web' }, { label: 'spare' }],
 			}
-			const manifest = openTemplate(noExec, adapter, template, { cwd: '/target', dirExists: anyDir })
+			const manifest = openTemplate(noExec, adapter, template, { cwd: '/target', dirExists: anyDir, newId: fakeNewId })
 			expect(calls.opens[0]?.cwd).toBe('/target/apps/web')
 			// And the manifest's claim matches where the pane was actually put.
 			expect(manifest.panes[0]).toMatchObject({ label: 'editor', dir: '/target/apps/web' })
@@ -323,7 +340,7 @@ describe('spec:cyber-mux/template', () => {
 					second: { type: 'pane', label: 'runner', env: { ROLE: 'worker' } },
 				},
 			}
-			openTemplate(noExec, adapter, template, { cwd: '/target', dirExists: anyDir })
+			openTemplate(noExec, adapter, template, { cwd: '/target', dirExists: anyDir, newId: fakeNewId })
 			expect(calls.opens[0]?.env).toEqual({ ROLE: 'planner' })
 			expect(calls.opens[1]?.env).toEqual({ ROLE: 'worker' })
 		})
@@ -334,11 +351,19 @@ describe('spec:cyber-mux/template', () => {
 				panes: [{ label: 'dispatcher', env: { TIER: 'gpu' } }, { label: 'spare' }],
 			}
 			const tmuxCalls: string[][] = []
-			openTemplate(tmuxExec(tmuxCalls), tmuxMuxAdapter, template, { cwd: '/target', dirExists: anyDir })
+			openTemplate(tmuxExec(tmuxCalls), tmuxMuxAdapter, template, {
+				cwd: '/target',
+				dirExists: anyDir,
+				newId: fakeNewId,
+			})
 			expect(tmuxCalls.find((c) => c[0] === 'new-window')!.join(' ')).toContain('-e TIER=gpu')
 
 			const herdrCalls: string[][] = []
-			openTemplate(herdrExec(herdrCalls), herdrMuxAdapter, template, { cwd: '/target', dirExists: anyDir })
+			openTemplate(herdrExec(herdrCalls), herdrMuxAdapter, template, {
+				cwd: '/target',
+				dirExists: anyDir,
+				newId: fakeNewId,
+			})
 			expect(herdrCalls.find((c) => c[0] === 'workspace' && c[1] === 'create')!.join(' ')).toContain('--env TIER=gpu')
 		})
 	})
@@ -358,7 +383,7 @@ describe('spec:cyber-mux/template', () => {
 			// A workspace is what a set of tabs needs to live in; every later tab belongs INSIDE it. A
 			// `pane:*` placement anywhere here would make a tab a split of the tab before it.
 			const { adapter, calls } = fakeAdapter({ workspace: 'w7' })
-			openTemplate(noExec, adapter, tabs3, { cwd: '/target', dirExists: anyDir })
+			openTemplate(noExec, adapter, tabs3, { cwd: '/target', dirExists: anyDir, newId: fakeNewId })
 			expect(calls.opens.map((o) => o.at)).toEqual(['workspace', 'tab', 'tab'])
 			// No tab is a split of another tab's pane — and nothing was placed against a pane at all.
 			expect(calls.opens.filter((o) => o.at === 'pane:right' || o.at === 'pane:down')).toEqual([])
@@ -370,7 +395,7 @@ describe('spec:cyber-mux/template', () => {
 			// the space the USER is looking at, so without the anchor the first tab opened the new
 			// workspace and tabs 2..N appeared beside the pane the command was RUN from.
 			const { adapter, calls } = fakeAdapter({ workspace: 'w7' })
-			openTemplate(noExec, adapter, tabs3, { cwd: '/target', dirExists: anyDir })
+			openTemplate(noExec, adapter, tabs3, { cwd: '/target', dirExists: anyDir, newId: fakeNewId })
 			expect(calls.opens.map((o) => o.within)).toEqual([undefined, 'w7', 'w7'])
 		})
 
@@ -378,14 +403,14 @@ describe('spec:cyber-mux/template', () => {
 			// tmux collapses workspace and tab onto one Window, so there is no space for a tab to land in
 			// the wrong one of — the grouping tag, not an anchor, is what makes its tabs one pool.
 			const { adapter, calls } = fakeAdapter()
-			openTemplate(noExec, adapter, tabs3, { cwd: '/target', dirExists: anyDir })
+			openTemplate(noExec, adapter, tabs3, { cwd: '/target', dirExists: anyDir, newId: fakeNewId })
 			expect(calls.opens.map((o) => o.within)).toEqual([undefined, undefined, undefined])
 		})
 
 		it('herdr names the workspace on every later tab create', () => {
 			// At the argv, on the backend the bug was reported on: `tab create --workspace <id>`.
 			const calls: string[][] = []
-			openTemplate(herdrExec(calls), herdrMuxAdapter, tabs3, { cwd: '/target', dirExists: anyDir })
+			openTemplate(herdrExec(calls), herdrMuxAdapter, tabs3, { cwd: '/target', dirExists: anyDir, newId: fakeNewId })
 			const creates = calls.filter((c) => c[0] === 'tab' && c[1] === 'create')
 			expect(creates).toHaveLength(2)
 			for (const create of creates) expect(create.slice(0, 4)).toEqual(['tab', 'create', '--workspace', 'w1'])
@@ -411,7 +436,7 @@ describe('spec:cyber-mux/template', () => {
 					},
 				],
 			}
-			openTemplate(noExec, adapter, template, { cwd: '/target', dirExists: anyDir })
+			openTemplate(noExec, adapter, template, { cwd: '/target', dirExists: anyDir, newId: fakeNewId })
 			// Opens: 1 = the workspace (tab 1's root), 2 = tab 2's root, 3 = tab 2's split.
 			const splits = calls.opens.filter((o) => o.at === 'pane:right' || o.at === 'pane:down')
 			expect(splits).toHaveLength(1)
@@ -446,7 +471,7 @@ describe('spec:cyber-mux/template', () => {
 					},
 				],
 			}
-			openTemplate(noExec, adapter, template, { cwd: '/target', dirExists: anyDir })
+			openTemplate(noExec, adapter, template, { cwd: '/target', dirExists: anyDir, newId: fakeNewId })
 			// EVERY open — both tab opens and both splits — precedes the first submit.
 			expect(calls.log.lastIndexOf('open')).toBeLessThan(calls.log.indexOf('submit'))
 			expect(calls.opens).toHaveLength(4)
@@ -465,7 +490,7 @@ describe('spec:cyber-mux/template', () => {
 			// id from the manifest. A multi-tab apply lands MORE spaces at once, which makes stealing focus
 			// worse rather than more justified.
 			const { adapter, calls } = fakeAdapter({ workspace: 'w7' })
-			openTemplate(noExec, adapter, tabs3, { cwd: '/target', dirExists: anyDir })
+			openTemplate(noExec, adapter, tabs3, { cwd: '/target', dirExists: anyDir, newId: fakeNewId })
 			expect(calls.focuses).toEqual([])
 			expect(calls.log).not.toContain('focus')
 
@@ -477,7 +502,7 @@ describe('spec:cyber-mux/template', () => {
 				focus: 'logs',
 				tabs: tabs3.tabs!.map((tab) => ({ ...tab, focus: true })),
 			} as Template
-			openTemplate(noExec, b, withFocusField, { cwd: '/target', dirExists: anyDir })
+			openTemplate(noExec, b, withFocusField, { cwd: '/target', dirExists: anyDir, newId: fakeNewId })
 			expect(asking.focuses).toEqual([])
 			expect(asking.log).toEqual(calls.log)
 		})
@@ -489,7 +514,7 @@ describe('spec:cyber-mux/template', () => {
 			const { adapter, calls } = fakeAdapter({ workspace: 'w7', failOnOpen: 2 })
 			let thrown: unknown
 			try {
-				openTemplate(noExec, adapter, tabs3, { cwd: '/target', dirExists: anyDir })
+				openTemplate(noExec, adapter, tabs3, { cwd: '/target', dirExists: anyDir, newId: fakeNewId })
 			} catch (err) {
 				thrown = err
 			}
@@ -513,7 +538,7 @@ describe('spec:cyber-mux/template', () => {
 					{ label: 'logs', panes: [{ label: 'tail' }] },
 				],
 			}
-			const manifest = openTemplate(noExec, adapter, template, { cwd: '/target', dirExists: anyDir })
+			const manifest = openTemplate(noExec, adapter, template, { cwd: '/target', dirExists: anyDir, newId: fakeNewId })
 			expect(manifest.panes.map((p) => ({ label: p.label, tab: p.tab }))).toEqual([
 				{ label: 'edit', tab: 0 },
 				{ label: 'test', tab: 0 },
@@ -530,7 +555,11 @@ describe('spec:cyber-mux/template', () => {
 			// Absent rather than false: there is no tab structure to report, and inventing one would claim
 			// the template said something it did not.
 			const { adapter } = fakeAdapter()
-			const manifest = openTemplate(noExec, adapter, agentPool3, { cwd: '/target', dirExists: anyDir })
+			const manifest = openTemplate(noExec, adapter, agentPool3, {
+				cwd: '/target',
+				dirExists: anyDir,
+				newId: fakeNewId,
+			})
 			expect(manifest.panes.map((p) => p.tab)).toEqual([null, null, null])
 		})
 
@@ -547,7 +576,7 @@ describe('spec:cyber-mux/template', () => {
 			// tmux collapses workspace and tab onto the same Window, so a template's tabs would otherwise be
 			// an unlabeled pile — the prefix is what keeps them recognizable as a group in the status bar.
 			const calls: string[][] = []
-			openTemplate(tmuxExec(calls), tmuxMuxAdapter, pool, { cwd: '/target', dirExists: anyDir })
+			openTemplate(tmuxExec(calls), tmuxMuxAdapter, pool, { cwd: '/target', dirExists: anyDir, newId: fakeNewId })
 			// The first tab's window is named after birth — at its birth the name went to the workspace,
 			// which on tmux is the same Window.
 			expect(calls.filter((c) => c[0] === 'rename-window')).toEqual([['rename-window', '-t', '@0', 'pool - editor']])
@@ -566,7 +595,7 @@ describe('spec:cyber-mux/template', () => {
 			// herdr's UI already groups by the real workspace label, so a prefix would be redundant noise —
 			// the concept maps onto what the backend actually has.
 			const calls: string[][] = []
-			openTemplate(herdrExec(calls), herdrMuxAdapter, pool, { cwd: '/target', dirExists: anyDir })
+			openTemplate(herdrExec(calls), herdrMuxAdapter, pool, { cwd: '/target', dirExists: anyDir, newId: fakeNewId })
 			// The workspace carries the workspace's name...
 			expect(calls.find((c) => c[0] === 'workspace' && c[1] === 'create')).toEqual(
 				expect.arrayContaining(['--label', 'pool']),
@@ -603,6 +632,7 @@ describe('spec:cyber-mux/template', () => {
 					rootEnvHonored: true,
 					label: 'pool',
 					dirExists: anyDir,
+					newId: fakeNewId,
 				})
 				// The first tab is renamed even though this route did not open it — the window it was
 				// handed is named `pool`, and the tab in it is `editor`.
@@ -622,6 +652,7 @@ describe('spec:cyber-mux/template', () => {
 					rootEnvHonored: true,
 					label: 'pool',
 					dirExists: anyDir,
+					newId: fakeNewId,
 				})
 				// The first tab carries its OWN label — named, but never prefixed.
 				expect(calls.find((c) => c[0] === 'tab' && c[1] === 'rename')).toEqual(['tab', 'rename', 'w1:t1', 'editor'])
@@ -640,7 +671,12 @@ describe('spec:cyber-mux/template', () => {
 			const labels = ['acme-platform-migration-2026-phase-two', 'acme-platform-migration-2026-phase-three']
 			const named = labels.map((label) => {
 				const calls: string[][] = []
-				openTemplate(tmuxExec(calls), tmuxMuxAdapter, pool, { cwd: '/target', label, dirExists: anyDir })
+				openTemplate(tmuxExec(calls), tmuxMuxAdapter, pool, {
+					cwd: '/target',
+					label,
+					dirExists: anyDir,
+					newId: fakeNewId,
+				})
 				return calls.find((c) => c[0] === 'rename-window')![3]!
 			})
 			// Each workspace label appears in its tab's label IN FULL, verbatim...
@@ -654,7 +690,7 @@ describe('spec:cyber-mux/template', () => {
 			// herdr labels a new workspace's root tab `1` with no flag to change it; `tab create --label`
 			// names every subsequent tab at birth.
 			const calls: string[][] = []
-			openTemplate(herdrExec(calls), herdrMuxAdapter, pool, { cwd: '/target', dirExists: anyDir })
+			openTemplate(herdrExec(calls), herdrMuxAdapter, pool, { cwd: '/target', dirExists: anyDir, newId: fakeNewId })
 			const verbs = calls.map((c) => c.slice(0, 2).join(' '))
 			// The workspace is created, and its own create names the WORKSPACE — never the tab under it.
 			const create = calls.find((c) => c[0] === 'workspace' && c[1] === 'create')!
@@ -678,7 +714,11 @@ describe('spec:cyber-mux/template', () => {
 			// The grouping tag is cyber-mux's own bookkeeping, not a workspace tier. Reporting it as the
 			// workspace would claim a tier tmux does not have.
 			const calls: string[][] = []
-			const manifest = openTemplate(tmuxExec(calls), tmuxMuxAdapter, tabs3, { cwd: '/target', dirExists: anyDir })
+			const manifest = openTemplate(tmuxExec(calls), tmuxMuxAdapter, tabs3, {
+				cwd: '/target',
+				dirExists: anyDir,
+				newId: fakeNewId,
+			})
 			expect(manifest.workspace).toBeNull()
 			// The tabs really WERE grouped — so the null is the convention holding, not the tag missing.
 			const tagged = calls.filter((c) => c[0] === 'set-option' && c.includes(TMUX_WORKSPACE_GROUP_OPTION))
@@ -708,14 +748,14 @@ describe('spec:cyber-mux/template', () => {
 
 		it('herdr receives --ratio 0.333 — its flag sizes the original pane, so it is unconverted', () => {
 			const calls: string[][] = []
-			openTemplate(herdrExec(calls), herdrMuxAdapter, skewed, { cwd: '/target', dirExists: anyDir })
+			openTemplate(herdrExec(calls), herdrMuxAdapter, skewed, { cwd: '/target', dirExists: anyDir, newId: fakeNewId })
 			const split = calls.find((c) => c[0] === 'pane' && c[1] === 'split')!
 			expect(split.join(' ')).toContain('--ratio 0.333')
 		})
 
 		it('tmux receives -l 67% — its flag sizes the new pane, so it inverts', () => {
 			const calls: string[][] = []
-			openTemplate(tmuxExec(calls), tmuxMuxAdapter, skewed, { cwd: '/target', dirExists: anyDir })
+			openTemplate(tmuxExec(calls), tmuxMuxAdapter, skewed, { cwd: '/target', dirExists: anyDir, newId: fakeNewId })
 			const split = calls.find((c) => c[0] === 'split-window')!
 			expect(split.join(' ')).toContain('-l 67%')
 			// Never the un-inverted number, which is what a double- or missing inversion would emit.
@@ -733,11 +773,15 @@ describe('spec:cyber-mux/template', () => {
 					second: { type: 'pane', label: 'tests' },
 				},
 			}
-			openTemplate(tmuxExec(calls), tmuxMuxAdapter, even, { cwd: '/target', dirExists: anyDir })
+			openTemplate(tmuxExec(calls), tmuxMuxAdapter, even, { cwd: '/target', dirExists: anyDir, newId: fakeNewId })
 			expect(calls.find((c) => c[0] === 'split-window')).not.toContain('-l')
 
 			const herdrCalls: string[][] = []
-			openTemplate(herdrExec(herdrCalls), herdrMuxAdapter, even, { cwd: '/target', dirExists: anyDir })
+			openTemplate(herdrExec(herdrCalls), herdrMuxAdapter, even, {
+				cwd: '/target',
+				dirExists: anyDir,
+				newId: fakeNewId,
+			})
 			expect(herdrCalls.find((c) => c[0] === 'pane' && c[1] === 'split')).not.toContain('--ratio')
 		})
 
@@ -753,13 +797,13 @@ describe('spec:cyber-mux/template', () => {
 
 		it('herdr sets env natively at the pane’s birth via --env', () => {
 			const calls: string[][] = []
-			openTemplate(herdrExec(calls), herdrMuxAdapter, withEnv, { cwd: '/target', dirExists: anyDir })
+			openTemplate(herdrExec(calls), herdrMuxAdapter, withEnv, { cwd: '/target', dirExists: anyDir, newId: fakeNewId })
 			expect(calls.find((c) => c[0] === 'pane' && c[1] === 'split')!.join(' ')).toContain('--env ROLE=worker')
 		})
 
 		it('tmux sets env natively at the pane’s birth via -e', () => {
 			const calls: string[][] = []
-			openTemplate(tmuxExec(calls), tmuxMuxAdapter, withEnv, { cwd: '/target', dirExists: anyDir })
+			openTemplate(tmuxExec(calls), tmuxMuxAdapter, withEnv, { cwd: '/target', dirExists: anyDir, newId: fakeNewId })
 			expect(calls.find((c) => c[0] === 'split-window')!.join(' ')).toContain('-e ROLE=worker')
 		})
 
@@ -779,6 +823,7 @@ describe('spec:cyber-mux/template', () => {
 			const manifest = openTemplate(herdrExec(calls), herdrMuxAdapter, template, {
 				cwd: '/target',
 				dirExists: anyDir,
+				newId: fakeNewId,
 			})
 			const split = calls.find((c) => c[0] === 'pane' && c[1] === 'split')!
 			expect(split.join(' ')).toContain('--env ROLE=worker')
@@ -795,7 +840,11 @@ describe('spec:cyber-mux/template', () => {
 			const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
 			const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
 			const { adapter, calls } = fakeAdapter({ canSizeSplits: false })
-			const manifest = openTemplate(noExec, adapter, agentPool3, { cwd: '/target', dirExists: anyDir })
+			const manifest = openTemplate(noExec, adapter, agentPool3, {
+				cwd: '/target',
+				dirExists: anyDir,
+				newId: fakeNewId,
+			})
 			// Every pane the template names is still created...
 			expect(manifest.panes.map((p) => p.label)).toEqual(['planner', 'worker-a', 'worker-b'])
 			// ...the ratios were dropped rather than passed to a backend that cannot honor them...
@@ -810,7 +859,7 @@ describe('spec:cyber-mux/template', () => {
 		it('a backend that can size a split passes the ratio through and warns about nothing', () => {
 			const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
 			const { adapter, calls } = fakeAdapter()
-			openTemplate(noExec, adapter, agentPool3, { cwd: '/target', dirExists: anyDir })
+			openTemplate(noExec, adapter, agentPool3, { cwd: '/target', dirExists: anyDir, newId: fakeNewId })
 			expect(calls.opens.filter((o) => o.ratio === 0.5)).toHaveLength(2)
 			expect(stderr).not.toHaveBeenCalled()
 		})
@@ -819,9 +868,13 @@ describe('spec:cyber-mux/template', () => {
 	describe('one template, one geometry, every backend', () => {
 		it('tmux and herdr receive the same splits, in the same order, with the same directions and ratios', () => {
 			const tmuxCalls: string[][] = []
-			openTemplate(tmuxExec(tmuxCalls), tmuxMuxAdapter, pool4, { cwd: '/target', dirExists: anyDir })
+			openTemplate(tmuxExec(tmuxCalls), tmuxMuxAdapter, pool4, { cwd: '/target', dirExists: anyDir, newId: fakeNewId })
 			const herdrCalls: string[][] = []
-			openTemplate(herdrExec(herdrCalls), herdrMuxAdapter, pool4, { cwd: '/target', dirExists: anyDir })
+			openTemplate(herdrExec(herdrCalls), herdrMuxAdapter, pool4, {
+				cwd: '/target',
+				dirExists: anyDir,
+				newId: fakeNewId,
+			})
 
 			const expected = [
 				{ direction: 'right', ratio: 0.5 },
@@ -837,7 +890,7 @@ describe('spec:cyber-mux/template', () => {
 			// It implements tmux's grid algorithm, which herdr has no equivalent of — using it would give
 			// the same template a different geometry per backend.
 			const calls: string[][] = []
-			openTemplate(tmuxExec(calls), tmuxMuxAdapter, pool4, { cwd: '/target', dirExists: anyDir })
+			openTemplate(tmuxExec(calls), tmuxMuxAdapter, pool4, { cwd: '/target', dirExists: anyDir, newId: fakeNewId })
 			expect(calls.some((c) => c[0] === 'select-template')).toBe(false)
 		})
 	})
@@ -856,7 +909,7 @@ describe('spec:cyber-mux/template', () => {
 			const { adapter, calls } = fakeAdapter({ failOnOpen: 4 })
 			let thrown: unknown
 			try {
-				openTemplate(noExec, adapter, template, { cwd: '/target', dirExists: anyDir })
+				openTemplate(noExec, adapter, template, { cwd: '/target', dirExists: anyDir, newId: fakeNewId })
 			} catch (err) {
 				thrown = err
 			}
@@ -875,7 +928,11 @@ describe('spec:cyber-mux/template', () => {
 	describe('the manifest', () => {
 		it('reports the template, the injected cwd, the workspace, and one entry per pane', () => {
 			const { adapter } = fakeAdapter()
-			const manifest = openTemplate(noExec, adapter, agentPool3, { cwd: '/w/feat-x', dirExists: anyDir })
+			const manifest = openTemplate(noExec, adapter, agentPool3, {
+				cwd: '/w/feat-x',
+				dirExists: anyDir,
+				newId: fakeNewId,
+			})
 			expect(manifest).toEqual({
 				template: 'agent-pool-3',
 				cwd: '/w/feat-x',
@@ -892,7 +949,7 @@ describe('spec:cyber-mux/template', () => {
 		it('reports an unlabeled pane with a null label rather than dropping it', () => {
 			const { adapter } = fakeAdapter()
 			const template: Template = { name: 'render-farm', panes: [{ command: 'top' }] }
-			const manifest = openTemplate(noExec, adapter, template, { cwd: '/target', dirExists: anyDir })
+			const manifest = openTemplate(noExec, adapter, template, { cwd: '/target', dirExists: anyDir, newId: fakeNewId })
 			expect(manifest.panes).toEqual([{ label: null, pane: 'p1', dir: '/target', command: 'top', tab: null }])
 		})
 	})
@@ -909,6 +966,7 @@ describe('spec:cyber-mux/template', () => {
 				workspace: 'w9',
 				rootEnvHonored: true,
 				dirExists: anyDir,
+				newId: fakeNewId,
 			})
 			expect(manifest.workspace).toBe('w9')
 			expect(manifest.cwd).toBe('/repo.worktrees/feat-x')
@@ -938,6 +996,7 @@ describe('spec:cyber-mux/template', () => {
 				workspace: 'w9',
 				rootEnvHonored: true,
 				dirExists: anyDir,
+				newId: fakeNewId,
 			})
 			// The region was already open, so the ONLY open here is the second tab's — and it is anchored.
 			expect(calls.opens.map((o) => ({ at: o.at, within: o.within }))).toEqual([{ at: 'tab', within: 'w9' }])
@@ -960,6 +1019,7 @@ describe('spec:cyber-mux/template', () => {
 				workspace: 'w9',
 				rootEnvHonored: true,
 				dirExists: anyDir,
+				newId: fakeNewId,
 			})
 			// Where it really is — not /repo.worktrees/feat-x/apps/web.
 			expect(manifest.panes[0]).toEqual({
@@ -989,6 +1049,7 @@ describe('spec:cyber-mux/template', () => {
 				workspace: 'w9',
 				rootEnvHonored: true,
 				dirExists: anyDir,
+				newId: fakeNewId,
 			})
 			expect(calls.opens[0]?.cwd).toBe('/repo.worktrees/feat-x/apps/web')
 			expect(manifest.panes[1]?.dir).toBe('/repo.worktrees/feat-x/apps/web')
@@ -1003,6 +1064,7 @@ describe('spec:cyber-mux/template', () => {
 				workspace: 'w9',
 				rootEnvHonored: true,
 				dirExists: anyDir,
+				newId: fakeNewId,
 			})
 			expect(stderr).not.toHaveBeenCalled()
 			expect(manifest.panes[0]?.dir).toBe('/repo.worktrees/feat-x')
@@ -1027,6 +1089,7 @@ describe('spec:cyber-mux/template', () => {
 					workspace: 'w9',
 					rootEnvHonored: false,
 					dirExists: anyDir,
+					newId: fakeNewId,
 				})
 				// It is just a command line, so it works on any backend — the fallback's whole appeal.
 				expect(calls.submits[0]).toEqual({ pane: 'w9:root', text: "env TIER='gpu' render" })
@@ -1043,6 +1106,7 @@ describe('spec:cyber-mux/template', () => {
 					workspace: 'w9',
 					rootEnvHonored: true,
 					dirExists: anyDir,
+					newId: fakeNewId,
 				})
 				expect(calls.submits[0]).toEqual({ pane: 'w9:root', text: 'render' })
 			})
@@ -1057,7 +1121,7 @@ describe('spec:cyber-mux/template', () => {
 						calls.push(args)
 						return exec(cmd, args)
 					}
-					openTemplate(recording, adapter, farm, { cwd: '/target', dirExists: anyDir })
+					openTemplate(recording, adapter, farm, { cwd: '/target', dirExists: anyDir, newId: fakeNewId })
 					// Whatever this backend's submit spells, it carries the bare command — never `env ...`.
 					expect(calls.filter((c) => c.some((a) => a.startsWith('env ')))).toEqual([])
 					expect(calls.some((c) => c.includes('render'))).toBe(true)
@@ -1076,6 +1140,7 @@ describe('spec:cyber-mux/template', () => {
 					workspace: 'w9',
 					rootEnvHonored: false,
 					dirExists: anyDir,
+					newId: fakeNewId,
 				})
 				// A bare value would split into extra words; a bare quote would unbalance the line.
 				expect(calls.submits[0]?.text).toBe("env NOTE='it'\\''s a big one' FLAGS='--x 1' render")
@@ -1095,6 +1160,7 @@ describe('spec:cyber-mux/template', () => {
 					workspace: 'w9',
 					rootEnvHonored: false,
 					dirExists: anyDir,
+					newId: fakeNewId,
 				})
 				expect(calls.submits).toEqual([])
 				expect(stderr).toHaveBeenCalledTimes(1)
@@ -1112,6 +1178,7 @@ describe('spec:cyber-mux/template', () => {
 					workspace: 'w9',
 					rootEnvHonored: false,
 					dirExists: anyDir,
+					newId: fakeNewId,
 				})
 				expect(stderr).not.toHaveBeenCalled()
 			})
@@ -1124,6 +1191,7 @@ describe('spec:cyber-mux/template', () => {
 					workspace: 'w9',
 					rootEnvHonored: false,
 					dirExists: anyDir,
+					newId: fakeNewId,
 				})
 				// The root pane's command carries its env as a prefix — the only route that lost env at birth.
 				expect(calls.submits[0]).toEqual({ pane: 'w9:root', text: "env TIER='gpu' render" })
@@ -1150,6 +1218,7 @@ describe('spec:cyber-mux/template', () => {
 					rootEnvHonored: false,
 					label: 'render-farm',
 					dirExists: anyDir,
+					newId: fakeNewId,
 				})
 				// Nothing to prefix, so nothing is submitted for the root pane...
 				expect(calls.submits).toEqual([])
@@ -1169,6 +1238,7 @@ describe('spec:cyber-mux/template', () => {
 				workspace: null,
 				rootEnvHonored: true,
 				dirExists: anyDir,
+				newId: fakeNewId,
 			})
 			expect(manifest.workspace).toBeNull()
 		})

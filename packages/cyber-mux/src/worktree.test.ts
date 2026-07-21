@@ -359,6 +359,39 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls.at(-1)).toEqual(['-C', '/repo', 'worktree', 'remove', realExistingDir, '--force'])
 		})
 
+		it('reads existence through the INJECTED fs seam, so a purely-fictional path can be driven', () => {
+			// The seam: existence is asked of the injected WorktreeFs, never `node:fs` — so a fake disk
+			// stands in and no real directory is needed to exercise the exists→remove path.
+			const calls: string[][] = []
+			const exec: Exec = (_cmd, args) => {
+				calls.push(args)
+				return ''
+			}
+			const fs = { exists: (p: string) => p === '/fake/wt', realpath: (p: string) => p }
+			removeWorktreeSafely(exec, '/fake/wt', { primaryRoot: '/repo', fs })
+			expect(calls.at(-1)).toEqual(['-C', '/repo', 'worktree', 'remove', '/fake/wt', '--force'])
+
+			// And when the fake disk reports the checkout gone, git is never called — releaseBinding runs.
+			let released = false
+			const gitCalls: string[][] = []
+			removeWorktreeSafely(
+				(_cmd, args) => {
+					gitCalls.push(args)
+					return ''
+				},
+				'/fake/wt',
+				{
+					primaryRoot: '/repo',
+					fs: { exists: () => false, realpath: (p: string) => p },
+					releaseBinding: () => {
+						released = true
+					},
+				},
+			)
+			expect(released).toBe(true)
+			expect(gitCalls).toEqual([])
+		})
+
 		it('worktree remove --force discards uncommitted changes without the dirty check', () => {
 			const calls: string[][] = []
 			const exec: Exec = (_cmd, args) => {

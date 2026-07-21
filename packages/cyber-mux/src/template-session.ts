@@ -1,8 +1,8 @@
-import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { envFallback } from './env-fallback.ts'
 import type { Exec } from './exec.ts'
 import type { MuxAdapter, MuxPlacement, MuxTarget, OpenedPane } from './mux.ts'
+import type { NewId } from './new-id.ts'
 import {
 	collectPanes,
 	firstPane,
@@ -182,6 +182,9 @@ export interface OpenTemplateOptions {
 	at?: MuxPlacement | undefined
 	label?: string | undefined
 	dirExists: (path: string) => boolean
+	/** Injected id source for the opaque tab-grouping id a `tabs` template mints — the seam that keeps
+	 * this a pure function rather than a caller of `node:crypto`. Unused by a single-region template. */
+	newId: NewId
 	/** Passed to the region's own `open` for a `pane:*` placement; see `MuxOpenOptions.from`. */
 	from?: MuxTarget | undefined
 }
@@ -366,7 +369,7 @@ function openTabsTemplate(
 	// The machine's carrier for the grouping, and the reason the label never has to be parsed back:
 	// an opaque id no one reads FOR its content. A backend with a real workspace tier ignores it, that
 	// tier already being the group.
-	const group = randomUUID()
+	const group = opts.newId()
 	const workspaceLabel = workspaceLabelOf(template, opts.label)
 	const ctx: WalkContext = {
 		exec,
@@ -459,6 +462,9 @@ export interface ApplyTemplateOptions {
 	 */
 	rootEnvHonored: boolean
 	dirExists: (path: string) => boolean
+	/** Injected id source for the opaque tab-grouping id a `tabs` template mints; see
+	 * `OpenTemplateOptions.newId`. Unused by a single-region apply. */
+	newId: NewId
 	/**
 	 * The label the region was opened under — the workspace's name, which a tabs template carries into
 	 * each later tab's label on a backend with no workspace tier. Only the caller that opened the region
@@ -548,7 +554,7 @@ function applyTabsToRegion(
 	// cannot change what the template means. Nothing has to be threaded through the worktree verbs to
 	// make this work — `opts.root` is the region they opened, and it carries its own tab, which is all
 	// grouping an already-open space needs.
-	return walkTabs(ctx, tabs, trees, workspaceLabelOf(template, opts.label), randomUUID(), () => ({
+	return walkTabs(ctx, tabs, trees, workspaceLabelOf(template, opts.label), opts.newId(), () => ({
 		// The region that already exists. Where it actually is, not where the template asked for.
 		root: opts.root,
 		rootDir: opts.cwd,

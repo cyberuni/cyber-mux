@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Exec } from './exec.ts'
-import { weztermMuxAdapter } from './mux.wezterm.ts'
+import { createWeztermAdapter, weztermMuxAdapter } from './mux.wezterm.ts'
 
 /**
  * Keyed by `args[1]`, not `args[0]` — every wezterm call is `wezterm cli <subcommand> ...`, so
@@ -77,6 +77,17 @@ describe('spec:cyber-mux/mux', () => {
 			// the workspace name IS what open() picked — known without a list lookup, unlike the tab.
 			expect(target.workspace).toBe(spawnCall[4])
 			expect(target.tab).toBe('2')
+		})
+
+		it('open() at workspace mints the workspace name from the INJECTED newId, not node:crypto', () => {
+			// The seam: createWeztermAdapter takes its id source, so a test drives a deterministic name
+			// instead of a UUID. The minted name is `cyber-mux-<first 8 of newId()>`.
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { spawn: '9', list: LIST_ONE })
+			const adapter = createWeztermAdapter({ newId: () => 'abcdef1234' })
+			const target = adapter.open(exec, { cwd: '/unit', at: 'workspace' })
+			expect(target.workspace).toBe('cyber-mux-abcdef12')
+			expect(calls[0]).toEqual(['cli', 'spawn', '--new-window', '--workspace', 'cyber-mux-abcdef12', '--cwd', '/unit'])
 		})
 
 		it('open() at workspace uses --label as the workspace name when given, rather than minting one', () => {

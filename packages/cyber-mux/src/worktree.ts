@@ -4,6 +4,26 @@ import type { Exec } from './exec.ts'
 
 /** Generic worktree seam — no host-specific concepts. */
 
+/**
+ * The filesystem half of the worktree adapter — the one seam here that is NOT `Exec`, exactly as
+ * `TemplateStore` is for templates. `normalizeWorktreePath` and the remove gate reach for the disk,
+ * and reading it through bare `node:fs` would make those the one worktree path a consumer cannot
+ * drive hermetically. Injected (defaulting to `realWorktreeFs`), so #339's callers are unchanged and
+ * a test can stand in a fake disk.
+ */
+export interface WorktreeFs {
+	/** Whether a path exists on disk — the apply-time check behind the remove gate. */
+	exists(path: string): boolean
+	/** The path with symlinks resolved, native-cased — the normalization every matched path goes
+	 * through. Throws for a path not on disk, exactly as `realpathSync.native` does; callers fall back. */
+	realpath(path: string): string
+}
+
+export const realWorktreeFs: WorktreeFs = {
+	exists: existsSync,
+	realpath: (path) => realpathSync.native(path),
+}
+
 interface WorktreeAddOptions {
 	/** The primary checkout's root — the repo `git worktree add` runs against. */
 	primaryRoot: string
@@ -113,9 +133,9 @@ export function resolvePrimaryRoot(exec: Exec): string {
  * same way (a symlinked repo, or macOS's `/tmp` → `/private/tmp`, otherwise silently fails to
  * match). Falls back to `resolve` for a path that isn't on disk, where there is no link to follow.
  */
-export function normalizeWorktreePath(path: string): string {
+export function normalizeWorktreePath(path: string, fs: WorktreeFs = realWorktreeFs): string {
 	try {
-		return realpathSync.native(path)
+		return fs.realpath(path)
 	} catch {
 		return resolve(path)
 	}
@@ -128,10 +148,14 @@ export function normalizeWorktreePath(path: string): string {
  * same worktree. The one fact git cannot answer — which workspace a worktree is open in — is joined
  * in by the caller.
  */
-export function listWorktreesFromGit(exec: Exec, primaryRoot: string): WorktreeEntry[] {
+export function listWorktreesFromGit(
+	exec: Exec,
+	primaryRoot: string,
+	fs: WorktreeFs = realWorktreeFs,
+): WorktreeEntry[] {
 	const out = exec('git', ['-C', primaryRoot, 'worktree', 'list', '--porcelain'])
 	if (!out) return []
-	const normalizedPrimary = normalizeWorktreePath(primaryRoot)
+	const normalizedPrimary = normalizeWorktreePath(primaryRoot, fs)
 	// Porcelain emits one blank-line-separated record per worktree, each opening with `worktree <path>`.
 	const entries = out
 		.split('\n\n')
@@ -139,7 +163,7 @@ export function listWorktreesFromGit(exec: Exec, primaryRoot: string): WorktreeE
 		.filter((record) => record.startsWith('worktree '))
 		.map((record): WorktreeEntry => {
 			const lines = record.split('\n')
-			const root = normalizeWorktreePath(lines[0]!.slice('worktree '.length))
+			const root = normalizeWorktreePath(lines[0]!.slice('worktree '.length), fs)
 			// `branch refs/heads/<name>`; absent entirely when detached or bare.
 			const branchLine = lines.find((line) => line.startsWith('branch '))
 			const branch = branchLine?.slice('branch '.length).replace(/^refs\/heads\//, '')
@@ -288,10 +312,16 @@ function isDirty(exec: Exec, worktreeRoot: string): boolean {
 export function removeWorktreeSafely(
 	exec: Exec,
 	path: string,
-	opts: { primaryRoot: string; force?: boolean | undefined; releaseBinding?: (() => void) | undefined },
+	opts: {
+		primaryRoot: string
+		force?: boolean | undefined
+		releaseBinding?: (() => void) | undefined
+		fs?: WorktreeFs | undefined
+	},
 ): void {
+	const fs = opts.fs ?? realWorktreeFs
 	assertDistinctFromPrimary(path, opts.primaryRoot)
-	if (!existsSync(path)) {
+	if (!fs.exists(path)) {
 		// A checkout already gone but still bound is exactly the orphan this releases; git has nothing
 		// left to remove, so the "no git removal command" promise still holds.
 		opts.releaseBinding?.()

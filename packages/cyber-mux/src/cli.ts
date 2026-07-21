@@ -6,6 +6,7 @@ import { AT_OPTION, ENV_OPTION, FORMAT_OPTION, LABEL_OPTION } from './cli-option
 import { type Exec, realExec } from './exec.ts'
 import type { LivePane, MuxAdapter, MuxPlacement, MuxTarget } from './mux.ts'
 import { currentPane, probeMultiplexer } from './mux-probe.ts'
+import { realNewId } from './new-id.ts'
 import { type HelpEntry, output, printFields, printHelp, printTable, tildify } from './output.ts'
 import {
 	collectPanes,
@@ -738,6 +739,7 @@ function openCommand(deps: Deps): Command {
 									at: opts.at ?? 'workspace',
 									label: opts.label ?? template.name,
 									dirExists: deps.store.dirExists,
+									newId: realNewId,
 									from: callerPane(a, deps.env),
 								}),
 							)
@@ -975,6 +977,7 @@ function worktreeAddCommand(deps: Deps): Command {
 									// could carry the root pane's env; the walk falls back to a prefix when not.
 									rootEnvHonored: opened.envHonored,
 									dirExists: deps.store.dirExists,
+									newId: realNewId,
 								}),
 								extra,
 							)
