@@ -1,5 +1,148 @@
 # cyber-mux
 
+## 0.3.0
+
+### Minor Changes
+
+- cd74775: Expose a library API. `cyber-mux` now publishes real entry points beside the CLI:
+
+  - `cyber-mux` — the multiplexer core: `resolveMux`, which returns a `MuxSession` with `Exec` bound
+    (`mux.open(opts)`, no runner threaded per call), over the raw exec-injected `MuxAdapter` contract
+    and its types reached via `resolveMuxAdapter`; the mux probe (`probeMultiplexer`, `currentPane`);
+    `callerPane`; the tmux/herdr/wezterm adapters; `nudge`; and the `Exec`/`NewId` seams (each a type
+    plus its real implementation).
+  - `cyber-mux/worktree` — the git-worktree adapter (`resolvePrimaryRoot`, `assertDistinctFromPrimary`,
+    `gitWorktreeAdapter`, `listWorktreesFromGit`, `removeWorktreeSafely`, and the `WorktreeFs` seam),
+    plus `worktreeApi(deps?)` — the same helpers with `Exec`/`WorktreeFs` bound.
+  - `cyber-mux/template` — template resolution and the `TemplateStore` seam, plus `templateApi(env, deps?)`
+    — resolution with `env`/`Exec`/`TemplateStore` bound.
+
+  Every entry ships type declarations, and the core is pure: it takes its effects (`Exec`, `NewId`,
+  `WorktreeFs`, `TemplateStore`) as parameters, with the real implementations exported as separate
+  named values, so a host binds them once and tests drive fakes. `probeMultiplexer` gains an
+  `envPrefix` option so a host embedding cyber-mux under its own namespace adopts the env fast-path
+  without forking detection. The CLI bin is unchanged.
+
+  The package also ships its TypeScript source (tests excluded) alongside declaration maps, so
+  go-to-definition on any exported symbol lands in real source rather than a generated `.d.ts`.
+
+  Pre-1.0, depend on this with a caret range (`^0.2.0`); a 0.x minor may still carry breaking changes.
+
+- 90daa48: `cyber-mux template edit [<name>]` shows a template's panes and fills them in — the other half of
+  `template save`, which captures geometry but lands with no `command` on any pane.
+
+  The bare form **lists and mutates nothing**: a table of every pane with its position, label, dir and
+  current value, plus `help[N]` suggestions for what to do next. Its `pane` column is verbatim what
+  `--set` takes, so acting on the listing is a paste rather than a derivation. Panes are addressed by
+  ordinal (`3`, or `2.3` for tab 2 pane 3) and never by label, since two panes may share a label by
+  design. A `position` (`top-left`, `right`) is shown because apply order is a tree walk rather than a
+  reading order — pane 2 of a 2x2 is the pane below pane 1, not the one beside it.
+
+  `--set <pane>=<value>` writes without a terminal, is repeatable, splits on the first `=` only so a
+  value may contain one, and clears the field when the value is empty. Re-running the same `--set` is a
+  no-op that exits 0 and leaves the file's mtime alone, so a checked-in template is never dirtied by an
+  edit that changes nothing. A batch naming one pane that does not exist writes none of them, and the
+  error lists every identifier that would have worked.
+
+  `--interactive` asks one question per pane instead, in apply order, with the current value pre-filled
+  into the editable line: Enter keeps, `-` clears, `'-'` is a literal dash, Ctrl-D abandons the edit and
+  leaves the file untouched. It refuses when stdin is not a tty or when `--format json|agent` was asked
+  for, and points at `--set` instead.
+
+  `--field command|label` picks what both modes write; `--dry-run` prints the result instead of writing
+  it. A template's spelling survives either way — one written with the flat `panes`/`arrange` sugar
+  comes back out flat rather than re-spelled as a tree.
+
+- ff91915: `worktree list` now answers whether a worktree is still **needed**, not only whether it is occupied.
+
+  Entries carry two new booleans — `merged` (the branch's tip is an ancestor of the repo's default
+  branch) and `dirty` (the checkout has uncommitted changes) — read from git on every backend, exactly
+  as `linked` and `prunable` are. The default branch is resolved from `origin/HEAD`, falling back to the
+  primary checkout's branch; `main` is never hardcoded.
+
+  The table compresses those two, plus the workspace binding, into a single `(removable)` marker on `BRANCH`
+  — merged **and** clean **and** unoccupied, i.e. safe to remove. It rides on `BRANCH` because the
+  branch is what carries the work that landed, and it is mutually exclusive with `(*)`, so no row ever
+  shows two markers. `--format json` is unmarked as always: consumers read the raw `merged` and `dirty`
+  booleans and compose their own policy.
+
+  A squash or rebase merge rewrites the commits, so such a branch reads `merged: false` and goes
+  unmarked — the signal errs toward "still needed" deliberately. Any signal git cannot determine (a
+  detached HEAD, a `prunable` entry, no default branch) is an **absent** field and an unmarked row, never
+  a guess and never a failure.
+
+  This reports only. Removal gating and pruning are unchanged: nothing consults `(removable)` before deleting
+  anything.
+
+- 6a36ad6: Add `worktree prune` to remove every disposable worktree in one call — the same gate `worktree list` marks `(removable)` with. The bare form previews the candidates; pass `--force` to actually remove them.
+- 20da54f: Add a **Zellij** backend — the fourth multiplexer cyber-mux drives, after tmux, herdr, and WezTerm.
+
+  Detected via `$ZELLIJ` (fast-path override `CYBER_MUX=zellij`), with self-identity from
+  `$ZELLIJ_PANE_ID`. Driven through `zellij action …` and gated on **Zellij ≥ 0.44.1**, the release
+  that added per-pane CLI addressing (`--pane-id` across the action verbs, `focus-pane-id`,
+  `list-panes --json`, and ids returned from `new-pane`/`new-tab`) — the stable per-pane handle the
+  seam requires.
+
+  Capability shape: it names panes (`new-pane --name` / `rename-pane`) and reports the focused pane
+  (`is_focused`), unlike WezTerm. A `workspace` placement opens a new tab in the ambient session —
+  Zellij pane ids are session-scoped and the seam's pane target carries no session — but the occupied
+  workspace is still reported as the session name, unlike tmux. Tiled splits are always even (no
+  `ratio`), env rides in as a command prefix (no `--env` flag), and pane-geometry introspection
+  (`template save`) is not yet supported.
+
+### Patch Changes
+
+- c4f2293: `template save` now explains the command limit in terms of **portability** rather than availability,
+  and its help text changes accordingly.
+
+  The old wording — "no multiplexer can report the command a pane was launched with" — was true as
+  literally phrased and misleading in effect. Probed against live binaries: herdr 0.7.4's `pane
+process-info` returns full argv for a pane's whole foreground tree, and `/proc` reaches the same from
+  a pid on any backend, so "there is nothing to be had here" was false.
+
+  The real reason a capture writes no `command` is that what a backend reports is the **resolved**
+  command line, not the one that was typed: `nr web dev` comes back as
+  `node /run/user/1000/fnm_multishells/4223_1784479278417/bin/nr web dev`, a path carrying a uid, a pid
+  and a timestamp that is dead on the next machine. A template is meant to be checked in and run
+  elsewhere, and applying one **submits** whatever `command` says — so a wrong one fails by executing
+  something. Absent beats wrong.
+
+  Behavior is unchanged: a capture still records no `command` on any pane. `template save --help` now
+  also names the two `template edit` calls that fill them in.
+
+- 1fa102d: Place every tab of a multi-tab template in the workspace the apply opened. Previously only the first tab landed there — each later tab was created beside the pane the command was run from, because a `tab` placement with no anchor is resolved against the workspace the user is looking at. `SessionOpenOptions` gains `within`, the workspace a `tab` placement opens inside, honored by the herdr and WezTerm backends and ignored by tmux, which has no workspace tier.
+- 9af5af2: `CYBER_MUX=screen` is now **rejected with a named error** instead of the generic "run inside a
+  multiplexer" throw. GNU Screen is detected — an override pinning it, or a real `screen` ancestor, is
+  reported truthfully — but it is **not a drivable backend**, and pinning it now says so plainly.
+
+  The `CYBER_MUX` contract used to name `screen` as an accepted override value alongside
+  `tmux`/`herdr`/`wezterm`, but no adapter ever stood behind it, so setting `CYBER_MUX=screen` produced
+  `cyber-mux requires a session backend — run inside tmux, herdr, or wezterm` — a lie, since the caller
+  _had_ declared a real multiplexer. The value looked supported and was not.
+
+  Probed live (GNU Screen 5.0.2): the blocker is identity, which is load-bearing across the whole
+  contract (`SessionTarget.id`, `currentPane`, `LivePane.id`). Screen addresses its split **regions**
+  positionally — no per-region id to send to or read from — and leaves `$WINDOW` **unset** in windows
+  opened via `screen -X`, exactly the panes a driver creates, so a pane cannot even self-identify. Every
+  supported backend ships a stable per-pane id (`$TMUX_PANE` / `$HERDR_PANE_ID` / `$WEZTERM_PANE`);
+  screen has no equivalent for driven panes.
+
+  Rather than ship a half-faithful adapter with unstable pane identity, `cyber-mux` keeps `screen`
+  recognized-but-rejected: the value is still honored as an override (so it is never silently ignored
+  and fallen through to discovery) and now fails with the reason. Detection of a real `screen` session
+  is unchanged; only the drive step rejects it. Full probe and decision: the `45-screen-adapter` ADR.
+
+- 9c06f45: `worktree list` drops the LINKED column from the table. The primary checkout is marked `(*)` after
+  its branch instead, so the one bit that column carried costs no width. `--format json` is unchanged:
+  every entry still carries the `linked` boolean.
+- 68c28a1: `worktree list` marks a prunable worktree — one whose checkout no longer exists on disk — with
+  `(gone)` after its `root` in the table. It rides on `root` because the path is the thing that
+  vanished, and `(gone)` is git's own word for it (`branch -vv` prints the same). `--format json` is
+  unchanged: entries still carry the `prunable` boolean.
+- cc3c5d8: `worktree list` shortens a `root` under your home directory to `~/…` in the table. The match is on a
+  path boundary, so `/home/annex` is untouched by a home of `/home/ann`. `--format json` is unchanged:
+  consumers still get the absolute path.
+
 ## 0.1.0
 
 ### Minor Changes
