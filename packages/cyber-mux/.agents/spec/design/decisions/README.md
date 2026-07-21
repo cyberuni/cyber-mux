@@ -218,3 +218,31 @@ Decisions (`59-suite-format-repair` — closing the `56-spec-corpus-drift` suite
     internal-call/evaluative shapes the audit named, then confirmed against `sdd:suite-format-governance`
     by hand. `check-suite`'s scenario-map binding check caught the one title rename that needed a
     README update. `pnpm verify` green after.
+
+Decisions (`61-plan-brief-keys` — mission plan briefs missing discovery/dispatch keys):
+
+- **new plan briefs carry `cr`/`source`/`project`/`status`; existing briefs are not rewritten** —
+  DECIDED: pin the required frontmatter shape for *new* `.agents/plans/<cr-ref>.plan.md` briefs in
+  a local contract (`.agents/plans/README.md`), rather than editing history. Confirmed the failure
+  live against the real `discover-plans` engine (`sdd:discover-plans`'s
+  `scripts/discover-plans.mts --root . --format json`), not by hand comparison: several completed
+  missions (e.g. `11-layout-walk-ceiling`, `14-template-tabs`, `21-bind-pane-scenarios`,
+  `47-wezterm-adapter`) carry no `status` key at all, so the engine reports them `active` — its
+  documented default for "unset" — identical to a genuinely fresh, undispatched mission, even though
+  each brief's own `## NEXT` already says the work landed. A consumer scanning by `cr`, `source`, or
+  `project` sees nothing to match on for the same briefs. The shared upstream skills
+  (`sdd:start-mission`, `sdd:pause-mission`, `sdd:resume-mission`) only scaffold a minimal
+  `todos` + `## NEXT` template and carry no per-project override slot for the plan-brief shape (unlike
+  `spec-format-governance` for spec nodes), so the fix is a local convention this repo's conductors
+  follow when scaffolding a brief, not a change to those shared skills — no Council escalation
+  needed, since nothing upstream has to change.
+- **one finished-state word: `implemented`, not `done`** — DECIDED: existing briefs split roughly
+  evenly between `status: done` (`10-split-options-contract`, `20-tmux-split-option-scope`,
+  `5-layout-templates`, `rename-layout-to-template`) and `status: implemented`
+  (`40-layout-suggestions-on-stdout`, `42-worktree-failed-backend-text`, `56-spec-corpus-drift`,
+  `58-split-oversized-nodes`, `63-worktree-list-table-markers`) for the same "the mission's work has
+  landed" state — so a consumer matching on either spelling misses the other half. `implemented` was
+  chosen because it is already this project's `spec.md` lifecycle word for "landed" (`draft \|
+  approved \| implemented \| deprecated`, `sdd:lifecycle-governance`) — one word for "done" across
+  the corpus instead of two. `done` is retired going forward only; historical briefs keep their
+  original spelling.
