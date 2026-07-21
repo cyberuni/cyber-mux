@@ -1,3 +1,5 @@
+/// <reference types="node" />
+
 import { statSync } from 'node:fs'
 // Imported BY PACKAGE NAME, so these resolve through package.json `exports` to the built `dist` —
 // exactly what a downstream consumer gets. Testing against `src` would not catch a broken exports
