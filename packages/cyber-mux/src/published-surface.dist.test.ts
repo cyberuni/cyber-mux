@@ -89,6 +89,7 @@ describe('spec:cyber-mux/library — published surface', () => {
 				'listWorktreesFromGit',
 				'nodeWorktreeFs',
 				'normalizeWorktreePath',
+				'pruneWorktrees',
 				'removeWorktreeSafely',
 				'resolvePrimaryRoot',
 				'resolveWorktreePath',
