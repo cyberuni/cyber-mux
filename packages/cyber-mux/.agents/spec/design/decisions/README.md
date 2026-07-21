@@ -186,3 +186,35 @@ Decisions (`pane-command-probe` — what a backend can say about a pane's comman
   concurrent panes, which is this project's normal case), it is written on shell exit so a live pane's
   most recent command is frequently absent, and it routinely contains secrets typed inline. `save`
   writes a file the user is expected to commit; scraping history into it would exfiltrate by default.
+
+Decisions (`59-suite-format-repair` — closing the `56-spec-corpus-drift` suite-format backlog item):
+
+- **the three flagged classes are FORM-only rewrites, never a behavioral change** — DECIDED: repaired
+  in place against the frozen suites, no scenario dropped or narrowed in meaning.
+  - `template/apply/apply.feature` named the internal `open`/`submit` adapter calls directly
+    ("`open` is called with no launch", "`submit` is called…", "no submit is issued for it") across 5
+    `Then`/`And` steps. Rewritten to the observable trace those calls actually leave — a pane opened
+    with no command yet running, or a pane receiving (or never receiving) its command text — per
+    suite-format's "never assert internal state or a function name" rule.
+  - `template/apply/apply.feature` carried 4 evaluative `Then it is valid` steps (schema-validation
+    scenarios for shared pane/tab labels). Rewritten to `Then it exits 0`, the artifact `template
+    validate` already produces and the same shape the file's own `validate exits 0 on a valid
+    template` scenario already uses — no new vocabulary introduced.
+  - `mux/lookup/lookup.feature` carried two 3-way disjunctive `Given`s (tmux not-focused: not-active
+    OR window-not-current OR no-attached-client; an unanswerable focus query: no primitive OR
+    unresolvable pane OR erroring query). Both are genuine convergence shapes — three edges the CFG
+    reconverges to one outcome — so both became `Scenario Outline`s with one condition per `Examples`
+    row instead of an OR-chain in one `Given`, matching the "genuinely uniform enumerated set" carve-out
+    suite-format reserves `Scenario Outline` for.
+  - Scenario **titles** were preserved everywhere except the tmux not-focused case, whose title named
+    only one of the three conditions ("no attached client is viewing it"); it became
+    `tmux reports a pane not focused when <condition>` to cover all three rows, and the sibling
+    `README.md` scenario-map row was updated to match (map binding is by exact title text — `checkSuite`
+    would otherwise report every renamed scenario as unmapped).
+  - Verified via the suite-format `check-suite` engine (`sdd`'s
+    `plugins/sdd/skills/spec-gate/scripts/check-suite.mts`, both `--files` per-suite and `--root
+    .agents/spec` corpus-wide) — clean before and after, since the mechanical linter does not catch
+    these three classes; they were located by grepping each suite directly for the disjunction/
+    internal-call/evaluative shapes the audit named, then confirmed against `sdd:suite-format-governance`
+    by hand. `check-suite`'s scenario-map binding check caught the one title rename that needed a
+    README update. `pnpm verify` green after.
