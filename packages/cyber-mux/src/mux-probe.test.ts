@@ -91,6 +91,14 @@ describe('spec:cyber-mux/mux', () => {
 			expect(probeMultiplexer(exec, {})).toEqual({ mux: 'screen', via: 'ancestry' })
 		})
 
+		it('recognizes the $CYBER_MUX=screen override — recognition is not support', () => {
+			// screen stays a KNOWN value so pinning it is HONORED-then-honestly-rejected (by
+			// resolveMuxAdapter), never silently ignored and fallen through to discovery. The probe's
+			// job ends at recognition; drivability is resolveMuxAdapter's call (issue #45).
+			const exec = psChain({})
+			expect(probeMultiplexer(exec, { CYBER_MUX: 'screen' })).toEqual({ mux: 'screen', via: 'env' })
+		})
+
 		it('does not stop at the immediate parent shell — walks past it to the real mux ancestor', () => {
 			const pid = process.pid
 			const exec = psChain({

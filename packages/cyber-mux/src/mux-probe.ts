@@ -18,7 +18,8 @@ export interface ProbeOptions {
 	discover?: boolean | undefined
 	/**
 	 * The environment-variable namespace the fast-path reads, without the trailing `_PANE`. Defaults to
-	 * `CYBER_MUX`, so `<prefix>` names the mux (`tmux|herdr|screen|none`) and `<prefix>_PANE` the pane.
+	 * `CYBER_MUX`, so `<prefix>` names the mux (`tmux|herdr|wezterm|screen|none`) and `<prefix>_PANE`
+	 * the pane. `screen` is recognized here but is not a drivable backend — see `resolveMuxAdapter`.
 	 * A host embedding cyber-mux under its OWN namespace passes its prefix here and adopts the same
 	 * fast-path without forking detection.
 	 */
@@ -70,9 +71,11 @@ export function currentPane(env: NodeJS.ProcessEnv): { mux: PaneMux; pane: strin
 /**
  * Two-mode multiplexer detection.
  *
- * Fast-path: `$CYBER_MUX` (tmux | herdr | screen | none) is trusted outright — this also serves as
- * an OVERRIDE (`=none` forces no-mux even inside a real multiplexer). `$CYBER_MUX_PANE` carries the
- * pane id alongside it.
+ * Fast-path: `$CYBER_MUX` (tmux | herdr | wezterm | screen | none) is trusted outright — this also
+ * serves as an OVERRIDE (`=none` forces no-mux even inside a real multiplexer). `$CYBER_MUX_PANE`
+ * carries the pane id alongside it. Detection RECOGNIZES `screen` (so an override pinning it, or a
+ * real screen ancestor, is reported truthfully rather than silently ignored), but `screen` is not a
+ * drivable backend — `resolveMuxAdapter` rejects it with a reason. Recognition is not support.
  *
  * Discovery (else): walk the process ancestry from `$$` via `ps -o ppid=,comm= -p <pid>`, since the
  * tool's own shell may not be the human's pane. `$TMUX`/`$HERDR_ENV` are NOT trusted alone — they

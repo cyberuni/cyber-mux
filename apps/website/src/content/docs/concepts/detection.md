@@ -14,6 +14,15 @@ trusted outright. `CYBER_MUX_PANE` carries the pane id alongside it.
 This also acts as an **override**: `CYBER_MUX=none` forces no-mux behavior even inside a real
 multiplexer.
 
+:::caution[`screen` is detected, but not drivable]
+`screen` is a **recognized** value — pinning it, or running under a real `screen` session, is
+reported truthfully rather than silently ignored — but `cyber-mux` **cannot drive GNU Screen**, so it
+rejects the value with a named error instead of returning a backend. Screen addresses its split
+regions positionally (no per-pane id) and leaves `$WINDOW` unset in panes opened via `screen -X`, so
+a pane has no stable identity to send to, read from, or self-identify by — the affordance every driven
+backend depends on. Use `tmux`, `herdr`, or `wezterm`.
+:::
+
 ```bash
 export CYBER_MUX=tmux CYBER_MUX_PANE=%3
 ```

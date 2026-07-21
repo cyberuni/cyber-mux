@@ -33,6 +33,26 @@ describe('spec:cyber-mux/mux', () => {
 			expect(() => resolveMuxAdapter({}, noAncestry)).toThrow(/tmux.*herdr.*wezterm|wezterm.*herdr.*tmux/)
 		})
 
+		it('a detected screen is rejected by name, not with the generic no-multiplexer error', () => {
+			// screen is a KNOWN mux the probe recognizes — via the fast-path override here, and via
+			// ancestry for a real screen session — but not a drivable backend (issue #45). The rejection
+			// must NAME screen and state the reason, so a caller who pinned CYBER_MUX=screen is told the
+			// truth (a real multiplexer cyber-mux cannot drive) rather than the lie "run inside one".
+			expect(() => resolveMuxAdapter({ CYBER_MUX: 'screen' }, noAncestry)).toThrow(/screen/i)
+			expect(() => resolveMuxAdapter({ CYBER_MUX: 'screen' }, noAncestry)).toThrow(
+				/cannot drive|no per-pane id|identity/i,
+			)
+		})
+
+		it('rejects a screen ancestor by name too, not only the pinned override', () => {
+			const psChain: Exec = (cmd, args) => {
+				if (cmd !== 'ps') return null
+				const pid = Number.parseInt(args[args.length - 1] ?? '', 10)
+				return pid === process.pid ? '1 screen' : null
+			}
+			expect(() => resolveMuxAdapter({}, psChain)).toThrow(/screen/i)
+		})
+
 		it('an ancestry-verified mux wins over a stale env hint', () => {
 			const psChain: Exec = (cmd, args) => {
 				if (cmd !== 'ps') return null

@@ -26,6 +26,20 @@ Feature: mux detection — which multiplexer, and which backend adapter
     # existed. Widening the Given/Then to name all three keeps the SAME coverage — a caller with none
     # of the three still throws — rather than changing what is asserted.
 
+  Scenario: a detected screen is rejected by name, not with the generic no-backend error
+    Given a caller whose multiplexer is detected as screen — a $CYBER_MUX=screen override, or a screen ancestor
+    When cyber-mux open runs
+    Then it throws an error naming screen and the reason cyber-mux cannot drive it
+    # screen is a KNOWN, DETECTED mux but NOT a drivable backend (issue #45). Empirically (screen
+    # 5.0.2): its split regions are addressed positionally — no per-pane id — and $WINDOW is left
+    # unset in panes opened via `screen -X`, so a driver-created pane has no stable identity to send
+    # to, read from, self-identify by, or enumerate — the exact affordance SessionTarget.id /
+    # currentPane / LivePane.id are load-bearing on, and the one wezterm had ($WEZTERM_PANE) and
+    # screen lacks. Recognizing-then-rejecting the value (rather than dropping it from the known set
+    # and silently falling through to discovery) tells a caller who pinned CYBER_MUX=screen the truth
+    # immediately. This ADDS a rejection behavior for a value the generic scenario above never
+    # covered — screen is a detected multiplexer, not "none of the three" — narrowing nothing.
+
   # ── Multiplexer detection is two-mode ──
 
   Scenario: $CYBER_MUX is trusted outright as a fast-path
