@@ -527,7 +527,7 @@ function templateSaveCommand(deps: Deps): Command {
 						// member this run would not have called. A backend that cannot answer cannot be captured
 						// and there is nothing to degrade to, so this refuses NAMING the backend rather than
 						// guessing a tree.
-						const describeRegion = a.describeRegion
+						const describeRegion = a.regions?.describeRegion
 						if (!opts.workspace && !describeRegion) {
 							throw new CliError(
 								'backend-unsupported',
@@ -536,7 +536,7 @@ function templateSaveCommand(deps: Deps): Command {
 								1,
 							)
 						}
-						const describeWorkspace = a.describeWorkspace
+						const describeWorkspace = a.regions?.describeWorkspace
 						if (opts.workspace && !describeWorkspace) {
 							throw new CliError(
 								'backend-unsupported',
@@ -612,10 +612,11 @@ function templateSaveCommand(deps: Deps): Command {
  * re-states the caller's own `name` with `--workspace`, the flag that captures every tab.
  */
 function noteTabsLeftOut(deps: Deps, adapter: MuxAdapter, target: MuxTarget, name: string): HelpEntry | null {
-	if (!adapter.describeWorkspace) return null
+	const describeWorkspace = adapter.regions?.describeWorkspace
+	if (!describeWorkspace) return null
 	let tabs: number
 	try {
-		tabs = adapter.describeWorkspace(deps.exec, target).length
+		tabs = describeWorkspace(deps.exec, target).length
 	} catch {
 		return null
 	}

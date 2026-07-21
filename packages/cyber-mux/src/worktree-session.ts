@@ -11,7 +11,7 @@ import {
 
 /**
  * Worktrees × sessions — the routing policy, and the only module that knows both halves. `worktree.ts`
- * stays a pure git adapter that owes nothing to the session seam; `session.ts` stays a pure mux seam
+ * stays a pure git adapter that owes nothing to the session seam; `mux.ts` stays a pure mux seam
  * that owes nothing to git. Deciding between them is a third concern, and it lives here.
  */
 

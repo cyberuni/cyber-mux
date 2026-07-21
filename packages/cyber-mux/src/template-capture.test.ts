@@ -137,7 +137,7 @@ describe('spec:cyber-mux/template', () => {
 			// one even if it wanted to. Driving each adapter's real describeRegion is what proves that —
 			// both are fed a region whose panes are running commands, and neither can say so.
 			const tmuxCalls: string[][] = []
-			const tmuxPanes = tmuxMuxAdapter.describeRegion!(
+			const tmuxPanes = tmuxMuxAdapter.regions!.describeRegion(
 				(_c, args) => {
 					tmuxCalls.push(args)
 					// Every pane is running `claude`, and tmux reports it — as pane_current_command, which the
@@ -146,7 +146,7 @@ describe('spec:cyber-mux/template', () => {
 				},
 				{ id: '%0' },
 			)
-			const herdrPanes = herdrMuxAdapter.describeRegion!(
+			const herdrPanes = herdrMuxAdapter.regions!.describeRegion(
 				(_c, args) => {
 					if (args[1] === 'layout') {
 						return JSON.stringify({
@@ -188,7 +188,7 @@ describe('spec:cyber-mux/template', () => {
 			// The design of the seam. Both backends CAN describe a region and both describe it in a
 			// structure the other cannot speak, so neither structure is portable — rects are.
 			const tmuxCalls: string[][] = []
-			const tmuxPanes = tmuxMuxAdapter.describeRegion!(
+			const tmuxPanes = tmuxMuxAdapter.regions!.describeRegion(
 				(_c, args) => {
 					tmuxCalls.push(args)
 					return '%0\t0\t0\t119\t50\t/repo\tzeta\tzeta\n%1\t120\t0\t80\t50\t/repo\tzeta\tzeta'
@@ -206,7 +206,7 @@ describe('spec:cyber-mux/template', () => {
 			// herdr's `splits[]` reports direction and ratio OUTRIGHT — and is ignored, because it is flat:
 			// its parent links exist only inside the `split_1_0` id convention, which herdr documents
 			// nowhere. Here it is fed a splits[] that contradicts the rects outright; the rects win.
-			const herdrPanes = herdrMuxAdapter.describeRegion!(
+			const herdrPanes = herdrMuxAdapter.regions!.describeRegion(
 				(_c, args) => {
 					if (args[1] === 'layout') {
 						return JSON.stringify({
@@ -300,7 +300,7 @@ describe('spec:cyber-mux/template', () => {
 			// EXACTLY ONE pane carries the host default here, so a broken host filter shows up as that
 			// pane's label rather than being absorbed anywhere: the assertion below pins `undefined` in
 			// first position, and the hostname is checked against the whole written template besides.
-			const panes = tmuxMuxAdapter.describeRegion!(
+			const panes = tmuxMuxAdapter.regions!.describeRegion(
 				() =>
 					[
 						'%0\t0\t0\t119\t34\t/repo\tzeta\tzeta',
@@ -382,7 +382,7 @@ describe('spec:cyber-mux/template', () => {
 				if (args[0] === 'list-panes') return '%0\t0\t0\t200\t50\t/repo\tzeta\tzeta'
 				return null
 			}
-			const tabs = tmuxMuxAdapter.describeWorkspace!(exec, { id: '%0' })
+			const tabs = tmuxMuxAdapter.regions!.describeWorkspace(exec, { id: '%0' })
 			// The workspace is identified by its GROUPING TAG — the opaque id, filtered server-side.
 			expect(calls.find((c) => c[0] === 'list-windows')).toEqual([
 				'list-windows',

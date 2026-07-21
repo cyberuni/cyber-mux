@@ -272,9 +272,8 @@ describe('spec:cyber-mux/mux', () => {
 
 		// Optional omissions, not stubs: no pane geometry to build a rect from, and no worktree
 		// subcommand in the CLI at all.
-		it('has no describeRegion, describeWorkspace, or worktree capability', () => {
-			expect(weztermMuxAdapter.describeRegion).toBeUndefined()
-			expect(weztermMuxAdapter.describeWorkspace).toBeUndefined()
+		it('has no regions (describeRegion/describeWorkspace) or worktree capability', () => {
+			expect(weztermMuxAdapter.regions).toBeUndefined()
 			expect(weztermMuxAdapter.worktree).toBeUndefined()
 		})
 	})

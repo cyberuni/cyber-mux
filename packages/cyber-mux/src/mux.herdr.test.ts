@@ -54,7 +54,7 @@ const PANE_IN_SPLIT = (paneId: string, ws: string) =>
  * it entirely. The herdr adapter must implement it, so bind it once here: if it ever goes missing
  * these tests fail loudly on that fact rather than silently skipping every case below.
  */
-const describeRegion = herdrMuxAdapter.describeRegion
+const describeRegion = herdrMuxAdapter.regions?.describeRegion
 if (!describeRegion) throw new Error('the herdr adapter must implement describeRegion')
 
 describe('spec:cyber-mux/mux', () => {
@@ -1150,7 +1150,7 @@ describe('spec:cyber-mux/mux', () => {
 			result: { layout: { panes: [{ pane_id: 'w3V:p9', rect: { x: 0, y: 0, width: 200, height: 50 } }] } },
 		})
 
-		const describeWorkspace = herdrMuxAdapter.describeWorkspace
+		const describeWorkspace = herdrMuxAdapter.regions?.describeWorkspace
 		if (!describeWorkspace) throw new Error('the herdr adapter must implement describeWorkspace')
 
 		it('describeWorkspace() resolves the caller’s workspace, enumerates its tabs, and reads each tab’s geometry', () => {

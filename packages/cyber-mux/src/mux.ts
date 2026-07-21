@@ -369,6 +369,71 @@ export interface WorktreeWorkspaceCapability {
 	releaseWorkspace(exec: Exec, workspace: string): void
 }
 
+/**
+ * The optional capability a backend implements when its pane listing reports pane GEOMETRY —
+ * position, not merely size. That one fact is what both members are derived from, and the single
+ * all-or-nothing precondition that bundles them into ONE object rather than two separate optional
+ * methods (mirroring `WorktreeWorkspaceCapability`): a backend either reports pane rects or it does
+ * not, and neither read is possible without them. tmux (`#{window_layout}`) and herdr (`pane
+ * layout`'s rects) both report position, so both ship this; WezTerm's `list` reports a pane's size
+ * but no position — nothing to build a `PaneRect` from — so it omits this entirely. A caller that
+ * finds this absent refuses (`template save` exits naming the backend) rather than guessing a tree.
+ */
+export interface RegionInspector {
+	/**
+	 * Report the geometry of the region (tab/window) the target pane sits in — every pane in it, with
+	 * its rectangle. `template save` runs this backwards into a template.
+	 *
+	 * **Rects, not a tree, and that is the whole design of this verb.** Both backends can answer
+	 * "what does this region look like", and both answer in a DIFFERENT structure: tmux hands back a
+	 * nested tree encoded in a string (`#{window_layout}` — `83ae,200x50,0,0{133x50,0,0[...],...}`,
+	 * where `{}` is a side-by-side split and `[]` a stacked one), while herdr hands back a FLAT
+	 * `splits[]` array whose parent/child links exist only inside an undocumented id convention
+	 * (`split_1_0` meaning "split 1, child of split 0" — inferred from the shape, never specified).
+	 * Neither structure survives being made portable: one needs a bespoke parser for a string format
+	 * tmux does not promise to keep, and the other needs cyber-mux to bet on herdr's id spelling.
+	 *
+	 * Rects are the fact both report exactly and neither can spell differently. The tree is then
+	 * *derived* from them by recursive guillotine cuts (`template-capture.ts`), which is sound because a
+	 * multiplexer region is built by splitting and therefore always guillotine-cuttable. That buys
+	 * two things: the tricky half — n-ary rows, ratios, ambiguous grids — is a PURE function testable
+	 * with no multiplexer at all, and a third backend owes this verb four numbers per pane rather
+	 * than a tree in its own dialect.
+	 *
+	 * **`label` is the author's, or absent.** Only a label someone deliberately set is reported —
+	 * herdr omits the field entirely until `pane rename`, and tmux defaults `pane_title` to the
+	 * HOSTNAME, so the tmux adapter drops a title equal to `#{host}` rather than exporting `zeta` as
+	 * every pane's name.
+	 *
+	 * Throws rather than returning empty when the region cannot be read: an export built from a
+	 * region the backend could not describe would be a confident lie about the user's screen.
+	 */
+	describeRegion(exec: Exec, target: MuxTarget): RegionPane[]
+	/**
+	 * Report every tab of the workspace the target pane sits in, each with its own region's geometry —
+	 * the workspace-wide read beside `describeRegion`'s one-region read. `template save --workspace` runs
+	 * this backwards into a `tabs` template, and it is the exact inverse of the tabs walk.
+	 *
+	 * `save`'s default subject is unaffected by this member: a bare `save` reads `describeRegion` and
+	 * captures one region.
+	 *
+	 * **The grouping is read from the tag, never off the label.** On a backend with a real workspace
+	 * tier the tier IS the answer (herdr: the caller's `workspace_id`, whose tabs and panes the backend
+	 * already stamps). On one without, the workspace is not a fact the backend holds at all, so the
+	 * read is *"which spaces carry this group id"* — the tag `MuxOpenOptions.workspaceGroup` wrote,
+	 * which is opaque and survives a rename. Parsing `<workspace> - <tab>` back apart is unsound
+	 * (`acme - beta - main` splits two ways, both legal), which is the whole reason the tag exists.
+	 *
+	 * **A space carrying no tag is a workspace of ONE.** That is the honest answer for a space nobody
+	 * grouped, not an error and not an empty list: the caller's own region is a workspace of one tab.
+	 *
+	 * Throws rather than returning empty when the workspace cannot be read, matching `describeRegion`:
+	 * a template built from a workspace the backend could not describe would be a confident lie about
+	 * the user's screen.
+	 */
+	describeWorkspace(exec: Exec, target: MuxTarget): WorkspaceTab[]
+}
+
 export interface MuxAdapter {
 	/** Backend name, e.g. "tmux" or "herdr". */
 	readonly name: string
@@ -387,7 +452,7 @@ export interface MuxAdapter {
 	 * offers no flag to change it, only `tab rename` afterwards. Every later tab takes `label` at birth
 	 * like any other space, so the whole cost of this member is one rename on herdr's first tab.
 	 *
-	 * REQUIRED rather than optional, unlike `describeRegion`/`worktree`. Those are optional because a
+	 * REQUIRED rather than optional, unlike `regions`/`worktree`. Those are optional because a
 	 * backend may genuinely lack the concept, leaving a caller something to do about it (refuse, or
 	 * fall back to plain git). Naming has neither property: every backend names every tier — the same
 	 * breadth `label` already relies on at birth (tmux a window name or a pane title, herdr a tab or a
@@ -518,64 +583,12 @@ export interface MuxAdapter {
 	 */
 	listPanes(exec: Exec): LivePane[]
 	/**
-	 * Report the geometry of the region (tab/window) the target pane sits in — every pane in it, with
-	 * its rectangle. `template save` runs this backwards into a template.
-	 *
-	 * **Optional, exactly as `worktree` is** — present on a backend that can describe its own region,
-	 * absent on one that cannot. Both real backends can, so both declare it; a caller that finds it
-	 * missing refuses (`template save` exits naming the backend) rather than degrading, because there is
-	 * nothing to degrade to: no geometry, no capture.
-	 *
-	 * **Rects, not a tree, and that is the whole design of this verb.** Both backends can answer
-	 * "what does this region look like", and both answer in a DIFFERENT structure: tmux hands back a
-	 * nested tree encoded in a string (`#{window_layout}` — `83ae,200x50,0,0{133x50,0,0[...],...}`,
-	 * where `{}` is a side-by-side split and `[]` a stacked one), while herdr hands back a FLAT
-	 * `splits[]` array whose parent/child links exist only inside an undocumented id convention
-	 * (`split_1_0` meaning "split 1, child of split 0" — inferred from the shape, never specified).
-	 * Neither structure survives being made portable: one needs a bespoke parser for a string format
-	 * tmux does not promise to keep, and the other needs cyber-mux to bet on herdr's id spelling.
-	 *
-	 * Rects are the fact both report exactly and neither can spell differently. The tree is then
-	 * *derived* from them by recursive guillotine cuts (`template-capture.ts`), which is sound because a
-	 * multiplexer region is built by splitting and therefore always guillotine-cuttable. That buys
-	 * two things: the tricky half — n-ary rows, ratios, ambiguous grids — is a PURE function testable
-	 * with no multiplexer at all, and a third backend owes this verb four numbers per pane rather
-	 * than a tree in its own dialect.
-	 *
-	 * **`label` is the author's, or absent.** Only a label someone deliberately set is reported —
-	 * herdr omits the field entirely until `pane rename`, and tmux defaults `pane_title` to the
-	 * HOSTNAME, so the tmux adapter drops a title equal to `#{host}` rather than exporting `zeta` as
-	 * every pane's name.
-	 *
-	 * Throws rather than returning empty when the region cannot be read: an export built from a
-	 * region the backend could not describe would be a confident lie about the user's screen.
+	 * The optional geometry-introspection capability — `describeRegion` and `describeWorkspace` bundled
+	 * as one object (see `RegionInspector`), present on a backend whose pane listing reports pane
+	 * POSITION and absent on one that cannot. `template save` gates on it — refusing by NAMING the
+	 * backend rather than degrading, because a region the backend cannot describe has nothing to degrade
+	 * to. Bundled rather than shipped as two loose optional methods for the same reason `worktree` is
+	 * one object: the two reads share a single all-or-nothing precondition.
 	 */
-	describeRegion?(exec: Exec, target: MuxTarget): RegionPane[]
-	/**
-	 * Report every tab of the workspace the target pane sits in, each with its own region's geometry —
-	 * the workspace-wide read beside `describeRegion`'s one-region read. `template save --workspace` runs
-	 * this backwards into a `tabs` template, and it is the exact inverse of the tabs walk.
-	 *
-	 * **Optional, exactly as `describeRegion` is**, and for the same reason: a backend that cannot
-	 * enumerate a workspace's tabs leaves a caller something to DO about it — `template save --workspace`
-	 * exits naming the backend and writes nothing. An absent optional member is a refusal, never a
-	 * guess. (Contrast `rename`, which is required precisely because a caller finding it missing could
-	 * not degrade.) `save`'s default subject is unaffected: a bare `save` reads `describeRegion` and
-	 * captures one region, whatever this member does or does not do.
-	 *
-	 * **The grouping is read from the tag, never off the label.** On a backend with a real workspace
-	 * tier the tier IS the answer (herdr: the caller's `workspace_id`, whose tabs and panes the backend
-	 * already stamps). On one without, the workspace is not a fact the backend holds at all, so the
-	 * read is *"which spaces carry this group id"* — the tag `MuxOpenOptions.workspaceGroup` wrote,
-	 * which is opaque and survives a rename. Parsing `<workspace> - <tab>` back apart is unsound
-	 * (`acme - beta - main` splits two ways, both legal), which is the whole reason the tag exists.
-	 *
-	 * **A space carrying no tag is a workspace of ONE.** That is the honest answer for a space nobody
-	 * grouped, not an error and not an empty list: the caller's own region is a workspace of one tab.
-	 *
-	 * Throws rather than returning empty when the workspace cannot be read, matching `describeRegion`:
-	 * a template built from a workspace the backend could not describe would be a confident lie about
-	 * the user's screen.
-	 */
-	describeWorkspace?(exec: Exec, target: MuxTarget): WorkspaceTab[]
+	readonly regions?: RegionInspector
 }

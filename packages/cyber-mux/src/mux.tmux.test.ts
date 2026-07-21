@@ -15,7 +15,7 @@ function fakeExec(calls: string[][], responses: Record<string, string | null> = 
  * it entirely. The tmux adapter must implement it, so bind it once here: if it ever goes missing
  * these tests fail loudly on that fact rather than silently skipping every case below.
  */
-const describeRegion = tmuxMuxAdapter.describeRegion
+const describeRegion = tmuxMuxAdapter.regions?.describeRegion
 if (!describeRegion) throw new Error('the tmux adapter must implement describeRegion')
 
 describe('spec:cyber-mux/mux', () => {
@@ -866,7 +866,7 @@ describe('spec:cyber-mux/mux', () => {
 		 * what it holds is the grouping TAG the walk wrote into a window user option. The read is
 		 * therefore literally "which windows carry this group id", filtered server-side on the tag.
 		 */
-		const describeWorkspace = tmuxMuxAdapter.describeWorkspace
+		const describeWorkspace = tmuxMuxAdapter.regions?.describeWorkspace
 		if (!describeWorkspace) throw new Error('the tmux adapter must implement describeWorkspace')
 
 		it('describeWorkspace() reads the caller’s window and its tag in one call, then the tagged windows', () => {

@@ -267,62 +267,64 @@ export const tmuxMuxAdapter: MuxAdapter = {
 			.filter((p) => p.id !== '')
 	},
 
-	describeRegion(exec, target) {
-		return describeTmuxRegion(exec, target.id)
-	},
+	regions: {
+		describeRegion(exec, target) {
+			return describeTmuxRegion(exec, target.id)
+		},
 
-	/**
-	 * tmux has NO workspace tier — `workspace` and `tab` both collapse onto a Window — so a workspace
-	 * is not a fact this backend holds. What it holds is the grouping TAG the walk wrote
-	 * (`MuxOpenOptions.workspaceGroup`, stored in a window user option), so the read here is
-	 * literally *"which windows carry this group id"*.
-	 *
-	 * The tag, never the label. `list-windows -a` spans SESSIONS, so a bare name match would
-	 * over-collect a same-named window from another session, and taking the workspace off a
-	 * `<workspace> - <tab>` label is unsound in the first place (`acme - beta - main` splits two ways,
-	 * both legal). `-f '#{==:#{@cm_ws},<id>}'` keys on what actually identifies the group, filtered
-	 * server-side — the tag survives a window rename, which a name-encoded grouping does not.
-	 *
-	 * A window with NO tag is a workspace of ONE: the honest answer for a window nobody grouped, and
-	 * it costs no further call — the caller's own window is the whole workspace.
-	 */
-	describeWorkspace(exec, target) {
-		// One call for both facts: the caller's window and that window's tag. `display-message -p`
-		// resolves the pane target and prints the format, so nothing has to be matched out of a
-		// server-wide listing. Tab-separated — an id and a tag cannot contain one; a window NAME can,
-		// but it is last, so a name with a tab in it cannot displace anything.
-		const out = exec('tmux', [
-			'display-message',
-			'-p',
-			'-t',
-			target.id,
-			`#{window_id}\t#{${TMUX_WORKSPACE_GROUP_OPTION}}\t#{${TMUX_TAB_NAME_OPTION}}\t#{window_name}`,
-		])
-		if (!out) throw new Error(withReason(exec, `tmux could not resolve the workspace around pane ${target.id}`))
-		const [windowId, group, ownName, ...nameParts] = out.split('\n')[0]!.split('\t')
-		if (!windowId) throw new Error(`tmux did not report the window around pane ${target.id}`)
-		// Untagged: this window is a workspace of one. Not an error and not an empty list — nobody
-		// grouped it, and one window is exactly what that means.
-		if (!group) return [tmuxTab(exec, windowId, ownName, nameParts.join('\t'))]
-		const listed = exec('tmux', [
-			'list-windows',
-			'-a',
-			'-F',
-			`#{window_id}\t#{${TMUX_TAB_NAME_OPTION}}\t#{window_name}`,
-			'-f',
-			`#{==:#{${TMUX_WORKSPACE_GROUP_OPTION}},${group}}`,
-		])
-		if (!listed) throw new Error(withReason(exec, `tmux could not enumerate the windows grouped as ${group}`))
-		const tabs = listed
-			.split('\n')
-			.filter(Boolean)
-			.map((line) => line.split('\t'))
-			.filter(([id]) => Boolean(id))
-			// `window_name` is LAST and absorbs any tab it contains, which is why it is rejoined rather
-			// than destructured: a window name is a human's and may hold anything.
-			.map(([id, own, ...rest]) => tmuxTab(exec, id!, own, rest.join('\t')))
-		if (tabs.length === 0) throw new Error(`tmux reported no windows grouped as ${group}`)
-		return tabs
+		/**
+		 * tmux has NO workspace tier — `workspace` and `tab` both collapse onto a Window — so a workspace
+		 * is not a fact this backend holds. What it holds is the grouping TAG the walk wrote
+		 * (`MuxOpenOptions.workspaceGroup`, stored in a window user option), so the read here is
+		 * literally *"which windows carry this group id"*.
+		 *
+		 * The tag, never the label. `list-windows -a` spans SESSIONS, so a bare name match would
+		 * over-collect a same-named window from another session, and taking the workspace off a
+		 * `<workspace> - <tab>` label is unsound in the first place (`acme - beta - main` splits two ways,
+		 * both legal). `-f '#{==:#{@cm_ws},<id>}'` keys on what actually identifies the group, filtered
+		 * server-side — the tag survives a window rename, which a name-encoded grouping does not.
+		 *
+		 * A window with NO tag is a workspace of ONE: the honest answer for a window nobody grouped, and
+		 * it costs no further call — the caller's own window is the whole workspace.
+		 */
+		describeWorkspace(exec, target) {
+			// One call for both facts: the caller's window and that window's tag. `display-message -p`
+			// resolves the pane target and prints the format, so nothing has to be matched out of a
+			// server-wide listing. Tab-separated — an id and a tag cannot contain one; a window NAME can,
+			// but it is last, so a name with a tab in it cannot displace anything.
+			const out = exec('tmux', [
+				'display-message',
+				'-p',
+				'-t',
+				target.id,
+				`#{window_id}\t#{${TMUX_WORKSPACE_GROUP_OPTION}}\t#{${TMUX_TAB_NAME_OPTION}}\t#{window_name}`,
+			])
+			if (!out) throw new Error(withReason(exec, `tmux could not resolve the workspace around pane ${target.id}`))
+			const [windowId, group, ownName, ...nameParts] = out.split('\n')[0]!.split('\t')
+			if (!windowId) throw new Error(`tmux did not report the window around pane ${target.id}`)
+			// Untagged: this window is a workspace of one. Not an error and not an empty list — nobody
+			// grouped it, and one window is exactly what that means.
+			if (!group) return [tmuxTab(exec, windowId, ownName, nameParts.join('\t'))]
+			const listed = exec('tmux', [
+				'list-windows',
+				'-a',
+				'-F',
+				`#{window_id}\t#{${TMUX_TAB_NAME_OPTION}}\t#{window_name}`,
+				'-f',
+				`#{==:#{${TMUX_WORKSPACE_GROUP_OPTION}},${group}}`,
+			])
+			if (!listed) throw new Error(withReason(exec, `tmux could not enumerate the windows grouped as ${group}`))
+			const tabs = listed
+				.split('\n')
+				.filter(Boolean)
+				.map((line) => line.split('\t'))
+				.filter(([id]) => Boolean(id))
+				// `window_name` is LAST and absorbs any tab it contains, which is why it is rejoined rather
+				// than destructured: a window name is a human's and may hold anything.
+				.map(([id, own, ...rest]) => tmuxTab(exec, id!, own, rest.join('\t')))
+			if (tabs.length === 0) throw new Error(`tmux reported no windows grouped as ${group}`)
+			return tabs
+		},
 	},
 }
 

@@ -231,74 +231,76 @@ export const herdrMuxAdapter: MuxAdapter = {
 			}))
 	},
 
-	describeRegion(exec, target) {
-		// Two calls, because herdr splits the answer across two verbs: `pane layout` reports the
-		// region's rects (`layout.panes[].rect`) but carries no cwd and no label, while `pane list`
-		// carries both and no geometry. Neither alone can build a template.
-		//
-		// `layout.splits[]` is deliberately ignored even though it reports `direction` and `ratio`
-		// outright. It is FLAT — `[{id:"split_0_root",...},{id:"split_1_0",...}]` — so the tree is
-		// recoverable only by parsing the parent out of that id string, a convention herdr's CLI help
-		// never documents and could respell without warning. The rects say the same thing in a fact
-		// herdr does promise, so the derivation runs off those; see `describeRegion` in `session.ts`.
-		// Best-effort: a region whose geometry is known is still worth exporting when the cwd/label
-		// lookup fails — the geometry is the verbose part, and the missing dirs are visibly absent.
-		return herdrRegionPanes(exec, target.id, herdrPaneDetails(exec))
-	},
+	regions: {
+		describeRegion(exec, target) {
+			// Two calls, because herdr splits the answer across two verbs: `pane layout` reports the
+			// region's rects (`layout.panes[].rect`) but carries no cwd and no label, while `pane list`
+			// carries both and no geometry. Neither alone can build a template.
+			//
+			// `layout.splits[]` is deliberately ignored even though it reports `direction` and `ratio`
+			// outright. It is FLAT — `[{id:"split_0_root",...},{id:"split_1_0",...}]` — so the tree is
+			// recoverable only by parsing the parent out of that id string, a convention herdr's CLI help
+			// never documents and could respell without warning. The rects say the same thing in a fact
+			// herdr does promise, so the derivation runs off those; see `RegionInspector.describeRegion` in `mux.ts`.
+			// Best-effort: a region whose geometry is known is still worth exporting when the cwd/label
+			// lookup fails — the geometry is the verbose part, and the missing dirs are visibly absent.
+			return herdrRegionPanes(exec, target.id, herdrPaneDetails(exec))
+		},
 
-	/**
-	 * herdr HAS a workspace tier, so the workspace is a fact the backend holds rather than one
-	 * cyber-mux has to reconstruct: the caller's pane names its `workspace_id`, `tab list --workspace`
-	 * enumerates that workspace's tabs, and `pane list --workspace` hands back every pane already
-	 * stamped with the tab it sits in. No grouping tag is read here and none is written — the tier IS
-	 * the group, which is exactly why `open` ignores `workspaceGroup` on this backend.
-	 *
-	 * The one indirection: geometry is per-PANE (`pane layout --pane`), never per-tab, so each tab's
-	 * rects are fetched through any one pane that sits in it. That is safe and race-free, and both
-	 * halves were established against 0.7.4: `pane layout` reports live geometry for an UNFOCUSED tab
-	 * in a DIFFERENT workspace, so nothing has to be focused first and nothing moves while this runs.
-	 *
-	 * herdr's own native per-tab layout export would be the obvious road — it takes a `tab_id` — but
-	 * `layout` is NOT a CLI verb in 0.7.4; it is socket-API-only, and this adapter speaks the CLI by
-	 * design (so it composes with the synchronous `Exec` seam). The road is closed, hence the pane
-	 * indirection.
-	 */
-	describeWorkspace(exec, target) {
-		const { workspaceId } = parsePaneRecord(exec('herdr', ['pane', 'get', target.id]))
-		if (!workspaceId) {
-			throw new Error(withReason(exec, `herdr could not resolve the workspace around pane ${target.id}`))
-		}
-		const out = exec('herdr', ['tab', 'list', '--workspace', workspaceId])
-		if (!out) throw new Error(withReason(exec, `herdr could not enumerate the tabs of workspace ${workspaceId}`))
-		let reported: unknown
-		try {
-			reported = JSON.parse(out)?.result?.tabs
-		} catch {
-			throw new Error(`herdr tab list returned unparseable output: ${out.slice(0, 200)}`)
-		}
-		if (!Array.isArray(reported) || reported.length === 0) {
-			throw new Error(`herdr reported no tabs in workspace ${workspaceId}: ${out.slice(0, 200)}`)
-		}
-		// Scoped to the workspace, so a busy machine's other workspaces never reach the capture. Every
-		// pane arrives stamped with its `tab_id`, which is what makes ONE call enough for every tab.
-		const details = herdrPaneDetails(exec, workspaceId)
-		const tabs: WorkspaceTab[] = []
-		for (const reportedTab of reported) {
-			if (typeof reportedTab?.tab_id !== 'string') continue
-			const tabId: string = reportedTab.tab_id
-			// Any pane of the tab will do — `pane layout` reports the whole region the pane sits in, so
-			// which one is asked is immaterial.
-			const anchor = [...details].find(([, detail]) => detail.tab === tabId)?.[0]
-			if (!anchor) throw new Error(`herdr reported no panes in tab ${tabId} of workspace ${workspaceId}`)
-			const tab: WorkspaceTab = { id: tabId, panes: herdrRegionPanes(exec, anchor, details) }
-			// Verbatim, never parsed: herdr labels a tab with the tab's own name because the real
-			// workspace tier already carries the grouping, so there is nothing composed to take apart.
-			if (typeof reportedTab.label === 'string' && reportedTab.label !== '') tab.label = reportedTab.label
-			tabs.push(tab)
-		}
-		if (tabs.length === 0)
-			throw new Error(`herdr reported no usable tabs in workspace ${workspaceId}: ${out.slice(0, 200)}`)
-		return tabs
+		/**
+		 * herdr HAS a workspace tier, so the workspace is a fact the backend holds rather than one
+		 * cyber-mux has to reconstruct: the caller's pane names its `workspace_id`, `tab list --workspace`
+		 * enumerates that workspace's tabs, and `pane list --workspace` hands back every pane already
+		 * stamped with the tab it sits in. No grouping tag is read here and none is written — the tier IS
+		 * the group, which is exactly why `open` ignores `workspaceGroup` on this backend.
+		 *
+		 * The one indirection: geometry is per-PANE (`pane layout --pane`), never per-tab, so each tab's
+		 * rects are fetched through any one pane that sits in it. That is safe and race-free, and both
+		 * halves were established against 0.7.4: `pane layout` reports live geometry for an UNFOCUSED tab
+		 * in a DIFFERENT workspace, so nothing has to be focused first and nothing moves while this runs.
+		 *
+		 * herdr's own native per-tab layout export would be the obvious road — it takes a `tab_id` — but
+		 * `layout` is NOT a CLI verb in 0.7.4; it is socket-API-only, and this adapter speaks the CLI by
+		 * design (so it composes with the synchronous `Exec` seam). The road is closed, hence the pane
+		 * indirection.
+		 */
+		describeWorkspace(exec, target) {
+			const { workspaceId } = parsePaneRecord(exec('herdr', ['pane', 'get', target.id]))
+			if (!workspaceId) {
+				throw new Error(withReason(exec, `herdr could not resolve the workspace around pane ${target.id}`))
+			}
+			const out = exec('herdr', ['tab', 'list', '--workspace', workspaceId])
+			if (!out) throw new Error(withReason(exec, `herdr could not enumerate the tabs of workspace ${workspaceId}`))
+			let reported: unknown
+			try {
+				reported = JSON.parse(out)?.result?.tabs
+			} catch {
+				throw new Error(`herdr tab list returned unparseable output: ${out.slice(0, 200)}`)
+			}
+			if (!Array.isArray(reported) || reported.length === 0) {
+				throw new Error(`herdr reported no tabs in workspace ${workspaceId}: ${out.slice(0, 200)}`)
+			}
+			// Scoped to the workspace, so a busy machine's other workspaces never reach the capture. Every
+			// pane arrives stamped with its `tab_id`, which is what makes ONE call enough for every tab.
+			const details = herdrPaneDetails(exec, workspaceId)
+			const tabs: WorkspaceTab[] = []
+			for (const reportedTab of reported) {
+				if (typeof reportedTab?.tab_id !== 'string') continue
+				const tabId: string = reportedTab.tab_id
+				// Any pane of the tab will do — `pane layout` reports the whole region the pane sits in, so
+				// which one is asked is immaterial.
+				const anchor = [...details].find(([, detail]) => detail.tab === tabId)?.[0]
+				if (!anchor) throw new Error(`herdr reported no panes in tab ${tabId} of workspace ${workspaceId}`)
+				const tab: WorkspaceTab = { id: tabId, panes: herdrRegionPanes(exec, anchor, details) }
+				// Verbatim, never parsed: herdr labels a tab with the tab's own name because the real
+				// workspace tier already carries the grouping, so there is nothing composed to take apart.
+				if (typeof reportedTab.label === 'string' && reportedTab.label !== '') tab.label = reportedTab.label
+				tabs.push(tab)
+			}
+			if (tabs.length === 0)
+				throw new Error(`herdr reported no usable tabs in workspace ${workspaceId}: ${out.slice(0, 200)}`)
+			return tabs
+		},
 	},
 }
 
@@ -314,7 +316,7 @@ export const herdrMuxAdapter: MuxAdapter = {
  * It is FLAT — `[{id:"split_0_root",...},{id:"split_1_0",...}]` — so the tree is recoverable only by
  * parsing the parent out of that id string, a convention herdr's CLI help never documents and could
  * respell without warning. The rects say the same thing in a fact herdr does promise, so the
- * derivation runs off those; see `describeRegion` in `session.ts`.
+ * derivation runs off those; see `RegionInspector.describeRegion` in `mux.ts`.
  */
 function herdrRegionPanes(exec: Exec, paneId: string, details: Map<string, HerdrPaneDetail>): RegionPane[] {
 	const out = exec('herdr', ['pane', 'layout', '--pane', paneId])

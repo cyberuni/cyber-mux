@@ -15,9 +15,9 @@ import {
 
 /**
  * Templates × sessions — the walk, and the only module that knows both halves. `template.ts` stays pure
- * and owes nothing to the mux; `session.ts` stays a pure mux seam that owes nothing to templates.
+ * and owes nothing to the mux; `mux.ts` stays a pure mux seam that owes nothing to templates.
  * Compiling one into the other is a third concern, and it lives here — exactly what
- * `worktree-session.ts` is to `worktree.ts` + `session.ts`.
+ * `worktree-session.ts` is to `worktree.ts` + `mux.ts`.
  *
  * The engine is cyber-mux's own: a tree-walk emitting `open`/`submit` against the PORTABLE
  * `MuxAdapter` verbs, never a backend's native template primitive. herdr's `template.apply` drops
