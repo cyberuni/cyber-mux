@@ -419,7 +419,7 @@ function templateShowCommand(deps: Deps): Command {
 		.option('--file <path>', 'Read this path instead, skipping resolution entirely')
 		.option('--desugar', 'Print the canonical tree panes/arrange expands to — exactly what apply builds')
 		.action(
-			guarded((name: string | undefined, opts: { file?: string; desugar?: boolean }) => {
+			guarded((name: string | undefined, opts: { file?: string | undefined; desugar?: boolean | undefined }) => {
 				if (!name && !opts.file) {
 					throw new CliError(
 						'missing-argument',
@@ -441,7 +441,7 @@ function templateValidateCommand(deps: Deps): Command {
 		.argument('[name]', 'Template name')
 		.option('--file <path>', 'Validate this path instead, skipping resolution entirely')
 		.action(
-			guarded((name: string | undefined, opts: { file?: string }) => {
+			guarded((name: string | undefined, opts: { file?: string | undefined }) => {
 				if (!name && !opts.file) {
 					throw new CliError(
 						'missing-argument',
@@ -503,7 +503,13 @@ function templateSaveCommand(deps: Deps): Command {
 			guarded(
 				(
 					name: string,
-					opts: { from?: string; workspace?: boolean; description?: string; to: 'repo' | 'user'; force?: boolean },
+					opts: {
+						from?: string | undefined
+						workspace?: boolean | undefined
+						description?: string | undefined
+						to: 'repo' | 'user'
+						force?: boolean | undefined
+					},
 				) => {
 					// Before the multiplexer is touched: a name is a lookup key that must also be a filename, so an
 					// unusable one should not cost a region read to find out. A usage error (exit 2), the same
@@ -720,12 +726,12 @@ function openCommand(deps: Deps): Command {
 		.action(
 			guarded(
 				(opts: {
-					launch?: string
-					template?: string
+					launch?: string | undefined
+					template?: string | undefined
 					cwd: string
-					at?: MuxPlacement
-					env?: Record<string, string>
-					label?: string
+					at?: MuxPlacement | undefined
+					env?: Record<string, string> | undefined
+					label?: string | undefined
 				}) => {
 					if (opts.template) {
 						// Resolve and validate BEFORE touching a backend, so an unresolvable name opens nothing.
@@ -834,7 +840,7 @@ function readCommand(deps: Deps): Command {
 		.option('--lines <n>', 'Trailing lines to capture', (v) => Number.parseInt(v, 10))
 		.addOption(FORMAT_OPTION)
 		.action(
-			guarded((pane: string, opts: { lines?: number }) => {
+			guarded((pane: string, opts: { lines?: number | undefined }) => {
 				paneVerb(pane, () => {
 					const a = adapter(deps)
 					const t = resolveTarget(deps, a, pane)
@@ -933,13 +939,13 @@ function worktreeAddCommand(deps: Deps): Command {
 		.action(
 			(opts: {
 				branch: string
-				path?: string
-				base?: string
-				launch?: string
-				template?: string
-				at?: MuxPlacement
-				env?: Record<string, string>
-				label?: string
+				path?: string | undefined
+				base?: string | undefined
+				launch?: string | undefined
+				template?: string | undefined
+				at?: MuxPlacement | undefined
+				env?: Record<string, string> | undefined
+				label?: string | undefined
 			}) => {
 				try {
 					const primaryRoot = resolvePrimaryRoot(deps.exec)
@@ -1034,7 +1040,15 @@ function worktreeOpenCommand(deps: Deps): Command {
 		.addOption(LABEL_OPTION)
 		.addOption(FORMAT_OPTION)
 		.action(
-			(path: string, opts: { launch?: string; at?: MuxPlacement; env?: Record<string, string>; label?: string }) => {
+			(
+				path: string,
+				opts: {
+					launch?: string | undefined
+					at?: MuxPlacement | undefined
+					env?: Record<string, string> | undefined
+					label?: string | undefined
+				},
+			) => {
 				try {
 					const primaryRoot = resolvePrimaryRoot(deps.exec)
 					const a = adapter(deps)
@@ -1099,7 +1113,7 @@ function worktreeRemoveCommand(deps: Deps): Command {
 		.description('Remove a git worktree — refuses the primary checkout and uncommitted changes unless --force')
 		.argument('<path>', 'Worktree path to remove')
 		.option('--force', 'Discard uncommitted changes in the worktree')
-		.action((path: string, opts: { force?: boolean }) => {
+		.action((path: string, opts: { force?: boolean | undefined }) => {
 			try {
 				const primaryRoot = resolvePrimaryRoot(deps.exec)
 				removeWorktree(deps.exec, optionalAdapter(deps), path, { primaryRoot, force: opts.force })

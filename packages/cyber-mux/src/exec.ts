@@ -37,7 +37,7 @@ export const realExec: Exec = (cmd, args) => {
 		return out
 	} catch (err) {
 		// Captured rather than inherited: routine failures would otherwise spam the caller's terminal.
-		const stderr = (err as { stderr?: Buffer | string }).stderr
+		const stderr = (err as { stderr?: Buffer | string | undefined }).stderr
 		realExec.lastError = String(stderr ?? '').trim() || undefined
 		return null
 	}

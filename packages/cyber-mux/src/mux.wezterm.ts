@@ -156,7 +156,7 @@ export function createWeztermAdapter(deps: { newId: NewId }): MuxAdapter {
 			adapter.sendKeys(exec, target, ['Enter'])
 		},
 
-		read(exec, target, opts?: MuxReadOptions) {
+		read(exec, target, opts?: MuxReadOptions | undefined) {
 			const args = ['cli', 'get-text', '--pane-id', target.id]
 			// `--start-line` counts backward into scrollback from 0 (the top of the visible screen); the
 			// end defaults to the bottom of the screen. Negative-N approximates "last N lines" the way
@@ -282,8 +282,8 @@ interface WeztermListEntry {
 	tab_id: number | string
 	pane_id: number | string
 	workspace: string
-	title?: string
-	cwd?: string
+	title?: string | undefined
+	cwd?: string | undefined
 }
 
 /** One `wezterm cli list --format json` call, parsed defensively — never throws on bad output. */

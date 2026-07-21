@@ -50,7 +50,7 @@ export interface WorktreeEntry {
 	/** Absolute checkout path, normalized. */
 	root: string
 	/** Branch checked out there; absent for a detached HEAD or a bare entry. */
-	branch?: string
+	branch?: string | undefined
 	/** `false` for the primary checkout, `true` for a linked worktree. */
 	linked: boolean
 	/** git considers the entry stale — its checkout is gone from disk. */
@@ -66,20 +66,20 @@ export interface WorktreeEntry {
 	 * under-reporting a disposal candidate costs the reader one manual check, over-reporting costs them
 	 * work. See `docs/design/worktree-disposability.md` §3.
 	 */
-	merged?: boolean
+	merged?: boolean | undefined
 	/**
 	 * The checkout has uncommitted changes — tracked or untracked. Merged is not sufficient on its own:
 	 * a merged branch whose checkout carries edits is not disposable, because those edits exist nowhere
 	 * else and `removeWorktreeSafely` is going to refuse them. Absent when there is no working tree to
 	 * read (a `prunable` entry) or when git could not answer.
 	 */
-	dirty?: boolean
+	dirty?: boolean | undefined
 	/**
 	 * The multiplexer workspace this worktree is currently open in. Joined in by the caller from a
 	 * backend's binding; always absent on a backend that has no worktree/workspace binding, and when
 	 * nothing is open on the worktree.
 	 */
-	workspace?: string
+	workspace?: string | undefined
 }
 
 interface WorktreeRemoveOptions {

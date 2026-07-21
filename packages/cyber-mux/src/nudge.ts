@@ -12,10 +12,10 @@ const NEEDLE_LEN = 40
 
 export interface NudgeOptions {
 	/** Max flush re-submits after the initial send; default 10. */
-	attempts?: number
+	attempts?: number | undefined
 	/** Wait after a submit before reading back, in ms; default 400. */
-	settleMs?: number
-	sleep?: (ms: number) => Promise<void>
+	settleMs?: number | undefined
+	sleep?: ((ms: number) => Promise<void>) | undefined
 }
 
 export interface NudgeResult {

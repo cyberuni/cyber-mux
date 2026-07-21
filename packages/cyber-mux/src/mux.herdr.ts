@@ -157,7 +157,7 @@ export const herdrMuxAdapter: MuxAdapter = {
 		exec('herdr', ['pane', 'run', target.id, text])
 	},
 
-	read(exec, target, opts?: MuxReadOptions) {
+	read(exec, target, opts?: MuxReadOptions | undefined) {
 		const args = ['pane', 'read', target.id, '--source', 'visible']
 		if (opts?.lines != null) args.push('--lines', String(opts.lines))
 		return exec('herdr', args) ?? ''
@@ -215,7 +215,10 @@ export const herdrMuxAdapter: MuxAdapter = {
 		if (!Array.isArray(panes)) return []
 		return panes
 			.filter(
-				(p): p is { pane_id: string; agent?: string; cwd?: string; label?: string } => typeof p?.pane_id === 'string',
+				(
+					p,
+				): p is { pane_id: string; agent?: string | undefined; cwd?: string | undefined; label?: string | undefined } =>
+					typeof p?.pane_id === 'string',
 			)
 			.map((p): LivePane => {
 				const harness = p.agent || undefined
@@ -360,10 +363,10 @@ function herdrRegionPanes(exec: Exec, paneId: string, details: Map<string, Herdr
 
 /** What `pane list` knows and `pane layout` does not: a pane's cwd, its label, and the tab it sits in. */
 interface HerdrPaneDetail {
-	cwd?: string
-	label?: string
+	cwd?: string | undefined
+	label?: string | undefined
 	/** The tab this pane sits in — herdr stamps every pane record with it. */
-	tab?: string
+	tab?: string | undefined
 }
 
 /**
@@ -373,7 +376,7 @@ interface HerdrPaneDetail {
  * every pane herdr can see, which is what a single-region read wants (it keys by pane id and never
  * cares which workspace a pane came from).
  */
-function herdrPaneDetails(exec: Exec, workspace?: string): Map<string, HerdrPaneDetail> {
+function herdrPaneDetails(exec: Exec, workspace?: string | undefined): Map<string, HerdrPaneDetail> {
 	const details = new Map<string, HerdrPaneDetail>()
 	const out = exec('herdr', ['pane', 'list', ...(workspace ? ['--workspace', workspace] : [])])
 	if (!out) return details
@@ -411,7 +414,12 @@ function envFlags(env: Record<string, string> | undefined): string[] {
  * because it is the one route that loses env. With a command, env rides in as a prefix; with none and
  * env asked for, it warns to stderr (stdout stays machine-readable) rather than dropping in silence.
  */
-function carryLaunch(exec: Exec, target: OpenedPane, env: Record<string, string> | undefined, launch?: string): void {
+function carryLaunch(
+	exec: Exec,
+	target: OpenedPane,
+	env: Record<string, string> | undefined,
+	launch?: string | undefined,
+): void {
 	const fallback = envFallback(env, launch)
 	if (fallback.kind === 'dropped') {
 		process.stderr.write(
@@ -551,7 +559,9 @@ function parseRootPaneId(out: string, label: string): OpenedPane {
  * new one for a field no caller is required to use.
  */
 function parseOpenedPane(out: string, label: string, key: 'pane' | 'root_pane'): OpenedPane {
-	let pane: { pane_id?: unknown; tab_id?: unknown; workspace_id?: unknown } | undefined
+	let pane:
+		| { pane_id?: unknown | undefined; tab_id?: unknown | undefined; workspace_id?: unknown | undefined }
+		| undefined
 	try {
 		pane = JSON.parse(out)?.result?.[key]
 	} catch {
@@ -598,10 +608,10 @@ function parseWorktreeWorkspace(out: string, label: string): WorktreeWorkspace {
 	} catch {
 		throw new Error(`${label} returned unparseable output: ${out.slice(0, 200)}`)
 	}
-	const result = (parsed as { result?: unknown })?.result as
+	const result = (parsed as { result?: unknown | undefined })?.result as
 		| {
-				workspace?: { workspace_id?: unknown }
-				worktree?: { path?: unknown; branch?: unknown }
+				workspace?: { workspace_id?: unknown | undefined } | undefined
+				worktree?: { path?: unknown | undefined; branch?: unknown | undefined } | undefined
 		  }
 		| undefined
 	// Throws on a missing pane id or tab id, with `parseOpenedPane`'s own message.
@@ -633,9 +643,10 @@ function parseWorktreeBindings(out: string | null): Map<string, string> {
 	} catch {
 		return bindings
 	}
-	const worktrees = ((parsed as { result?: { worktrees?: unknown } })?.result?.worktrees ?? []) as unknown
+	const worktrees = ((parsed as { result?: { worktrees?: unknown | undefined } | undefined })?.result?.worktrees ??
+		[]) as unknown
 	if (!Array.isArray(worktrees)) return bindings
-	for (const entry of worktrees as { path?: unknown; open_workspace_id?: unknown }[]) {
+	for (const entry of worktrees as { path?: unknown | undefined; open_workspace_id?: unknown | undefined }[]) {
 		const path = entry?.path
 		const workspace = entry?.open_workspace_id
 		if (typeof path === 'string' && path !== '' && typeof workspace === 'string' && workspace !== '') {

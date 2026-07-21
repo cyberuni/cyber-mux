@@ -188,7 +188,7 @@ export const tmuxMuxAdapter: MuxAdapter = {
 		exec('tmux', ['send-keys', '-t', target.id, 'Enter'])
 	},
 
-	read(exec, target, opts?: MuxReadOptions) {
+	read(exec, target, opts?: MuxReadOptions | undefined) {
 		const args = ['capture-pane', '-p', '-t', target.id]
 		if (opts?.lines != null) args.push('-S', `-${opts.lines}`)
 		return exec('tmux', args) ?? ''

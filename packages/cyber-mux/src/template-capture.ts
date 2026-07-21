@@ -30,7 +30,7 @@ interface RegionLeaf {
 interface RegionSplit {
 	type: 'split'
 	direction: 'right' | 'down'
-	ratio?: number
+	ratio?: number | undefined
 	first: RegionTree
 	second: RegionTree
 }
@@ -180,7 +180,10 @@ function roundRatio(ratio: number): number {
  * emitted as a `..` path: `dir` must stay under the apply-time target, so a template that escaped it
  * would fail validation on the way back in.
  */
-function toDir(paneCwd: string | undefined, rootCwd: string | undefined): { dir?: string; outside: boolean } {
+function toDir(
+	paneCwd: string | undefined,
+	rootCwd: string | undefined,
+): { dir?: string | undefined; outside: boolean } {
 	if (!paneCwd || !rootCwd) return { outside: false }
 	const rel = relative(rootCwd, paneCwd)
 	if (rel === '') return { outside: false }
@@ -196,7 +199,7 @@ function rootOf(tree: RegionTree): RegionPane {
 export interface CaptureTemplateOptions {
 	/** The template's `name` — validated by the caller, since a name is also a lookup key. */
 	name: string
-	description?: string
+	description?: string | undefined
 }
 
 /**

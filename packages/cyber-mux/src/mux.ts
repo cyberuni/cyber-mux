@@ -178,7 +178,7 @@ export interface OpenedPane extends MuxTarget {
 	 * tmux, where `workspace` and `tab` both collapse to a Window, has nothing to report here, which
 	 * is not the same as reporting that nothing is there.
 	 */
-	workspace?: string
+	workspace?: string | undefined
 }
 
 /** A pane the backend can currently see, as reported by `listPanes` (bulk enumeration). */
@@ -188,9 +188,9 @@ export interface LivePane {
 	/** Which multiplexer this pane belongs to. */
 	mux: 'tmux' | 'herdr' | 'wezterm'
 	/** The harness running in this pane, when the backend can report it (herdr only). */
-	harness?: string
+	harness?: string | undefined
 	/** The pane's working directory, when the backend reports it. */
-	cwd?: string
+	cwd?: string | undefined
 	/**
 	 * The human name a person gave this pane, when there is one — what lets a caller address the pane
 	 * by name instead of by id.
@@ -205,12 +205,12 @@ export interface LivePane {
 	 * **A name, not a key.** Neither backend requires one unique, so duplicates are ordinary and are
 	 * resolved where the caller is — at lookup — rather than refused at authoring time.
 	 */
-	label?: string
+	label?: string | undefined
 }
 
 export interface MuxReadOptions {
 	/** How many trailing lines of output to capture; omit for the backend's default. */
-	lines?: number
+	lines?: number | undefined
 }
 
 /**
@@ -233,9 +233,9 @@ export interface RegionPane {
 	id: string
 	rect: PaneRect
 	/** The pane's working directory. */
-	cwd?: string
+	cwd?: string | undefined
 	/** The pane's label, when it has one the AUTHOR set — see `describeRegion` on the tmux caveat. */
-	label?: string
+	label?: string | undefined
 }
 
 /**
@@ -266,7 +266,7 @@ export interface WorkspaceTab {
 	 * it already IS the tab's own name. A backend whose label is never composed (herdr) reports that
 	 * label unchanged and stores nothing.
 	 */
-	label?: string
+	label?: string | undefined
 	/** Every pane in this tab, with its rectangle — `describeRegion`'s answer for this tab. */
 	panes: RegionPane[]
 }
@@ -503,7 +503,7 @@ export interface MuxAdapter {
 	 * is no other way to group a space it did not open. As read-only in its side effects as `rename`
 	 * is — it moves no focus and opens nothing.
 	 */
-	group(exec: Exec, target: MuxTarget, group: string, name?: string): void
+	group(exec: Exec, target: MuxTarget, group: string, name?: string | undefined): void
 	/**
 	 * Whether this backend can size a split — i.e. whether it honors `MuxOpenOptions.ratio`. Both
 	 * real backends can (herdr `--ratio`, tmux `-l`), so both declare it. Absent/`false` means a
@@ -511,12 +511,12 @@ export interface MuxAdapter {
 	 * (with one warning) rather than reject: the template schema is backend-agnostic, so a template's
 	 * validity must never depend on which multiplexer happens to be running.
 	 */
-	readonly canSizeSplits?: boolean
+	readonly canSizeSplits?: boolean | undefined
 	/**
 	 * Present only on a backend that binds a git worktree to a workspace (herdr); `undefined` on one
 	 * with no such concept (tmux), where callers fall back to plain git plus `open()`.
 	 */
-	readonly worktree?: WorktreeWorkspaceCapability
+	readonly worktree?: WorktreeWorkspaceCapability | undefined
 	/**
 	 * Type `text` into the target as literal characters, pressing **no** Enter — the text is left
 	 * staged in the pane's input box. Literal means literal: text that happens to name a key
@@ -551,9 +551,9 @@ export interface MuxAdapter {
 	 * booting harness swallowed the Enter of an earlier submit and left the text staged unsent;
 	 * because flushing never re-types, a repeated flush cannot duplicate the message.
 	 */
-	submit(exec: Exec, target: MuxTarget, text?: string): void
+	submit(exec: Exec, target: MuxTarget, text?: string | undefined): void
 	/** Capture the target session's current output. */
-	read(exec: Exec, target: MuxTarget, opts?: MuxReadOptions): string
+	read(exec: Exec, target: MuxTarget, opts?: MuxReadOptions | undefined): string
 	/**
 	 * Beam the attached client's view all the way to the target pane — across workspace and tab, not
 	 * just within the current one. Resolves the pane's own workspace/tab from the backend and drives
@@ -590,5 +590,5 @@ export interface MuxAdapter {
 	 * to. Bundled rather than shipped as two loose optional methods for the same reason `worktree` is
 	 * one object: the two reads share a single all-or-nothing precondition.
 	 */
-	readonly regions?: RegionInspector
+	readonly regions?: RegionInspector | undefined
 }

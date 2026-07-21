@@ -26,7 +26,7 @@ export interface OpenedWorktree {
 	 */
 	target: OpenedPane
 	/** The workspace bound to the worktree; absent when it opened ungrouped. */
-	workspace?: string
+	workspace?: string | undefined
 	/**
 	 * The backend COULD have bound this worktree to a workspace, but the route taken did not — i.e. a
 	 * caller on herdr asked for a pane or tab placement, which its `worktree create` cannot serve.
