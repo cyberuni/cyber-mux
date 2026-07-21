@@ -189,7 +189,7 @@ Every scenario in [`lookup.feature`](./lookup.feature), one row each, grouped by
 | Edge | Path (Given) | Scenario |
 |---|---|---|
 | tmux: active pane, current window, attached client → focused | a tmux pane meeting all three | `tmux reports a pane focused when an attached client is currently viewing it` |
-| tmux: any of the three unset → not-focused | a tmux pane failing one of the three | `tmux reports a pane not focused when no attached client is viewing it` |
+| tmux: any of the three unset → not-focused | a tmux pane failing one of the three | `tmux reports a pane not focused when <condition>` |
 | herdr: pane record focused → focused | a herdr pane record reporting a viewing client | `herdr reports a pane focused when its pane record is focused` |
 | herdr: pane record not focused → not-focused | a herdr pane record reporting no viewing client | `herdr reports a pane not focused when its pane record is not focused` |
 | query cannot be answered → unknown | no primitive, an unresolvable pane, or an erroring query | `a focus query that cannot be answered is unknown, not a boolean` |

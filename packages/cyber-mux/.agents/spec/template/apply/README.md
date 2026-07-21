@@ -360,13 +360,13 @@ graph TD
   TIER -->|"C5: the backend cannot name its root tab at birth"| TC5["the root tab is renamed after birth; every later tab is named at birth"]
   SHAPE -->|"one tree"| W1
   W1["the region is opened blank; its pane is the tree's root region"]
-  W1 -->|"W2: geometry precedes every submit"| WGEO["every split is issued before the first submit"]
+  W1 -->|"W2: geometry precedes every submit"| WGEO["every split lands before any pane receives its command text"]
   WGEO -->|"W3: each split names its pane"| WFROM["from carries that pane's id; no backend default is relied on"]
   WFROM --> WDIR{"does the pane node carry a dir?"}
   WDIR -->|"W6: the dir exists under the target"| WD1["the pane opens at cwd joined with dir"]
   WDIR -->|"W7: the dir is absent under the target"| WD2["exit 1, naming the pane and the resolved path"]
   WFROM --> WENV{"ratio and env at the seam"}
-  WENV -->|"E1: a pane carries env and no command"| WE1["the pane is created with that env; no submit"]
+  WENV -->|"E1: a pane carries env and no command"| WE1["the pane is created with that env; no command sent"]
   WENV -->|"E2: the backend cannot size a split"| WE2["one stderr warning; the backend's own default; stdout stays machine-readable"]
   WENV -->|"E3: the open route could not carry the root pane's env, and it has a command"| WE3["that command is prefixed; no other pane's is"]
   WENV -->|"E4: the open route could not carry it, and there is no command"| WE4["exactly one stderr warning naming the variables"]
