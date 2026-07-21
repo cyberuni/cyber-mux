@@ -31,7 +31,7 @@ export interface TemplateStore {
 	write(path: string, contents: string): void
 }
 
-export const realTemplateStore: TemplateStore = {
+export const nodeTemplateStore: TemplateStore = {
 	list(dir) {
 		try {
 			return readdirSync(dir)

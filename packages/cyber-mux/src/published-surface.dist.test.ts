@@ -18,8 +18,8 @@ describe('spec:cyber-mux/library — published surface', () => {
 			expect(typeof lib.selectMuxAdapter).toBe('function')
 			expect(typeof lib.probeMultiplexer).toBe('function')
 			expect(typeof lib.nudge).toBe('function')
-			expect(typeof lib.realExec).toBe('function')
-			expect(typeof lib.realNewId).toBe('function')
+			expect(typeof lib.nodeExec).toBe('function')
+			expect(typeof lib.nodeNewId).toBe('function')
 			expect(lib.tmuxMuxAdapter.name).toBe('tmux')
 			expect(lib.herdrMuxAdapter.name).toBe('herdr')
 			expect(lib.weztermMuxAdapter.name).toBe('wezterm')
@@ -28,8 +28,8 @@ describe('spec:cyber-mux/library — published surface', () => {
 		it('the ./worktree and ./template subpaths yield their seams', () => {
 			expect(typeof wt.resolvePrimaryRoot).toBe('function')
 			expect(typeof wt.gitWorktreeAdapter.add).toBe('function')
-			expect(typeof wt.realWorktreeFs.exists).toBe('function')
-			expect(typeof tpl.realTemplateStore.read).toBe('function')
+			expect(typeof wt.nodeWorktreeFs.exists).toBe('function')
+			expect(typeof tpl.nodeTemplateStore.read).toBe('function')
 			expect(typeof tpl.resolveTemplate).toBe('function')
 		})
 
@@ -50,10 +50,10 @@ describe('spec:cyber-mux/library — published surface', () => {
 				'currentPane',
 				'herdrMuxAdapter',
 				'isStaged',
+				'nodeExec',
+				'nodeNewId',
 				'nudge',
 				'probeMultiplexer',
-				'realExec',
-				'realNewId',
 				'selectMuxAdapter',
 				'tmuxMuxAdapter',
 				'weztermMuxAdapter',
@@ -84,8 +84,8 @@ describe('spec:cyber-mux/library — published surface', () => {
 				'gitWorktreeAdapter',
 				'isWorktreeRemovable',
 				'listWorktreesFromGit',
+				'nodeWorktreeFs',
 				'normalizeWorktreePath',
-				'realWorktreeFs',
 				'removeWorktreeSafely',
 				'resolvePrimaryRoot',
 				'resolveWorktreePath',
@@ -100,8 +100,8 @@ describe('spec:cyber-mux/library — published surface', () => {
 				'firstPane',
 				'isValidTemplateName',
 				'listTemplates',
+				'nodeTemplateStore',
 				'parseTemplate',
-				'realTemplateStore',
 				'resolveTemplate',
 				'resolveTree',
 				'templateDirs',

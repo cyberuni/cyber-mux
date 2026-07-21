@@ -12,4 +12,4 @@ import { randomUUID } from 'node:crypto'
 export type NewId = () => string
 
 /** The real id source — a v4 UUID. The shell binds this; core takes `NewId` as a parameter. */
-export const realNewId: NewId = () => randomUUID()
+export const nodeNewId: NewId = () => randomUUID()

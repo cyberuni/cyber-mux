@@ -8,7 +8,7 @@ name, the pane, and how it was found — call the probe directly. See
 [Detection](/cyber-mux/concepts/detection/) for the two-mode algorithm this implements.
 
 ```ts
-import { probeMultiplexer, currentPane, realExec, type MuxProbe } from 'cyber-mux'
+import { probeMultiplexer, currentPane, nodeExec, type MuxProbe } from 'cyber-mux'
 ```
 
 ## `probeMultiplexer(exec, env, opts?)` → `MuxProbe`
@@ -22,7 +22,7 @@ Two-mode detection:
    `$TMUX`/`$HERDR_ENV`/`$WEZTERM_PANE` hint only when the walk is inconclusive.
 
 ```ts
-const probe = probeMultiplexer(realExec, process.env)
+const probe = probeMultiplexer(nodeExec, process.env)
 // { mux: 'tmux', pane: '%3', via: 'ancestry' }
 ```
 
@@ -52,7 +52,7 @@ the fast-path reads *your* variables instead of `CYBER_MUX`, without forking det
 ```ts
 // Reads $MYTOOL_MUX and $MYTOOL_MUX_PANE for the fast-path;
 // discovery still walks the process ancestry unchanged.
-const probe = probeMultiplexer(realExec, process.env, { envPrefix: 'MYTOOL_MUX' })
+const probe = probeMultiplexer(nodeExec, process.env, { envPrefix: 'MYTOOL_MUX' })
 ```
 
 `<prefix>` names the mux and `<prefix>_PANE` the pane. This is one prefix per call — the host's — not

@@ -1,4 +1,4 @@
-import { type Exec, realExec } from './exec.ts'
+import { type Exec, nodeExec } from './exec.ts'
 import { herdrMuxAdapter } from './mux.herdr.ts'
 import { tmuxMuxAdapter } from './mux.tmux.ts'
 import type { MuxAdapter, MuxTarget } from './mux.ts'
@@ -10,7 +10,7 @@ import { currentPane, probeMultiplexer } from './mux-probe.ts'
  * discovery from `$$` falling back to the `$TMUX`/`$HERDR_ENV`/`$WEZTERM_PANE` hint when the walk is
  * inconclusive) — tmux/herdr/wezterm map to their existing adapters; anything else is a clear error.
  */
-export function selectMuxAdapter(env: NodeJS.ProcessEnv, exec: Exec = realExec): MuxAdapter {
+export function selectMuxAdapter(env: NodeJS.ProcessEnv, exec: Exec = nodeExec): MuxAdapter {
 	const probe = probeMultiplexer(exec, env)
 	if (probe.mux === 'tmux') return tmuxMuxAdapter
 	if (probe.mux === 'herdr') return herdrMuxAdapter

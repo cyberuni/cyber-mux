@@ -23,22 +23,22 @@ export interface Exec {
 	 * same routine-failure reason: it would spam every normal run.
 	 *
 	 * Typed `string | undefined` rather than a bare optional because it is a mutable TOGGLE, not an
-	 * absent-or-present field: a runner clears it by assigning `undefined` (see `realExec`), which under
+	 * absent-or-present field: a runner clears it by assigning `undefined` (see `nodeExec`), which under
 	 * `exactOptionalPropertyTypes` is a distinct, and here intended, operation from deleting the key.
 	 */
 	lastError?: string | undefined
 }
 
-export const realExec: Exec = (cmd, args) => {
+export const nodeExec: Exec = (cmd, args) => {
 	try {
 		const out = execFileSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
 		// Cleared on success, so a reason can never outlive the command that produced it.
-		realExec.lastError = undefined
+		nodeExec.lastError = undefined
 		return out
 	} catch (err) {
 		// Captured rather than inherited: routine failures would otherwise spam the caller's terminal.
 		const stderr = (err as { stderr?: Buffer | string | undefined }).stderr
-		realExec.lastError = String(stderr ?? '').trim() || undefined
+		nodeExec.lastError = String(stderr ?? '').trim() || undefined
 		return null
 	}
 }

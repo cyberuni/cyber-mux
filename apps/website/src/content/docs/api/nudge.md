@@ -11,7 +11,7 @@ sitting staged — flushes it with bare Enters until the turn is taken or a cap 
 ```ts
 import { nudge, type NudgeResult } from 'cyber-mux'
 
-const result = await nudge(adapter, realExec, target, 'run the tests')
+const result = await nudge(adapter, nodeExec, target, 'run the tests')
 // result: { taken: true, resubmits: 2 }
 ```
 

@@ -8,7 +8,7 @@ import type { Exec } from './exec.ts'
  * The filesystem half of the worktree adapter — the one seam here that is NOT `Exec`, exactly as
  * `TemplateStore` is for templates. `normalizeWorktreePath` and the remove gate reach for the disk,
  * and reading it through bare `node:fs` would make those the one worktree path a consumer cannot
- * drive hermetically. Injected (defaulting to `realWorktreeFs`), so #339's callers are unchanged and
+ * drive hermetically. Injected (defaulting to `nodeWorktreeFs`), so #339's callers are unchanged and
  * a test can stand in a fake disk.
  */
 export interface WorktreeFs {
@@ -19,7 +19,7 @@ export interface WorktreeFs {
 	realpath(path: string): string
 }
 
-export const realWorktreeFs: WorktreeFs = {
+export const nodeWorktreeFs: WorktreeFs = {
 	exists: existsSync,
 	realpath: (path) => realpathSync.native(path),
 }
@@ -133,7 +133,7 @@ export function resolvePrimaryRoot(exec: Exec): string {
  * same way (a symlinked repo, or macOS's `/tmp` → `/private/tmp`, otherwise silently fails to
  * match). Falls back to `resolve` for a path that isn't on disk, where there is no link to follow.
  */
-export function normalizeWorktreePath(path: string, fs: WorktreeFs = realWorktreeFs): string {
+export function normalizeWorktreePath(path: string, fs: WorktreeFs = nodeWorktreeFs): string {
 	try {
 		return fs.realpath(path)
 	} catch {
@@ -151,7 +151,7 @@ export function normalizeWorktreePath(path: string, fs: WorktreeFs = realWorktre
 export function listWorktreesFromGit(
 	exec: Exec,
 	primaryRoot: string,
-	fs: WorktreeFs = realWorktreeFs,
+	fs: WorktreeFs = nodeWorktreeFs,
 ): WorktreeEntry[] {
 	const out = exec('git', ['-C', primaryRoot, 'worktree', 'list', '--porcelain'])
 	if (!out) return []
@@ -319,7 +319,7 @@ export function removeWorktreeSafely(
 		fs?: WorktreeFs | undefined
 	},
 ): void {
-	const fs = opts.fs ?? realWorktreeFs
+	const fs = opts.fs ?? nodeWorktreeFs
 	assertDistinctFromPrimary(path, opts.primaryRoot)
 	if (!fs.exists(path)) {
 		// A checkout already gone but still bound is exactly the orphan this releases; git has nothing

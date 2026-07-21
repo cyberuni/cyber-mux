@@ -15,7 +15,7 @@ import {
   resolveTree,
   resolveTemplate,
   listTemplates,
-  realTemplateStore,
+  nodeTemplateStore,
   type Template,
 } from 'cyber-mux/template'
 ```
@@ -83,7 +83,7 @@ searched.
 - **`listTemplates(store, dirs)`** → `TemplateListing[]` — every resolvable template, repo first,
   with a shadowed user template *reported* (`shadowed: true`) rather than omitted.
 
-`store` is a `TemplateStore` seam (`list` / `read` / `dirExists` / `write`); `realTemplateStore` is
+`store` is a `TemplateStore` seam (`list` / `read` / `dirExists` / `write`); `nodeTemplateStore` is
 the default over the filesystem.
 
 :::note

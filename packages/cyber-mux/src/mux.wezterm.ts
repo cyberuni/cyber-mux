@@ -1,7 +1,7 @@
 import { envFallback } from './env-fallback.ts'
 import { type Exec, withReason } from './exec.ts'
 import type { LivePane, MuxAdapter, MuxReadOptions, OpenedPane } from './mux.ts'
-import { type NewId, realNewId } from './new-id.ts'
+import { type NewId, nodeNewId } from './new-id.ts'
 
 /**
  * WezTerm backend — detected via `$WEZTERM_PANE`. Drives WezTerm's built-in multiplexer through
@@ -213,7 +213,7 @@ export function createWeztermAdapter(deps: { newId: NewId }): MuxAdapter {
 	return adapter
 }
 
-export const weztermMuxAdapter: MuxAdapter = createWeztermAdapter({ newId: realNewId })
+export const weztermMuxAdapter: MuxAdapter = createWeztermAdapter({ newId: nodeNewId })
 
 /**
  * `wezterm cli spawn`/`split-pane` report ONLY the new pane's bare id on stdout — unlike tmux/herdr,

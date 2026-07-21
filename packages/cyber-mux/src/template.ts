@@ -423,7 +423,7 @@ export function firstPane(node: TemplateNode): PaneNode {
 }
 
 // The `cyber-mux/template` subpath surface: the schema/validation above PLUS the filesystem-backed
-// resolution seam (TemplateStore + realTemplateStore, resolveTemplate, listTemplates, templateDirs).
+// resolution seam (TemplateStore + nodeTemplateStore, resolveTemplate, listTemplates, templateDirs).
 // The apply engine (template-session/template-capture) stays internal — no consumer exercises it yet,
 // and exporting it would freeze a much larger contract.
 export * from './template-store.ts'

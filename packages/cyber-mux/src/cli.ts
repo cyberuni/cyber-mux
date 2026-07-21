@@ -3,10 +3,10 @@ import { Command, CommanderError, Option } from 'commander'
 import { callerPane, selectMuxAdapter } from './backend.ts'
 import { AmbiguousPaneError, CliError, reportError } from './cli-error.ts'
 import { AT_OPTION, ENV_OPTION, FORMAT_OPTION, LABEL_OPTION } from './cli-options.ts'
-import { type Exec, realExec } from './exec.ts'
+import { type Exec, nodeExec } from './exec.ts'
 import type { LivePane, MuxAdapter, MuxPlacement, MuxTarget } from './mux.ts'
 import { currentPane, probeMultiplexer } from './mux-probe.ts'
-import { realNewId } from './new-id.ts'
+import { nodeNewId } from './new-id.ts'
 import { type HelpEntry, output, printFields, printHelp, printTable, tildify } from './output.ts'
 import {
 	collectPanes,
@@ -26,8 +26,8 @@ import {
 } from './template-session.ts'
 import {
 	listTemplates,
+	nodeTemplateStore,
 	type ResolvedTemplate,
-	realTemplateStore,
 	resolveTemplate as resolveTemplateSource,
 	type TemplateStore,
 	templateDirs,
@@ -68,7 +68,7 @@ interface Deps {
 	store: TemplateStore
 }
 
-const REAL_DEPS: CliDeps = { env: process.env, exec: realExec, store: realTemplateStore }
+const DEFAULT_DEPS: CliDeps = { env: process.env, exec: nodeExec, store: nodeTemplateStore }
 
 /**
  * Resolve the adapter for the multiplexer this process is inside, failing with a coded `no-mux` error
@@ -745,7 +745,7 @@ function openCommand(deps: Deps): Command {
 									at: opts.at ?? 'workspace',
 									label: opts.label ?? template.name,
 									dirExists: deps.store.dirExists,
-									newId: realNewId,
+									newId: nodeNewId,
 									from: callerPane(a, deps.env),
 								}),
 							)
@@ -983,7 +983,7 @@ function worktreeAddCommand(deps: Deps): Command {
 									// could carry the root pane's env; the walk falls back to a prefix when not.
 									rootEnvHonored: opened.envHonored,
 									dirExists: deps.store.dirExists,
-									newId: realNewId,
+									newId: nodeNewId,
 								}),
 								extra,
 							)
@@ -1213,8 +1213,8 @@ function exitOverrideTree(command: Command): Command {
  * instead of calling `process.exit` directly and a rejection (an invalid `--at` choice, a missing
  * argument, a bare `send`) is catchable both here and in tests, rather than killing the test
  * runner's own process. */
-export function buildProgram(cliDeps: CliDeps = REAL_DEPS): Command {
-	const deps: Deps = { env: cliDeps.env, exec: cliDeps.exec, store: cliDeps.store ?? realTemplateStore }
+export function buildProgram(cliDeps: CliDeps = DEFAULT_DEPS): Command {
+	const deps: Deps = { env: cliDeps.env, exec: cliDeps.exec, store: cliDeps.store ?? nodeTemplateStore }
 	const program = new Command()
 		.name('cyber-mux')
 		.description('Cross-multiplexer pane control — one contract over tmux and herdr')

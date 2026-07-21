@@ -14,7 +14,7 @@ import {
   listWorktreesFromGit,
   removeWorktreeSafely,
   isWorktreeRemovable,
-  realExec,
+  nodeExec,
   type WorktreeEntry,
 } from 'cyber-mux/worktree'
 ```
@@ -56,7 +56,7 @@ Whether an entry is safe to dispose — the merged-and-clean predicate over the 
 - **`assertDistinctFromPrimary(worktreeRoot, primaryRoot)`** — throws if a worktree path is the
   primary checkout, the guard behind any removal.
 
-The `fs` parameter is a `WorktreeFs` seam (`exists` / `realpath`); `realWorktreeFs` is the default.
+The `fs` parameter is a `WorktreeFs` seam (`exists` / `realpath`); `nodeWorktreeFs` is the default.
 
 ## Removing a worktree
 

@@ -37,9 +37,9 @@ need.
 Every core function takes its side effects as parameters rather than reaching for `node:child_process`
 or `node:fs` directly. The two you will pass most often:
 
-- **`Exec`** — the synchronous command runner every adapter uses. The real one is `realExec`; a test
+- **`Exec`** — the synchronous command runner every adapter uses. The real one is `nodeExec`; a test
   passes a fake that records calls, so an adapter is drivable with no real multiplexer.
-- **`NewId`** — the id-minting seam. The real one is `realNewId` (a v4 UUID); a test passes a
+- **`NewId`** — the id-minting seam. The real one is `nodeNewId` (a v4 UUID); a test passes a
   deterministic counter.
 
 Bind the real implementations at the edge of your program and thread them through — that is exactly
@@ -50,13 +50,13 @@ what the CLI does.
 Detect the backend, open a pane, hand it its turn, and read the result back:
 
 ```ts
-import { selectMuxAdapter, callerPane, realExec, nudge } from 'cyber-mux'
+import { selectMuxAdapter, callerPane, nodeExec, nudge } from 'cyber-mux'
 
 // Pick the adapter for whatever multiplexer this process is inside.
 const adapter = selectMuxAdapter(process.env)
 
 // Open a pane to the right of THIS one, running a command.
-const opened = adapter.open(realExec, {
+const opened = adapter.open(nodeExec, {
   cwd: process.cwd(),
   at: 'pane:right',
   from: callerPane(adapter, process.env), // split the caller, not the user's focused pane
@@ -64,11 +64,11 @@ const opened = adapter.open(realExec, {
 })
 
 // Submit a message and verify the peer actually took its turn.
-const { taken, resubmits } = await nudge(adapter, realExec, opened, 'run the tests')
+const { taken, resubmits } = await nudge(adapter, nodeExec, opened, 'run the tests')
 console.log({ taken, resubmits })
 
 // Read the pane's current output.
-console.log(adapter.read(realExec, opened, { lines: 40 }))
+console.log(adapter.read(nodeExec, opened, { lines: 40 }))
 ```
 
 `selectMuxAdapter` throws if the process is in no supported multiplexer;

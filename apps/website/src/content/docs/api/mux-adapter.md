@@ -13,7 +13,7 @@ Import from the main entry:
 import {
   selectMuxAdapter,
   callerPane,
-  realExec,
+  nodeExec,
   type MuxAdapter,
   type OpenedPane,
 } from 'cyber-mux'
@@ -31,7 +31,7 @@ const adapter = selectMuxAdapter(process.env)
 adapter.name // 'tmux' | 'herdr' | 'wezterm'
 ```
 
-`exec` defaults to `realExec`; pass a fake to drive selection in a test.
+`exec` defaults to `nodeExec`; pass a fake to drive selection in a test.
 
 ### `callerPane(adapter, env)`
 
@@ -118,13 +118,13 @@ use:
 ## The `Exec` seam
 
 Every adapter method takes an `Exec` — a synchronous command runner returning trimmed stdout or
-`null` on failure. Bind `realExec` at the edge of your program:
+`null` on failure. Bind `nodeExec` at the edge of your program:
 
 ```ts
-import { realExec, withReason, type Exec } from 'cyber-mux'
+import { nodeExec, withReason, type Exec } from 'cyber-mux'
 ```
 
-- **`realExec`** — the real runner, over `execFileSync`.
+- **`nodeExec`** — the real runner, over `execFileSync`.
 - **`exec.lastError`** — the backend's own words for why the most recent call returned `null`, when
   the runner supplies them. A diagnostic, never a control-flow signal — `null` stays the one failure
   sentinel.
