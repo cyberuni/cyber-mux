@@ -57,7 +57,7 @@ export interface CliDeps {
 	/** The filesystem half, for the `template` group — injected for the same reason `exec` is: it is the
 	 * only way `template` can be driven hermetically in tests, with no real templates on disk. Optional
 	 * at this boundary so a caller that drives no template command need not know the seam exists. */
-	store?: TemplateStore
+	store?: TemplateStore | undefined
 }
 
 /** `CliDeps` with every optional dep resolved — what each command is actually handed. */
@@ -294,7 +294,7 @@ function templateOption(): Option {
  */
 function resolveTemplate(
 	deps: Deps,
-	opts: { name?: string; file?: string },
+	opts: { name?: string | undefined; file?: string | undefined },
 ): ResolvedTemplate & { template: Template } {
 	// A malformed NAME is a usage error (exit 2), and it is caught HERE — before `resolveTemplateSource` reads —
 	// so it is told apart from a well-formed name that simply resolves nowhere (exit 1, below). The name

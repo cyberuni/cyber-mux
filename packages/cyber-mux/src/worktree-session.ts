@@ -75,14 +75,14 @@ export function addAndOpenWorktree(
 		primaryRoot: string
 		branch: string
 		path: string
-		base?: string
-		launch?: string
+		base?: string | undefined
+		launch?: string | undefined
 		/** Environment set in the opened root pane at birth — native at every tier on both backends. */
-		env?: Record<string, string>
-		at?: MuxPlacement
-		label?: string
+		env?: Record<string, string> | undefined
+		at?: MuxPlacement | undefined
+		label?: string | undefined
 		/** Passed to `open` for a `pane:*` placement; see `MuxOpenOptions.from`. */
-		from?: MuxTarget
+		from?: MuxTarget | undefined
 	},
 ): OpenedWorktree {
 	if (canBind(adapter, opts.at)) {
@@ -127,13 +127,13 @@ export function openExistingWorktree(
 	opts: {
 		primaryRoot: string
 		path: string
-		launch?: string
+		launch?: string | undefined
 		/** Environment set in the opened root pane; honored natively on the `open` route, compensated on the bind route. */
-		env?: Record<string, string>
-		at?: MuxPlacement
-		label?: string
+		env?: Record<string, string> | undefined
+		at?: MuxPlacement | undefined
+		label?: string | undefined
 		/** Passed to `open` for a `pane:*` placement; see `MuxOpenOptions.from`. */
-		from?: MuxTarget
+		from?: MuxTarget | undefined
 	},
 ): OpenedWorktree {
 	const at = opts.at ?? 'workspace'
@@ -196,7 +196,7 @@ export function removeWorktree(
 	exec: Exec,
 	adapter: MuxAdapter | undefined,
 	path: string,
-	opts: { primaryRoot: string; force?: boolean },
+	opts: { primaryRoot: string; force?: boolean | undefined },
 ): void {
 	const capability = adapter?.worktree
 	const workspace = capability?.bindings(exec, { primaryRoot: opts.primaryRoot }).get(normalizeWorktreePath(path))

@@ -179,11 +179,11 @@ export interface OpenTemplateOptions {
 	/** The injected target directory. */
 	cwd: string
 	/** Defaults to `workspace` — a fresh space is empty by construction. */
-	at?: MuxPlacement
-	label?: string
+	at?: MuxPlacement | undefined
+	label?: string | undefined
 	dirExists: (path: string) => boolean
 	/** Passed to the region's own `open` for a `pane:*` placement; see `MuxOpenOptions.from`. */
-	from?: MuxTarget
+	from?: MuxTarget | undefined
 }
 
 /**
@@ -465,7 +465,7 @@ export interface ApplyTemplateOptions {
 	 * knows what it named it; omitted, the template's own name stands, matching `open --template`'s
 	 * default.
 	 */
-	label?: string
+	label?: string | undefined
 }
 
 /**

@@ -97,10 +97,10 @@ export function templateDirs(exec: Exec, env: NodeJS.ProcessEnv): TemplateDirs {
 
 export interface ResolveTemplateOptions {
 	/** A template name — resolved repo-then-user. Ignored when `file` is given. */
-	name?: string
+	name?: string | undefined
 	/** An explicit path, which SKIPS resolution entirely: the escape hatch for a template that is not
 	 * checked in. Neither templates directory is consulted. */
-	file?: string
+	file?: string | undefined
 	store: TemplateStore
 	exec: Exec
 	env: NodeJS.ProcessEnv

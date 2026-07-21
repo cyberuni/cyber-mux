@@ -26,9 +26,9 @@ export interface MuxOpenOptions {
 	/** Working directory the new pane/window/session should start in. */
 	cwd: string
 	/** Command line to launch inside the new pane once it is open; omit for a blank pane. */
-	launch?: string
+	launch?: string | undefined
 	/** Placement relative to the caller; defaults to 'tab'. */
-	at?: MuxPlacement
+	at?: MuxPlacement | undefined
 	/**
 	 * The pane a `pane:*` placement splits. Ignored by `tab`/`workspace`, which split nothing.
 	 *
@@ -40,7 +40,7 @@ export interface MuxOpenOptions {
 	 * human is typing and diverge exactly when a program is driving. Naming the pane is the only way
 	 * `pane:right` means the same thing on both backends.
 	 */
-	from?: MuxTarget
+	from?: MuxTarget | undefined
 	/**
 	 * The workspace a `tab` placement opens INSIDE — a backend workspace id, exactly the value
 	 * `OpenedPane.workspace` reports. Ignored by `pane:*` (a split lands in its pane's own space) and
@@ -58,7 +58,7 @@ export interface MuxOpenOptions {
 	 * a Window): an adapter with nothing to resolve it against ignores it, which still satisfies the
 	 * contract — there is no second space for a tab to land in the wrong one of.
 	 */
-	within?: string
+	within?: string | undefined
 	/**
 	 * Fraction of the split region kept by `first` — the ORIGINAL pane, not the new one. Only
 	 * meaningful for a `pane:*` placement; `0 < ratio < 1`, and omitting it takes the backend's own
@@ -69,7 +69,7 @@ export interface MuxOpenOptions {
 	 * unconverted; tmux's `-l` sizes the NEW pane, so it takes `1 - ratio`. Applying the inversion to
 	 * both, or to neither, is the single most likely way to get a split backwards.
 	 */
-	ratio?: number
+	ratio?: number | undefined
 	/**
 	 * Environment variables set at the birth of whatever tier `at` opens — NOT just a split. Native
 	 * on both real backends, which take a repeatable flag on every space-creating command (herdr
@@ -87,14 +87,14 @@ export interface MuxOpenOptions {
 	 * ANY route at all (`session.wezterm.ts`), so every one of its opens takes this same fallback path
 	 * rather than just the one.
 	 */
-	env?: Record<string, string>
+	env?: Record<string, string> | undefined
 	/**
 	 * Name for the space this opens, at whatever tier `at` opens it — every backend can name every
 	 * tier, so this is host-neutral: on herdr a workspace/tab/pane label, on tmux a window name
 	 * (`workspace` and `tab` both collapse to a Window there) or a pane title. Omit for the backend's
 	 * own default.
 	 */
-	label?: string
+	label?: string | undefined
 	/**
 	 * An OPAQUE id grouping the spaces one caller opens, for a backend with no workspace tier to group
 	 * them in. A caller opening several tabs as one workspace needs them recognizable as a group
@@ -125,7 +125,7 @@ export interface MuxOpenOptions {
 	 * did not open the space calls `group` directly; this option is only the shorthand for a caller
 	 * that did.
 	 */
-	workspaceGroup?: string
+	workspaceGroup?: string | undefined
 }
 
 /** Opaque handle to an open pane/window/session; backend-specific id lives in `id`. */
@@ -279,13 +279,13 @@ export interface CreateWorktreeWorkspaceOptions {
 	/** Where the new worktree should be checked out. */
 	path: string
 	/** Start point for the new branch; omit for the backend's own default (the current HEAD). */
-	base?: string
+	base?: string | undefined
 	/** Command line to launch inside the new workspace's root pane; omit for a blank pane. */
-	launch?: string
+	launch?: string | undefined
 	/** Environment variables set in the new workspace's root pane at birth. */
-	env?: Record<string, string>
+	env?: Record<string, string> | undefined
 	/** Name for the bound workspace; omit for the backend's own default. */
-	label?: string
+	label?: string | undefined
 }
 
 export interface OpenWorktreeWorkspaceOptions {
@@ -294,11 +294,11 @@ export interface OpenWorktreeWorkspaceOptions {
 	/** An EXISTING worktree's checkout path. */
 	path: string
 	/** Command line to launch inside the new workspace's root pane; omit for a blank pane. */
-	launch?: string
+	launch?: string | undefined
 	/** Environment variables set in the new workspace's root pane at birth. */
-	env?: Record<string, string>
+	env?: Record<string, string> | undefined
 	/** Name for the bound workspace; omit for the backend's own default. */
-	label?: string
+	label?: string | undefined
 }
 
 /** A worktree open in a workspace bound to it — the capability's whole product. */

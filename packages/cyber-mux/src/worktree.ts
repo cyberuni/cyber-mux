@@ -12,7 +12,7 @@ interface WorktreeAddOptions {
 	/** Branch to create the worktree on. */
 	branch: string
 	/** Start point for the new branch; omit for git's own default (the current HEAD). */
-	base?: string
+	base?: string | undefined
 }
 
 export interface Worktree {
@@ -142,9 +142,12 @@ export function listWorktreesFromGit(exec: Exec, primaryRoot: string): WorktreeE
 			const root = normalizeWorktreePath(lines[0]!.slice('worktree '.length))
 			// `branch refs/heads/<name>`; absent entirely when detached or bare.
 			const branchLine = lines.find((line) => line.startsWith('branch '))
+			const branch = branchLine?.slice('branch '.length).replace(/^refs\/heads\//, '')
 			return {
 				root,
-				branch: branchLine?.slice('branch '.length).replace(/^refs\/heads\//, ''),
+				// Omitted, never carried as an explicit `undefined`: a detached/bare entry has no branch,
+				// and `WorktreeEntry.branch` is an absent-or-present field.
+				...(branch !== undefined ? { branch } : {}),
 				// Derived from the path rather than record order — git lists the primary first today,
 				// but that ordering is not something to depend on.
 				linked: root !== normalizedPrimary,
@@ -155,8 +158,12 @@ export function listWorktreesFromGit(exec: Exec, primaryRoot: string): WorktreeE
 	for (const entry of entries) {
 		if (merged && entry.branch) entry.merged = merged.has(entry.branch)
 		// No directory to stat for an entry git already calls stale — and skipping it is the one place
-		// the per-worktree cost can be avoided honestly.
-		if (!entry.prunable) entry.dirty = readDirty(exec, entry.root)
+		// the per-worktree cost can be avoided honestly. Assigned only when git answered, so `dirty`
+		// stays absent (never explicit `undefined`) for a checkout git could not read.
+		if (!entry.prunable) {
+			const dirty = readDirty(exec, entry.root)
+			if (dirty !== undefined) entry.dirty = dirty
+		}
 	}
 	return entries
 }
@@ -281,7 +288,7 @@ function isDirty(exec: Exec, worktreeRoot: string): boolean {
 export function removeWorktreeSafely(
 	exec: Exec,
 	path: string,
-	opts: { primaryRoot: string; force?: boolean; releaseBinding?: () => void },
+	opts: { primaryRoot: string; force?: boolean | undefined; releaseBinding?: (() => void) | undefined },
 ): void {
 	assertDistinctFromPrimary(path, opts.primaryRoot)
 	if (!existsSync(path)) {

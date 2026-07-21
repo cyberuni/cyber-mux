@@ -21,8 +21,12 @@ export interface Exec {
 	 * The alternative was widening the return to a result object, which rewrites every call site and
 	 * every fake for a diagnostic. Forwarding stderr to the terminal instead is not an option for the
 	 * same routine-failure reason: it would spam every normal run.
+	 *
+	 * Typed `string | undefined` rather than a bare optional because it is a mutable TOGGLE, not an
+	 * absent-or-present field: a runner clears it by assigning `undefined` (see `realExec`), which under
+	 * `exactOptionalPropertyTypes` is a distinct, and here intended, operation from deleting the key.
 	 */
-	lastError?: string
+	lastError?: string | undefined
 }
 
 export const realExec: Exec = (cmd, args) => {

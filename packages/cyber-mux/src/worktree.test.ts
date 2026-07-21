@@ -142,7 +142,11 @@ describe('spec:cyber-mux/mux', () => {
 		})
 
 		it('reports a detached HEAD as a worktree with no branch', () => {
-			expect(listing(porcelain)[2]).toMatchObject({ branch: undefined, linked: true })
+			// The `branch` key is OMITTED (absent), not carried as an explicit `undefined` — a detached
+			// HEAD has no branch, and under exactOptionalPropertyTypes `branch?` is an absent-or-present field.
+			const detached = listing(porcelain)[2]!
+			expect(detached).toMatchObject({ linked: true })
+			expect(detached).not.toHaveProperty('branch')
 		})
 
 		it('reports a stale entry as prunable', () => {
