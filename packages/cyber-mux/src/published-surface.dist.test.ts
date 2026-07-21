@@ -25,6 +25,7 @@ describe('spec:cyber-mux/library — published surface', () => {
 			expect(lib.tmuxMuxAdapter.name).toBe('tmux')
 			expect(lib.herdrMuxAdapter.name).toBe('herdr')
 			expect(lib.weztermMuxAdapter.name).toBe('wezterm')
+			expect(lib.zellijMuxAdapter.name).toBe('zellij')
 		})
 
 		it('the ./worktree and ./template subpaths yield their seams', () => {
@@ -51,6 +52,7 @@ describe('spec:cyber-mux/library — published surface', () => {
 				'TMUX_WORKSPACE_GROUP_OPTION',
 				'callerPane',
 				'createWeztermAdapter',
+				'createZellijAdapter',
 				'currentPane',
 				'herdrMuxAdapter',
 				'isStaged',
@@ -63,6 +65,7 @@ describe('spec:cyber-mux/library — published surface', () => {
 				'tmuxMuxAdapter',
 				'weztermMuxAdapter',
 				'withReason',
+				'zellijMuxAdapter',
 			])
 			// The CLI-only surface (console.log / process.exit) must be structurally unreachable from any
 			// library entry. Assert the names are absent rather than trusting the list above alone.

@@ -1,9 +1,9 @@
 ---
 title: Multiplexers
-description: The multiplexers cyber-mux drives — tmux, herdr, and WezTerm — and how their differing feature sets map onto the one contract.
+description: The multiplexers cyber-mux drives — tmux, herdr, WezTerm, and Zellij — and how their differing feature sets map onto the one contract.
 ---
 
-`cyber-mux` drives three terminal multiplexers through one contract, so callers never write
+`cyber-mux` drives four terminal multiplexers through one contract, so callers never write
 host-specific code. But the multiplexers are not the same shape: they disagree on how
 many nesting tiers they have, whether they track git worktrees, and whether they can name a pane or
 tell you which one is focused. This page is the map of those differences — what each multiplexer
@@ -11,13 +11,13 @@ supports and what cyber-mux does when it falls short.
 
 ## At a glance
 
-| Capability            | tmux                    | herdr                   | WezTerm (alpha)         |
-| --------------------- | ----------------------- | ----------------------- | ----------------------- |
-| Workspace tier        | ✗ (collapses to window) | ✓                       | ✓ (a real Window/Workspace split) |
-| Worktree binding      | ✗                       | ✓                       | ✗                       |
-| Name a pane           | —                       | ✓                       | ✗ (throws / warns)      |
-| Report focused pane   | best-effort             | best-effort             | ✗ (always `unknown`)    |
-| Knows the running harness | ✗                   | ✓                       | ✗                       |
+| Capability            | tmux                    | herdr                   | WezTerm (alpha)         | Zellij (alpha)          |
+| --------------------- | ----------------------- | ----------------------- | ----------------------- | ----------------------- |
+| Workspace tier        | ✗ (collapses to window) | ✓                       | ✓ (a real Window/Workspace split) | ✗ (placement collapses to tab, but occupancy is reported) |
+| Worktree binding      | ✗                       | ✓                       | ✗                       | ✗                       |
+| Name a pane           | —                       | ✓                       | ✗ (throws / warns)      | ✓                       |
+| Report focused pane   | best-effort             | best-effort             | ✗ (always `unknown`)    | ✓ (`list-panes --json`) |
+| Knows the running harness | ✗                   | ✓                       | ✗                       | ✗                       |
 
 ## tmux
 
@@ -87,6 +87,36 @@ against — so its gaps are real, spec'd limitations rather than forced parity:
   — when sizing a `pane:*` split.
 - `spawn`/`split-pane` report only the bare pane id — unlike tmux/herdr, its tab (and, on a `tab` or
   `pane:*` placement, its workspace) cost one follow-up `list --format json` call.
+
+## Zellij (alpha)
+
+Driven via `zellij action` (`new-pane`, `new-tab`, `write-chars`, `send-keys`, `dump-screen`,
+`focus-pane-id`, `list-panes --json`, `rename-pane`, `rename-tab-by-id`, `close-pane`, …) against
+[Zellij](https://zellij.dev)'s built-in multiplexer. Requires Zellij ≥ 0.44.1, the release that
+added per-pane CLI addressing. Built from the Zellij docs and CHANGELOG rather than empirically — no
+live Zellij binary was available to verify against — so, like WezTerm, its gaps are real, spec'd
+limitations rather than forced parity:
+
+- **Has a real session tier, but a placement can't reach it.** Zellij's workspace-equivalent is a
+  session, and pane ids are session-scoped — cyber-mux's pane target carries no session, so it can
+  only ever operate inside the ambient session. A `workspace` placement therefore **collapses to a
+  new tab**, the same way tmux collapses `workspace` to a window, even though the underlying tier is
+  real. It still **reports** the occupied session, though: `OpenedPane.workspace` carries the ambient
+  `$ZELLIJ_SESSION_NAME` — occupancy is answered even where placement can't reach the tier.
+- **Never binds a git worktree.** Its CLI has no `worktree` subcommand or concept of one, so — like
+  WezTerm — it falls back to plain git plus a placement-appropriate `open()`.
+- **No `--env` flag on `new-pane`/`new-tab`.** Every Zellij open takes the same
+  command-prefix-or-warn fallback as WezTerm: env rides in as an `env K=V` prefix on the launch
+  command when there is one, or a stderr warning when there isn't.
+- **Can name a pane, at birth or after.** `new-pane --name` sets it at birth; `rename-pane` and
+  `rename-tab-by-id` rename an already-open space.
+- **Reports focused pane for real.** `list-panes --json` carries an `is_focused` field per pane, so
+  `isPaneFocused` answers `true`/`false` rather than `unknown`.
+- **Cannot size a split.** Zellij's tiled splits are always even; sizing a pane requires a floating
+  pane, which cyber-mux does not use. A requested `ratio` is dropped and the caller gets Zellij's own
+  even split, the same degrade path as a backend with no `canSizeSplits`.
+- **No region introspection yet.** Pane geometry is deliberately not implemented (a follow-up), so
+  `template save` refuses on Zellij by naming the backend, the same as WezTerm.
 
 ## The common shape
 

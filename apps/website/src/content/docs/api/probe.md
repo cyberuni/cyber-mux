@@ -29,13 +29,13 @@ import { probeMultiplexer, currentPane, nodeExec, type MuxProbe } from 'cyber-mu
 
 Two-mode detection:
 
-1. **Fast-path** — `$CYBER_MUX` (`tmux | herdr | wezterm | screen | none`) is trusted outright, and
-   also serves as an **override** (`=none` forces no-mux even inside a real multiplexer).
-   `$CYBER_MUX_PANE` carries the pane id. `screen` is **recognized** here but is **not a drivable
-   backend** — `probeMultiplexer` reports `mux: 'screen'`, and `resolveMux`/`resolveMuxAdapter` then
-   reject it with a named error rather than returning an adapter. Recognition is not support.
+1. **Fast-path** — `$CYBER_MUX` (`tmux | herdr | wezterm | zellij | screen | none`) is trusted
+   outright, and also serves as an **override** (`=none` forces no-mux even inside a real
+   multiplexer). `$CYBER_MUX_PANE` carries the pane id. `screen` is **recognized** here but is **not a
+   drivable backend** — `probeMultiplexer` reports `mux: 'screen'`, and `resolveMux`/`resolveMuxAdapter`
+   then reject it with a named error rather than returning an adapter. Recognition is not support.
 2. **Discovery** — otherwise, walk the process ancestry from `$$`, falling back to the
-   `$TMUX`/`$HERDR_ENV`/`$WEZTERM_PANE` hint only when the walk is inconclusive.
+   `$TMUX`/`$HERDR_ENV`/`$WEZTERM_PANE`/`$ZELLIJ` hint only when the walk is inconclusive.
 
 ```ts
 const probe = probeMultiplexer(nodeExec, process.env)
@@ -55,8 +55,8 @@ const probe = probeMultiplexer(nodeExec, process.env)
 ## `currentPane(env)`
 
 This session's own pane, resolved from **env alone** (no `ps` walk): the `$CYBER_MUX_PANE` fast-path,
-then `$TMUX_PANE`, `$HERDR_PANE_ID`, `$WEZTERM_PANE`. Returns `{ mux, pane }` tagged with the
-multiplexer, or `undefined` when the session is in no pane-carrying multiplexer. This is the
+then `$TMUX_PANE`, `$HERDR_PANE_ID`, `$WEZTERM_PANE`, `$ZELLIJ_PANE_ID`. Returns `{ mux, pane }` tagged
+with the multiplexer, or `undefined` when the session is in no pane-carrying multiplexer. This is the
 mux-agnostic self-identity key that [`mux.callerPane()`](/cyber-mux/api/mux-adapter/#muxcallerpane)
 (and the raw [`callerPane`](/cyber-mux/api/mux-adapter/#callerpaneadapter-env)) is built on.
 

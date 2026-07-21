@@ -5,8 +5,9 @@ description: Print just the detected backend name.
 
 ### `cyber-mux mode`
 
-Print just the detected backend name: `tmux`, `herdr`, `wezterm` (alpha), or `none`. The one-line
-version of [`doctor`](/cyber-mux/cli/doctor/) for scripts that only need the backend name.
+Print just the detected backend name: `tmux`, `herdr`, `wezterm` (alpha), `zellij` (alpha), or
+`none`. The one-line version of [`doctor`](/cyber-mux/cli/doctor/) for scripts that only need the
+backend name.
 
 ## Examples
 

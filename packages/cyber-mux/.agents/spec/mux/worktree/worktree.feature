@@ -76,6 +76,7 @@ Feature: mux worktree — git worktree helpers and the workspace binding
       | my-feature | $HERDR_ENV set and no $TMUX | herdr   | bound to a workspace — one call creates both  |
       | my-feature | $TMUX set                   | tmux    | ungrouped — tmux binds nothing, plain git plus a plain open |
       | my-feature | $WEZTERM_PANE set           | wezterm | ungrouped — wezterm has no worktree concept in its CLI at all, plain git plus a plain open |
+      | my-feature | $ZELLIJ set                 | zellij  | ungrouped — zellij has no worktree subcommand in its CLI at all, plain git plus a plain open |
 
   Scenario Outline: a placement the binding cannot serve falls back rather than failing
     Given a caller running cyber-mux worktree add --branch <branch> --at <placement> on a backend that binds

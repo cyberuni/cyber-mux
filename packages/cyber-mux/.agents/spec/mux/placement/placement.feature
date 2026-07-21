@@ -27,6 +27,7 @@ Feature: mux placement — where a new pane opens, and what open reports back
       | $TMUX set                   | tmux    |
       | $HERDR_ENV set and no $TMUX | herdr   |
       | $WEZTERM_PANE set           | wezterm |
+      | $ZELLIJ set                 | zellij  |
 
   Scenario: tmux --at workspace opens a visible window in the current session, never a detached session
     Given a caller running cyber-mux open --at workspace with $TMUX set
@@ -64,6 +65,7 @@ Feature: mux placement — where a new pane opens, and what open reports back
       | $TMUX set                   | tmux    |
       | $HERDR_ENV set and no $TMUX | herdr   |
       | $WEZTERM_PANE set           | wezterm |
+      | $ZELLIJ set                 | zellij  |
 
   Scenario: the tab placement opens in the background without stealing focus
     Given a caller running cyber-mux open --at tab

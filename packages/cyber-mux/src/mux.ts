@@ -186,7 +186,7 @@ export interface LivePane {
 	/** Backend-native pane id. */
 	id: string
 	/** Which multiplexer this pane belongs to. */
-	mux: 'tmux' | 'herdr' | 'wezterm'
+	mux: 'tmux' | 'herdr' | 'wezterm' | 'zellij'
 	/** The harness running in this pane, when the backend can report it (herdr only). */
 	harness?: string | undefined
 	/** The pane's working directory, when the backend reports it. */

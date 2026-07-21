@@ -275,3 +275,86 @@ Decisions (`45-screen-adapter` — a screen adapter, or an honest rejection):
   a launch wrapper, parsing windowlist hardcopy for enumeration, widening `LivePane.mux` +
   consumers, omitting `regions`/`worktree`, all empirically unverifiable end-to-end) remains on record
   here should someone ever want to reprice it — the probe is the input that would decide it again.
+
+Decisions (`46-zellij-adapter` — the fourth backend, and the pane-identity gate it turned on):
+
+- **the identity gate resolved to BUILD — Zellij CAN yield a stable per-pane handle, as of 0.44.0** —
+  DECIDED: a full adapter, not a deferral. This was the decisive question (issue #46 flagged it, and
+  #45's screen adapter faces the same one): `zellij action` was, historically, almost entirely
+  FOCUS-relative — `write-chars`/`dump-screen`/`rename-pane`/`close-pane` all acted on the focused
+  pane, with no per-pane target and no "focus pane X" primitive, only directional `move-focus`. On
+  that surface no faithful adapter is possible and the honest answer would have been to decline, at
+  #45's bar. **Probed, not assumed** (the whole point — an assistant reasoning from a stale knowledge
+  cutoff would have declared Zellij focus-only and been confidently wrong): Zellij **0.44.0
+  (2026-03-23)** added `-p, --pane-id` across the write/dump/rename/close action family, `focus-pane-id
+  <id>` (0.44.1), `list-panes --json`, and ids returned from `new-pane`/`new-tab` — a stable,
+  discoverable, CLI-addressable per-pane handle. So the adapter is gated on **Zellij ≥ 0.44.1**; on an
+  older binary the commands fail and the adapter surfaces the failure rather than silently driving the
+  focused pane. Evidence is the Zellij docs + CHANGELOG only — Zellij is not installed in the build
+  sandbox — so the adapter carries the same "not verified against a live binary" disclaimer
+  `mux.wezterm.ts` does, with two literals flagged for a live spot-check (the exact id form `new-pane`
+  prints, and the shell value of `$ZELLIJ_PANE_ID`). Both are handled either way — ids are carried
+  verbatim and compared through a normalizer that folds a bare `N` to its `terminal_N` twin, per the
+  docs' own `terminal_N | plugin_N | bare N` scheme.
+
+- **self-identity is `$ZELLIJ_PANE_ID`** — DECIDED: the fast-path pane var, alongside
+  `$TMUX_PANE`/`$HERDR_PANE_ID`/`$WEZTERM_PANE`. `$ZELLIJ`/`$ZELLIJ_SESSION_NAME` name the SESSION, not
+  the pane — the issue's own worry — but Zellij also exports `$ZELLIJ_PANE_ID` in every terminal pane,
+  so `currentPane` gets a real fast path and does not fall to the ancestry walk. Detection uses `$ZELLIJ`
+  as the fast-positive hint (the role `$TMUX`/`$HERDR_ENV` play), with the pane riding separately in
+  `$ZELLIJ_PANE_ID`. **Shared with #45/mux-screen:** this is the identity answer for a session-scoped
+  multiplexer — a per-pane env var plus a per-pane CLI target is exactly what screen would need and, on
+  probing, lacks; the two backends' feasibility genuinely diverges here despite the surface similarity.
+
+- **the workspace tier COLLAPSES to a tab, but occupancy is still reported — and the limit is the
+  SEAM's, not Zellij's** — DECIDED, and this is the load-bearing design finding. Zellij's native tiers
+  are Session › Tab › Pane, and the issue's thesis was that Session answers `OpenedPane.workspace` where
+  tmux cannot. Half of that holds and half does not, for a reason worth recording. Zellij pane ids are
+  **session-scoped**: driving a pane in another session requires `zellij --session <name> action …`, and
+  `MuxTarget` carries only an opaque pane id with **no session qualifier**. So a `workspace` placement
+  that created a fresh session (`zellij attach --create-background`, which does work non-interactively)
+  would hand back a pane that fails on the very next `write`/`read`/`focus` — a trap, not a tier. The
+  adapter therefore operates within the AMBIENT session and collapses `workspace` onto a new **tab**, the
+  same collapse tmux makes onto a Window. **Unlike tmux, occupancy IS answered:** every `OpenedPane`
+  reports `workspace = $ZELLIJ_SESSION_NAME` (injected at resolution via `createZellijAdapter({session})`),
+  because every pane genuinely lives in that session. So the issue's "workspace is answerable rather than
+  absent" is delivered for occupancy, while separate DRIVABLE workspaces are out of reach. **The fix, if
+  ever pursued, is a seam change, not an adapter change:** an optional session/workspace qualifier on
+  `MuxTarget` would let the adapter address a second session and lift the collapse. Recorded as a
+  follow-up; not built here, and not Zellij's shortcoming to route around.
+
+- **`group` is a complete no-op, herdr/wezterm-style** — DECIDED: the session is a real workspace tier
+  that already groups every tab in it (exactly what `OpenedPane.workspace` reports), and Zellij has no
+  per-tab opaque metadata store — no tmux-style window option — to hold a finer per-caller tag in. So
+  there is nothing for `group` to write, the same complete answer wezterm gives at its window/workspace
+  tier; the granularity is the whole session, coarser than tmux's per-window tag but honest.
+
+- **tiled splits cannot be sized, so `canSizeSplits` is omitted** — DECIDED: `new-pane`'s
+  `-x/-y/--width/--height` all require `--floating`; a tiled `pane:*` split is always even. Rather than
+  reach for floating panes (a different pane model cyber-mux does not use elsewhere) to honor a ratio,
+  the adapter omits `canSizeSplits` and drops a `ratio`, and callers degrade to the even default with one
+  warning — the exact path the flag's absence already documents.
+
+- **`from` is honored by focusing the target pane first** — DECIDED, with the focus move as an accepted
+  cost. `new-pane` has no split-target flag (only `--tab-id`); it splits the focused pane. The seam's
+  `from` names WHICH pane a `pane:*` split lands beside, and the only way to choose it is
+  `focus-pane-id <from>` before `new-pane`. That is a real, visible focus move — accepted because
+  splitting the RIGHT pane matters more than avoiding it, and an omitted `from` still takes Zellij's own
+  focused-pane default (the backend default the seam documents, never silently "the caller's pane").
+
+- **pane geometry (`regions`) is deliberately unbuilt, though Zellij reports it** — DECIDED: omitted, a
+  follow-up. `list-panes --json` carries `pane_x`/`pane_y`/`pane_rows`/`pane_columns`, so unlike wezterm
+  (which has no position at all) Zellij COULD implement `describeRegion`/`describeWorkspace` and unlock
+  `template save`. But the cell-vs-divider semantics of Zellij's rects (does `pane_columns` include the
+  divider column between panes, the way tmux's width excludes it?) cannot be pinned from docs and would
+  be a guess baked into a captured template a user commits. So `regions` is omitted — `template save`
+  refuses on zellij by naming the backend, the same optional-absence it handles for wezterm — and left
+  as a clean follow-up for a live-binary pass. This keeps this CR's scope at the core adapter.
+
+- **wins Zellij has that wezterm does not, recorded so they are not re-questioned** — DECIDED: Zellij CAN
+  name a pane (`new-pane --name` / `rename-pane --pane-id`), so `rename(…, 'pane', …)` is a real rename,
+  not a throw; and it CAN report which pane is focused (`list-panes --json`'s `is_focused`), so
+  `isPaneFocused` answers a real boolean rather than always `unknown`. `read` uses `dump-screen` to
+  stdout (the viewport; `--full` plus a client-side tail for a `lines` request, Zellij having no
+  trailing-N primitive); env is non-native on `new-pane`/`new-tab`, so every open rides the same
+  `envFallback` prefix-or-warn compensation wezterm uses.
