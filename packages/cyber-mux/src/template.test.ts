@@ -65,7 +65,7 @@ function splits(node: TemplateNode, acc: SplitNode[] = []): SplitNode[] {
 	return acc
 }
 
-describe('spec:cyber-mux/template', () => {
+describe('spec:cyber-mux/template/apply', () => {
 	describe('parseTemplate', () => {
 		it('parses a template’s bytes into an object', () => {
 			expect(parseTemplate('{"name":"render-farm","panes":[{"label":"gpu"}]}')).toEqual({
@@ -97,7 +97,7 @@ describe('spec:cyber-mux/template', () => {
 	})
 
 	describe('validateTemplate', () => {
-		it('a name field that disagrees with the filename stem fails, naming both', () => {
+		it('apply-name-field-mismatch-fails', () => {
 			// The redundancy is the point: a copied file that kept its old name fails loudly rather than
 			// resolving under one name while calling itself another.
 			const errors = validateTemplate({ name: 'pool-3', panes: [{ label: 'w' }] }, 'pool-4')
@@ -110,7 +110,7 @@ describe('spec:cyber-mux/template', () => {
 			expect(validateTemplate({ name: 'render-farm', panes: [{ label: 'gpu' }] }, 'render-farm')).toEqual([])
 		})
 
-		it('a template that sets cwd fails, naming its JSON path, --cwd and dir', () => {
+		it('apply-cwd-field-refused', () => {
 			// A hard error rather than an ignored key is what keeps a template reusable: silently dropping
 			// a cwd would let a template that pins a machine's path look like it worked.
 			const errors = validateTemplate(
@@ -133,7 +133,7 @@ describe('spec:cyber-mux/template', () => {
 
 		// The Examples rows are the contract's own vectors: absolute, a bare escape, and an escape that
 		// only shows up after normalization.
-		it.each(['/etc', '../sibling', 'packages/../../outside'])('refuses dir "%s", naming that pane’s path', (dir) => {
+		it.each(['/etc', '../sibling', 'packages/../../outside'])('apply-dir-must-be-relative', (dir) => {
 			const errors = validateTemplate(
 				{ name: 'render-farm', panes: [{ label: 'gpu' }, { label: 'cpu', dir }] },
 				'render-farm',
@@ -142,14 +142,14 @@ describe('spec:cyber-mux/template', () => {
 			expect(errors[0]).toContain('panes[1].dir')
 		})
 
-		it('accepts a relative dir under the target', () => {
+		it('apply-dir-relative-accepted', () => {
 			expect(
 				validateTemplate({ name: 'render-farm', panes: [{ label: 'gpu', dir: 'services/api/logs' }] }, 'render-farm'),
 			).toEqual([])
 		})
 
 		// 0 and 1 hand one side the whole region and the other nothing — a mistake, not an intent.
-		it.each([0, 1, -0.5, 1.5])('refuses ratio %s, naming that node’s path', (ratio) => {
+		it.each([0, 1, -0.5, 1.5])('apply-ratio-out-of-range-refused', (ratio) => {
 			const errors = validateTemplate(
 				{
 					name: 'render-farm',
@@ -184,7 +184,7 @@ describe('spec:cyber-mux/template', () => {
 			expect(errors).toEqual([])
 		})
 
-		it('two panes may share a label, because a label is a name rather than a key', () => {
+		it('apply-shared-label-allowed', () => {
 			// Nothing keys on a label — the manifest's unique handle is the pane id — and neither backend
 			// requires a unique name. A pool of renderers all named `gpu` is a legitimate thing to mean.
 			expect(
@@ -199,7 +199,7 @@ describe('spec:cyber-mux/template', () => {
 			{ declares: 'both root and tabs', root: { type: 'pane', label: 'gpu' }, tabs: [{ panes: [{ label: 'io' }] }] },
 			{ declares: 'both panes and tabs', panes: [{ label: 'cpu' }], tabs: [{ panes: [{ label: 'io' }] }] },
 			{ declares: 'none of root, panes or tabs' },
-		])('exactly one of root, panes and tabs', ({ declares: _declares, ...shape }) => {
+		])('apply-exactly-one-of-root-panes-tabs', ({ declares: _declares, ...shape }) => {
 			const errors = validateTemplate({ name: 'render-farm', ...shape }, 'render-farm')
 			expect(errors.some((e) => e.startsWith('root/panes/tabs:'))).toBe(true)
 		})
@@ -214,7 +214,7 @@ describe('spec:cyber-mux/template', () => {
 			}
 		})
 
-		it('every validation error is reported at once, not first-only', () => {
+		it('apply-all-validation-errors-reported', () => {
 			// CI's whole reason to run this is being told everything wrong in one pass — a template with
 			// three mistakes must not take three runs to fix.
 			const errors = validateTemplate(
@@ -261,7 +261,7 @@ describe('spec:cyber-mux/template', () => {
 	// A workspace is tabs of panes, not one pane tree. `root`/`panes` are the one-tab spelling; `tabs`
 	// is the two-level form, each tab a tree in the very same shape.
 	describe('tabs', () => {
-		it('a tab carries its own tree, in the same shape a single-tab template uses', () => {
+		it('apply-tab-tree-same-shape', () => {
 			const split: TemplateNode = {
 				type: 'split',
 				direction: 'right',
@@ -286,7 +286,7 @@ describe('spec:cyber-mux/template', () => {
 			expect(resolveTree(template.tabs![1]!)).toBe(solo)
 		})
 
-		it('a tab may use the flat sugar, desugared exactly as a single-tab template is', () => {
+		it('apply-tab-flat-sugar-desugared', () => {
 			// Sugar is a property of a pane pool, not of where the pool sits — one desugarer, one answer.
 			const tab: TabNode = { label: 'shots', panes: pool(3), arrange: 'even-horizontal' }
 			const single: Template = { name: 'render-farm', panes: pool(3), arrange: 'even-horizontal' }
@@ -304,20 +304,20 @@ describe('spec:cyber-mux/template', () => {
 		it.each([
 			{ declares: 'both root and panes', root: { type: 'pane', label: 'gpu' }, panes: [{ label: 'cpu' }] },
 			{ declares: 'neither root nor panes', label: 'shots' },
-		])('a tab declares exactly one of root and panes, the same as the template itself', ({ declares: _d, ...tab }) => {
+		])('apply-tab-exactly-one-of-root-panes', ({ declares: _d, ...tab }) => {
 			const errors = validateTemplate({ name: 'render-farm', tabs: [{ panes: [{ label: 'io' }] }, tab] }, 'render-farm')
 			// The error points at the offending TAB rather than at the template.
 			expect(errors.some((e) => e.startsWith('tabs[1]:'))).toBe(true)
 		})
 
-		it('an empty tabs array is refused, because a workspace of no tabs is not a workspace', () => {
+		it('apply-empty-tabs-array-refused', () => {
 			const errors = validateTemplate({ name: 'render-farm', tabs: [] }, 'render-farm')
 			expect(errors.some((e) => e.startsWith('tabs:'))).toBe(true)
 			// And it is refused as an empty workspace, not by falling through to "declares none of the three".
 			expect(errors.some((e) => e.startsWith('root/panes/tabs:'))).toBe(false)
 		})
 
-		it('two tabs may share a label, and so may panes in different tabs', () => {
+		it('apply-tabs-shared-label-allowed', () => {
 			// Nothing keys on either name: the manifest reports a pane's tab by INDEX, and a tab is addressed
 			// by its own id at the seam. herdr labels every new workspace's root tab `1`, so a backend that
 			// manufactures duplicates by default cannot be one a uniqueness rule describes.
@@ -341,7 +341,7 @@ describe('spec:cyber-mux/template', () => {
 			).toEqual([])
 		})
 
-		it('a tab may leave its label to the backend', () => {
+		it('apply-tab-label-optional', () => {
 			// Matching --label omitted everywhere else: the backend's own default stands.
 			expect(
 				validateTemplate(
@@ -351,7 +351,7 @@ describe('spec:cyber-mux/template', () => {
 			).toEqual([])
 		})
 
-		it('a tab cannot carry a cwd any more than a pane can', () => {
+		it('apply-tab-cwd-refused', () => {
 			// The rule the whole capability exists to enforce does not weaken because a level was added.
 			const errors = validateTemplate(
 				{ name: 'render-farm', tabs: [{ label: 'shots', cwd: '/home/someone/render', panes: [{ label: 'gpu' }] }] },
@@ -393,7 +393,7 @@ describe('spec:cyber-mux/template', () => {
 	})
 
 	describe('desugar', () => {
-		it('even-horizontal splits at 1/n then 1/(n-1) so every pane ends the same width', () => {
+		it('apply-even-horizontal-splits', () => {
 			// Splitting evenly at 0.5 each time would yield 1/2, 1/4, 1/4 — a comb that looks like a row
 			// and is not one. This is the assertion that tells the two apart.
 			const tree = desugar(pool(3), 'even-horizontal')
@@ -408,7 +408,7 @@ describe('spec:cyber-mux/template', () => {
 			for (const w of widths) expect(w).toBeCloseTo(1 / 3)
 		})
 
-		it('even-vertical is the same comb, down', () => {
+		it('apply-even-vertical-splits', () => {
 			const tree = desugar(pool(3), 'even-vertical')
 			expect(splits(tree).every((s) => s.direction === 'down')).toBe(true)
 			expect(splits(tree).map((s) => s.ratio)).toHaveLength(2)
@@ -417,7 +417,7 @@ describe('spec:cyber-mux/template', () => {
 			for (const h of rects(tree).map((r) => r.h)) expect(h).toBeCloseTo(1 / 3)
 		})
 
-		it('tiled balances columns and rows into a 2x2 grid at n=4', () => {
+		it('apply-tiled-balances-grid', () => {
 			const tree = desugar(pool(4), 'tiled')
 			const outer = asSplit(tree)
 			expect(outer.direction).toBe('right')
@@ -442,12 +442,12 @@ describe('spec:cyber-mux/template', () => {
 			])
 		})
 
-		it('arrange omitted defaults to tiled', () => {
+		it('apply-arrange-default-tiled', () => {
 			const template: Template = { name: 'render-farm', panes: pool(4) }
 			expect(resolveTree(template)).toEqual(desugar(pool(4), 'tiled'))
 		})
 
-		it('n = 1 is legal and produces a single pane carrying no split', () => {
+		it('apply-single-pane-no-split', () => {
 			for (const arrange of ['tiled', 'even-horizontal', 'even-vertical'] as const) {
 				const tree = desugar([{ label: 'solo', command: 'zsh' }], arrange)
 				expect(tree.type).toBe('pane')

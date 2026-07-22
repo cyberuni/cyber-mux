@@ -57,7 +57,7 @@ const PANE_IN_SPLIT = (paneId: string, ws: string) =>
 const describeRegion = herdrMuxAdapter.regions?.describeRegion
 if (!describeRegion) throw new Error('the herdr adapter must implement describeRegion')
 
-describe('spec:cyber-mux/mux', () => {
+describe('spec:cyber-mux/mux/placement', () => {
 	describe('herdrMuxAdapter (mocked exec — herdr is not installed in this environment)', () => {
 		// The outline is ONE key, so every Examples row folds under this one static title. The
 		// placement-specific tests below each cover a single row and assert argv besides; this one
@@ -86,12 +86,12 @@ describe('spec:cyber-mux/mux', () => {
 				// The workspace the split landed in — the caller's own.
 				expected: { id: 'w3:pB', tab: 'w3:t1', workspace: 'w3' },
 			},
-		])('open returns the workspace the new pane landed in', ({ at, response, expected }) => {
+		])('placement-open-returns-workspace', ({ at, response, expected }) => {
 			const target = herdrMuxAdapter.open(fakeExec([], response), { cwd: '/unit', at })
 			expect(target).toEqual(expected)
 		})
 
-		it('open() splits a pane at the given cwd, extracts the pane id from herdr JSON, and runs the launch command', () => {
+		it('placement-launch-command-submitted', () => {
 			const calls: string[][] = []
 			const splitOut = JSON.stringify({
 				id: 'cli:pane:split',
@@ -106,7 +106,7 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls[1]).toEqual(['pane', 'run', 'w3:pB', 'claude'])
 		})
 
-		it("open() at 'tab' opens a real herdr tab without stealing focus, extracting the pane id the same way as workspace create", () => {
+		it('placement-tab-no-focus-steal', () => {
 			const calls: string[][] = []
 			const tabOut = JSON.stringify({
 				result: {
@@ -122,6 +122,8 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls[1]).toEqual(['pane', 'run', 'w3:pT', 'claude'])
 		})
 
+		// No matching scenario in placement.feature (the `within` flag is not covered there) — left as
+		// an extra, title kept descriptive rather than bound to a slug.
 		it("open() at 'tab' opens in the workspace the caller NAMES, not the one the user is looking at", () => {
 			// The tab tier's counterpart to `from`: `tab create` without `--workspace` resolves the
 			// UI-focused space, so a caller filling a workspace it just opened has to name it or every tab
@@ -133,6 +135,7 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls[0]).toEqual(['tab', 'create', '--workspace', 'w7', '--cwd', '/unit', '--no-focus'])
 		})
 
+		// No matching scenario in placement.feature — left as an extra.
 		it("a `within` is ignored by every placement but 'tab'", () => {
 			// A split lands in its own pane's space and a `workspace` create makes the space it opens in —
 			// neither has a space to be placed INTO, so neither emits a flag for one.
@@ -154,7 +157,7 @@ describe('spec:cyber-mux/mux', () => {
 			expect(splitCalls[0]).not.toContain('--workspace')
 		})
 
-		it('--at omitted falls back to tab', () => {
+		it('placement-omitted-defaults-to-tab', () => {
 			const calls: string[][] = []
 			const tabOut = JSON.stringify({
 				result: {
@@ -170,7 +173,7 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls[1]).toEqual(['pane', 'run', 'w3:pT', 'claude'])
 		})
 
-		it('herdr --at workspace creates its own workspace, unattached to any repo', () => {
+		it('placement-herdr-workspace-unattached', () => {
 			const calls: string[][] = []
 			const createOut = JSON.stringify({
 				id: 'cli:workspace:create',
@@ -191,7 +194,7 @@ describe('spec:cyber-mux/mux', () => {
 		// The workspace is read from the SAME output the pane id is read from, on every route. Probing
 		// for it separately would buy nothing and cost a round trip per open, so the argv is the proof:
 		// one command, and no `pane get`/`workspace list` follow-up.
-		it('the workspace costs no extra backend call', () => {
+		it('placement-herdr-workspace-free', () => {
 			const calls: string[][] = []
 			const createOut = JSON.stringify({
 				result: {
@@ -206,6 +209,7 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls.some((c) => c[1] === 'get' || c[1] === 'list')).toBe(false)
 		})
 
+		// No matching scenario in placement.feature — left as an extra.
 		// The pane id is required — a route that cannot name its pane has failed. The workspace is not:
 		// a herdr build that stops emitting it degrades to "cannot say" rather than breaking `open`,
 		// which is the meaning the seam already has for it.
@@ -221,7 +225,7 @@ describe('spec:cyber-mux/mux', () => {
 			expect(target.workspace).toBeUndefined()
 		})
 
-		it('open() with no launch creates a blank pane and runs nothing', () => {
+		it('placement-open-no-launch-blank-pane', () => {
 			const calls: string[][] = []
 			const splitOut = JSON.stringify({
 				id: 'cli:pane:split',
@@ -238,7 +242,7 @@ describe('spec:cyber-mux/mux', () => {
 		// resolves to the UI-FOCUSED pane when that is unset (verified against herdr 0.7.4), so an
 		// unidentified caller splits whatever the user is looking at. Naming the pane is the fix, and
 		// the emitted argv is the only place the difference is visible.
-		it('from names the pane a pane:* split targets', () => {
+		it('placement-from-names-split-target', () => {
 			const calls: string[][] = []
 			const splitOut = JSON.stringify({
 				id: 'cli:pane:split',
@@ -254,7 +258,7 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls.every((c) => !c.includes('--current'))).toBe(true)
 		})
 
-		it("from omitted leaves each backend its own default, which tracks the USER's focus", () => {
+		it('placement-from-omitted-tracks-focus', () => {
 			const calls: string[][] = []
 			const splitOut = JSON.stringify({
 				id: 'cli:pane:split',
@@ -269,7 +273,7 @@ describe('spec:cyber-mux/mux', () => {
 		// `ratio` is the fraction kept by the ORIGINAL pane, and herdr's `--ratio` sizes exactly that —
 		// so it passes through UNCONVERTED, where tmux's `-l` sizes the new pane and inverts. Measured
 		// against 0.7.4 rather than documented, which is why the literal flag is asserted, not trusted.
-		it('the ratio sign convention converts in opposite directions per backend', () => {
+		it('placement-ratio-sign-convention', () => {
 			const calls: string[][] = []
 			const splitOut = JSON.stringify({ result: { pane: { pane_id: 'w3:pB', tab_id: 'w3:t1' } } })
 			const exec = fakeExec(calls, { 'pane split': splitOut })
@@ -279,7 +283,7 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls[0]).not.toContain('0.667')
 		})
 
-		it('ratio omitted leaves each backend its own even default', () => {
+		it('placement-ratio-omitted-even-default', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, {
 				'pane split': JSON.stringify({ result: { pane: { pane_id: 'w3:pB', tab_id: 'w3:t1' } } }),
@@ -288,7 +292,7 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls[0]).not.toContain('--ratio')
 		})
 
-		it('each env variable gets its own flag, in the order given', () => {
+		it('placement-env-each-var-own-flag', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, {
 				'pane split': JSON.stringify({ result: { pane: { pane_id: 'w3:pB', tab_id: 'w3:t1' } } }),
@@ -309,7 +313,7 @@ describe('spec:cyber-mux/mux', () => {
 			])
 		})
 
-		it('env with no launch opens a blank shell carrying the env', () => {
+		it('placement-env-no-launch-blank-shell', () => {
 			// Native env means no command to prefix is needed, so a warm pane with no command is coherent.
 			const calls: string[][] = []
 			const exec = fakeExec(calls, {
@@ -324,7 +328,7 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls.some((c) => c[0] === 'pane' && ['run', 'send-text', 'send-keys'].includes(c[1] ?? ''))).toBe(false)
 		})
 
-		it('a backend declares whether it can size a split', () => {
+		it('placement-backend-declares-can-size', () => {
 			expect(herdrMuxAdapter.canSizeSplits).toBe(true)
 		})
 
@@ -339,7 +343,7 @@ describe('spec:cyber-mux/mux', () => {
 			{ at: 'workspace', response: { 'workspace create': PANE_IN_WORKSPACE('w7:p1', 'w7') }, tab: 'w7:t1' },
 			// A split opens no tab of its own, so it reports the tab it LANDED in — the caller's own.
 			{ at: 'pane:right', response: { 'pane split': PANE_IN_SPLIT('w3:pB', 'w3') }, tab: 'w3:t1' },
-		])('open reports the tab the new pane landed in', ({ at, response, tab }) => {
+		])('placement-open-reports-tab', ({ at, response, tab }) => {
 			const calls: string[][] = []
 			const opened = herdrMuxAdapter.open(fakeExec(calls, response), { cwd: '/unit', at })
 			expect(opened.tab).toBe(tab)
@@ -353,7 +357,7 @@ describe('spec:cyber-mux/mux', () => {
 		// for `id` would leave the root tab named `1` with nothing raised. So the assertion is that the
 		// rename carries the TAB and not the pane; asserting only "a tab rename ran" would pass on the
 		// broken spelling.
-		it("the reported tab is what names a new workspace's root tab", () => {
+		it('placement-reported-tab-names-root', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'workspace create': PANE_IN_WORKSPACE('w7:p1', 'w7') })
 			const opened = herdrMuxAdapter.open(exec, { cwd: '/unit', at: 'workspace' })
@@ -369,7 +373,7 @@ describe('spec:cyber-mux/mux', () => {
 		it.each<{ tier: MuxSpaceTier; id: string; expected: string[] }>([
 			{ tier: 'tab', id: 'w2:t3', expected: ['tab', 'rename', 'w2:t3', 'ledger'] },
 			{ tier: 'pane', id: 'w2:pB', expected: ['pane', 'rename', 'w2:pB', 'ledger'] },
-		])('a space is named after birth on every backend', ({ tier, id, expected }) => {
+		])('placement-rename-after-birth', ({ tier, id, expected }) => {
 			const calls: string[][] = []
 			herdrMuxAdapter.rename(fakeExec(calls), { id }, tier, 'ledger')
 			expect(calls).toEqual([expected])
@@ -380,7 +384,7 @@ describe('spec:cyber-mux/mux', () => {
 		// the name must reach herdr only through a `tab rename`, and only after the create that made the
 		// tab exist. A `workspace create` that carried the tab name would be the invented flag 0.7.4
 		// answers with `unknown option`.
-		it("renaming is the only way to name a new workspace's root tab", () => {
+		it('placement-herdr-root-tab-rename-only', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'workspace create': PANE_IN_WORKSPACE('w7:p1', 'w7') })
 			herdrMuxAdapter.open(exec, { cwd: '/unit', at: 'workspace' })
@@ -396,7 +400,7 @@ describe('spec:cyber-mux/mux', () => {
 		// the rename: a rename that also beamed the client would still emit the right rename argv, so
 		// only the exact-call-list assertion can catch it. `workspace focus`/`tab focus` would move
 		// focus and `tab create` would open a space — none may appear, and nothing else may either.
-		it('a rename moves no focus and opens nothing', () => {
+		it('placement-rename-no-focus-no-create', () => {
 			const calls: string[][] = []
 			// A tab the caller is not in — the rename addresses it by id, never by visiting it.
 			herdrMuxAdapter.rename(fakeExec(calls), { id: 'w9:t4' }, 'tab', 'ledger')
@@ -408,7 +412,7 @@ describe('spec:cyber-mux/mux', () => {
 		// taught to read it. Asserting the argv is byte-identical to the ungrouped call is the check
 		// that catches a flag invented for it (`--group`, `--label`, a `--env` smuggle), including one
 		// herdr 0.7.4 would answer with `unknown option` and turn a working open into a failure.
-		it('a backend with a real workspace tier ignores the group id', () => {
+		it('placement-herdr-group-id-ignored', () => {
 			const grouped: string[][] = []
 			const ungrouped: string[][] = []
 			const out = PANE_IN_TAB('w3:pT', 'w3')
@@ -427,7 +431,7 @@ describe('spec:cyber-mux/mux', () => {
 		// own name — its UI groups by the real workspace label, so the walk composes nothing to prefix.
 		// Both are facts the backend already holds, so storing either would duplicate what it never
 		// reads.
-		it('a backend with a real workspace tier stores neither', () => {
+		it('placement-herdr-stores-neither-group-nor-name', () => {
 			const calls: string[][] = []
 			// Both a group id AND an own name are offered; neither may reach herdr.
 			herdrMuxAdapter.group(fakeExec(calls), { id: 'w3:t1' }, 'shift-a', 'editor')
@@ -448,7 +452,7 @@ describe('spec:cyber-mux/mux', () => {
 		// that one owns the per-variable/order contract, this one owns "pane is a tier env reaches",
 		// so the tier scenario's key covers every row it names rather than leaving pane to a
 		// neighbouring key. Many-to-one binding is intended here.
-		it('env is set natively at the birth of whatever tier is opened', () => {
+		it('placement-env-native-at-birth', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, {
 				'pane split': JSON.stringify({ result: { pane: { pane_id: 'w3:pB', tab_id: 'w3:t1' } } }),
@@ -467,7 +471,7 @@ describe('spec:cyber-mux/mux', () => {
 			])
 		})
 
-		it('env is set natively at the birth of whatever tier is opened', () => {
+		it('placement-env-native-at-birth', () => {
 			const calls: string[][] = []
 			const createOut = JSON.stringify({ result: { root_pane: { pane_id: 'w7:p1', tab_id: 'w7:t1' } } })
 			const exec = fakeExec(calls, { 'workspace create': createOut })
@@ -485,7 +489,7 @@ describe('spec:cyber-mux/mux', () => {
 			])
 		})
 
-		it('env is set natively at the birth of whatever tier is opened', () => {
+		it('placement-env-native-at-birth', () => {
 			const calls: string[][] = []
 			const tabOut = JSON.stringify({ result: { root_pane: { pane_id: 'w3:pT', tab_id: 'w3:t1' } } })
 			const exec = fakeExec(calls, { 'tab create': tabOut })
@@ -499,7 +503,7 @@ describe('spec:cyber-mux/mux', () => {
 		// create failed". So passing env here must emit NOTHING, or the primary flow (a worktree pool
 		// whose root pane sets ROLE) breaks outright. The adapter stays honest about its backend; the
 		// caller honors env with the command prefix instead.
-		it("herdr's worktree verbs cannot set env at birth, and drop it rather than failing", () => {
+		it('placement-herdr-worktree-env-dropped', () => {
 			const calls: string[][] = []
 			// env with no launch now takes the compensation's warn path — silence its stderr; this test
 			// asserts only that no `--env` reaches herdr's command, which the sibling scenarios cover for
@@ -527,7 +531,7 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls[0]).not.toContain('ROLE=planner')
 		})
 
-		it("herdr's worktree verbs cannot set env at birth, and drop it rather than failing", () => {
+		it('placement-herdr-worktree-env-dropped', () => {
 			const calls: string[][] = []
 			vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
 			const exec = fakeExec(calls, { 'worktree open': worktreeOut() })
@@ -536,7 +540,7 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls[0]).not.toContain('--env')
 		})
 
-		it('from is ignored by tab and workspace, which split nothing', () => {
+		it('placement-from-ignored-by-tab-workspace', () => {
 			const calls: string[][] = []
 			const created = JSON.stringify({
 				id: 'cli:workspace:create',
@@ -548,11 +552,13 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls.every((c) => !c.includes('w3:pA'))).toBe(true)
 		})
 
+		// No matching scenario in placement.feature — left as an extra.
 		it('open() throws when workspace create reports no root pane id', () => {
 			const exec = fakeExec([], { 'workspace create': JSON.stringify({ id: 'cli:workspace:create', result: {} }) })
 			expect(() => herdrMuxAdapter.open(exec, { cwd: '/unit', launch: 'claude', at: 'workspace' })).toThrow(/root_pane/)
 		})
 
+		// No matching scenario in placement.feature — left as an extra.
 		it('open() carries the backend’s own reason for refusing a split, and stays bare without one', () => {
 			const exec = fakeExec([])
 			expect(() => herdrMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:down', from: { id: 'w1:p2' } })).toThrow(
@@ -564,45 +570,7 @@ describe('spec:cyber-mux/mux', () => {
 			)
 		})
 
-		it('worktree.createInWorkspace() creates the worktree and opens its bound workspace in one call', () => {
-			const calls: string[][] = []
-			const createOut = JSON.stringify({
-				id: 'cli:worktree:create',
-				result: {
-					root_pane: { pane_id: 'w9:p1', tab_id: 'w9:t1' },
-					workspace: { workspace_id: 'w9' },
-					worktree: { branch: 'cyber-mux/unit-abc123', path: '/repo.worktrees/mux-abc123' },
-				},
-			})
-			const exec = fakeExec(calls, { 'worktree create': createOut })
-			const result = worktree().createInWorkspace(exec, {
-				primaryRoot: '/repo',
-				branch: 'cyber-mux/unit-abc123',
-				path: '/repo.worktrees/mux-abc123',
-				launch: 'claude',
-			})
-			// The root pane AND its root tab — read from the same `root_pane` record `workspace create`
-			// reports both in, so this route hides no fact it already held. The tab is what lets a caller
-			// handed this workspace address its region's tab (group it, name it) without reaching for the
-			// pane id, which herdr refuses outright.
-			expect(result.target).toEqual({ id: 'w9:p1', tab: 'w9:t1' })
-			expect(result.worktree).toEqual({ root: '/repo.worktrees/mux-abc123', branch: 'cyber-mux/unit-abc123' })
-			// The workspace id IS the binding — the whole reason to route through herdr rather than git.
-			expect(result.workspace).toBe('w9')
-			expect(calls[0]).toEqual([
-				'worktree',
-				'create',
-				'--cwd',
-				'/repo',
-				'--branch',
-				'cyber-mux/unit-abc123',
-				'--path',
-				'/repo.worktrees/mux-abc123',
-				'--no-focus',
-			])
-			expect(calls[1]).toEqual(['pane', 'run', 'w9:p1', 'claude'])
-		})
-
+		// No matching scenario for a bare labeling flag in placement.feature — left as an extra.
 		it('open({at:workspace}) labels the workspace', () => {
 			const calls: string[][] = []
 			const out = JSON.stringify({ result: { root_pane: { pane_id: 'w7:p1', tab_id: 'w7:t1' } } })
@@ -640,158 +608,7 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls[0]).toEqual(['workspace', 'create', '--cwd', '/unit', '--no-focus'])
 		})
 
-		it('worktree.createInWorkspace() labels the bound workspace', () => {
-			const calls: string[][] = []
-			const exec = fakeExec(calls, { 'worktree create': worktreeOut() })
-			worktree().createInWorkspace(exec, { primaryRoot: '/repo', branch: 'b', path: '/p', label: 'my-name' })
-			// Without it herdr names the workspace after the path basename, since we always pass --path.
-			expect(calls[0]).toEqual([
-				'worktree',
-				'create',
-				'--cwd',
-				'/repo',
-				'--branch',
-				'b',
-				'--path',
-				'/p',
-				'--label',
-				'my-name',
-				'--no-focus',
-			])
-		})
-
-		it('worktree.openInWorkspace() labels the bound workspace', () => {
-			const calls: string[][] = []
-			const exec = fakeExec(calls, { 'worktree open': worktreeOut() })
-			worktree().openInWorkspace(exec, { primaryRoot: '/repo', path: '/p', label: 'my-name' })
-			expect(calls[0]).toEqual([
-				'worktree',
-				'open',
-				'--cwd',
-				'/repo',
-				'--path',
-				'/p',
-				'--label',
-				'my-name',
-				'--no-focus',
-			])
-		})
-
-		it('worktree.createInWorkspace() passes a base as the branch start-point', () => {
-			const calls: string[][] = []
-			const exec = fakeExec(calls, { 'worktree create': worktreeOut() })
-			worktree().createInWorkspace(exec, { primaryRoot: '/repo', branch: 'b', path: '/p', base: 'origin/main' })
-			expect(calls[0]).toEqual([
-				'worktree',
-				'create',
-				'--cwd',
-				'/repo',
-				'--branch',
-				'b',
-				'--path',
-				'/p',
-				'--base',
-				'origin/main',
-				'--no-focus',
-			])
-		})
-
-		it('worktree.createInWorkspace() leaves the pane blank when no launch is given', () => {
-			const calls: string[][] = []
-			const exec = fakeExec(calls, { 'worktree create': worktreeOut() })
-			worktree().createInWorkspace(exec, { primaryRoot: '/repo', branch: 'b', path: '/p' })
-			expect(calls.some((c) => c[0] === 'pane' && c[1] === 'run')).toBe(false)
-		})
-
-		it('worktree.createInWorkspace() throws when herdr reports no root pane id', () => {
-			const exec = fakeExec([], { 'worktree create': JSON.stringify({ id: 'cli:worktree:create', result: {} }) })
-			expect(() => worktree().createInWorkspace(exec, { primaryRoot: '/repo', branch: 'b', path: '/p' })).toThrow(
-				/root_pane/,
-			)
-		})
-
-		it('worktree.createInWorkspace() throws when herdr reports no worktree path/branch', () => {
-			const out = JSON.stringify({
-				id: 'cli:worktree:create',
-				result: { root_pane: { pane_id: 'w9:p1', tab_id: 'w9:t1' } },
-			})
-			const exec = fakeExec([], { 'worktree create': out })
-			expect(() => worktree().createInWorkspace(exec, { primaryRoot: '/repo', branch: 'b', path: '/p' })).toThrow(
-				/worktree/,
-			)
-		})
-
-		it('worktree.createInWorkspace() throws when herdr reports no bound workspace', () => {
-			const out = JSON.stringify({
-				id: 'cli:worktree:create',
-				result: { root_pane: { pane_id: 'w9:p1', tab_id: 'w9:t1' }, worktree: { path: '/p', branch: 'b' } },
-			})
-			const exec = fakeExec([], { 'worktree create': out })
-			expect(() => worktree().createInWorkspace(exec, { primaryRoot: '/repo', branch: 'b', path: '/p' })).toThrow(
-				/workspace_id/,
-			)
-		})
-
-		it('worktree.createInWorkspace() throws when herdr reports nothing', () => {
-			const exec: Exec = () => null
-			expect(() => worktree().createInWorkspace(exec, { primaryRoot: '/repo', branch: 'b', path: '/p' })).toThrow(
-				/herdr worktree create/,
-			)
-		})
-
-		it('worktree.openInWorkspace() opens an existing checkout in a workspace bound to it', () => {
-			const calls: string[][] = []
-			const exec = fakeExec(calls, { 'worktree open': worktreeOut() })
-			const result = worktree().openInWorkspace(exec, { primaryRoot: '/repo', path: '/p', launch: 'claude' })
-			expect(result.workspace).toBe('w9')
-			expect(calls[0]).toEqual(['worktree', 'open', '--cwd', '/repo', '--path', '/p', '--no-focus'])
-			expect(calls[1]).toEqual(['pane', 'run', 'w9:p1', 'claude'])
-		})
-
-		it('worktree.openInWorkspace() throws when herdr reports nothing', () => {
-			expect(() => worktree().openInWorkspace(() => null, { primaryRoot: '/repo', path: '/p' })).toThrow(
-				/herdr worktree open/,
-			)
-		})
-
-		it('worktree.bindings() reports only the worktrees a workspace is currently open on', () => {
-			const calls: string[][] = []
-			const listOut = JSON.stringify({
-				id: 'cli:worktree:list',
-				result: {
-					worktrees: [
-						{ branch: 'main', path: '/repo', open_workspace_id: 'w19' },
-						{ branch: 'feat/x', path: '/repo.worktrees/x', open_workspace_id: 'w21' },
-						{ branch: 'feat/y', path: '/repo.worktrees/y' },
-					],
-				},
-			})
-			const exec = fakeExec(calls, { 'worktree list': listOut })
-			const bindings = worktree().bindings(exec, { primaryRoot: '/repo' })
-			expect(calls[0]).toEqual(['worktree', 'list', '--cwd', '/repo'])
-			expect([...bindings]).toEqual([
-				['/repo', 'w19'],
-				['/repo.worktrees/x', 'w21'],
-			])
-			expect(bindings.has('/repo.worktrees/y')).toBe(false)
-		})
-
-		it.each([
-			['nothing', null],
-			['unparseable output', 'not json'],
-			['no worktrees array', JSON.stringify({ result: {} })],
-			['a non-array worktrees field', JSON.stringify({ result: { worktrees: 'nope' } })],
-		])('worktree.bindings() reports no bindings when herdr returns %s', (_label, out) => {
-			expect(worktree().bindings(() => out, { primaryRoot: '/repo' }).size).toBe(0)
-		})
-
-		it('worktree.releaseWorkspace() closes the workspace without touching the checkout', () => {
-			const calls: string[][] = []
-			const exec = fakeExec(calls, { 'workspace close': '' })
-			worktree().releaseWorkspace(exec, 'w21')
-			expect(calls).toEqual([['workspace', 'close', 'w21']])
-		})
-
+		// No matching scenario in placement.feature — left as an extra.
 		it('open() throws when herdr reports no pane id', () => {
 			const exec: Exec = () => null
 			expect(() => herdrMuxAdapter.open(exec, { cwd: '/unit', launch: 'claude', at: 'pane:right' })).toThrow(
@@ -811,28 +628,101 @@ describe('spec:cyber-mux/mux', () => {
 			)
 		})
 
-		it('sendText() types literal text and presses no Enter', () => {
+		// herdr's worktree verbs cannot set env at birth, so the capability compensates on the launch:
+		// `carryLaunch` runs `envFallback`, and a `carried` command lands as an `env KEY=VALUE` prefix.
+		it('placement-env-rides-command-prefix', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'worktree create': worktreeOut() })
+			worktree().createInWorkspace(exec, {
+				primaryRoot: '/repo',
+				branch: 'b',
+				path: '/p',
+				env: { ROLE: 'worker' },
+				launch: 'claude',
+			})
+			const paneRun = calls.find((c) => c[0] === 'pane' && c[1] === 'run')
+			expect(paneRun).toEqual(['pane', 'run', 'w9:p1', "env ROLE='worker' claude"])
+		})
+
+		it('placement-env-no-command-warns', () => {
+			const spy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+			try {
+				const calls: string[][] = []
+				const exec = fakeExec(calls, { 'worktree create': worktreeOut() })
+				worktree().createInWorkspace(exec, { primaryRoot: '/repo', branch: 'b', path: '/p', env: { ROLE: 'worker' } })
+				// Named on stderr — a caller that asked for env and did not get it is told, not left guessing.
+				expect(spy).toHaveBeenCalled()
+				expect(String(spy.mock.calls[0]![0])).toContain('ROLE')
+				// Nothing rides, because there was no command to ride on — no `pane run` at all.
+				expect(calls.some((c) => c[0] === 'pane' && c[1] === 'run')).toBe(false)
+			} finally {
+				spy.mockRestore()
+			}
+		})
+
+		it('placement-env-value-quoted-in-prefix', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'worktree create': worktreeOut() })
+			worktree().createInWorkspace(exec, {
+				primaryRoot: '/repo',
+				branch: 'b',
+				path: '/p',
+				env: { GREETING: "hi there's" },
+				launch: 'claude',
+			})
+			const paneRun = calls.find((c) => c[0] === 'pane' && c[1] === 'run')!
+			// Single-quoted for the shell — the space stays inside one word and the quote does not unbalance it.
+			expect(paneRun[3]).toContain("GREETING='hi there'\\''s'")
+		})
+
+		// The other half of the env rule, on the tier that DOES carry it natively: `open` sets `--env`
+		// on the opening call, so the launch command it runs must never be prefixed on top of that.
+		it.each<{ at: MuxPlacement; responses: Record<string, string>; pane: string }>([
+			{ at: 'pane:right', responses: { 'pane split': PANE_IN_SPLIT('w3:pB', 'w3') }, pane: 'w3:pB' },
+			{ at: 'tab', responses: { 'tab create': PANE_IN_TAB('w3:pT', 'w3') }, pane: 'w3:pT' },
+			{ at: 'workspace', responses: { 'workspace create': PANE_IN_WORKSPACE('w7:p1', 'w7') }, pane: 'w7:p1' },
+		])('placement-native-env-no-double-prefix', ({ at, responses, pane }) => {
+			const calls: string[][] = []
+			herdrMuxAdapter.open(fakeExec(calls, responses), {
+				cwd: '/unit',
+				at,
+				env: { ROLE: 'worker' },
+				launch: 'claude',
+			})
+			// Env is native — the flag is on the opening call...
+			expect(calls[0]).toContain('--env')
+			expect(calls[0]).toContain('ROLE=worker')
+			// ...so the launched command runs verbatim, never `env ROLE=... claude`.
+			const paneRun = calls.find((c) => c[0] === 'pane' && c[1] === 'run')!
+			expect(paneRun).toEqual(['pane', 'run', pane, 'claude'])
+		})
+	})
+})
+
+describe('spec:cyber-mux/mux/driving', () => {
+	describe('herdrMuxAdapter (mocked exec — herdr is not installed in this environment)', () => {
+		it('driving-send-text-literal-no-enter', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls)
 			herdrMuxAdapter.sendText(exec, { id: 'p-1' }, 'hello')
 			expect(calls).toEqual([['pane', 'send-text', 'p-1', 'hello']])
 		})
 
-		it('sendText() types a key-named word rather than interpreting it as that key', () => {
+		it('driving-send-text-literal-no-enter', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls)
 			herdrMuxAdapter.sendText(exec, { id: 'p-1' }, 'Up')
 			expect(calls[0]).toEqual(['pane', 'send-text', 'p-1', 'Up'])
 		})
 
-		it('sendKeys() presses each key in order, typing nothing', () => {
+		it('driving-send-keys-core-vocab', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls)
 			herdrMuxAdapter.sendKeys(exec, { id: 'p-1' }, ['Escape', 'Up', 'C-c'])
 			expect(calls).toEqual([['pane', 'send-keys', 'p-1', 'Escape', 'Up', 'C-c']])
 		})
 
-		it('sendKeys() sends every core key unrenamed — herdr already speaks the core vocabulary', () => {
+		it('driving-send-keys-core-vocab', () => {
 			// Backspace is the one key tmux renames; herdr takes the core name as-is.
 			const calls: string[][] = []
 			const exec = fakeExec(calls)
@@ -840,7 +730,7 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls[0]).toEqual(['pane', 'send-keys', 'p-1', 'Backspace'])
 		})
 
-		it('sendKeys() forwards a non-core token verbatim, leaving herdr to refuse it', () => {
+		it('driving-non-core-token-refused', () => {
 			// herdr answers an unknown key with `unsupported key <k>` rather than typing it, so the
 			// divergence is loud AT THE HERDR BOUNDARY (tmux types it instead). It is not loud at the
 			// CLI: `Exec` drops stderr and reports failure as `null`, so exit 0 either way. What this
@@ -851,41 +741,43 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls[0]).toEqual(['pane', 'send-keys', 'p-1', 'Home'])
 		})
 
-		it('sendKeys() Enter presses Enter, because the caller asked for it', () => {
+		it('driving-send-keys-enter-submits', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls)
 			herdrMuxAdapter.sendKeys(exec, { id: 'p-1' }, ['Enter'])
 			expect(calls[0]).toEqual(['pane', 'send-keys', 'p-1', 'Enter'])
 		})
 
-		it('submit() with text uses pane run, herdr’s atomic text-plus-Enter primitive', () => {
+		it('driving-submit-with-text', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls)
 			herdrMuxAdapter.submit(exec, { id: 'p-1' }, 'echo hi')
 			expect(calls).toEqual([['pane', 'run', 'p-1', 'echo hi']])
 		})
 
-		it('submit() types key-named text literally — pane run does not interpret it as a key', () => {
+		it('driving-submit-text-literal-not-key', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls)
 			herdrMuxAdapter.submit(exec, { id: 'p-1' }, 'Up')
 			expect(calls).toEqual([['pane', 'run', 'p-1', 'Up']])
 		})
 
-		it('submit() with no text flushes the staged buffer with a bare Enter, never re-typing it', () => {
+		it('driving-submit-no-text-bare-enter', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls)
 			herdrMuxAdapter.submit(exec, { id: 'p-1' })
 			expect(calls).toEqual([['pane', 'send-keys', 'p-1', 'Enter']])
 		})
 
-		it('submit() with empty text is the bare flush, not a second contract', () => {
+		it('driving-submit-empty-text-bare-flush', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls)
 			herdrMuxAdapter.submit(exec, { id: 'p-1' }, '')
 			expect(calls).toEqual([['pane', 'send-keys', 'p-1', 'Enter']])
 		})
 
+		// No matching scenario in driving.feature (only send text / send keys / submit are specced there)
+		// — left as an extra.
 		it('read() captures visible pane output, optionally scoped to N lines', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'pane read': 'line1\nline2' })
@@ -895,7 +787,13 @@ describe('spec:cyber-mux/mux', () => {
 			herdrMuxAdapter.read(exec, { id: 'p-1' }, { lines: 50 })
 			expect(calls[1]).toEqual(['pane', 'read', 'p-1', '--source', 'visible', '--lines', '50'])
 		})
+	})
+})
 
+describe('spec:cyber-mux/mux/lookup', () => {
+	describe('herdrMuxAdapter (mocked exec — herdr is not installed in this environment)', () => {
+		// No matching scenario in lookup.feature (which specs the isFocused PROBE, not the focus ACTION)
+		// — left as an extra.
 		it("focus() beams the attached client to the pane's own workspace and tab, in order", () => {
 			const calls: string[][] = []
 			const paneGetOut = JSON.stringify({
@@ -917,13 +815,7 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls).toEqual([['pane', 'get', 'gone-pane']])
 		})
 
-		it('teardown() closes the pane', () => {
-			const calls: string[][] = []
-			const exec = fakeExec(calls)
-			herdrMuxAdapter.teardown(exec, { id: 'p-1' })
-			expect(calls[0]).toEqual(['pane', 'close', 'p-1'])
-		})
-
+		// No matching scenario in lookup.feature — left as an extra.
 		it('paneExists() is true for a live pane (read returns content, even empty) and false for a gone one', () => {
 			// live pane with content
 			expect(herdrMuxAdapter.paneExists(fakeExec([], { 'pane read': 'some output' }), { id: 'w3:p4' })).toBe(true)
@@ -933,24 +825,24 @@ describe('spec:cyber-mux/mux', () => {
 			expect(herdrMuxAdapter.paneExists((): string | null => null, { id: 'w3:p4' })).toBe(false)
 		})
 
-		it('herdr reports a pane focused when its pane record is focused', () => {
+		it('lookup-herdr-focused', () => {
 			const focusedOut = JSON.stringify({ result: { pane: { pane_id: 'w3:pB', focused: true } } })
 			expect(herdrMuxAdapter.isPaneFocused(fakeExec([], { 'pane get': focusedOut }), { id: 'w3:pB' })).toBe(true)
 		})
 
-		it('herdr reports a pane not focused when its pane record is not focused', () => {
+		it('lookup-herdr-not-focused', () => {
 			const notFocusedOut = JSON.stringify({ result: { pane: { pane_id: 'w3:pB', focused: false } } })
 			expect(herdrMuxAdapter.isPaneFocused(fakeExec([], { 'pane get': notFocusedOut }), { id: 'w3:pB' })).toBe(false)
 		})
 
-		it('a focus query that cannot be answered is unknown, not a boolean', () => {
+		it('lookup-focus-unknown-not-boolean', () => {
 			const errorOut = JSON.stringify({ error: { code: 'pane_not_found' } })
 			expect(herdrMuxAdapter.isPaneFocused(fakeExec([], { 'pane get': errorOut }), { id: 'gone' })).toBeUndefined()
 			expect(herdrMuxAdapter.isPaneFocused(() => null, { id: 'gone' })).toBeUndefined()
 			expect(herdrMuxAdapter.isPaneFocused(() => 'not json', { id: 'w3:pB' })).toBeUndefined()
 		})
 
-		it('listPanes() reports every live pane, agent-bearing or not', () => {
+		it('lookup-listing-enumerates-all-panes', () => {
 			const listOut = JSON.stringify({
 				result: {
 					panes: [
@@ -967,6 +859,7 @@ describe('spec:cyber-mux/mux', () => {
 			])
 		})
 
+		// No matching scenario in lookup.feature — left as an extra.
 		it("listPanes() drops entries herdr reports with no pane_id, but keeps a bare '' agent as no harness", () => {
 			const listOut = JSON.stringify({
 				result: {
@@ -987,7 +880,7 @@ describe('spec:cyber-mux/mux', () => {
 		})
 
 		// The herdr row of the outline; the tmux row lives in session.tmux.test.ts.
-		it("the live pane listing carries each pane's label, so a name resolves from it", () => {
+		it('lookup-listing-carries-label', () => {
 			// A person renamed this pane — herdr reports the name it was given, as its own field.
 			const listOut = JSON.stringify({ result: { panes: [{ pane_id: 'w3:p1', cwd: '/repo/a', label: 'worker' }] } })
 			expect(herdrMuxAdapter.listPanes(fakeExec([], { 'pane list': listOut }))).toEqual([
@@ -997,264 +890,389 @@ describe('spec:cyber-mux/mux', () => {
 
 		// The contrast that shows the tmux rule is a workaround, not the shape of the thing: herdr has
 		// the honest primitive, so an unnamed pane needs no comparison to be read as unnamed.
-		it('a herdr pane nobody named carries no label, with no comparison needed to tell', () => {
+		it('lookup-herdr-unnamed-no-label', () => {
 			// herdr OMITS the key outright until a pane is renamed — not an empty string, not a default
 			// standing in for absence. Nothing here is compared against anything to reach `undefined`.
 			const listOut = JSON.stringify({ result: { panes: [{ pane_id: 'w3:p2', cwd: '/repo/b' }] } })
 			const panes = herdrMuxAdapter.listPanes(fakeExec([], { 'pane list': listOut }))
 			expect(panes[0]?.label).toBeUndefined()
 		})
+	})
+})
 
-		// Real capture from herdr 0.7.4 (`herdr pane layout --pane w3V:p1`): a workspace at x=36,y=1
-		// sized 201x45, split right at ratio 0.6 then down at 0.7 — three panes.
-		const LAYOUT_OUT = JSON.stringify({
-			id: 'cli:pane:layout',
+// The tests below prove capabilities with no owned node assigned to this file: the worktree
+// capability (worktree/worktree.feature) and the region-description capability (describeRegion /
+// describeWorkspace, uncovered by any of the four .agents/spec/mux/* nodes this file binds). Kept
+// here, unmoved, but outside any `spec:` describe so the scenario bridge does not mis-attribute them.
+describe('herdrMuxAdapter — capabilities without an owned node in this file', () => {
+	it('teardown() closes the pane', () => {
+		const calls: string[][] = []
+		const exec = fakeExec(calls)
+		herdrMuxAdapter.teardown(exec, { id: 'p-1' })
+		expect(calls[0]).toEqual(['pane', 'close', 'p-1'])
+	})
+
+	it('worktree.createInWorkspace() creates the worktree and opens its bound workspace in one call', () => {
+		const calls: string[][] = []
+		const createOut = JSON.stringify({
+			id: 'cli:worktree:create',
 			result: {
-				layout: {
-					area: { height: 45, width: 201, x: 36, y: 1 },
-					focused_pane_id: 'w3V:p1',
-					panes: [
-						{ focused: true, pane_id: 'w3V:p1', rect: { height: 32, width: 121, x: 36, y: 1 } },
-						{ focused: false, pane_id: 'w3V:p3', rect: { height: 13, width: 121, x: 36, y: 33 } },
-						{ focused: false, pane_id: 'w3V:p2', rect: { height: 45, width: 80, x: 157, y: 1 } },
-					],
-					// Deliberately present but never read by describeRegion — see the "ignores splits" test below.
-					splits: [
-						{ direction: 'right', id: 'split_0_root', ratio: 0.6, rect: { height: 45, width: 201, x: 36, y: 1 } },
-						{ direction: 'down', id: 'split_1_0', ratio: 0.7, rect: { height: 45, width: 121, x: 36, y: 1 } },
-					],
-					tab_id: 'w3V:t1',
-					workspace_id: 'w3V',
-					zoomed: false,
-				},
-				type: 'pane_layout',
+				root_pane: { pane_id: 'w9:p1', tab_id: 'w9:t1' },
+				workspace: { workspace_id: 'w9' },
+				worktree: { branch: 'cyber-mux/unit-abc123', path: '/repo.worktrees/mux-abc123' },
 			},
 		})
+		const exec = fakeExec(calls, { 'worktree create': createOut })
+		const result = worktree().createInWorkspace(exec, {
+			primaryRoot: '/repo',
+			branch: 'cyber-mux/unit-abc123',
+			path: '/repo.worktrees/mux-abc123',
+			launch: 'claude',
+		})
+		// The root pane AND its root tab — read from the same `root_pane` record `workspace create`
+		// reports both in, so this route hides no fact it already held. The tab is what lets a caller
+		// handed this workspace address its region's tab (group it, name it) without reaching for the
+		// pane id, which herdr refuses outright.
+		expect(result.target).toEqual({ id: 'w9:p1', tab: 'w9:t1' })
+		expect(result.worktree).toEqual({ root: '/repo.worktrees/mux-abc123', branch: 'cyber-mux/unit-abc123' })
+		// The workspace id IS the binding — the whole reason to route through herdr rather than git.
+		expect(result.workspace).toBe('w9')
+		expect(calls[0]).toEqual([
+			'worktree',
+			'create',
+			'--cwd',
+			'/repo',
+			'--branch',
+			'cyber-mux/unit-abc123',
+			'--path',
+			'/repo.worktrees/mux-abc123',
+			'--no-focus',
+		])
+		expect(calls[1]).toEqual(['pane', 'run', 'w9:p1', 'claude'])
+	})
 
-		// `pane list` companion for LAYOUT_OUT — carries cwd/label, which `pane layout` does not.
-		const LIST_OUT = JSON.stringify({
-			id: 'cli:pane:list',
+	it('worktree.createInWorkspace() labels the bound workspace', () => {
+		const calls: string[][] = []
+		const exec = fakeExec(calls, { 'worktree create': worktreeOut() })
+		worktree().createInWorkspace(exec, { primaryRoot: '/repo', branch: 'b', path: '/p', label: 'my-name' })
+		// Without it herdr names the workspace after the path basename, since we always pass --path.
+		expect(calls[0]).toEqual([
+			'worktree',
+			'create',
+			'--cwd',
+			'/repo',
+			'--branch',
+			'b',
+			'--path',
+			'/p',
+			'--label',
+			'my-name',
+			'--no-focus',
+		])
+	})
+
+	it('worktree.openInWorkspace() labels the bound workspace', () => {
+		const calls: string[][] = []
+		const exec = fakeExec(calls, { 'worktree open': worktreeOut() })
+		worktree().openInWorkspace(exec, { primaryRoot: '/repo', path: '/p', label: 'my-name' })
+		expect(calls[0]).toEqual(['worktree', 'open', '--cwd', '/repo', '--path', '/p', '--label', 'my-name', '--no-focus'])
+	})
+
+	it('worktree.createInWorkspace() passes a base as the branch start-point', () => {
+		const calls: string[][] = []
+		const exec = fakeExec(calls, { 'worktree create': worktreeOut() })
+		worktree().createInWorkspace(exec, { primaryRoot: '/repo', branch: 'b', path: '/p', base: 'origin/main' })
+		expect(calls[0]).toEqual([
+			'worktree',
+			'create',
+			'--cwd',
+			'/repo',
+			'--branch',
+			'b',
+			'--path',
+			'/p',
+			'--base',
+			'origin/main',
+			'--no-focus',
+		])
+	})
+
+	it('worktree.createInWorkspace() leaves the pane blank when no launch is given', () => {
+		const calls: string[][] = []
+		const exec = fakeExec(calls, { 'worktree create': worktreeOut() })
+		worktree().createInWorkspace(exec, { primaryRoot: '/repo', branch: 'b', path: '/p' })
+		expect(calls.some((c) => c[0] === 'pane' && c[1] === 'run')).toBe(false)
+	})
+
+	it('worktree.createInWorkspace() throws when herdr reports no root pane id', () => {
+		const exec = fakeExec([], { 'worktree create': JSON.stringify({ id: 'cli:worktree:create', result: {} }) })
+		expect(() => worktree().createInWorkspace(exec, { primaryRoot: '/repo', branch: 'b', path: '/p' })).toThrow(
+			/root_pane/,
+		)
+	})
+
+	it('worktree.createInWorkspace() throws when herdr reports no worktree path/branch', () => {
+		const out = JSON.stringify({
+			id: 'cli:worktree:create',
+			result: { root_pane: { pane_id: 'w9:p1', tab_id: 'w9:t1' } },
+		})
+		const exec = fakeExec([], { 'worktree create': out })
+		expect(() => worktree().createInWorkspace(exec, { primaryRoot: '/repo', branch: 'b', path: '/p' })).toThrow(
+			/worktree/,
+		)
+	})
+
+	it('worktree.createInWorkspace() throws when herdr reports no bound workspace', () => {
+		const out = JSON.stringify({
+			id: 'cli:worktree:create',
+			result: { root_pane: { pane_id: 'w9:p1', tab_id: 'w9:t1' }, worktree: { path: '/p', branch: 'b' } },
+		})
+		const exec = fakeExec([], { 'worktree create': out })
+		expect(() => worktree().createInWorkspace(exec, { primaryRoot: '/repo', branch: 'b', path: '/p' })).toThrow(
+			/workspace_id/,
+		)
+	})
+
+	it('worktree.createInWorkspace() throws when herdr reports nothing', () => {
+		const exec: Exec = () => null
+		expect(() => worktree().createInWorkspace(exec, { primaryRoot: '/repo', branch: 'b', path: '/p' })).toThrow(
+			/herdr worktree create/,
+		)
+	})
+
+	it('worktree.openInWorkspace() opens an existing checkout in a workspace bound to it', () => {
+		const calls: string[][] = []
+		const exec = fakeExec(calls, { 'worktree open': worktreeOut() })
+		const result = worktree().openInWorkspace(exec, { primaryRoot: '/repo', path: '/p', launch: 'claude' })
+		expect(result.workspace).toBe('w9')
+		expect(calls[0]).toEqual(['worktree', 'open', '--cwd', '/repo', '--path', '/p', '--no-focus'])
+		expect(calls[1]).toEqual(['pane', 'run', 'w9:p1', 'claude'])
+	})
+
+	it('worktree.openInWorkspace() throws when herdr reports nothing', () => {
+		expect(() => worktree().openInWorkspace(() => null, { primaryRoot: '/repo', path: '/p' })).toThrow(
+			/herdr worktree open/,
+		)
+	})
+
+	it('worktree.bindings() reports only the worktrees a workspace is currently open on', () => {
+		const calls: string[][] = []
+		const listOut = JSON.stringify({
+			id: 'cli:worktree:list',
 			result: {
+				worktrees: [
+					{ branch: 'main', path: '/repo', open_workspace_id: 'w19' },
+					{ branch: 'feat/x', path: '/repo.worktrees/x', open_workspace_id: 'w21' },
+					{ branch: 'feat/y', path: '/repo.worktrees/y' },
+				],
+			},
+		})
+		const exec = fakeExec(calls, { 'worktree list': listOut })
+		const bindings = worktree().bindings(exec, { primaryRoot: '/repo' })
+		expect(calls[0]).toEqual(['worktree', 'list', '--cwd', '/repo'])
+		expect([...bindings]).toEqual([
+			['/repo', 'w19'],
+			['/repo.worktrees/x', 'w21'],
+		])
+		expect(bindings.has('/repo.worktrees/y')).toBe(false)
+	})
+
+	it.each([
+		['nothing', null],
+		['unparseable output', 'not json'],
+		['no worktrees array', JSON.stringify({ result: {} })],
+		['a non-array worktrees field', JSON.stringify({ result: { worktrees: 'nope' } })],
+	])('worktree.bindings() reports no bindings when herdr returns %s', (_label, out) => {
+		expect(worktree().bindings(() => out, { primaryRoot: '/repo' }).size).toBe(0)
+	})
+
+	it('worktree.releaseWorkspace() closes the workspace without touching the checkout', () => {
+		const calls: string[][] = []
+		const exec = fakeExec(calls, { 'workspace close': '' })
+		worktree().releaseWorkspace(exec, 'w21')
+		expect(calls).toEqual([['workspace', 'close', 'w21']])
+	})
+
+	// Real capture from herdr 0.7.4 (`herdr pane layout --pane w3V:p1`): a workspace at x=36,y=1
+	// sized 201x45, split right at ratio 0.6 then down at 0.7 — three panes.
+	const LAYOUT_OUT = JSON.stringify({
+		id: 'cli:pane:layout',
+		result: {
+			layout: {
+				area: { height: 45, width: 201, x: 36, y: 1 },
+				focused_pane_id: 'w3V:p1',
 				panes: [
-					{ pane_id: 'w3V:p1', cwd: '/repo', label: 'editor' },
-					{ pane_id: 'w3V:p2', cwd: '/repo' },
-					{ pane_id: 'w3V:p3', cwd: '/repo/logs', label: 'logs' },
+					{ focused: true, pane_id: 'w3V:p1', rect: { height: 32, width: 121, x: 36, y: 1 } },
+					{ focused: false, pane_id: 'w3V:p3', rect: { height: 13, width: 121, x: 36, y: 33 } },
+					{ focused: false, pane_id: 'w3V:p2', rect: { height: 45, width: 80, x: 157, y: 1 } },
 				],
-			},
-		})
-
-		it('describeRegion() queries pane layout by id, and pane list separately for cwd/label', () => {
-			const calls: string[][] = []
-			const exec = fakeExec(calls, { 'pane layout': LAYOUT_OUT, 'pane list': LIST_OUT })
-			describeRegion(exec, { id: 'w3V:p1' })
-			expect(calls).toContainEqual(['pane', 'layout', '--pane', 'w3V:p1'])
-			expect(calls).toContainEqual(['pane', 'list'])
-		})
-
-		it('describeRegion() parses rects from layout.panes, screen-absolute and passed through verbatim', () => {
-			const exec = fakeExec([], { 'pane layout': LAYOUT_OUT, 'pane list': LIST_OUT })
-			const panes = describeRegion(exec, { id: 'w3V:p1' })
-			expect(panes.map((p) => ({ id: p.id, rect: p.rect }))).toEqual([
-				{ id: 'w3V:p1', rect: { height: 32, width: 121, x: 36, y: 1 } },
-				{ id: 'w3V:p3', rect: { height: 13, width: 121, x: 36, y: 33 } },
-				{ id: 'w3V:p2', rect: { height: 45, width: 80, x: 157, y: 1 } },
-			])
-			// Screen-absolute, not window-relative like tmux: a workspace can start at x=36, not 0.
-			expect(panes.every((p) => p.rect.x === 0)).toBe(false)
-		})
-
-		// `layout.splits[]` reports direction/ratio outright, but its parent links live only in an
-		// undocumented id convention ("split_1_0") — the rects say the same thing in a fact herdr
-		// actually promises, so the export must be derived from `panes[]`, never `splits[]`.
-		it('describeRegion() ignores layout.splits, deriving rects from panes only', () => {
-			const exec = fakeExec([], { 'pane layout': LAYOUT_OUT, 'pane list': LIST_OUT })
-			const panes = describeRegion(exec, { id: 'w3V:p1' })
-			// Two panes' worth of rects, not the splits' rects (which include the whole 201x45 area and a
-			// 121x45 sub-area that no reported pane actually has).
-			expect(panes.some((p) => p.rect.width === 201)).toBe(false)
-			expect(panes.some((p) => p.rect.height === 45 && p.rect.width === 121)).toBe(false)
-			expect(panes).toHaveLength(3)
-		})
-
-		it('describeRegion() attaches a label only when herdr reports one — no hostname filtering needed', () => {
-			const exec = fakeExec([], { 'pane layout': LAYOUT_OUT, 'pane list': LIST_OUT })
-			const panes = describeRegion(exec, { id: 'w3V:p1' })
-			expect(panes.find((p) => p.id === 'w3V:p1')?.label).toBe('editor')
-			expect(panes.find((p) => p.id === 'w3V:p3')?.label).toBe('logs')
-			// p2's `pane list` entry carries no label key at all — omitted, not a falsy placeholder.
-			expect(panes.find((p) => p.id === 'w3V:p2')?.label).toBeUndefined()
-		})
-
-		it('describeRegion() parses cwd from pane list, keyed by pane id', () => {
-			const exec = fakeExec([], { 'pane layout': LAYOUT_OUT, 'pane list': LIST_OUT })
-			const panes = describeRegion(exec, { id: 'w3V:p1' })
-			expect(panes.find((p) => p.id === 'w3V:p3')?.cwd).toBe('/repo/logs')
-		})
-
-		it('describeRegion() throws when herdr reports nothing', () => {
-			const exec: Exec = () => null
-			expect(() => describeRegion(exec, { id: 'w3V:p1' })).toThrow(/could not describe the region/)
-		})
-
-		it('describeRegion() throws when pane layout returns unparseable JSON', () => {
-			const exec = fakeExec([], { 'pane layout': 'not json' })
-			expect(() => describeRegion(exec, { id: 'w3V:p1' })).toThrow(/unparseable output/)
-		})
-
-		it('describeRegion() throws when herdr reports no panes', () => {
-			const out = JSON.stringify({ result: { layout: { panes: [] } } })
-			const exec = fakeExec([], { 'pane layout': out })
-			expect(() => describeRegion(exec, { id: 'w3V:p1' })).toThrow(/reported no panes/)
-		})
-
-		// Best-effort: the geometry is the verbose, hard-won part. A `pane list` failure must not take
-		// down a query whose rects came back fine — cwd/label are just visibly absent.
-		it('describeRegion() is best-effort: returns geometry without cwd/label when pane list fails', () => {
-			const exec = fakeExec([], { 'pane layout': LAYOUT_OUT, 'pane list': null })
-			const panes = describeRegion(exec, { id: 'w3V:p1' })
-			expect(panes).toHaveLength(3)
-			expect(panes.every((p) => p.cwd === undefined && p.label === undefined)).toBe(true)
-			expect(panes.map((p) => p.rect)).toEqual([
-				{ height: 32, width: 121, x: 36, y: 1 },
-				{ height: 13, width: 121, x: 36, y: 33 },
-				{ height: 45, width: 80, x: 157, y: 1 },
-			])
-		})
-
-		/**
-		 * The workspace-wide read. herdr HAS a workspace tier, so every fact here is one the backend
-		 * already holds: the caller's pane names its workspace, `tab list` enumerates it, and `pane list`
-		 * stamps every pane with its tab. No grouping tag is read and none is written — the tier IS the
-		 * group, which is why `open` ignores `workspaceGroup` on this backend.
-		 */
-		const WS_TABS_OUT = JSON.stringify({
-			result: {
-				tabs: [
-					{ tab_id: 'w3V:t1', workspace_id: 'w3V', number: 1, label: 'editor', focused: true, pane_count: 1 },
-					{ tab_id: 'w3V:t2', workspace_id: 'w3V', number: 2, label: 'logs', focused: false, pane_count: 1 },
+				// Deliberately present but never read by describeRegion — see the "ignores splits" test below.
+				splits: [
+					{ direction: 'right', id: 'split_0_root', ratio: 0.6, rect: { height: 45, width: 201, x: 36, y: 1 } },
+					{ direction: 'down', id: 'split_1_0', ratio: 0.7, rect: { height: 45, width: 121, x: 36, y: 1 } },
 				],
+				tab_id: 'w3V:t1',
+				workspace_id: 'w3V',
+				zoomed: false,
 			},
-		})
-		const WS_PANES_OUT = JSON.stringify({
-			result: {
-				panes: [
-					{ pane_id: 'w3V:p1', tab_id: 'w3V:t1', cwd: '/repo', label: 'editor' },
-					{ pane_id: 'w3V:p9', tab_id: 'w3V:t2', cwd: '/repo/logs' },
-				],
-			},
-		})
-		const WS_PANE_GET = JSON.stringify({
-			result: { pane: { pane_id: 'w3V:p1', tab_id: 'w3V:t1', workspace_id: 'w3V' } },
-		})
-		const ONE_PANE_LAYOUT = JSON.stringify({
-			result: { layout: { panes: [{ pane_id: 'w3V:p9', rect: { x: 0, y: 0, width: 200, height: 50 } }] } },
-		})
+			type: 'pane_layout',
+		},
+	})
 
-		const describeWorkspace = herdrMuxAdapter.regions?.describeWorkspace
-		if (!describeWorkspace) throw new Error('the herdr adapter must implement describeWorkspace')
+	// `pane list` companion for LAYOUT_OUT — carries cwd/label, which `pane layout` does not.
+	const LIST_OUT = JSON.stringify({
+		id: 'cli:pane:list',
+		result: {
+			panes: [
+				{ pane_id: 'w3V:p1', cwd: '/repo', label: 'editor' },
+				{ pane_id: 'w3V:p2', cwd: '/repo' },
+				{ pane_id: 'w3V:p3', cwd: '/repo/logs', label: 'logs' },
+			],
+		},
+	})
 
-		it('describeWorkspace() resolves the caller’s workspace, enumerates its tabs, and reads each tab’s geometry', () => {
-			const calls: string[][] = []
-			const exec = fakeExec(calls, {
-				'pane get': WS_PANE_GET,
-				'tab list': WS_TABS_OUT,
-				'pane list': WS_PANES_OUT,
-				'pane layout': ONE_PANE_LAYOUT,
-			})
-			const tabs = describeWorkspace(exec, { id: 'w3V:p1' })
-			expect(calls).toEqual([
-				// The workspace the caller sits in — the tier herdr really has, read off the pane record.
-				['pane', 'get', 'w3V:p1'],
-				['tab', 'list', '--workspace', 'w3V'],
-				// Scoped to the workspace, so another workspace's panes never reach a capture — and ONE call
-				// for every tab, since each pane arrives stamped with the tab it sits in.
-				['pane', 'list', '--workspace', 'w3V'],
-				// Geometry is per-PANE, never per-tab: `herdr layout` takes a tab_id but is socket-API-only
-				// in 0.7.4, so each tab's rects come through any one pane that sits in it. Race-free — an
-				// unfocused tab reports live geometry, so nothing is focused first.
-				['pane', 'layout', '--pane', 'w3V:p1'],
-				['pane', 'layout', '--pane', 'w3V:p9'],
-			])
-			expect(tabs.map((t) => t.id)).toEqual(['w3V:t1', 'w3V:t2'])
-			expect(tabs.map((t) => t.label)).toEqual(['editor', 'logs'])
-		})
+	it('describeRegion() queries pane layout by id, and pane list separately for cwd/label', () => {
+		const calls: string[][] = []
+		const exec = fakeExec(calls, { 'pane layout': LAYOUT_OUT, 'pane list': LIST_OUT })
+		describeRegion(exec, { id: 'w3V:p1' })
+		expect(calls).toContainEqual(['pane', 'layout', '--pane', 'w3V:p1'])
+		expect(calls).toContainEqual(['pane', 'list'])
+	})
 
-		it('describeWorkspace() throws when herdr cannot resolve the pane, rather than guessing a workspace', () => {
-			expect(() => describeWorkspace(() => null, { id: 'gone' })).toThrow(/could not resolve the workspace/)
-		})
+	it('describeRegion() parses rects from layout.panes, screen-absolute and passed through verbatim', () => {
+		const exec = fakeExec([], { 'pane layout': LAYOUT_OUT, 'pane list': LIST_OUT })
+		const panes = describeRegion(exec, { id: 'w3V:p1' })
+		expect(panes.map((p) => ({ id: p.id, rect: p.rect }))).toEqual([
+			{ id: 'w3V:p1', rect: { height: 32, width: 121, x: 36, y: 1 } },
+			{ id: 'w3V:p3', rect: { height: 13, width: 121, x: 36, y: 33 } },
+			{ id: 'w3V:p2', rect: { height: 45, width: 80, x: 157, y: 1 } },
+		])
+		// Screen-absolute, not window-relative like tmux: a workspace can start at x=36, not 0.
+		expect(panes.every((p) => p.rect.x === 0)).toBe(false)
+	})
 
-		it('describeWorkspace() throws when the workspace reports no tabs', () => {
-			const exec = fakeExec([], { 'pane get': WS_PANE_GET, 'tab list': JSON.stringify({ result: { tabs: [] } }) })
-			expect(() => describeWorkspace(exec, { id: 'w3V:p1' })).toThrow(/reported no tabs/)
-		})
+	// `layout.splits[]` reports direction/ratio outright, but its parent links live only in an
+	// undocumented id convention ("split_1_0") — the rects say the same thing in a fact herdr
+	// actually promises, so the export must be derived from `panes[]`, never `splits[]`.
+	it('describeRegion() ignores layout.splits, deriving rects from panes only', () => {
+		const exec = fakeExec([], { 'pane layout': LAYOUT_OUT, 'pane list': LIST_OUT })
+		const panes = describeRegion(exec, { id: 'w3V:p1' })
+		// Two panes' worth of rects, not the splits' rects (which include the whole 201x45 area and a
+		// 121x45 sub-area that no reported pane actually has).
+		expect(panes.some((p) => p.rect.width === 201)).toBe(false)
+		expect(panes.some((p) => p.rect.height === 45 && p.rect.width === 121)).toBe(false)
+		expect(panes).toHaveLength(3)
+	})
 
-		// herdr's worktree create/open take no env at birth, so the capability compensates on the launch:
-		// `carryLaunch` runs `envFallback`, and a `carried` command lands as an `env KEY=VALUE` prefix.
-		it('env a route could not carry rides in on the command instead', () => {
-			const calls: string[][] = []
-			const exec = fakeExec(calls, { 'worktree create': worktreeOut() })
-			worktree().createInWorkspace(exec, {
-				primaryRoot: '/repo',
-				branch: 'b',
-				path: '/p',
-				env: { ROLE: 'worker' },
-				launch: 'claude',
-			})
-			const paneRun = calls.find((c) => c[0] === 'pane' && c[1] === 'run')
-			expect(paneRun).toEqual(['pane', 'run', 'w9:p1', "env ROLE='worker' claude"])
-		})
+	it('describeRegion() attaches a label only when herdr reports one — no hostname filtering needed', () => {
+		const exec = fakeExec([], { 'pane layout': LAYOUT_OUT, 'pane list': LIST_OUT })
+		const panes = describeRegion(exec, { id: 'w3V:p1' })
+		expect(panes.find((p) => p.id === 'w3V:p1')?.label).toBe('editor')
+		expect(panes.find((p) => p.id === 'w3V:p3')?.label).toBe('logs')
+		// p2's `pane list` entry carries no label key at all — omitted, not a falsy placeholder.
+		expect(panes.find((p) => p.id === 'w3V:p2')?.label).toBeUndefined()
+	})
 
-		it('env a route could not carry, with no command to ride, warns rather than vanishing', () => {
-			const spy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
-			try {
-				const calls: string[][] = []
-				const exec = fakeExec(calls, { 'worktree create': worktreeOut() })
-				worktree().createInWorkspace(exec, { primaryRoot: '/repo', branch: 'b', path: '/p', env: { ROLE: 'worker' } })
-				// Named on stderr — a caller that asked for env and did not get it is told, not left guessing.
-				expect(spy).toHaveBeenCalled()
-				expect(String(spy.mock.calls[0]![0])).toContain('ROLE')
-				// Nothing rides, because there was no command to ride on — no `pane run` at all.
-				expect(calls.some((c) => c[0] === 'pane' && c[1] === 'run')).toBe(false)
-			} finally {
-				spy.mockRestore()
-			}
-		})
+	it('describeRegion() parses cwd from pane list, keyed by pane id', () => {
+		const exec = fakeExec([], { 'pane layout': LAYOUT_OUT, 'pane list': LIST_OUT })
+		const panes = describeRegion(exec, { id: 'w3V:p1' })
+		expect(panes.find((p) => p.id === 'w3V:p3')?.cwd).toBe('/repo/logs')
+	})
 
-		it('an env value carrying a space or a quote survives the prefix intact', () => {
-			const calls: string[][] = []
-			const exec = fakeExec(calls, { 'worktree create': worktreeOut() })
-			worktree().createInWorkspace(exec, {
-				primaryRoot: '/repo',
-				branch: 'b',
-				path: '/p',
-				env: { GREETING: "hi there's" },
-				launch: 'claude',
-			})
-			const paneRun = calls.find((c) => c[0] === 'pane' && c[1] === 'run')!
-			// Single-quoted for the shell — the space stays inside one word and the quote does not unbalance it.
-			expect(paneRun[3]).toContain("GREETING='hi there'\\''s'")
-		})
+	it('describeRegion() throws when herdr reports nothing', () => {
+		const exec: Exec = () => null
+		expect(() => describeRegion(exec, { id: 'w3V:p1' })).toThrow(/could not describe the region/)
+	})
 
-		// The other half of the env rule, on the tier that DOES carry it natively: `open` sets `--env`
-		// on the opening call, so the launch command it runs must never be prefixed on top of that.
-		it.each<{ at: MuxPlacement; responses: Record<string, string>; pane: string }>([
-			{ at: 'pane:right', responses: { 'pane split': PANE_IN_SPLIT('w3:pB', 'w3') }, pane: 'w3:pB' },
-			{ at: 'tab', responses: { 'tab create': PANE_IN_TAB('w3:pT', 'w3') }, pane: 'w3:pT' },
-			{ at: 'workspace', responses: { 'workspace create': PANE_IN_WORKSPACE('w7:p1', 'w7') }, pane: 'w7:p1' },
-		])('a route that set env natively never prefixes it on top', ({ at, responses, pane }) => {
-			const calls: string[][] = []
-			herdrMuxAdapter.open(fakeExec(calls, responses), {
-				cwd: '/unit',
-				at,
-				env: { ROLE: 'worker' },
-				launch: 'claude',
-			})
-			// Env is native — the flag is on the opening call...
-			expect(calls[0]).toContain('--env')
-			expect(calls[0]).toContain('ROLE=worker')
-			// ...so the launched command runs verbatim, never `env ROLE=... claude`.
-			const paneRun = calls.find((c) => c[0] === 'pane' && c[1] === 'run')!
-			expect(paneRun).toEqual(['pane', 'run', pane, 'claude'])
+	it('describeRegion() throws when pane layout returns unparseable JSON', () => {
+		const exec = fakeExec([], { 'pane layout': 'not json' })
+		expect(() => describeRegion(exec, { id: 'w3V:p1' })).toThrow(/unparseable output/)
+	})
+
+	it('describeRegion() throws when herdr reports no panes', () => {
+		const out = JSON.stringify({ result: { layout: { panes: [] } } })
+		const exec = fakeExec([], { 'pane layout': out })
+		expect(() => describeRegion(exec, { id: 'w3V:p1' })).toThrow(/reported no panes/)
+	})
+
+	// Best-effort: the geometry is the verbose, hard-won part. A `pane list` failure must not take
+	// down a query whose rects came back fine — cwd/label are just visibly absent.
+	it('describeRegion() is best-effort: returns geometry without cwd/label when pane list fails', () => {
+		const exec = fakeExec([], { 'pane layout': LAYOUT_OUT, 'pane list': null })
+		const panes = describeRegion(exec, { id: 'w3V:p1' })
+		expect(panes).toHaveLength(3)
+		expect(panes.every((p) => p.cwd === undefined && p.label === undefined)).toBe(true)
+		expect(panes.map((p) => p.rect)).toEqual([
+			{ height: 32, width: 121, x: 36, y: 1 },
+			{ height: 13, width: 121, x: 36, y: 33 },
+			{ height: 45, width: 80, x: 157, y: 1 },
+		])
+	})
+
+	/**
+	 * The workspace-wide read. herdr HAS a workspace tier, so every fact here is one the backend
+	 * already holds: the caller's pane names its workspace, `tab list` enumerates it, and `pane list`
+	 * stamps every pane with its tab. No grouping tag is read and none is written — the tier IS the
+	 * group, which is why `open` ignores `workspaceGroup` on this backend.
+	 */
+	const WS_TABS_OUT = JSON.stringify({
+		result: {
+			tabs: [
+				{ tab_id: 'w3V:t1', workspace_id: 'w3V', number: 1, label: 'editor', focused: true, pane_count: 1 },
+				{ tab_id: 'w3V:t2', workspace_id: 'w3V', number: 2, label: 'logs', focused: false, pane_count: 1 },
+			],
+		},
+	})
+	const WS_PANES_OUT = JSON.stringify({
+		result: {
+			panes: [
+				{ pane_id: 'w3V:p1', tab_id: 'w3V:t1', cwd: '/repo', label: 'editor' },
+				{ pane_id: 'w3V:p9', tab_id: 'w3V:t2', cwd: '/repo/logs' },
+			],
+		},
+	})
+	const WS_PANE_GET = JSON.stringify({
+		result: { pane: { pane_id: 'w3V:p1', tab_id: 'w3V:t1', workspace_id: 'w3V' } },
+	})
+	const ONE_PANE_LAYOUT = JSON.stringify({
+		result: { layout: { panes: [{ pane_id: 'w3V:p9', rect: { x: 0, y: 0, width: 200, height: 50 } }] } },
+	})
+
+	const describeWorkspace = herdrMuxAdapter.regions?.describeWorkspace
+	if (!describeWorkspace) throw new Error('the herdr adapter must implement describeWorkspace')
+
+	it('describeWorkspace() resolves the caller’s workspace, enumerates its tabs, and reads each tab’s geometry', () => {
+		const calls: string[][] = []
+		const exec = fakeExec(calls, {
+			'pane get': WS_PANE_GET,
+			'tab list': WS_TABS_OUT,
+			'pane list': WS_PANES_OUT,
+			'pane layout': ONE_PANE_LAYOUT,
 		})
+		const tabs = describeWorkspace(exec, { id: 'w3V:p1' })
+		expect(calls).toEqual([
+			// The workspace the caller sits in — the tier herdr really has, read off the pane record.
+			['pane', 'get', 'w3V:p1'],
+			['tab', 'list', '--workspace', 'w3V'],
+			// Scoped to the workspace, so another workspace's panes never reach a capture — and ONE call
+			// for every tab, since each pane arrives stamped with the tab it sits in.
+			['pane', 'list', '--workspace', 'w3V'],
+			// Geometry is per-PANE, never per-tab: `herdr layout` takes a tab_id but is socket-API-only
+			// in 0.7.4, so each tab's rects come through any one pane that sits in it. Race-free — an
+			// unfocused tab reports live geometry, so nothing is focused first.
+			['pane', 'layout', '--pane', 'w3V:p1'],
+			['pane', 'layout', '--pane', 'w3V:p9'],
+		])
+		expect(tabs.map((t) => t.id)).toEqual(['w3V:t1', 'w3V:t2'])
+		expect(tabs.map((t) => t.label)).toEqual(['editor', 'logs'])
+	})
+
+	it('describeWorkspace() throws when herdr cannot resolve the pane, rather than guessing a workspace', () => {
+		expect(() => describeWorkspace(() => null, { id: 'gone' })).toThrow(/could not resolve the workspace/)
+	})
+
+	it('describeWorkspace() throws when the workspace reports no tabs', () => {
+		const exec = fakeExec([], { 'pane get': WS_PANE_GET, 'tab list': JSON.stringify({ result: { tabs: [] } }) })
+		expect(() => describeWorkspace(exec, { id: 'w3V:p1' })).toThrow(/reported no tabs/)
 	})
 })

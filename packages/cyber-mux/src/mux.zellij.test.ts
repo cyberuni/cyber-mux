@@ -29,7 +29,7 @@ const LIST_ONE = JSON.stringify([
 // A session-bound adapter for the workspace-reporting cases; the exported singleton has no session.
 const sessionAdapter = createZellijAdapter({ session: 'my-session' })
 
-describe('spec:cyber-mux/mux', () => {
+describe('spec:cyber-mux/mux/placement', () => {
 	describe('zellijMuxAdapter', () => {
 		it('open() at pane:right splits with --direction right and resolves tab from list-panes', () => {
 			const calls: string[][] = []
@@ -54,7 +54,7 @@ describe('spec:cyber-mux/mux', () => {
 			expect(target).toEqual({ id: 'terminal_9', tab: '2', workspace: 'my-session' })
 		})
 
-		it('open() at tab opens a new tab and resolves its initial pane', () => {
+		it('placement-at-tab-new-tab', () => {
 			const calls: string[][] = []
 			// new-tab reports the TAB id; the tab's initial pane is the list-panes record carrying it.
 			const exec = fakeExec(calls, { 'new-tab': '2', 'list-panes': LIST_ONE })
@@ -63,7 +63,7 @@ describe('spec:cyber-mux/mux', () => {
 			expect(target).toEqual({ id: 'terminal_9', tab: '2' })
 		})
 
-		it('open() at workspace collapses to a new tab, but still reports the session as the workspace', () => {
+		it('placement-at-workspace-visible-space', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'new-tab': '2', 'list-panes': LIST_ONE })
 			const target = sessionAdapter.open(exec, { cwd: '/unit', at: 'workspace' })
@@ -105,7 +105,7 @@ describe('spec:cyber-mux/mux', () => {
 
 		// zellij has no --env on new-pane/new-tab, so env rides in as a prefix on the launch command,
 		// exactly the fallback wezterm and herdr's worktree route use.
-		it('open() env is never native — it rides in as an env prefix on the launch command', () => {
+		it('placement-env-rides-command-prefix', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'new-pane': 'terminal_9', 'list-panes': LIST_ONE })
 			zellijMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right', env: { ROLE: 'worker' }, launch: 'claude' })
@@ -117,7 +117,7 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls).toContainEqual(['action', 'send-keys', '--pane-id', 'terminal_9', 'Enter'])
 		})
 
-		it('open() env with no launch command warns to stderr rather than vanishing', () => {
+		it('placement-env-no-command-warns', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'new-pane': 'terminal_9', 'list-panes': LIST_ONE })
 			const writes: string[] = []
@@ -158,6 +158,21 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls).toEqual([])
 		})
 
+		it('does not declare it can size a split — tiled splits are always even', () => {
+			expect(zellijMuxAdapter.canSizeSplits).toBeUndefined()
+		})
+
+		// Optional omissions, not stubs: pane geometry semantics need a live binary (regions), and there
+		// is no worktree subcommand in the CLI at all.
+		it('has no regions (describeRegion/describeWorkspace) or worktree capability', () => {
+			expect(zellijMuxAdapter.regions).toBeUndefined()
+			expect(zellijMuxAdapter.worktree).toBeUndefined()
+		})
+	})
+})
+
+describe('spec:cyber-mux/mux/driving', () => {
+	describe('zellijMuxAdapter', () => {
 		it('sendText writes literal characters with write-chars, pressing no Enter', () => {
 			const calls: string[][] = []
 			zellijMuxAdapter.sendText(fakeExec(calls), { id: 'terminal_9' }, 'Enter')
@@ -179,7 +194,7 @@ describe('spec:cyber-mux/mux', () => {
 			])
 		})
 
-		it('submit with no text sends a bare Enter only', () => {
+		it('driving-submit-no-text-bare-enter', () => {
 			const calls: string[][] = []
 			zellijMuxAdapter.submit(fakeExec(calls), { id: 'terminal_9' })
 			expect(calls).toEqual([['action', 'send-keys', '--pane-id', 'terminal_9', 'Enter']])
@@ -199,16 +214,20 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls).toEqual([['action', 'dump-screen', '--pane-id', 'terminal_9', '--full']])
 		})
 
-		it('focus drives focus-pane-id', () => {
-			const calls: string[][] = []
-			zellijMuxAdapter.focus(fakeExec(calls), { id: 'terminal_9' })
-			expect(calls).toEqual([['action', 'focus-pane-id', 'terminal_9']])
-		})
-
 		it('teardown closes the pane', () => {
 			const calls: string[][] = []
 			zellijMuxAdapter.teardown(fakeExec(calls), { id: 'terminal_9' })
 			expect(calls).toEqual([['action', 'close-pane', '--pane-id', 'terminal_9']])
+		})
+	})
+})
+
+describe('spec:cyber-mux/mux/lookup', () => {
+	describe('zellijMuxAdapter', () => {
+		it('focus drives focus-pane-id', () => {
+			const calls: string[][] = []
+			zellijMuxAdapter.focus(fakeExec(calls), { id: 'terminal_9' })
+			expect(calls).toEqual([['action', 'focus-pane-id', 'terminal_9']])
 		})
 
 		it('paneExists scans the live listing, treating a bare id and its terminal_ twin as equal', () => {
@@ -219,7 +238,7 @@ describe('spec:cyber-mux/mux', () => {
 			expect(zellijMuxAdapter.paneExists(exec, { id: 'terminal_99' })).toBe(false)
 		})
 
-		it('isPaneFocused reports the real is_focused field, and unknown for a missing pane', () => {
+		it('lookup-focus-unknown-not-boolean', () => {
 			const exec = fakeExec([], { 'list-panes': LIST_ONE })
 			expect(zellijMuxAdapter.isPaneFocused(exec, { id: 'terminal_9' })).toBe(true)
 			expect(zellijMuxAdapter.isPaneFocused(exec, { id: 'terminal_99' })).toBeUndefined()
@@ -231,7 +250,7 @@ describe('spec:cyber-mux/mux', () => {
 			expect(zellijMuxAdapter.isPaneFocused(exec, { id: 'terminal_9' })).toBe(false)
 		})
 
-		it('listPanes reports each pane, its cwd, and an authored label (a title that is not the command)', () => {
+		it('lookup-listing-enumerates-all-panes', () => {
 			const list = JSON.stringify([
 				{ id: 'terminal_9', tab_id: 2, title: 'worker', pane_command: 'claude', pane_cwd: '/unit' },
 				// title equals the running command — ambient, not chosen — so it reports no label.
@@ -251,17 +270,6 @@ describe('spec:cyber-mux/mux', () => {
 		it('listPanes returns nothing on non-JSON output rather than throwing', () => {
 			const exec = fakeExec([], { 'list-panes': 'not json' })
 			expect(zellijMuxAdapter.listPanes(exec)).toEqual([])
-		})
-
-		it('does not declare it can size a split — tiled splits are always even', () => {
-			expect(zellijMuxAdapter.canSizeSplits).toBeUndefined()
-		})
-
-		// Optional omissions, not stubs: pane geometry semantics need a live binary (regions), and there
-		// is no worktree subcommand in the CLI at all.
-		it('has no regions (describeRegion/describeWorkspace) or worktree capability', () => {
-			expect(zellijMuxAdapter.regions).toBeUndefined()
-			expect(zellijMuxAdapter.worktree).toBeUndefined()
 		})
 	})
 })

@@ -57,14 +57,14 @@ function applyToRects(node: TemplateNode, region: PaneRect, acc: PaneRect[] = []
 	return acc
 }
 
-describe('spec:cyber-mux/template', () => {
+describe('spec:cyber-mux/template/capture', () => {
 	describe('captureTemplate', () => {
 		it('captures a single pane as a bare leaf, with no split at all', () => {
 			const tree = treeOf([pane('%0', 0, 0, 200, 50)])
 			expect(tree).toEqual({ type: 'pane' })
 		})
 
-		it('a captured ratio is the one the split was made with, not the one the pane sizes imply', () => {
+		it('capture-ratio-matches-split-not-sizes', () => {
 			// LIVE, tmux 3.6b: a 200x50 window, `split-window -h -l 40%` then `split-window -v -l 30%` on
 			// the original. tmux reports 119 + 80 across (200 less the divider column) and 34 + 15 down.
 			const tree = asSplit(treeOf([pane('%0', 0, 0, 119, 34), pane('%2', 0, 35, 119, 15), pane('%1', 120, 0, 80, 50)]))
@@ -92,7 +92,7 @@ describe('spec:cyber-mux/template', () => {
 			expect(asSplit(tree.first).ratio).toBe(0.71)
 		})
 
-		it('an n-ary row captures as the right-comb the flat sugar desugars to', () => {
+		it('capture-nary-row-as-right-comb', () => {
 			// Three panes side by side is ONE node with three children in tmux's own tree. The schema has
 			// only binary splits, so the capture has to comb it — and must comb it the same way
 			// `arrange: even-horizontal` does, or a pool would not survive a round trip.
@@ -110,7 +110,7 @@ describe('spec:cyber-mux/template', () => {
 			expect(rest.ratio).toBeUndefined()
 		})
 
-		it('an ambiguous grid captures columns-first, matching tiled rather than its transpose', () => {
+		it('capture-ambiguous-grid-matches-tiled', () => {
 			// A 2x2 is genuinely ambiguous — cutting vertically or horizontally first describes the same
 			// screen. `desugar`'s `tiled` lays columns first, so the capture must break the tie the same way
 			// or an exported grid would come back as the mirror of the template that built it.
@@ -127,7 +127,7 @@ describe('spec:cyber-mux/template', () => {
 			expect(asSplit(tree.second).direction).toBe('down')
 		})
 
-		it('no pane in a captured template carries a command, on either backend', () => {
+		it('capture-no-command-either-backend', () => {
 			// The honest limit of the whole verb: geometry comes back, commands do not. cyber-mux types
 			// commands with `submit`, so tmux's `pane_start_command` is empty for every pane it created
 			// and `pane_current_command` reports the shell or interpreter instead.
@@ -184,7 +184,7 @@ describe('spec:cyber-mux/template', () => {
 			expect(tmuxCalls.flat().join(' ')).not.toContain('pane_current_command')
 		})
 
-		it("the geometry seam reports one rectangle per pane, not a backend's own tree", () => {
+		it('capture-geometry-seam-per-pane-rectangle', () => {
 			// The design of the seam. Both backends CAN describe a region and both describe it in a
 			// structure the other cannot speak, so neither structure is portable — rects are.
 			const tmuxCalls: string[][] = []
@@ -243,7 +243,7 @@ describe('spec:cyber-mux/template', () => {
 			expect(tree.ratio).toBe(0.6)
 		})
 
-		it('re-applying a captured template reproduces the region it was captured from', () => {
+		it('capture-reapply-reproduces-region', () => {
 			// The property the whole derivation exists to hold. These are the REAL rects of a live 4-pane
 			// herdr region (0.7.4) — a 201x43 workspace split right, then down, then right again.
 			const region = { x: 0, y: 0, width: 201, height: 43 }
@@ -264,7 +264,7 @@ describe('spec:cyber-mux/template', () => {
 	})
 
 	describe('captureTemplate cwd handling', () => {
-		it('a pane under the captured root becomes a relative dir', () => {
+		it('capture-pane-under-root-relative-dir', () => {
 			const { template, warnings } = captureTemplate(
 				[pane('%0', 0, 0, 99, 50, { cwd: '/repo' }), pane('%1', 100, 0, 100, 50, { cwd: '/repo/packages/api' })],
 				{ name: 'captured' },
@@ -278,7 +278,7 @@ describe('spec:cyber-mux/template', () => {
 			expect(JSON.stringify(template)).not.toContain('/repo')
 		})
 
-		it('captureTemplate reports a pane outside the root as a warning, and emits no dir for it', () => {
+		it('capture-pane-outside-root-loses-dir', () => {
 			const { template, warnings } = captureTemplate(
 				[pane('%0', 0, 0, 99, 50, { cwd: '/repo' }), pane('%1', 100, 0, 100, 50, { cwd: '/elsewhere/other' })],
 				{ name: 'captured' },
@@ -291,7 +291,7 @@ describe('spec:cyber-mux/template', () => {
 			expect(warnings[0]).toContain('not under the captured root')
 		})
 
-		it("a label the author set is captured, and a backend's default pane title is not", () => {
+		it('capture-author-label-not-default-title', () => {
 			// tmux has no unset title — it defaults every pane's to the HOSTNAME. Capturing the title
 			// verbatim would hang the host's name on every pane of every capture, which is not a label
 			// anyone chose. A title equal to the host is that default; one that differs is a real label
@@ -317,7 +317,7 @@ describe('spec:cyber-mux/template', () => {
 			expect(JSON.stringify(template)).not.toContain('zeta')
 		})
 
-		it('a captured template passes validate', () => {
+		it('capture-template-passes-validate', () => {
 			// The round trip that matters: a capture has to be loadable. Run the REAL validator over it —
 			// asserting the name and description came back would pass for a template carrying a cwd or a
 			// degenerate ratio, which is exactly what this has to rule out.
@@ -337,7 +337,7 @@ describe('spec:cyber-mux/template', () => {
 	})
 
 	describe('captureWorkspaceTemplate', () => {
-		it('re-applying a captured workspace reproduces the tabs it was captured from', () => {
+		it('capture-reapply-workspace-reproduces-tabs', () => {
 			// The round-trip property the whole derivation exists to hold, now at the TAB level as well as
 			// the pane level. Two tabs, each of two panes built by splitting — herdr-shaped rects (no
 			// divider), so the rebuild is exact rather than approximate.
@@ -367,7 +367,7 @@ describe('spec:cyber-mux/template', () => {
 			}
 		})
 
-		it("a tab's label is never parsed back to recover its workspace", () => {
+		it('capture-tab-label-not-composed', () => {
 			// A workspace labeled "acme - beta" whose tab is labeled main — so tmux's window is DISPLAYED
 			// as "acme - beta - main", the composition the walk wrote, and the walk stored `main` beside
 			// the tag as the tab's own name. The display name is ambiguous under every split rule: it
@@ -408,7 +408,7 @@ describe('spec:cyber-mux/template', () => {
 			expect(() => captureTemplate([], { name: 'captured' })).toThrow(/at least one pane/)
 		})
 
-		it('captureTemplate throws on a region no straight cut separates', () => {
+		it('capture-non-guillotine-region-refused', () => {
 			// A true pinwheel: four panes wound around a fifth, tiling the region with no gap. No straight
 			// line crosses it without cutting a pane in half, so there is no split that could have made it —
 			// and both backends build regions only BY splitting. Reaching this means the geometry is not

@@ -48,7 +48,7 @@ function fakeExec(calls: string[][], responses: Record<string, string | null> = 
 const ran = (calls: string[][], cmd: string, ...head: string[]) =>
 	calls.some((c) => c[0] === cmd && head.every((h, i) => c[i + 1] === h))
 
-describe('spec:cyber-mux/mux', () => {
+describe('spec:cyber-mux/mux/worktree', () => {
 	describe('worktree routing — native when the backend binds, plain git plus open() otherwise', () => {
 		const addOpts = { primaryRoot: '/repo', branch: 'feat/x', path: '/repo.worktrees/x', launch: 'claude' }
 
@@ -83,28 +83,6 @@ describe('spec:cyber-mux/mux', () => {
 			expect(opened.degraded).toBe(true)
 			expect(ran(calls, 'git', '-C', '/repo', 'worktree', 'add')).toBe(true)
 			expect(ran(calls, 'herdr', verb, sub)).toBe(true)
-			expect(ran(calls, 'herdr', 'worktree', 'create')).toBe(false)
-		})
-
-		// One workspace tier, two questions. OCCUPANCY — which workspace the pane LIVES IN — is what
-		// `open` answers, and a split lands in the caller's own workspace. BINDING — whether the worktree
-		// is GROUPED to a workspace — is what this report answers, and a split creates none. Neither
-		// answers for the other: a pane sitting in w3 is NOT evidence its worktree was grouped there, so
-		// the pane's workspace must never leak into the worktree's report.
-		it('the workspace a pane landed in is not a worktree binding', () => {
-			const calls: string[][] = []
-			const exec = fakeExec(calls, {
-				// The live envelope: herdr reports the split's own workspace_id — the caller's workspace.
-				'herdr pane split': '{"result":{"pane":{"pane_id":"w3:pB","tab_id":"w3:t1","workspace_id":"w3"}}}',
-			})
-			const opened = addAndOpenWorktree(exec, herdrMuxAdapter, { ...addOpts, at: 'pane:right' })
-
-			// The pane knows where it landed...
-			expect(opened.target).toEqual({ id: 'w3:pB', tab: 'w3:t1', workspace: 'w3' })
-			// ...and the worktree is STILL bound to nothing. This is the assertion that would break if
-			// occupancy were ever mistaken for a binding.
-			expect(opened.workspace).toBeUndefined()
-			expect(opened.degraded).toBe(true)
 			expect(ran(calls, 'herdr', 'worktree', 'create')).toBe(false)
 		})
 
@@ -158,64 +136,6 @@ describe('spec:cyber-mux/mux', () => {
 				base: 'origin/main',
 			})
 			expect(tmuxCalls[0]!.at(-1)).toBe('origin/main')
-		})
-	})
-
-	describe('the seam reports whether a route carried env, because only it knows', () => {
-		const env = { ROLE: 'worker' }
-		const base = { primaryRoot: '/repo', path: '/repo.worktrees/x', launch: 'claude' }
-
-		// One row per Examples row: env is native on every route EXCEPT herdr's worktree bind, whose
-		// `worktree create` takes no env param — so only that one route reports `envHonored: false`.
-		it.each<{
-			route: string
-			call: (exec: Exec) => { envHonored: boolean }
-			responses: Record<string, string>
-			envHonored: boolean
-		}>([
-			{
-				route: "herdr's worktree bind",
-				call: (exec) => addAndOpenWorktree(exec, herdrMuxAdapter, { ...base, branch: 'feat/x', env, at: 'workspace' }),
-				responses: { 'herdr worktree create': HERDR_WORKTREE_OUT },
-				envHonored: false,
-			},
-			{
-				// The same bind route reached through `worktree open` rather than `worktree add` — exposed
-				// identically (herdr's `worktree open` takes no env either), so it must report the drop too.
-				// Covered so the report is not wired on one worktree verb and silently forgotten on its sibling.
-				route: "herdr's worktree bind, via open",
-				call: (exec) => openExistingWorktree(exec, herdrMuxAdapter, { ...base, env, at: 'workspace' }),
-				responses: { 'herdr worktree open': HERDR_WORKTREE_OUT },
-				envHonored: false,
-			},
-			{
-				route: 'the plain git worktree fallback',
-				call: (exec) => addAndOpenWorktree(exec, tmuxMuxAdapter, { ...base, branch: 'feat/x', env, at: 'workspace' }),
-				responses: { 'tmux new-window': '%9\t@1' },
-				envHonored: true,
-			},
-			{
-				route: 'a direct open on herdr',
-				call: (exec) => openExistingWorktree(exec, herdrMuxAdapter, { ...base, env, at: 'pane:right' }),
-				responses: {
-					'herdr pane split': '{"result":{"pane":{"pane_id":"w3:pB","tab_id":"w3:t1"}}}',
-					'git -C /repo': GIT_PORCELAIN,
-				},
-				envHonored: true,
-			},
-			{
-				route: 'a direct open on tmux',
-				call: (exec) => openExistingWorktree(exec, tmuxMuxAdapter, { ...base, env }),
-				responses: { 'tmux new-window': '%9\t@1', 'git -C /repo': GIT_PORCELAIN },
-				envHonored: true,
-			},
-		])('whether a route carried env is reported by the route, because only it knows', ({
-			call,
-			responses,
-			envHonored,
-		}) => {
-			const opened = call(fakeExec([], responses))
-			expect(opened.envHonored).toBe(envHonored)
 		})
 	})
 
@@ -283,7 +203,7 @@ describe('spec:cyber-mux/mux', () => {
 			])
 		})
 
-		it('worktree list reads every worktree fact from git, whatever the backend', () => {
+		it('worktree-facts-from-git-not-backend', () => {
 			// herdr re-reads git and reports facts of its own — a stale branch, and a linked/prunable
 			// that disagree with git on every count. All of them are ignored, on purpose.
 			const listOut = JSON.stringify({
@@ -330,7 +250,7 @@ describe('spec:cyber-mux/mux', () => {
 		const realExistingDir = new URL('.', import.meta.url).pathname
 		const bindingOut = (path: string) => JSON.stringify({ result: { worktrees: [{ path, open_workspace_id: 'w21' }] } })
 
-		it('worktree remove releases the workspace before git removes the checkout', () => {
+		it('worktree-remove-not-delegated-to-backend', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'herdr worktree list': bindingOut(realExistingDir) })
 			removeWorktree(exec, herdrMuxAdapter, realExistingDir, { primaryRoot: '/repo' })
@@ -397,5 +317,86 @@ describe('spec:cyber-mux/mux', () => {
 			expect(ran(calls, 'herdr', 'workspace', 'close')).toBe(false)
 			expect(ran(calls, 'git', '-C', '/repo', 'worktree', 'remove')).toBe(true)
 		})
+	})
+})
+
+// These two exercise the worktree ROUTING seam, but what they pin is the mux/placement contract — how
+// a route reports the workspace a pane landed in, and whether it carried env — so they bind to that
+// leaf node rather than to mux/worktree, whose describe would shadow them if they lived inside it.
+describe('spec:cyber-mux/mux/placement', () => {
+	const addOpts = { primaryRoot: '/repo', branch: 'feat/x', path: '/repo.worktrees/x', launch: 'claude' }
+
+	// One workspace tier, two questions. OCCUPANCY — which workspace the pane LIVES IN — is what
+	// `open` answers, and a split lands in the caller's own workspace. BINDING — whether the worktree
+	// is GROUPED to a workspace — is what this report answers, and a split creates none. Neither
+	// answers for the other: a pane sitting in w3 is NOT evidence its worktree was grouped there, so
+	// the pane's workspace must never leak into the worktree's report.
+	it('placement-workspace-not-worktree-binding', () => {
+		const calls: string[][] = []
+		const exec = fakeExec(calls, {
+			// The live envelope: herdr reports the split's own workspace_id — the caller's workspace.
+			'herdr pane split': '{"result":{"pane":{"pane_id":"w3:pB","tab_id":"w3:t1","workspace_id":"w3"}}}',
+		})
+		const opened = addAndOpenWorktree(exec, herdrMuxAdapter, { ...addOpts, at: 'pane:right' })
+
+		// The pane knows where it landed...
+		expect(opened.target).toEqual({ id: 'w3:pB', tab: 'w3:t1', workspace: 'w3' })
+		// ...and the worktree is STILL bound to nothing. This is the assertion that would break if
+		// occupancy were ever mistaken for a binding.
+		expect(opened.workspace).toBeUndefined()
+		expect(opened.degraded).toBe(true)
+		expect(ran(calls, 'herdr', 'worktree', 'create')).toBe(false)
+	})
+
+	const env = { ROLE: 'worker' }
+	const base = { primaryRoot: '/repo', path: '/repo.worktrees/x', launch: 'claude' }
+
+	// One row per Examples row: env is native on every route EXCEPT herdr's worktree bind, whose
+	// `worktree create` takes no env param — so only that one route reports `envHonored: false`.
+	it.each<{
+		route: string
+		call: (exec: Exec) => { envHonored: boolean }
+		responses: Record<string, string>
+		envHonored: boolean
+	}>([
+		{
+			route: "herdr's worktree bind",
+			call: (exec) => addAndOpenWorktree(exec, herdrMuxAdapter, { ...base, branch: 'feat/x', env, at: 'workspace' }),
+			responses: { 'herdr worktree create': HERDR_WORKTREE_OUT },
+			envHonored: false,
+		},
+		{
+			// The same bind route reached through `worktree open` rather than `worktree add` — exposed
+			// identically (herdr's `worktree open` takes no env either), so it must report the drop too.
+			// Covered so the report is not wired on one worktree verb and silently forgotten on its sibling.
+			route: "herdr's worktree bind, via open",
+			call: (exec) => openExistingWorktree(exec, herdrMuxAdapter, { ...base, env, at: 'workspace' }),
+			responses: { 'herdr worktree open': HERDR_WORKTREE_OUT },
+			envHonored: false,
+		},
+		{
+			route: 'the plain git worktree fallback',
+			call: (exec) => addAndOpenWorktree(exec, tmuxMuxAdapter, { ...base, branch: 'feat/x', env, at: 'workspace' }),
+			responses: { 'tmux new-window': '%9\t@1' },
+			envHonored: true,
+		},
+		{
+			route: 'a direct open on herdr',
+			call: (exec) => openExistingWorktree(exec, herdrMuxAdapter, { ...base, env, at: 'pane:right' }),
+			responses: {
+				'herdr pane split': '{"result":{"pane":{"pane_id":"w3:pB","tab_id":"w3:t1"}}}',
+				'git -C /repo': GIT_PORCELAIN,
+			},
+			envHonored: true,
+		},
+		{
+			route: 'a direct open on tmux',
+			call: (exec) => openExistingWorktree(exec, tmuxMuxAdapter, { ...base, env }),
+			responses: { 'tmux new-window': '%9\t@1', 'git -C /repo': GIT_PORCELAIN },
+			envHonored: true,
+		},
+	])('placement-route-reports-env-carried', ({ call, responses, envHonored }) => {
+		const opened = call(fakeExec([], responses))
+		expect(opened.envHonored).toBe(envHonored)
 	})
 })

@@ -54,7 +54,560 @@ async function withArgv<T>(argv: string[], fn: () => Promise<T>): Promise<T> {
 	}
 }
 
-describe('spec:cyber-mux/mux', () => {
+describe('spec:cyber-mux/cli/worktree', () => {
+	let logs: string[]
+
+	beforeEach(() => {
+		logs = []
+		vi.spyOn(console, 'log').mockImplementation((line: string) => {
+			logs.push(line)
+		})
+		vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+		vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+	})
+
+	afterEach(() => {
+		vi.restoreAllMocks()
+	})
+
+	/** git replies keyed by the sub-command word (rev-parse, add, remove); every call is recorded. */
+	function fakeGitExec(
+		calls: string[][],
+		responses: Record<string, string | null> = { 'rev-parse': '/repo/.git' },
+	): Exec {
+		return (_cmd, args) => {
+			calls.push(args)
+			const key = args.includes('worktree') ? args[args.indexOf('worktree') + 1]! : args[0]!
+			return responses[key] ?? ''
+		}
+	}
+
+	it('worktree-add-default-path', async () => {
+		const calls: string[][] = []
+		const exec = fakeGitExec(calls)
+		const program = buildProgram({ env: {}, exec })
+		await run(program, ['worktree', 'add', '--branch', 'my-feature'])
+		expect(calls.at(-1)).toEqual(['-C', '/repo', 'worktree', 'add', '-b', 'my-feature', '/repo.worktrees/my-feature'])
+		expect(logs.join('\n')).toContain('/repo.worktrees/my-feature')
+	})
+
+	it('worktree-add-explicit-path', async () => {
+		const calls: string[][] = []
+		const exec = fakeGitExec(calls)
+		const program = buildProgram({ env: {}, exec })
+		await run(program, ['worktree', 'add', '--branch', 'my-feature', '--path', '/elsewhere/x'])
+		expect(calls.at(-1)).toEqual(['-C', '/repo', 'worktree', 'add', '-b', 'my-feature', '/elsewhere/x'])
+	})
+
+	it('worktree-remove-refuses-primary', async () => {
+		vi.spyOn(process, 'exit').mockImplementation(() => {
+			throw new Error('exit')
+		})
+		const exec = fakeGitExec([])
+		const program = buildProgram({ env: {}, exec })
+		await expect(run(program, ['worktree', 'remove', '/repo'])).rejects.toThrow()
+	})
+
+	it('worktree-add-bare-opens-nothing', async () => {
+		const calls: string[][] = []
+		// env: {} — no backend at all. A bare add must still work; it is a git operation.
+		const program = buildProgram({ env: {}, exec: fakeGitExec(calls) })
+		await run(program, ['worktree', 'add', '--branch', 'my-feature'])
+		expect(calls.every((c) => c.includes('worktree') || c[0] === 'rev-parse')).toBe(true)
+		// Reports NEITHER a pane nor a workspace — with nothing opened there is nothing to group,
+		// so a workspace line would be claiming a binding that was never made.
+		expect(logs.join('\n')).not.toContain('pane')
+		expect(logs.join('\n')).not.toContain('workspace')
+	})
+
+	it('worktree add passes --base as the branch start-point', async () => {
+		const calls: string[][] = []
+		const program = buildProgram({ env: {}, exec: fakeGitExec(calls) })
+		await run(program, ['worktree', 'add', '--branch', 'b', '--path', '/x', '--base', 'origin/main'])
+		expect(calls.at(-1)).toEqual(['-C', '/repo', 'worktree', 'add', '-b', 'b', '/x', 'origin/main'])
+	})
+
+	describe('worktree provision (the CLI verb over provisionWorktree, default gate only)', () => {
+		// Primary on main + one landed (merged, clean) linked worktree — the pool the verb recycles
+		// from. Routes by verb so the seam's internal list/merged/status reads and the recycle/add
+		// writes each get their own answer, plus the CLI's own rev-parse for the primary root.
+		const porcelain = [
+			'worktree /repo',
+			'branch refs/heads/main',
+			'',
+			'worktree /repo.worktrees/landed',
+			'branch refs/heads/feat/landed',
+			'',
+		].join('\n')
+		const provisionGit =
+			(calls: string[][], merged: string): Exec =>
+			(_cmd, args) => {
+				calls.push(args)
+				if (args[0] === 'rev-parse') return '/repo/.git'
+				if (args.includes('symbolic-ref')) return 'origin/main'
+				if (args.includes('--merged')) return merged
+				if (args[2] === 'status') return ''
+				if (args[2] === 'worktree' && args[3] === 'list') return porcelain
+				return ''
+			}
+
+		it('worktree-provision-reuses-free', async () => {
+			const calls: string[][] = []
+			const program = buildProgram({ env: {}, exec: provisionGit(calls, 'main\nfeat/landed') })
+			await withArgv(['worktree', 'provision', '--branch', 'feat/new', '--format', 'json'], () =>
+				run(program, ['worktree', 'provision', '--branch', 'feat/new', '--format', 'json']),
+			)
+			const payload = JSON.parse(logs.join('\n'))
+			expect(payload.action).toBe('reused')
+			expect(payload.branch).toBe('feat/new')
+			// The recycled entry in full: its prior branch and the workspace it was open in.
+			expect(payload.reused).toMatchObject({ root: '/repo.worktrees/landed', branch: 'feat/landed' })
+			expect(payload.reused).toHaveProperty('workspace')
+			// Reuse means NO new checkout, and a pristine reset of the recycled one.
+			expect(calls.some((c) => c[2] === 'worktree' && c[3] === 'add')).toBe(false)
+			expect(calls).toContainEqual(['-C', '/repo.worktrees/landed', 'switch', '-c', 'feat/new', 'origin/main'])
+		})
+
+		it('worktree-provision-creates-fresh', async () => {
+			const calls: string[][] = []
+			// Only the primary's own branch is merged — no linked worktree qualifies, so it creates.
+			const program = buildProgram({ env: {}, exec: provisionGit(calls, 'main') })
+			await withArgv(['worktree', 'provision', '--branch', 'feat/new', '--format', 'json'], () =>
+				run(program, ['worktree', 'provision', '--branch', 'feat/new', '--format', 'json']),
+			)
+			const payload = JSON.parse(logs.join('\n'))
+			expect(payload.action).toBe('created')
+			expect(payload.reused).toBeNull()
+			// Created at the sibling default, with plain git, recycling nothing.
+			expect(calls).toContainEqual(['-C', '/repo', 'worktree', 'add', '-b', 'feat/new', '/repo.worktrees/feat/new'])
+			expect(calls.some((c) => c[2] === 'switch')).toBe(false)
+		})
+
+		it('worktree-provision-base', async () => {
+			const calls: string[][] = []
+			const program = buildProgram({ env: {}, exec: provisionGit(calls, 'main\nfeat/landed') })
+			await run(program, ['worktree', 'provision', '--branch', 'feat/new', '--base', 'release/1.0'])
+			expect(calls).toContainEqual(['-C', '/repo.worktrees/landed', 'switch', '-c', 'feat/new', 'release/1.0'])
+		})
+
+		it('worktree-provision-path', async () => {
+			const calls: string[][] = []
+			// Nothing merged among linked worktrees → create, at the explicit --path rather than the sibling.
+			const program = buildProgram({ env: {}, exec: provisionGit(calls, 'main') })
+			await run(program, ['worktree', 'provision', '--branch', 'feat/new', '--path', '/custom/spot'])
+			// Create with no --base: git's own default (HEAD), no base arg — the resolved-default-branch
+			// fallback is the REUSE path's, not create's (see the worktree-provision ADR).
+			expect(calls).toContainEqual(['-C', '/repo', 'worktree', 'add', '-b', 'feat/new', '/custom/spot'])
+		})
+
+		it('worktree-provision-no-predicate-injection', () => {
+			const program = buildProgram({ env: {}, exec: () => null })
+			const worktree = program.commands.find((c) => c.name() === 'worktree')!
+			const provision = worktree.commands.find((c) => c.name() === 'provision')!
+			const flags = provision.options.map((o) => o.long)
+			expect(flags).toEqual(['--branch', '--base', '--path', '--format'])
+			// The surface divergence: no flag reaches the seam's injectable `available` predicate.
+			expect(flags.some((f) => /avail|predicate|gate|exclude/i.test(f ?? ''))).toBe(false)
+		})
+	})
+
+	/** herdr replies keyed by the first two args; git is answered on the same fake, by binary. */
+	function fakeRepoExec(calls: string[][], responses: Record<string, string | null> = {}): Exec {
+		return (cmd, args) => {
+			calls.push([cmd, ...args])
+			if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
+			return responses[args.slice(0, 2).join(' ')] ?? ''
+		}
+	}
+
+	const worktreeOut = JSON.stringify({
+		result: {
+			root_pane: { pane_id: 'w9:p1', tab_id: 'w9:t1' },
+			workspace: { workspace_id: 'w9' },
+			worktree: { path: '/repo.worktrees/my-feature', branch: 'my-feature' },
+		},
+	})
+
+	it('worktree-add-at-workspace-grouping', async () => {
+		const calls: string[][] = []
+		const exec = fakeRepoExec(calls, { 'worktree create': worktreeOut })
+		const program = buildProgram({ env: { CYBER_MUX: 'herdr' }, exec })
+		await run(program, ['worktree', 'add', '--branch', 'my-feature', '--at', 'workspace'])
+		expect(calls.some((c) => c[0] === 'herdr' && c[1] === 'worktree' && c[2] === 'create')).toBe(true)
+		expect(logs.join('\n')).toContain('w9')
+	})
+
+	it('worktree-add-launch-defaults-workspace', async () => {
+		const calls: string[][] = []
+		const exec = fakeRepoExec(calls, { 'worktree create': worktreeOut })
+		const program = buildProgram({ env: { CYBER_MUX: 'herdr' }, exec })
+		await run(program, ['worktree', 'add', '--branch', 'my-feature', '--launch', 'claude'])
+		expect(calls.some((c) => c[0] === 'herdr' && c[1] === 'worktree' && c[2] === 'create')).toBe(true)
+		expect(calls.some((c) => c[0] === 'herdr' && c[1] === 'pane' && c[2] === 'run')).toBe(true)
+	})
+
+	it('worktree-add-lost-grouping-note', async () => {
+		const stderr: string[] = []
+		vi.spyOn(process.stderr, 'write').mockImplementation((line) => {
+			stderr.push(String(line))
+			return true
+		})
+		const calls: string[][] = []
+		const exec = fakeRepoExec(calls, { 'pane split': '{"result":{"pane":{"pane_id":"w3:pB","tab_id":"w3:t1"}}}' })
+		const program = buildProgram({ env: { CYBER_MUX: 'herdr' }, exec })
+		await run(program, ['worktree', 'add', '--branch', 'my-feature', '--at', 'pane:right'])
+		// It succeeded — a worktree in a split pane is a complete outcome...
+		expect(calls.some((c) => c[0] === 'git' && c.includes('add'))).toBe(true)
+		// ...and the note that the placement cost the grouping rides in the payload on stdout, as a
+		// help entry naming --at workspace, per axi/'s #9 — never on stderr the agent does not read.
+		expect(logs.join('\n')).toContain('--at workspace')
+		expect(logs.join('\n')).toContain('cyber-mux worktree add --branch my-feature --at workspace')
+		expect(stderr.join('')).toBe('')
+	})
+
+	it('worktree-add-lost-grouping-note', async () => {
+		const calls: string[][] = []
+		const exec = fakeRepoExec(calls, { 'pane split': '{"result":{"pane":{"pane_id":"w3:pB","tab_id":"w3:t1"}}}' })
+		const program = buildProgram({ env: { CYBER_MUX: 'herdr' }, exec })
+		await withArgv(['worktree', 'add', '--branch', 'my-feature', '--at', 'pane:right', '--format', 'json'], () =>
+			run(program, ['worktree', 'add', '--branch', 'my-feature', '--at', 'pane:right', '--format', 'json']),
+		)
+		const payload = JSON.parse(logs.join('\n'))
+		expect(Array.isArray(payload.help)).toBe(true)
+		expect(payload.help[0].message).toContain('--at workspace')
+		expect(payload.help[0].command).toBe('cyber-mux worktree add --branch my-feature --at workspace')
+	})
+
+	it('worktree-open-groups-existing', async () => {
+		const calls: string[][] = []
+		const exec = fakeRepoExec(calls, { 'worktree open': worktreeOut })
+		const program = buildProgram({ env: { CYBER_MUX: 'herdr' }, exec })
+		await run(program, ['worktree', 'open', '/repo.worktrees/my-feature'])
+		expect(calls.some((c) => c[0] === 'herdr' && c[1] === 'worktree' && c[2] === 'open')).toBe(true)
+		expect(logs.join('\n')).toContain('w9')
+	})
+
+	/**
+	 * `worktree list` makes four distinct git reads, so a fake that answers every git call with the
+	 * porcelain dump would also hand it to `status` and read every checkout as dirty. Route by verb,
+	 * and default the two signal reads to "git could not say" so a test opts into a signal it means
+	 * to assert on.
+	 */
+	const gitListExec =
+		(
+			porcelain: string,
+			signals: { commonDir?: string; originHead?: string; merged?: string; dirty?: (root: string) => string } = {},
+		): Exec =>
+		(_cmd, args) => {
+			if (args[0] === 'rev-parse') return signals.commonDir ?? '/repo/.git'
+			if (args.includes('symbolic-ref')) return signals.originHead ?? null
+			if (args.includes('branch')) return signals.merged ?? null
+			if (args.includes('status')) return signals.dirty?.(args[1]!) ?? null
+			return porcelain
+		}
+
+	it('worktree-list-reports-workspace', async () => {
+		const porcelain = [
+			'worktree /repo',
+			'branch refs/heads/main',
+			'',
+			'worktree /repo.worktrees/x',
+			'branch refs/heads/feat/x',
+			'',
+		].join('\n')
+		const bindings = JSON.stringify({
+			result: { worktrees: [{ path: '/repo.worktrees/x', open_workspace_id: 'w21' }] },
+		})
+		const gitExec = gitListExec(porcelain)
+		const exec: Exec = (cmd, args) =>
+			cmd === 'git' ? gitExec(cmd, args) : args.slice(0, 2).join(' ') === 'worktree list' ? bindings : ''
+		const program = buildProgram({ env: { CYBER_MUX: 'herdr' }, exec })
+		await run(program, ['worktree', 'list'])
+		const out = logs.join('\n')
+		expect(out).toContain('main')
+		expect(out).toContain('feat/x')
+		expect(out).toContain('w21')
+	})
+
+	it('worktree-list-marks-one-bit-facts', async () => {
+		const porcelain = [
+			'worktree /repo',
+			'branch refs/heads/main',
+			'',
+			'worktree /repo.worktrees/x',
+			'branch refs/heads/feat/x',
+			'',
+		].join('\n')
+		const exec = gitListExec(porcelain)
+		const program = buildProgram({ env: {}, exec })
+		await run(program, ['worktree', 'list'])
+		const out = logs.join('\n')
+		expect(out).toContain('main (*)')
+		expect(out).not.toContain('feat/x (*)')
+		expect(out).not.toContain('LINKED')
+	})
+
+	it('worktree-list-marks-one-bit-facts', async () => {
+		const porcelain = [
+			'worktree /repo',
+			'branch refs/heads/main',
+			'',
+			'worktree /repo.worktrees/gone',
+			'branch refs/heads/old',
+			'prunable gitdir file points to non-existent location',
+			'',
+		].join('\n')
+		const exec = gitListExec(porcelain)
+		const program = buildProgram({ env: {}, exec })
+		await run(program, ['worktree', 'list'])
+		const out = logs.join('\n')
+		expect(out).toContain('/repo.worktrees/gone (gone)')
+		// The live checkout carries no marker — the cost is paid only by the row that earned it.
+		expect(out).not.toContain('/repo (gone)')
+
+		logs.length = 0
+		await withArgv(['worktree', 'list', '--format', 'json'], () =>
+			run(program, ['worktree', 'list', '--format', 'json']),
+		)
+		const payload = JSON.parse(logs.join('\n'))
+		expect(payload.worktrees.map((w: { prunable: boolean }) => w.prunable)).toEqual([false, true])
+		expect(payload.worktrees[1].root).toBe('/repo.worktrees/gone')
+	})
+
+	it('worktree-list-home-shortened', async () => {
+		const home = homedir()
+		const porcelain = [`worktree ${home}/code/app`, 'branch refs/heads/main', ''].join('\n')
+		const exec = gitListExec(porcelain, { commonDir: `${home}/code/app/.git` })
+		const program = buildProgram({ env: {}, exec })
+		await run(program, ['worktree', 'list'])
+		expect(logs.join('\n')).toContain('~/code/app')
+		expect(logs.join('\n')).not.toContain(home)
+
+		logs.length = 0
+		await withArgv(['worktree', 'list', '--format', 'json'], () =>
+			run(program, ['worktree', 'list', '--format', 'json']),
+		)
+		expect(JSON.parse(logs.join('\n')).worktrees[0].root).toBe(`${home}/code/app`)
+	})
+
+	it('worktree-list-marker-not-in-payload', async () => {
+		const porcelain = [
+			'worktree /repo',
+			'branch refs/heads/main',
+			'',
+			'worktree /repo.worktrees/x',
+			'branch refs/heads/feat/x',
+			'',
+		].join('\n')
+		const exec = gitListExec(porcelain)
+		const program = buildProgram({ env: {}, exec })
+		await withArgv(['worktree', 'list', '--format', 'json'], () =>
+			run(program, ['worktree', 'list', '--format', 'json']),
+		)
+		const payload = JSON.parse(logs.join('\n'))
+		expect(payload.worktrees.map((w: { linked: boolean }) => w.linked)).toEqual([false, true])
+		expect(payload.worktrees[0].branch).toBe('main')
+	})
+
+	// The disposability composite: `worktree list` answers "is this still NEEDED", not just
+	// "is it OCCUPIED", and compresses merged AND clean AND unoccupied to one BRANCH marker.
+	describe('worktree list marks a disposable worktree `(removable)`', () => {
+		const porcelain = [
+			'worktree /repo',
+			'branch refs/heads/main',
+			'',
+			'worktree /repo.worktrees/landed',
+			'branch refs/heads/feat/landed',
+			'',
+			'worktree /repo.worktrees/open',
+			'branch refs/heads/feat/open',
+			'',
+		].join('\n')
+		const disposable = { originHead: 'origin/main', merged: 'main\nfeat/landed', dirty: () => '' }
+
+		it('worktree-list-marks-removable', async () => {
+			const program = buildProgram({ env: {}, exec: gitListExec(porcelain, disposable) })
+			await run(program, ['worktree', 'list'])
+			const out = logs.join('\n')
+			expect(out).toContain('feat/landed (removable)')
+			// Unmerged work is not disposable, and the primary checkout is never disposable —
+			// `(removable)` and `(*)` are mutually exclusive, so BRANCH never carries two markers.
+			expect(out).not.toContain('feat/open (removable)')
+			expect(out).toContain('main (*)')
+			expect(out).not.toContain('main (removable)')
+		})
+
+		it('worktree-list-marks-removable', async () => {
+			const bindings = JSON.stringify({
+				result: { worktrees: [{ path: '/repo.worktrees/landed', open_workspace_id: 'w21' }] },
+			})
+			const gitExec = gitListExec(porcelain, disposable)
+			const exec: Exec = (cmd, args) =>
+				cmd === 'git' ? gitExec(cmd, args) : args.slice(0, 2).join(' ') === 'worktree list' ? bindings : ''
+			const program = buildProgram({ env: { CYBER_MUX: 'herdr' }, exec })
+			await run(program, ['worktree', 'list'])
+			expect(logs.join('\n')).not.toContain('(removable)')
+		})
+
+		it('worktree-list-marks-removable', async () => {
+			const exec = gitListExec(porcelain, {
+				...disposable,
+				dirty: (root) => (root.endsWith('landed') ? ' M a.ts' : ''),
+			})
+			await run(buildProgram({ env: {}, exec }), ['worktree', 'list'])
+			expect(logs.join('\n')).not.toContain('(removable)')
+		})
+
+		it('worktree-list-no-composite-field', async () => {
+			const program = buildProgram({ env: {}, exec: gitListExec(porcelain, disposable) })
+			await withArgv(['worktree', 'list', '--format', 'json'], () =>
+				run(program, ['worktree', 'list', '--format', 'json']),
+			)
+			const payload = JSON.parse(logs.join('\n'))
+			expect(payload.worktrees.map((w: { merged: boolean }) => w.merged)).toEqual([true, true, false])
+			expect(payload.worktrees.map((w: { dirty: boolean }) => w.dirty)).toEqual([false, false, false])
+			// The composite is the TABLE's compression, never a field — a consumer that wants a
+			// different policy (ignore occupancy, say) must not inherit this one from the payload.
+			expect(payload.worktrees.every((w: Record<string, unknown>) => !('removable' in w))).toBe(true)
+			expect(logs.join('\n')).not.toContain('(removable)')
+		})
+
+		it('worktree-list-undeterminable-not-removable', async () => {
+			// A detached HEAD, a prunable entry, and no origin/HEAD to measure against — the listing
+			// still renders, with no field guessed and no row wrongly marked disposable.
+			const awkward = [
+				'worktree /repo',
+				'detached',
+				'',
+				'worktree /repo.worktrees/spike',
+				'detached',
+				'',
+				'worktree /repo.worktrees/gone',
+				'branch refs/heads/old',
+				'prunable gitdir file points to non-existent location',
+				'',
+			].join('\n')
+			const program = buildProgram({ env: {}, exec: gitListExec(awkward) })
+			await run(program, ['worktree', 'list'])
+			const out = logs.join('\n')
+			expect(out).toContain('(detached)')
+			expect(out).toContain('/repo.worktrees/gone (gone)')
+			expect(out).not.toContain('(removable)')
+
+			logs.length = 0
+			await withArgv(['worktree', 'list', '--format', 'json'], () =>
+				run(program, ['worktree', 'list', '--format', 'json']),
+			)
+			const payload = JSON.parse(logs.join('\n'))
+			expect(payload.worktrees).toHaveLength(3)
+			expect(payload.worktrees.every((w: Record<string, unknown>) => w['merged'] === undefined)).toBe(true)
+			// The prunable row has no working tree to read, so `dirty` is absent rather than false.
+			expect(payload.worktrees[2].dirty).toBeUndefined()
+		})
+	})
+
+	it('worktree-list-answers-outside-mux', async () => {
+		const porcelain = ['worktree /repo', 'branch refs/heads/main', ''].join('\n')
+		const exec = gitListExec(porcelain)
+		const program = buildProgram({ env: {}, exec })
+		await run(program, ['worktree', 'list'])
+		expect(logs.join('\n')).toContain('main')
+	})
+
+	describe('worktree prune', () => {
+		// This module's own directory stands in for "a worktree that exists on disk" — the CLI's
+		// remove path checks existence for real (no injected fs at this boundary), so the removal
+		// half needs a real path; the primary and every git answer are still fully faked.
+		// realpathSync (which normalization runs through) strips the trailing slash `import.meta.url`
+		// leaves on a directory, so the normalized form is the one every later comparison uses.
+		const realExistingDir = new URL('.', import.meta.url).pathname.replace(/\/$/, '')
+
+		const porcelain = [
+			'worktree /repo',
+			'branch refs/heads/main',
+			'',
+			`worktree ${realExistingDir}`,
+			'branch refs/heads/feat/landed',
+			'',
+			'worktree /repo.worktrees/open',
+			'branch refs/heads/feat/open',
+			'',
+		].join('\n')
+		const disposable = { originHead: 'origin/main', merged: 'main\nfeat/landed', dirty: () => '' }
+
+		it('worktree-prune-preview', async () => {
+			const calls: string[][] = []
+			const gitExec = gitListExec(porcelain, disposable)
+			const exec: Exec = (cmd, args) => {
+				calls.push(args)
+				return gitExec(cmd, args)
+			}
+			const program = buildProgram({ env: {}, exec })
+			await run(program, ['worktree', 'prune'])
+			expect(logs.join('\n')).toContain('feat/landed')
+			expect(logs.join('\n')).not.toContain('feat/open')
+			expect(calls.some((args) => args.includes('remove'))).toBe(false)
+		})
+
+		it('worktree-prune-force-removes', async () => {
+			const calls: string[][] = []
+			const gitExec = gitListExec(porcelain, disposable)
+			const exec: Exec = (cmd, args) => {
+				calls.push(args)
+				return gitExec(cmd, args)
+			}
+			const program = buildProgram({ env: {}, exec })
+			await run(program, ['worktree', 'prune', '--force'])
+			expect(calls.at(-1)).toEqual(['-C', '/repo', 'worktree', 'remove', realExistingDir, '--force'])
+		})
+
+		it('worktree-prune-force-removes', async () => {
+			const exec = gitListExec(porcelain, disposable)
+			const program = buildProgram({ env: {}, exec })
+			await withArgv(['worktree', 'prune', '--format', 'json'], () =>
+				run(program, ['worktree', 'prune', '--format', 'json']),
+			)
+			const payload = JSON.parse(logs.join('\n'))
+			expect(payload.applied).toBe(false)
+			expect(payload.removed).toHaveLength(1)
+			expect(payload.skipped).toHaveLength(1)
+			expect(payload.skipped[0].root).toBe('/repo.worktrees/open')
+			expect(payload.skipped[0].reason).toMatch(/not merged/)
+		})
+	})
+
+	// ── worktree add --env (CLI surface) ──
+	/** git (rev-parse only), tmux (keyed by verb), herdr (keyed by first two args) on one fake. */
+	function envExec(calls: string[][], responses: Record<string, string | null> = {}): Exec {
+		return (cmd, args) => {
+			calls.push([cmd, ...args])
+			if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
+			if (cmd === 'tmux') return responses[args[0]!] ?? null
+			return responses[args.slice(0, 2).join(' ')] ?? null
+		}
+	}
+	const herdrWorktreeOut = JSON.stringify({
+		result: {
+			root_pane: { pane_id: 'w9:p1', tab_id: 'w9:t1' },
+			workspace: { workspace_id: 'w9' },
+			worktree: { path: '/repo.worktrees/x', branch: 'my-feature' },
+		},
+	})
+	it('worktree-add-env-defaults-workspace', async () => {
+		const calls: string[][] = []
+		const program = buildProgram({
+			env: { CYBER_MUX: 'herdr' },
+			exec: envExec(calls, { 'worktree create': herdrWorktreeOut }),
+		})
+		await run(program, ['worktree', 'add', '--branch', 'my-feature', '--env', 'ROLE=worker'])
+		// A bind route ran — a workspace opened, not the bare-git path an add with no pane request takes.
+		expect(calls.some((c) => c[0] === 'herdr' && c[1] === 'worktree' && c[2] === 'create')).toBe(true)
+	})
+})
+
+// Not a spec node itself — a grouping of cli-driven tests whose per-node spec wrappers live within,
+// so the bridge attributes each to its leaf library node rather than being shadowed by a coarse `mux`.
+describe('cyber-mux/mux — cli-driven library surface', () => {
 	describe('cli', () => {
 		let logs: string[]
 
@@ -77,50 +630,30 @@ describe('spec:cyber-mux/mux', () => {
 			vi.restoreAllMocks()
 		})
 
-		it('doctor reports the detected mux and prints a pin hint', async () => {
-			const program = buildProgram({ env: { CYBER_MUX: 'tmux', CYBER_MUX_PANE: '%3' }, exec: noAncestry })
-			await run(program, ['doctor'])
-			const out = logs.join('\n')
-			expect(out).toContain('tmux')
-			expect(out).toContain('%3')
-			expect(out).toContain('backend')
-			expect(out).toContain('export CYBER_MUX=tmux CYBER_MUX_PANE=%3')
-		})
-
-		it('mode reports the detected session backend', async () => {
-			const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: noAncestry })
-			await run(program, ['mode'])
-			expect(logs).toEqual(['tmux'])
-		})
-
-		it('mode reports none when no backend is selectable', async () => {
-			const program = buildProgram({ env: { CYBER_MUX: 'none' }, exec: noAncestry })
-			await expect(run(program, ['mode'])).resolves.toBeDefined()
-			expect(logs).toEqual(['none'])
-		})
-
 		// Nothing is looked up to answer this: the backend said so when the pane was born and the seam
 		// carries it, so a report that omitted it would be discarding a fact already in hand. That is
 		// what makes a caller able to group the panes it holds by the space they occupy.
-		it('open reports the workspace alongside the pane it opened', async () => {
-			const calls: string[][] = []
-			// CYBER_MUX pins the fast-path, so no ancestry walk pollutes the call count below.
-			const program = buildProgram({
-				env: { CYBER_MUX: 'herdr', HERDR_ENV: '1' },
-				exec: fakeHerdrExec(calls, {
-					'workspace create': JSON.stringify({
-						result: { root_pane: { pane_id: 'w7:p1', tab_id: 'w7:t1', workspace_id: 'w7' } },
+		describe('spec:cyber-mux/mux/placement', () => {
+			it('placement-open-reports-workspace-with-pane', async () => {
+				const calls: string[][] = []
+				// CYBER_MUX pins the fast-path, so no ancestry walk pollutes the call count below.
+				const program = buildProgram({
+					env: { CYBER_MUX: 'herdr', HERDR_ENV: '1' },
+					exec: fakeHerdrExec(calls, {
+						'workspace create': JSON.stringify({
+							result: { root_pane: { pane_id: 'w7:p1', tab_id: 'w7:t1', workspace_id: 'w7' } },
+						}),
 					}),
-				}),
+				})
+				await withArgv(['open', '--at', 'workspace', '--format', 'json'], () =>
+					run(program, ['open', '--at', 'workspace', '--format', 'json']),
+				)
+				expect(JSON.parse(logs.join('\n'))).toEqual({ pane: 'w7:p1', workspace: 'w7' })
+				// The report is free: opening the pane is the ONLY backend call — the workspace rode in on it,
+				// with no `pane get`/`workspace list` follow-up to resolve it.
+				expect(calls).toHaveLength(1)
+				expect(calls[0]?.slice(0, 2)).toEqual(['workspace', 'create'])
 			})
-			await withArgv(['open', '--at', 'workspace', '--format', 'json'], () =>
-				run(program, ['open', '--at', 'workspace', '--format', 'json']),
-			)
-			expect(JSON.parse(logs.join('\n'))).toEqual({ pane: 'w7:p1', workspace: 'w7' })
-			// The report is free: opening the pane is the ONLY backend call — the workspace rode in on it,
-			// with no `pane get`/`workspace list` follow-up to resolve it.
-			expect(calls).toHaveLength(1)
-			expect(calls[0]?.slice(0, 2)).toEqual(['workspace', 'create'])
 		})
 
 		// tmux has no workspace tier, so there is nothing to report. `null` is absent's spelling at the
@@ -148,20 +681,6 @@ describe('spec:cyber-mux/mux', () => {
 			expect(out).toContain('%20')
 			expect(out).not.toContain('workspace')
 			expect(out).not.toContain('null')
-		})
-
-		it('--at accepts only pane:right, pane:down, tab, and workspace', async () => {
-			const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: noAncestry })
-			await expect(run(program, ['open', '--launch', 'claude', '--at', 'bogus'])).rejects.toThrow()
-		})
-
-		it('--at chooses where the new pane opens', async () => {
-			const calls: string[][] = []
-			const exec = fakeTmuxExec(calls, { 'split-window': '%5\t@1' })
-			const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec })
-			await run(program, ['open', '--launch', 'claude', '--at', 'pane:down'])
-			expect(calls[0]?.[0]).toBe('split-window')
-			expect(calls[0]?.[1]).toBe('-v') // pane:down maps to a vertical split
 		})
 
 		// The regression this fix exists for. `--at pane:*` is documented as placement "relative to the
@@ -295,541 +814,6 @@ describe('spec:cyber-mux/mux', () => {
 			expect(out).not.toContain('herdr')
 		})
 
-		it('open with no --launch creates a blank pane', async () => {
-			const calls: string[][] = []
-			const exec = fakeTmuxExec(calls, { 'new-window': '%2\t@1' })
-			const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec })
-			await run(program, ['open'])
-			expect(calls).toHaveLength(1)
-			expect(calls.some((c) => c[0] === 'send-keys')).toBe(false)
-		})
-
-		describe('worktree', () => {
-			/** git replies keyed by the sub-command word (rev-parse, add, remove); every call is recorded. */
-			function fakeGitExec(
-				calls: string[][],
-				responses: Record<string, string | null> = { 'rev-parse': '/repo/.git' },
-			): Exec {
-				return (_cmd, args) => {
-					calls.push(args)
-					const key = args.includes('worktree') ? args[args.indexOf('worktree') + 1]! : args[0]!
-					return responses[key] ?? ''
-				}
-			}
-
-			it('worktree add defaults the path to a sibling of the primary checkout', async () => {
-				const calls: string[][] = []
-				const exec = fakeGitExec(calls)
-				const program = buildProgram({ env: {}, exec })
-				await run(program, ['worktree', 'add', '--branch', 'my-feature'])
-				expect(calls.at(-1)).toEqual([
-					'-C',
-					'/repo',
-					'worktree',
-					'add',
-					'-b',
-					'my-feature',
-					'/repo.worktrees/my-feature',
-				])
-				expect(logs.join('\n')).toContain('/repo.worktrees/my-feature')
-			})
-
-			it('worktree add honors an explicit --path', async () => {
-				const calls: string[][] = []
-				const exec = fakeGitExec(calls)
-				const program = buildProgram({ env: {}, exec })
-				await run(program, ['worktree', 'add', '--branch', 'my-feature', '--path', '/elsewhere/x'])
-				expect(calls.at(-1)).toEqual(['-C', '/repo', 'worktree', 'add', '-b', 'my-feature', '/elsewhere/x'])
-			})
-
-			it('worktree remove refuses the primary checkout', async () => {
-				vi.spyOn(process, 'exit').mockImplementation(() => {
-					throw new Error('exit')
-				})
-				const exec = fakeGitExec([])
-				const program = buildProgram({ env: {}, exec })
-				await expect(run(program, ['worktree', 'remove', '/repo'])).rejects.toThrow()
-			})
-
-			it('a bare worktree add opens nothing, so there is nothing to group', async () => {
-				const calls: string[][] = []
-				// env: {} — no backend at all. A bare add must still work; it is a git operation.
-				const program = buildProgram({ env: {}, exec: fakeGitExec(calls) })
-				await run(program, ['worktree', 'add', '--branch', 'my-feature'])
-				expect(calls.every((c) => c.includes('worktree') || c[0] === 'rev-parse')).toBe(true)
-				// Reports NEITHER a pane nor a workspace — with nothing opened there is nothing to group,
-				// so a workspace line would be claiming a binding that was never made.
-				expect(logs.join('\n')).not.toContain('pane')
-				expect(logs.join('\n')).not.toContain('workspace')
-			})
-
-			it('worktree add passes --base as the branch start-point', async () => {
-				const calls: string[][] = []
-				const program = buildProgram({ env: {}, exec: fakeGitExec(calls) })
-				await run(program, ['worktree', 'add', '--branch', 'b', '--path', '/x', '--base', 'origin/main'])
-				expect(calls.at(-1)).toEqual(['-C', '/repo', 'worktree', 'add', '-b', 'b', '/x', 'origin/main'])
-			})
-
-			describe('worktree provision (the CLI verb over provisionWorktree, default gate only)', () => {
-				// Primary on main + one landed (merged, clean) linked worktree — the pool the verb recycles
-				// from. Routes by verb so the seam's internal list/merged/status reads and the recycle/add
-				// writes each get their own answer, plus the CLI's own rev-parse for the primary root.
-				const porcelain = [
-					'worktree /repo',
-					'branch refs/heads/main',
-					'',
-					'worktree /repo.worktrees/landed',
-					'branch refs/heads/feat/landed',
-					'',
-				].join('\n')
-				const provisionGit =
-					(calls: string[][], merged: string): Exec =>
-					(_cmd, args) => {
-						calls.push(args)
-						if (args[0] === 'rev-parse') return '/repo/.git'
-						if (args.includes('symbolic-ref')) return 'origin/main'
-						if (args.includes('--merged')) return merged
-						if (args[2] === 'status') return ''
-						if (args[2] === 'worktree' && args[3] === 'list') return porcelain
-						return ''
-					}
-
-				it('reuses a free worktree in the pool and reports the reclaim', async () => {
-					const calls: string[][] = []
-					const program = buildProgram({ env: {}, exec: provisionGit(calls, 'main\nfeat/landed') })
-					await withArgv(['worktree', 'provision', '--branch', 'feat/new', '--format', 'json'], () =>
-						run(program, ['worktree', 'provision', '--branch', 'feat/new', '--format', 'json']),
-					)
-					const payload = JSON.parse(logs.join('\n'))
-					expect(payload.action).toBe('reused')
-					expect(payload.branch).toBe('feat/new')
-					// The recycled entry in full: its prior branch and the workspace it was open in.
-					expect(payload.reused).toMatchObject({ root: '/repo.worktrees/landed', branch: 'feat/landed' })
-					expect(payload.reused).toHaveProperty('workspace')
-					// Reuse means NO new checkout, and a pristine reset of the recycled one.
-					expect(calls.some((c) => c[2] === 'worktree' && c[3] === 'add')).toBe(false)
-					expect(calls).toContainEqual(['-C', '/repo.worktrees/landed', 'switch', '-c', 'feat/new', 'origin/main'])
-				})
-
-				it('creates a fresh checkout at the sibling path when the pool holds no reusable worktree', async () => {
-					const calls: string[][] = []
-					// Only the primary's own branch is merged — no linked worktree qualifies, so it creates.
-					const program = buildProgram({ env: {}, exec: provisionGit(calls, 'main') })
-					await withArgv(['worktree', 'provision', '--branch', 'feat/new', '--format', 'json'], () =>
-						run(program, ['worktree', 'provision', '--branch', 'feat/new', '--format', 'json']),
-					)
-					const payload = JSON.parse(logs.join('\n'))
-					expect(payload.action).toBe('created')
-					expect(payload.reused).toBeNull()
-					// Created at the sibling default, with plain git, recycling nothing.
-					expect(calls).toContainEqual(['-C', '/repo', 'worktree', 'add', '-b', 'feat/new', '/repo.worktrees/feat/new'])
-					expect(calls.some((c) => c[2] === 'switch')).toBe(false)
-				})
-
-				it('--base starts the provisioned branch at the given ref', async () => {
-					const calls: string[][] = []
-					const program = buildProgram({ env: {}, exec: provisionGit(calls, 'main\nfeat/landed') })
-					await run(program, ['worktree', 'provision', '--branch', 'feat/new', '--base', 'release/1.0'])
-					expect(calls).toContainEqual(['-C', '/repo.worktrees/landed', 'switch', '-c', 'feat/new', 'release/1.0'])
-				})
-
-				it('--path lands a created checkout at the given path', async () => {
-					const calls: string[][] = []
-					// Nothing merged among linked worktrees → create, at the explicit --path rather than the sibling.
-					const program = buildProgram({ env: {}, exec: provisionGit(calls, 'main') })
-					await run(program, ['worktree', 'provision', '--branch', 'feat/new', '--path', '/custom/spot'])
-					// Create with no --base: git's own default (HEAD), no base arg — the resolved-default-branch
-					// fallback is the REUSE path's, not create's (see the worktree-provision ADR).
-					expect(calls).toContainEqual(['-C', '/repo', 'worktree', 'add', '-b', 'feat/new', '/custom/spot'])
-				})
-
-				it('offers no availability-predicate injection — only --branch, --base, --path, --format', () => {
-					const program = buildProgram({ env: {}, exec: () => null })
-					const worktree = program.commands.find((c) => c.name() === 'worktree')!
-					const provision = worktree.commands.find((c) => c.name() === 'provision')!
-					const flags = provision.options.map((o) => o.long)
-					expect(flags).toEqual(['--branch', '--base', '--path', '--format'])
-					// The surface divergence: no flag reaches the seam's injectable `available` predicate.
-					expect(flags.some((f) => /avail|predicate|gate|exclude/i.test(f ?? ''))).toBe(false)
-				})
-			})
-
-			/** herdr replies keyed by the first two args; git is answered on the same fake, by binary. */
-			function fakeRepoExec(calls: string[][], responses: Record<string, string | null> = {}): Exec {
-				return (cmd, args) => {
-					calls.push([cmd, ...args])
-					if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
-					return responses[args.slice(0, 2).join(' ')] ?? ''
-				}
-			}
-
-			const worktreeOut = JSON.stringify({
-				result: {
-					root_pane: { pane_id: 'w9:p1', tab_id: 'w9:t1' },
-					workspace: { workspace_id: 'w9' },
-					worktree: { path: '/repo.worktrees/my-feature', branch: 'my-feature' },
-				},
-			})
-
-			it('worktree add --at workspace groups the worktree through a backend that binds', async () => {
-				const calls: string[][] = []
-				const exec = fakeRepoExec(calls, { 'worktree create': worktreeOut })
-				const program = buildProgram({ env: { CYBER_MUX: 'herdr' }, exec })
-				await run(program, ['worktree', 'add', '--branch', 'my-feature', '--at', 'workspace'])
-				expect(calls.some((c) => c[0] === 'herdr' && c[1] === 'worktree' && c[2] === 'create')).toBe(true)
-				expect(logs.join('\n')).toContain('w9')
-			})
-
-			it('worktree add --launch defaults the placement to workspace', async () => {
-				const calls: string[][] = []
-				const exec = fakeRepoExec(calls, { 'worktree create': worktreeOut })
-				const program = buildProgram({ env: { CYBER_MUX: 'herdr' }, exec })
-				await run(program, ['worktree', 'add', '--branch', 'my-feature', '--launch', 'claude'])
-				expect(calls.some((c) => c[0] === 'herdr' && c[1] === 'worktree' && c[2] === 'create')).toBe(true)
-				expect(calls.some((c) => c[0] === 'herdr' && c[1] === 'pane' && c[2] === 'run')).toBe(true)
-			})
-
-			it('the lost-grouping note is a help entry on stdout, not a line on stderr', async () => {
-				const stderr: string[] = []
-				vi.spyOn(process.stderr, 'write').mockImplementation((line) => {
-					stderr.push(String(line))
-					return true
-				})
-				const calls: string[][] = []
-				const exec = fakeRepoExec(calls, { 'pane split': '{"result":{"pane":{"pane_id":"w3:pB","tab_id":"w3:t1"}}}' })
-				const program = buildProgram({ env: { CYBER_MUX: 'herdr' }, exec })
-				await run(program, ['worktree', 'add', '--branch', 'my-feature', '--at', 'pane:right'])
-				// It succeeded — a worktree in a split pane is a complete outcome...
-				expect(calls.some((c) => c[0] === 'git' && c.includes('add'))).toBe(true)
-				// ...and the note that the placement cost the grouping rides in the payload on stdout, as a
-				// help entry naming --at workspace, per axi/'s #9 — never on stderr the agent does not read.
-				expect(logs.join('\n')).toContain('--at workspace')
-				expect(logs.join('\n')).toContain('cyber-mux worktree add --branch my-feature --at workspace')
-				expect(stderr.join('')).toBe('')
-			})
-
-			it('--format json carries the lost-grouping note as a help entry, not just prose', async () => {
-				const calls: string[][] = []
-				const exec = fakeRepoExec(calls, { 'pane split': '{"result":{"pane":{"pane_id":"w3:pB","tab_id":"w3:t1"}}}' })
-				const program = buildProgram({ env: { CYBER_MUX: 'herdr' }, exec })
-				await withArgv(['worktree', 'add', '--branch', 'my-feature', '--at', 'pane:right', '--format', 'json'], () =>
-					run(program, ['worktree', 'add', '--branch', 'my-feature', '--at', 'pane:right', '--format', 'json']),
-				)
-				const payload = JSON.parse(logs.join('\n'))
-				expect(Array.isArray(payload.help)).toBe(true)
-				expect(payload.help[0].message).toContain('--at workspace')
-				expect(payload.help[0].command).toBe('cyber-mux worktree add --branch my-feature --at workspace')
-			})
-
-			it('worktree open groups an existing checkout', async () => {
-				const calls: string[][] = []
-				const exec = fakeRepoExec(calls, { 'worktree open': worktreeOut })
-				const program = buildProgram({ env: { CYBER_MUX: 'herdr' }, exec })
-				await run(program, ['worktree', 'open', '/repo.worktrees/my-feature'])
-				expect(calls.some((c) => c[0] === 'herdr' && c[1] === 'worktree' && c[2] === 'open')).toBe(true)
-				expect(logs.join('\n')).toContain('w9')
-			})
-
-			/**
-			 * `worktree list` makes four distinct git reads, so a fake that answers every git call with the
-			 * porcelain dump would also hand it to `status` and read every checkout as dirty. Route by verb,
-			 * and default the two signal reads to "git could not say" so a test opts into a signal it means
-			 * to assert on.
-			 */
-			const gitListExec =
-				(
-					porcelain: string,
-					signals: { commonDir?: string; originHead?: string; merged?: string; dirty?: (root: string) => string } = {},
-				): Exec =>
-				(_cmd, args) => {
-					if (args[0] === 'rev-parse') return signals.commonDir ?? '/repo/.git'
-					if (args.includes('symbolic-ref')) return signals.originHead ?? null
-					if (args.includes('branch')) return signals.merged ?? null
-					if (args.includes('status')) return signals.dirty?.(args[1]!) ?? null
-					return porcelain
-				}
-
-			it('worktree list reports every worktree and the workspace each is open in', async () => {
-				const porcelain = [
-					'worktree /repo',
-					'branch refs/heads/main',
-					'',
-					'worktree /repo.worktrees/x',
-					'branch refs/heads/feat/x',
-					'',
-				].join('\n')
-				const bindings = JSON.stringify({
-					result: { worktrees: [{ path: '/repo.worktrees/x', open_workspace_id: 'w21' }] },
-				})
-				const gitExec = gitListExec(porcelain)
-				const exec: Exec = (cmd, args) =>
-					cmd === 'git' ? gitExec(cmd, args) : args.slice(0, 2).join(' ') === 'worktree list' ? bindings : ''
-				const program = buildProgram({ env: { CYBER_MUX: 'herdr' }, exec })
-				await run(program, ['worktree', 'list'])
-				const out = logs.join('\n')
-				expect(out).toContain('main')
-				expect(out).toContain('feat/x')
-				expect(out).toContain('w21')
-			})
-
-			it('worktree list marks the primary checkout in BRANCH instead of spending a column on it', async () => {
-				const porcelain = [
-					'worktree /repo',
-					'branch refs/heads/main',
-					'',
-					'worktree /repo.worktrees/x',
-					'branch refs/heads/feat/x',
-					'',
-				].join('\n')
-				const exec = gitListExec(porcelain)
-				const program = buildProgram({ env: {}, exec })
-				await run(program, ['worktree', 'list'])
-				const out = logs.join('\n')
-				expect(out).toContain('main (*)')
-				expect(out).not.toContain('feat/x (*)')
-				expect(out).not.toContain('LINKED')
-			})
-
-			it('worktree list marks a vanished checkout `(gone)` on ROOT, and keeps `prunable` in JSON', async () => {
-				const porcelain = [
-					'worktree /repo',
-					'branch refs/heads/main',
-					'',
-					'worktree /repo.worktrees/gone',
-					'branch refs/heads/old',
-					'prunable gitdir file points to non-existent location',
-					'',
-				].join('\n')
-				const exec = gitListExec(porcelain)
-				const program = buildProgram({ env: {}, exec })
-				await run(program, ['worktree', 'list'])
-				const out = logs.join('\n')
-				expect(out).toContain('/repo.worktrees/gone (gone)')
-				// The live checkout carries no marker — the cost is paid only by the row that earned it.
-				expect(out).not.toContain('/repo (gone)')
-
-				logs.length = 0
-				await withArgv(['worktree', 'list', '--format', 'json'], () =>
-					run(program, ['worktree', 'list', '--format', 'json']),
-				)
-				const payload = JSON.parse(logs.join('\n'))
-				expect(payload.worktrees.map((w: { prunable: boolean }) => w.prunable)).toEqual([false, true])
-				expect(payload.worktrees[1].root).toBe('/repo.worktrees/gone')
-			})
-
-			it('worktree list shortens a home-rooted ROOT to `~`, but never in JSON', async () => {
-				const home = homedir()
-				const porcelain = [`worktree ${home}/code/app`, 'branch refs/heads/main', ''].join('\n')
-				const exec = gitListExec(porcelain, { commonDir: `${home}/code/app/.git` })
-				const program = buildProgram({ env: {}, exec })
-				await run(program, ['worktree', 'list'])
-				expect(logs.join('\n')).toContain('~/code/app')
-				expect(logs.join('\n')).not.toContain(home)
-
-				logs.length = 0
-				await withArgv(['worktree', 'list', '--format', 'json'], () =>
-					run(program, ['worktree', 'list', '--format', 'json']),
-				)
-				expect(JSON.parse(logs.join('\n')).worktrees[0].root).toBe(`${home}/code/app`)
-			})
-
-			it('worktree list keeps `linked` in JSON, where a consumer reads the boolean', async () => {
-				const porcelain = [
-					'worktree /repo',
-					'branch refs/heads/main',
-					'',
-					'worktree /repo.worktrees/x',
-					'branch refs/heads/feat/x',
-					'',
-				].join('\n')
-				const exec = gitListExec(porcelain)
-				const program = buildProgram({ env: {}, exec })
-				await withArgv(['worktree', 'list', '--format', 'json'], () =>
-					run(program, ['worktree', 'list', '--format', 'json']),
-				)
-				const payload = JSON.parse(logs.join('\n'))
-				expect(payload.worktrees.map((w: { linked: boolean }) => w.linked)).toEqual([false, true])
-				expect(payload.worktrees[0].branch).toBe('main')
-			})
-
-			// The disposability composite: `worktree list` answers "is this still NEEDED", not just
-			// "is it OCCUPIED", and compresses merged AND clean AND unoccupied to one BRANCH marker.
-			describe('worktree list marks a disposable worktree `(removable)`', () => {
-				const porcelain = [
-					'worktree /repo',
-					'branch refs/heads/main',
-					'',
-					'worktree /repo.worktrees/landed',
-					'branch refs/heads/feat/landed',
-					'',
-					'worktree /repo.worktrees/open',
-					'branch refs/heads/feat/open',
-					'',
-				].join('\n')
-				const disposable = { originHead: 'origin/main', merged: 'main\nfeat/landed', dirty: () => '' }
-
-				it('marks the merged, clean, unoccupied worktree and nothing else', async () => {
-					const program = buildProgram({ env: {}, exec: gitListExec(porcelain, disposable) })
-					await run(program, ['worktree', 'list'])
-					const out = logs.join('\n')
-					expect(out).toContain('feat/landed (removable)')
-					// Unmerged work is not disposable, and the primary checkout is never disposable —
-					// `(removable)` and `(*)` are mutually exclusive, so BRANCH never carries two markers.
-					expect(out).not.toContain('feat/open (removable)')
-					expect(out).toContain('main (*)')
-					expect(out).not.toContain('main (removable)')
-				})
-
-				it('withholds the marker while a workspace still holds the worktree', async () => {
-					const bindings = JSON.stringify({
-						result: { worktrees: [{ path: '/repo.worktrees/landed', open_workspace_id: 'w21' }] },
-					})
-					const gitExec = gitListExec(porcelain, disposable)
-					const exec: Exec = (cmd, args) =>
-						cmd === 'git' ? gitExec(cmd, args) : args.slice(0, 2).join(' ') === 'worktree list' ? bindings : ''
-					const program = buildProgram({ env: { CYBER_MUX: 'herdr' }, exec })
-					await run(program, ['worktree', 'list'])
-					expect(logs.join('\n')).not.toContain('(removable)')
-				})
-
-				it('withholds the marker on a dirty checkout, whose edits exist nowhere else', async () => {
-					const exec = gitListExec(porcelain, {
-						...disposable,
-						dirty: (root) => (root.endsWith('landed') ? ' M a.ts' : ''),
-					})
-					await run(buildProgram({ env: {}, exec }), ['worktree', 'list'])
-					expect(logs.join('\n')).not.toContain('(removable)')
-				})
-
-				it('keeps `merged` and `dirty` raw and unmarked in JSON, where a consumer composes its own policy', async () => {
-					const program = buildProgram({ env: {}, exec: gitListExec(porcelain, disposable) })
-					await withArgv(['worktree', 'list', '--format', 'json'], () =>
-						run(program, ['worktree', 'list', '--format', 'json']),
-					)
-					const payload = JSON.parse(logs.join('\n'))
-					expect(payload.worktrees.map((w: { merged: boolean }) => w.merged)).toEqual([true, true, false])
-					expect(payload.worktrees.map((w: { dirty: boolean }) => w.dirty)).toEqual([false, false, false])
-					// The composite is the TABLE's compression, never a field — a consumer that wants a
-					// different policy (ignore occupancy, say) must not inherit this one from the payload.
-					expect(payload.worktrees.every((w: Record<string, unknown>) => !('removable' in w))).toBe(true)
-					expect(logs.join('\n')).not.toContain('(removable)')
-				})
-
-				it('lists every worktree with the signal simply absent when git cannot answer', async () => {
-					// A detached HEAD, a prunable entry, and no origin/HEAD to measure against — the listing
-					// still renders, with no field guessed and no row wrongly marked disposable.
-					const awkward = [
-						'worktree /repo',
-						'detached',
-						'',
-						'worktree /repo.worktrees/spike',
-						'detached',
-						'',
-						'worktree /repo.worktrees/gone',
-						'branch refs/heads/old',
-						'prunable gitdir file points to non-existent location',
-						'',
-					].join('\n')
-					const program = buildProgram({ env: {}, exec: gitListExec(awkward) })
-					await run(program, ['worktree', 'list'])
-					const out = logs.join('\n')
-					expect(out).toContain('(detached)')
-					expect(out).toContain('/repo.worktrees/gone (gone)')
-					expect(out).not.toContain('(removable)')
-
-					logs.length = 0
-					await withArgv(['worktree', 'list', '--format', 'json'], () =>
-						run(program, ['worktree', 'list', '--format', 'json']),
-					)
-					const payload = JSON.parse(logs.join('\n'))
-					expect(payload.worktrees).toHaveLength(3)
-					expect(payload.worktrees.every((w: Record<string, unknown>) => w['merged'] === undefined)).toBe(true)
-					// The prunable row has no working tree to read, so `dirty` is absent rather than false.
-					expect(payload.worktrees[2].dirty).toBeUndefined()
-				})
-			})
-
-			it('worktree list answers outside a multiplexer — listing is a git question', async () => {
-				const porcelain = ['worktree /repo', 'branch refs/heads/main', ''].join('\n')
-				const exec = gitListExec(porcelain)
-				const program = buildProgram({ env: {}, exec })
-				await run(program, ['worktree', 'list'])
-				expect(logs.join('\n')).toContain('main')
-			})
-
-			describe('worktree prune', () => {
-				// This module's own directory stands in for "a worktree that exists on disk" — the CLI's
-				// remove path checks existence for real (no injected fs at this boundary), so the removal
-				// half needs a real path; the primary and every git answer are still fully faked.
-				// realpathSync (which normalization runs through) strips the trailing slash `import.meta.url`
-				// leaves on a directory, so the normalized form is the one every later comparison uses.
-				const realExistingDir = new URL('.', import.meta.url).pathname.replace(/\/$/, '')
-
-				const porcelain = [
-					'worktree /repo',
-					'branch refs/heads/main',
-					'',
-					`worktree ${realExistingDir}`,
-					'branch refs/heads/feat/landed',
-					'',
-					'worktree /repo.worktrees/open',
-					'branch refs/heads/feat/open',
-					'',
-				].join('\n')
-				const disposable = { originHead: 'origin/main', merged: 'main\nfeat/landed', dirty: () => '' }
-
-				it('bare form previews the removable candidate and removes nothing', async () => {
-					const calls: string[][] = []
-					const gitExec = gitListExec(porcelain, disposable)
-					const exec: Exec = (cmd, args) => {
-						calls.push(args)
-						return gitExec(cmd, args)
-					}
-					const program = buildProgram({ env: {}, exec })
-					await run(program, ['worktree', 'prune'])
-					expect(logs.join('\n')).toContain('feat/landed')
-					expect(logs.join('\n')).not.toContain('feat/open')
-					expect(calls.some((args) => args.includes('remove'))).toBe(false)
-				})
-
-				it('--force removes the previewed candidate', async () => {
-					const calls: string[][] = []
-					const gitExec = gitListExec(porcelain, disposable)
-					const exec: Exec = (cmd, args) => {
-						calls.push(args)
-						return gitExec(cmd, args)
-					}
-					const program = buildProgram({ env: {}, exec })
-					await run(program, ['worktree', 'prune', '--force'])
-					expect(calls.at(-1)).toEqual(['-C', '/repo', 'worktree', 'remove', realExistingDir, '--force'])
-				})
-
-				it('reports the skip reason for a candidate left behind', async () => {
-					const exec = gitListExec(porcelain, disposable)
-					const program = buildProgram({ env: {}, exec })
-					await withArgv(['worktree', 'prune', '--format', 'json'], () =>
-						run(program, ['worktree', 'prune', '--format', 'json']),
-					)
-					const payload = JSON.parse(logs.join('\n'))
-					expect(payload.applied).toBe(false)
-					expect(payload.removed).toHaveLength(1)
-					expect(payload.skipped).toHaveLength(1)
-					expect(payload.skipped[0].root).toBe('/repo.worktrees/open')
-					expect(payload.skipped[0].reason).toMatch(/not merged/)
-				})
-			})
-		})
-
-		it('open --launch submits the command, so it actually runs', async () => {
-			const calls: string[][] = []
-			const exec = fakeTmuxExec(calls, { 'new-window': '%2\t@1' })
-			const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec })
-			await run(program, ['open', '--launch', 'claude'])
-			// Typed literally, then Enter — not left staged unsent.
-			expect(calls[1]).toEqual(['send-keys', '-t', '%2', '-l', 'claude'])
-			expect(calls[2]).toEqual(['send-keys', '-t', '%2', 'Enter'])
-		})
-
 		it('send text types literal text and presses no Enter', async () => {
 			const calls: string[][] = []
 			const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: fakeTmuxExec(calls) })
@@ -850,41 +834,6 @@ describe('spec:cyber-mux/mux', () => {
 			const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: fakeTmuxExec(calls) })
 			await run(program, ['send', 'keys', '%3', 'Enter'])
 			expect(drives(calls)).toEqual([['send-keys', '-t', '%3', 'Enter']])
-		})
-
-		it('send keys with no key tokens is rejected', async () => {
-			const calls: string[][] = []
-			const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: fakeTmuxExec(calls) })
-			await expect(run(program, ['send', 'keys', '%3'])).rejects.toThrow()
-			expect(calls).toEqual([])
-		})
-
-		it('send text with no text argument is rejected', async () => {
-			const calls: string[][] = []
-			const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: fakeTmuxExec(calls) })
-			await expect(run(program, ['send', 'text', '%3'])).rejects.toThrow()
-			expect(calls).toEqual([])
-		})
-
-		it('bare send is incomplete input, so it fails loud with help rather than acting', async () => {
-			const calls: string[][] = []
-			const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: fakeTmuxExec(calls) })
-			vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
-			const out: string[] = []
-			vi.spyOn(process.stdout, 'write').mockImplementation((line) => {
-				out.push(String(line))
-				return true
-			})
-			vi.spyOn(process, 'exit').mockImplementation((code) => {
-				throw new Error(`exit:${code}`)
-			})
-			// Help naming text and keys as its subcommands is written to stdout, and it exits 2 — the status
-			// that separates bad input from a failed operation.
-			await expect(run(program, ['send'])).rejects.toThrow('exit:2')
-			const help = out.join('')
-			expect(help).toContain('text')
-			expect(help).toContain('keys')
-			expect(calls).toEqual([])
 		})
 
 		// Both Examples rows fold under one static title — the outline is a single key, and a
@@ -940,18 +889,6 @@ describe('spec:cyber-mux/mux', () => {
 			const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: fakeTmuxExec(calls) })
 			await run(program, ['submit', '%3', ''])
 			expect(drives(calls)).toEqual([['send-keys', '-t', '%3', 'Enter']])
-		})
-
-		it('submit with no pane is rejected', async () => {
-			const calls: string[][] = []
-			const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: fakeTmuxExec(calls) })
-			vi.spyOn(process, 'exit').mockImplementation((code) => {
-				throw new Error(`exit:${code}`)
-			})
-			// A missing required argument is a usage error (exit 2), naming the argument that is missing.
-			await expect(run(program, ['submit'])).rejects.toThrow('exit:2')
-			expect(logs.join('\n')).toContain('pane')
-			expect(calls).toEqual([])
 		})
 
 		describe('template', () => {
@@ -1056,14 +993,6 @@ describe('spec:cyber-mux/mux', () => {
 			}
 
 			describe('resolving a template by name', () => {
-				it('--file skips resolution entirely — neither templates directory is consulted', async () => {
-					const store = fakeStore({ './scratch/pool.json': { name: 'pool', panes: [{ label: 'a' }] } })
-					const program = buildProgram({ env: XDG, exec: repoExec([]), store })
-					await run(program, ['template', 'show', '--file', './scratch/pool.json'])
-					expect(store.reads).toEqual(['./scratch/pool.json'])
-					expect(logs.join('\n')).toContain('"name": "pool"')
-				})
-
 				it('a repo template shadows a user template of the same name', async () => {
 					const store = fakeStore({
 						[repo('pool-4')]: POOL_4,
@@ -1201,72 +1130,14 @@ describe('spec:cyber-mux/mux', () => {
 					expect(paths.some((l) => l.includes('root.first.cwd'))).toBe(true)
 					expect(paths.some((l) => l.includes('root.second.dir'))).toBe(true)
 				})
-
-				it('exits 0 on a valid template, saying nothing at all', async () => {
-					// This is the CI hook, so silence is the pass signal.
-					const exit = catchExit()
-					const stderr = captureStderr()
-					const store = fakeStore({ [repo('pool-4')]: POOL_4 })
-					const program = buildProgram({ env: XDG, exec: repoExec([]), store })
-					await run(program, ['template', 'validate', 'pool-4'])
-					expect(exit).not.toHaveBeenCalled()
-					expect(stderr).toEqual([])
-				})
 			})
 
 			describe('show --desugar', () => {
-				it('prints exactly the tree apply will build', async () => {
-					const store = fakeStore({ [repo('pool-4')]: POOL_4 })
-					const program = buildProgram({ env: XDG, exec: repoExec([]), store })
-					await run(program, ['template', 'show', 'pool-4', '--desugar'])
-					// The canonical tree the sugar expands to — one right split over the two panes, which is
-					// the same tree the walk splits from (both go through `resolveTree`).
-					expect(JSON.parse(logs.join('\n'))).toEqual({
-						type: 'split',
-						direction: 'right',
-						ratio: 0.5,
-						first: { type: 'pane', label: 'w1' },
-						second: { type: 'pane', label: 'w2' },
-					})
-				})
-
 				it('without --desugar prints the template as written, sugar and all', async () => {
 					const store = fakeStore({ [repo('pool-4')]: POOL_4 })
 					const program = buildProgram({ env: XDG, exec: repoExec([]), store })
 					await run(program, ['template', 'show', 'pool-4'])
 					expect(JSON.parse(logs.join('\n'))).toEqual(POOL_4)
-				})
-			})
-
-			describe('managing templates needs no multiplexer', () => {
-				it.each([
-					['list', ['template', 'list']],
-					['show pool-4', ['template', 'show', 'pool-4']],
-					['validate pool-4', ['template', 'validate', 'pool-4']],
-				])('%s answers without resolving a session backend', async (_name, argv) => {
-					// Their subject is a FILE, the same way `worktree list`'s subject is git.
-					const calls: string[][] = []
-					const store = fakeStore({ [repo('pool-4')]: POOL_4 })
-					// No $TMUX, no $HERDR_ENV, no override at all.
-					const program = buildProgram({ env: XDG, exec: repoExec(calls), store })
-					await run(program, argv)
-					expect(calls.every((c) => c[0] === 'git')).toBe(true)
-				})
-
-				it("an unknown flag is rejected against the SUBCOMMAND's flags, not the group's", async () => {
-					// `--force` is a flag only `template save` defines; on `template list` it is unknown. Validating
-					// against the GROUP's union would accept it here and silently drop it.
-					catchExit()
-					const store = fakeStore({})
-					const program = buildProgram({ env: XDG, exec: repoExec([]), store })
-					await expect(run(program, ['template', 'list', '--force'])).rejects.toThrow('exit:2')
-					const out = logs.join('\n')
-					// Names --force as unknown for template list, and the valid flags it lists are list's own...
-					expect(out).toContain('--force')
-					expect(out).toContain('--format')
-					// ...never template save's.
-					expect(out).not.toContain('--from')
-					expect(out).not.toContain('--workspace')
 				})
 			})
 
@@ -1649,32 +1520,6 @@ describe('spec:cyber-mux/mux', () => {
 			})
 
 			describe('--template, the exact sibling of --launch', () => {
-				it('--template and --launch are mutually exclusive', async () => {
-					catchExit()
-					const store = fakeStore({ [repo('pool-4')]: POOL_4 })
-					const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'tmux' }, exec: repoExec([]), store })
-					// Two flags that cannot both be given is malformed input — a usage error (exit 2).
-					await expect(run(program, ['open', '--template', 'pool-4', '--launch', 'claude'])).rejects.toThrow('exit:2')
-				})
-
-				it('--at defaults to workspace when --template is given', async () => {
-					// A fresh space is empty by construction.
-					const calls: string[][] = []
-					const store = fakeStore({ [repo('pool-4')]: POOL_4 })
-					const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'tmux' }, exec: repoExec(calls), store })
-					await run(program, ['open', '--template', 'pool-4'])
-					// tmux collapses workspace to a window — the region is a new-window, not a split.
-					expect(calls.find((c) => c[0] === 'tmux')?.[1]).toBe('new-window')
-				})
-
-				it('--label defaults to the template name', async () => {
-					const calls: string[][] = []
-					const store = fakeStore({ [repo('pool-4')]: POOL_4 })
-					const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'tmux' }, exec: repoExec(calls), store })
-					await run(program, ['open', '--template', 'pool-4'])
-					expect(calls.find((c) => c[1] === 'new-window')).toEqual(expect.arrayContaining(['-n', 'pool-4']))
-				})
-
 				it('an explicit --label wins over the template name', async () => {
 					const calls: string[][] = []
 					const store = fakeStore({ [repo('pool-4')]: POOL_4 })
@@ -1684,8 +1529,8 @@ describe('spec:cyber-mux/mux', () => {
 				})
 			})
 
-			describe('resolution precedes side effects', () => {
-				it('open --template with an unresolvable name opens nothing', async () => {
+			describe('spec:cyber-mux/template/apply', () => {
+				it('apply-open-template-unresolvable-no-region', async () => {
 					catchExit()
 					const calls: string[][] = []
 					const program = buildProgram({
@@ -1697,7 +1542,7 @@ describe('spec:cyber-mux/mux', () => {
 					expect(calls.some((c) => c[0] === 'tmux')).toBe(false)
 				})
 
-				it('worktree add --template with a name that resolves nowhere leaves no worktree behind', async () => {
+				it('apply-unresolved-name-no-worktree', async () => {
 					catchExit()
 					const calls: string[][] = []
 					const program = buildProgram({
@@ -1711,7 +1556,7 @@ describe('spec:cyber-mux/mux', () => {
 					expect(calls.some((c) => c.includes('worktree') && c.includes('add'))).toBe(false)
 				})
 
-				it('worktree add --template with an invalid template leaves no worktree behind', async () => {
+				it('apply-invalid-template-no-worktree', async () => {
 					catchExit()
 					captureStderr()
 					const calls: string[][] = []
@@ -1726,7 +1571,7 @@ describe('spec:cyber-mux/mux', () => {
 					expect(calls.some((c) => c.includes('worktree') && c.includes('add'))).toBe(false)
 				})
 
-				it('applying with no multiplexer fails through the existing adapter path', async () => {
+				it('apply-no-multiplexer-fails', async () => {
 					catchExit()
 					captureStderr()
 					const store = fakeStore({ [repo('pool-4')]: POOL_4 })
@@ -1736,74 +1581,6 @@ describe('spec:cyber-mux/mux', () => {
 					// The no-mux error's help names both backends, on stdout.
 					expect(logs.join('\n')).toContain('tmux')
 					expect(logs.join('\n')).toContain('herdr')
-				})
-			})
-
-			describe('apply does not roll back', () => {
-				it('a throw mid-walk reports what was built, exits 1, and kills nothing', async () => {
-					catchExit()
-					const calls: string[][] = []
-					// A 4-pane comb: the region, then three splits. The THIRD split is refused.
-					let splits = 0
-					const exec: Exec = (cmd, args) => {
-						calls.push([cmd, ...args])
-						if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
-						// Every open reports the window alongside the pane — the window IS the pane's tab, which
-						// `OpenedPane.tab` always carries. A split lands in the caller's own window, hence @0.
-						if (args[0] === 'new-window') return '%0\t@0'
-						if (args[0] === 'split-window') return ++splits === 3 ? null : `%${splits}\t@0`
-						return ''
-					}
-					const store = fakeStore({
-						[repo('render-farm')]: {
-							name: 'render-farm',
-							arrange: 'even-horizontal',
-							panes: [{ label: 'a' }, { label: 'b' }, { label: 'c' }, { label: 'd' }],
-						},
-					})
-					const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'tmux' }, exec, store })
-					await withArgv(['open', '--template', 'render-farm', '--format', 'json'], async () => {
-						await expect(run(program, ['open', '--template', 'render-farm', '--format', 'json'])).rejects.toThrow(
-							'exit:1',
-						)
-					})
-					// The manifest still reports the panes that were built before the failure...
-					const manifest = JSON.parse(logs.join('\n'))
-					expect(manifest.panes.map((p: { label: string }) => p.label)).toEqual(['a', 'b', 'c'])
-					// ...and nothing is killed: a kill is not obviously safer than a half-built template the
-					// caller can see and finish.
-					expect(calls.some((c) => c[1] === 'kill-pane')).toBe(false)
-				})
-			})
-
-			describe('the manifest is the handoff', () => {
-				it('--format json reports every pane apply created', async () => {
-					const store = fakeStore({ [repo('agent-pool-3')]: AGENT_POOL_3 })
-					const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'tmux' }, exec: repoExec([]), store })
-					await withArgv(['open', '--template', 'agent-pool-3', '--format', 'json'], () =>
-						run(program, ['open', '--template', 'agent-pool-3', '--cwd', '/w/feat-x', '--format', 'json']),
-					)
-					const manifest = JSON.parse(logs.join('\n'))
-					expect(manifest.template).toBe('agent-pool-3')
-					expect(manifest.cwd).toBe('/w/feat-x')
-					expect(manifest).toHaveProperty('workspace')
-					// One entry per pane, each carrying its label, pane id, dir and command — plus the tab it
-					// landed in, `null` here because a single-tab template names no tabs at all.
-					expect(manifest.panes).toEqual([
-						{ label: 'planner', pane: '%0', dir: '/w/feat-x', command: 'claude', tab: null },
-						{ label: 'worker-a', pane: '%1', dir: '/w/feat-x', command: 'claude', tab: null },
-						{ label: 'worker-b', pane: '%2', dir: '/w/feat-x', command: 'claude', tab: null },
-					])
-				})
-
-				it('the manifest’s workspace is null on tmux', async () => {
-					// Matching how reportOpenedWorktree already reports it.
-					const store = fakeStore({ [repo('pool-4')]: POOL_4 })
-					const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'tmux' }, exec: repoExec([]), store })
-					await withArgv(['open', '--template', 'pool-4', '--format', 'json'], () =>
-						run(program, ['open', '--template', 'pool-4', '--format', 'json']),
-					)
-					expect(JSON.parse(logs.join('\n')).workspace).toBeNull()
 				})
 			})
 
@@ -1894,37 +1671,6 @@ describe('spec:cyber-mux/mux', () => {
 					expect(warnings).toHaveLength(1)
 					expect(warnings[0]).toContain('TIER')
 				})
-
-				it('reports the root pane’s actual dir and warns that its dir could not be honored', async () => {
-					const stderr = captureStderr()
-					const calls: string[][] = []
-					const store = fakeStore({
-						[repo('render-farm')]: {
-							name: 'render-farm',
-							panes: [{ label: 'dispatcher', dir: 'apps/render' }, { label: 'encoder' }],
-						},
-					})
-					const exec = repoExec(calls, { 'worktree create': worktreeOut })
-					const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'herdr' }, exec, store })
-					await withArgv(['worktree', 'add', '--format', 'json'], () =>
-						run(program, ['worktree', 'add', '--branch', 'feat-x', '--template', 'render-farm', '--format', 'json']),
-					)
-					// The workspace opens at the worktree root — that is what the binding pins...
-					const created = calls.find((c) => c[1] === 'worktree' && c[2] === 'create')!
-					expect(created).not.toContain('apps/render')
-					// ...so the manifest reports where the pane really is, rather than a place nothing opened.
-					const out = JSON.parse(logs.join('\n'))
-					expect(out.panes[0]).toEqual({
-						label: 'dispatcher',
-						pane: 'w9:root',
-						dir: '/repo.worktrees/feat-x',
-						command: null,
-						tab: null,
-					})
-					// Degraded loudly, on stderr, so stdout stays machine-readable.
-					expect(stderr.join('')).toContain('dispatcher')
-					expect(stderr.join('')).toContain('apps/render')
-				})
 			})
 		})
 
@@ -1943,7 +1689,7 @@ describe('spec:cyber-mux/mux', () => {
 			])
 		})
 
-		describe('addressing a pane by name', () => {
+		describe('spec:cyber-mux/mux/lookup', () => {
 			/** The hostname tmux hands an unnamed pane's title — the value the label rule must reject. */
 			const HOST = 'zeta'
 
@@ -2048,7 +1794,7 @@ describe('spec:cyber-mux/mux', () => {
 
 			// Both the Examples rows and the outline's two Thens: the verb reaches the pane labeled worker
 			// exactly as if %1 had been passed, and the two panes it did not name are never touched.
-			it.each(VERBS)('every pane verb addresses a pane by name as readily as by id', async ({ argv, store }) => {
+			it.each(VERBS)('lookup-verb-resolves-by-name', async ({ argv, store }) => {
 				const calls: string[][] = []
 				const program = buildProgram({
 					env: store ? { ...TMUX, XDG_CONFIG_HOME: '/home/u/.config' } : TMUX,
@@ -2070,25 +1816,8 @@ describe('spec:cyber-mux/mux', () => {
 				{ id: '%3', label: 'worker', cwd: '/repo/c' },
 			]
 
-			it.each(VERBS)('an ambiguous name fails the same way on every pane verb', async ({ argv, store }) => {
-				const calls: string[][] = []
-				const exit = catchExit()
-				captureStderr()
-				const program = buildProgram({
-					env: store ? { ...TMUX, XDG_CONFIG_HOME: '/home/u/.config' } : TMUX,
-					exec: paneServer(calls, ALL_WORKER, { 'capture-pane': 'out', 'list-panes': '', 'rev-parse': '/repo/.git' }),
-					store: store ? saveStore() : undefined,
-				})
-				await expect(run(program, argv)).rejects.toThrow('exit:2')
-				// The candidates, under the stable code, on stdout — where the agent reads.
-				expect(logs.join('\n')).toContain('ambiguous-pane')
-				expect(exit).toHaveBeenCalledWith(2)
-				// Having acted on none of the three: the only calls made were the resolution read itself.
-				expect(touched(calls)).toEqual([])
-			})
-
 			// An id and a label are not peers, so this is not a 2-candidate ambiguity — the id wins outright.
-			it('an id addresses the pane whose id it is, even when another pane is labeled with that id', async () => {
+			it('lookup-id-outranks-label-collision', async () => {
 				const calls: string[][] = []
 				const program = buildProgram({
 					env: TMUX,
@@ -2103,7 +1832,7 @@ describe('spec:cyber-mux/mux', () => {
 			})
 
 			// The counter-case a syntax rule cannot survive: %9 is id-SHAPED, but no pane carries it as an id.
-			it('an id is recognized by matching a live pane, never by the shape of the string', async () => {
+			it('lookup-id-matched-not-by-shape', async () => {
 				const calls: string[][] = []
 				const program = buildProgram({
 					env: TMUX,
@@ -2115,7 +1844,7 @@ describe('spec:cyber-mux/mux', () => {
 				expect(drives(calls)).toEqual([['kill-pane', '-t', '%1']])
 			})
 
-			it('a name matching exactly one live pane resolves to it and the command proceeds', async () => {
+			it('lookup-name-matches-one-resolves', async () => {
 				const calls: string[][] = []
 				const program = buildProgram({ env: TMUX, exec: paneServer(calls, THREE) })
 				await run(program, ['close', 'worker'])
@@ -2125,7 +1854,7 @@ describe('spec:cyber-mux/mux', () => {
 			})
 
 			// Not-found and ambiguous are different outcomes with different codes — 1, not 2.
-			it('a name matching no live pane is not found, rather than ambiguous', async () => {
+			it('lookup-name-matches-none-not-found', async () => {
 				const calls: string[][] = []
 				const exit = catchExit()
 				const stderr = captureStderr()
@@ -2138,7 +1867,7 @@ describe('spec:cyber-mux/mux', () => {
 				expect(stderr.join('')).not.toContain('ambiguous-pane')
 			})
 
-			it('a name matching two or more live panes fails rather than guessing which was meant', async () => {
+			it('lookup-name-matches-many-fails', async () => {
 				const calls: string[][] = []
 				catchExit()
 				captureStderr()
@@ -2150,571 +1879,16 @@ describe('spec:cyber-mux/mux', () => {
 				const err = logs.join('\n')
 				for (const id of ['%1', '%2', '%3']) expect(err).toContain(id)
 			})
-
-			it('the ambiguity report carries what tells the candidates apart, and what retries them', async () => {
-				catchExit()
-				captureStderr()
-				const program = buildProgram({ env: TMUX, exec: paneServer([], ALL_WORKER) })
-				await expect(run(program, ['close', 'worker'])).rejects.toThrow('exit:2')
-				const err = logs.join('\n')
-				// Each candidate with its id, its label, and its working directory — the cwd being the only
-				// one of the three that actually tells three panes all labeled `worker` apart.
-				for (const c of ALL_WORKER) {
-					expect(err).toContain(c.id)
-					expect(err).toContain(c.cwd!)
-				}
-				expect(err).toContain('worker')
-				// And each id is directly usable as the retry: feeding one back resolves, because an id
-				// outranks every name. Proven by running it, not by asserting the string looks like an id.
-				const retryCalls: string[][] = []
-				const retry = buildProgram({ env: TMUX, exec: paneServer(retryCalls, ALL_WORKER) })
-				await run(retry, ['close', '%2'])
-				expect(drives(retryCalls)).toEqual([['kill-pane', '-t', '%2']])
-			})
-
-			it('the ambiguity report is a structured error on stdout, where the agent reads', async () => {
-				const exit = catchExit()
-				const stderr = captureStderr()
-				const program = buildProgram({
-					env: TMUX,
-					exec: paneServer(
-						[],
-						[
-							{ id: '%1', label: 'worker', cwd: '/repo/a' },
-							{ id: '%2', label: 'worker', cwd: '/repo/b' },
-						],
-					),
-				})
-				await expect(run(program, ['close', 'worker'])).rejects.toThrow('exit:2')
-				// The report is on stdout, under the stable code, where the agent reads.
-				expect(logs.join('\n')).toContain('ambiguous-pane')
-				// And stderr is left empty, carrying no part of the answer.
-				expect(stderr.join('')).toBe('')
-				expect(exit).toHaveBeenCalledWith(2)
-			})
-
-			it('--format json emits the ambiguity as a structured error carrying its candidates', async () => {
-				catchExit()
-				const stderr = captureStderr()
-				const panes: FakePane[] = [
-					{ id: '%1', label: 'worker', cwd: '/repo/a' },
-					{ id: '%2', label: 'worker', cwd: '/repo/b' },
-				]
-				const program = buildProgram({ env: TMUX, exec: paneServer([], panes) })
-				await withArgv(['close', 'worker', '--format', 'json'], () =>
-					expect(run(program, ['close', 'worker', '--format', 'json'])).rejects.toThrow('exit:2'),
-				)
-				// Parsed, not string-matched: the contract is that the error IS JSON, carrying the code and
-				// the candidate entries as data a caller can branch on.
-				const parsed = JSON.parse(logs.join('\n'))
-				expect(parsed.error.code).toBe('ambiguous-pane')
-				expect(parsed.error.candidates).toEqual([
-					{ id: '%1', label: 'worker', cwd: '/repo/a' },
-					{ id: '%2', label: 'worker', cwd: '/repo/b' },
-				])
-				// Written to stdout, where a caller branching on exit 2 never mistakes it for a result;
-				// stderr carries no part of it.
-				expect(stderr.join('')).toBe('')
-			})
-
-			// The outcome rides the exit code, because three panes named worker is not an answer to
-			// "is it live?" — and `gone` and ambiguous are not the same thing.
-			it.each([
-				{ world: 'exactly one live pane matches the locator', panes: THREE, stdout: 'live', code: 0 },
-				{ world: 'no live pane matches the locator', panes: [{ id: '%2', label: 'sidebar' }], stdout: 'gone', code: 1 },
-				{ world: 'two or more live panes match the locator', panes: ALL_WORKER, stdout: 'nothing', code: 2 },
-			])('exists distinguishes its three outcomes by exit code, not by prose', async ({ panes, stdout, code }) => {
-				const exit = catchExit()
-				captureStderr()
-				const program = buildProgram({ env: TMUX, exec: paneServer([], panes) })
-				const running = run(program, ['exists', 'worker'])
-				if (code === 0) {
-					await running
-					expect(exit).not.toHaveBeenCalled()
-				} else {
-					await expect(running).rejects.toThrow(`exit:${code}`)
-					expect(exit).toHaveBeenCalledWith(code)
-				}
-				if (stdout === 'nothing') {
-					// Neither live nor gone — the ambiguous-pane error takes stdout instead.
-					expect(logs.join('\n')).toContain('ambiguous-pane')
-					expect(logs).not.toContain('live')
-					expect(logs).not.toContain('gone')
-				} else {
-					expect(logs).toEqual([stdout])
-				}
-			})
-
-			it('an ambiguous exists reports its candidates rather than answering the question', async () => {
-				catchExit()
-				captureStderr()
-				const program = buildProgram({
-					env: TMUX,
-					exec: paneServer(
-						[],
-						[
-							{ id: '%1', label: 'worker', cwd: '/repo/a' },
-							{ id: '%2', label: 'worker', cwd: '/repo/b' },
-						],
-					),
-				})
-				await expect(run(program, ['exists', 'worker'])).rejects.toThrow('exit:2')
-				const err = logs.join('\n')
-				expect(err).toContain('ambiguous-pane')
-				expect(err).toContain('%1')
-				expect(err).toContain('%2')
-				// It answers neither live nor gone — there is no single pane the question is about.
-				expect(err).not.toContain('live')
-				expect(err).not.toContain('gone')
-			})
-
-			// ── The error surface — structured, coded, and on stdout ──
-
-			/** A tmux whose list-panes reports `panes`, but whose every other command THROWS a backend
-			 * diagnostic — the shape a bad target takes: resolution succeeds/empties, the verb's own call
-			 * fails with the multiplexer's own words. */
-			function throwingExec(panes: string, diagnostic: string): Exec {
-				return (_cmd, args) => {
-					if (args[0] === 'list-panes') return panes
-					throw new Error(diagnostic)
-				}
-			}
-
-			it.each([
-				{
-					world: 'no multiplexer this process is inside',
-					make: () => buildProgram({ env: {}, exec: noAncestry }),
-					argv: ['list'],
-					code: 'no-mux',
-					exit: 1,
-				},
-				{
-					world: 'a locator matching no live pane',
-					make: () => buildProgram({ env: TMUX, exec: throwingExec('', "can't find pane: %99") }),
-					argv: ['focus', '%99'],
-					code: 'pane-not-found',
-					exit: 1,
-				},
-				{
-					world: 'two live panes labeled worker',
-					make: () => buildProgram({ env: TMUX, exec: paneServer([], ALL_WORKER) }),
-					argv: ['read', 'worker'],
-					code: 'ambiguous-pane',
-					exit: 2,
-				},
-			])('a failure is a structured error on stdout, under the code for THAT failure', async ({
-				make,
-				argv,
-				code,
-				exit,
-			}) => {
-				const errExit = catchExit()
-				const stderr = captureStderr()
-				await expect(run(make(), argv)).rejects.toThrow(`exit:${exit}`)
-				const out = logs.join('\n')
-				// The report is on stdout, never stderr, under the stable code for THAT failure.
-				expect(out).toContain(code)
-				expect(stderr.join('')).toBe('')
-				expect(errExit).toHaveBeenCalledWith(exit)
-				// A help line naming the command that fixes it, never "see --help".
-				expect(out).toContain('help:')
-				expect(out).not.toContain('see --help')
-			})
-
-			it('two different failures never share one code', async () => {
-				catchExit()
-				captureStderr()
-				await withArgv(['read', 'worker', '--format', 'json'], () =>
-					expect(
-						run(buildProgram({ env: TMUX, exec: paneServer([], ALL_WORKER) }), ['read', 'worker', '--format', 'json']),
-					).rejects.toThrow('exit:2'),
-				)
-				const ambiguousCode = JSON.parse(logs.join('\n')).error.code
-				logs.length = 0
-				await withArgv(['list', '--format', 'json'], () =>
-					expect(run(buildProgram({ env: {}, exec: noAncestry }), ['list', '--format', 'json'])).rejects.toThrow(
-						'exit:1',
-					),
-				)
-				const noMuxCode = JSON.parse(logs.join('\n')).error.code
-				// The two codes discriminate — neither is a catch-all a third failure would also land under.
-				expect(ambiguousCode).toBe('ambiguous-pane')
-				expect(noMuxCode).toBe('no-mux')
-				expect(ambiguousCode).not.toBe(noMuxCode)
-			})
-
-			it.each([
-				['read'],
-				['focus'],
-				['send', 'text'],
-			])('a missing required argument is a usage error, not a failed operation', async (...verb) => {
-				const calls: string[][] = []
-				const errExit = catchExit()
-				await expect(run(buildProgram({ env: TMUX, exec: paneServer(calls, THREE) }), verb)).rejects.toThrow('exit:2')
-				// Exits 2 rather than 1, having called no backend, and names the argument that is missing.
-				expect(errExit).toHaveBeenCalledWith(2)
-				expect(logs.join('\n')).toContain('pane')
-				expect(drives(calls)).toEqual([])
-			})
-
-			it('an unknown flag is a usage error, and says what the valid flags are', async () => {
-				const calls: string[][] = []
-				const errExit = catchExit()
-				await expect(
-					run(buildProgram({ env: TMUX, exec: paneServer(calls, THREE) }), ['list', '--nope']),
-				).rejects.toThrow('exit:2')
-				expect(errExit).toHaveBeenCalledWith(2)
-				const out = logs.join('\n')
-				// Names the unrecognized flag, and lists that command's own valid flags so the agent
-				// self-corrects without a second call.
-				expect(out).toContain('--nope')
-				expect(out).toContain('--format')
-				// Called no backend and listed nothing.
-				expect(drives(calls)).toEqual([])
-			})
-
-			it('--help is never an unknown flag', async () => {
-				const errExit = catchExit()
-				captureStderr()
-				const out: string[] = []
-				vi.spyOn(process.stdout, 'write').mockImplementation((line) => {
-					out.push(String(line))
-					return true
-				})
-				// Help is written to stdout and it exits 0 — no flag validation rejects it.
-				await expect(run(buildProgram({ env: TMUX, exec: paneServer([], THREE) }), ['list', '--help'])).rejects.toThrow(
-					'exit:0',
-				)
-				expect(errExit).toHaveBeenCalledWith(0)
-				expect(`${out.join('')}${logs.join('\n')}`).not.toContain('unknown')
-			})
-
-			it('a structured error honors --format json', async () => {
-				catchExit()
-				const stderr = captureStderr()
-				await withArgv(['list', '--format', 'json'], () =>
-					expect(run(buildProgram({ env: {}, exec: noAncestry }), ['list', '--format', 'json'])).rejects.toThrow(
-						'exit:1',
-					),
-				)
-				// Emitted as JSON on stdout carrying the same stable code the readable form uses, no prose beside it.
-				const parsed = JSON.parse(logs.join('\n'))
-				expect(parsed.error.code).toBe('no-mux')
-				expect(stderr.join('')).toBe('')
-			})
-
-			it("a failed verb's stdout is its structured error alone, with no result before it", async () => {
-				catchExit()
-				captureStderr()
-				const out: string[] = []
-				vi.spyOn(process.stdout, 'write').mockImplementation((line) => {
-					out.push(String(line))
-					return true
-				})
-				// A read whose capture fails: the backend throws, so there are no bytes for an error to land amid.
-				await expect(
-					run(buildProgram({ env: TMUX, exec: throwingExec('', 'capture-pane: no such pane') }), ['read', '%1']),
-				).rejects.toThrow('exit:1')
-				// read writes the pane's raw bytes through process.stdout.write — none were written here.
-				expect(out).toEqual([])
-				// The structured error is the whole of stdout (on console.log), with no partial pane output before it.
-				expect(logs.join('\n')).toContain('pane-not-found')
-			})
-
-			it("read writes the addressed pane's captured bytes straight to stdout, not through the JSON envelope", async () => {
-				const out: string[] = []
-				vi.spyOn(process.stdout, 'write').mockImplementation((line) => {
-					out.push(String(line))
-					return true
-				})
-				const program = buildProgram({
-					env: TMUX,
-					exec: paneServer([], [{ id: '%1', cwd: '/repo' }], { 'capture-pane': 'HELLO' }),
-				})
-				await run(program, ['read', '%1'])
-				// The raw capture rides process.stdout.write; the result never routes through console.log/--format.
-				expect(out.join('')).toContain('HELLO')
-				expect(logs.join('\n')).toBe('')
-			})
-
-			it('read --lines caps the capture to the trailing n lines', async () => {
-				const calls: string[][] = []
-				vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
-				const program = buildProgram({
-					env: TMUX,
-					exec: paneServer(calls, [{ id: '%1', cwd: '/repo' }], { 'capture-pane': 'x' }),
-				})
-				await run(program, ['read', '%1', '--lines', '5'])
-				// tmux caps with `-S -<n>` on capture-pane; without --lines that flag is absent.
-				expect(calls).toContainEqual(['capture-pane', '-p', '-t', '%1', '-S', '-5'])
-			})
-
-			it("focus beams the attached client's view to the addressed pane, writing nothing on success", async () => {
-				const calls: string[][] = []
-				const out: string[] = []
-				vi.spyOn(process.stdout, 'write').mockImplementation((line) => {
-					out.push(String(line))
-					return true
-				})
-				const program = buildProgram({ env: TMUX, exec: paneServer(calls, [{ id: '%1', cwd: '/repo' }]) })
-				await run(program, ['focus', '%1'])
-				// The beam is switch-client → select-window → select-pane; the verb-action writes nothing.
-				expect(calls.some((c) => c[0] === 'switch-client')).toBe(true)
-				expect(calls).toContainEqual(['select-pane', '-t', '%1'])
-				expect(out.join('')).toBe('')
-				expect(logs.join('\n')).toBe('')
-			})
-
-			it("an error never leaks the multiplexer's own output", async () => {
-				catchExit()
-				captureStderr()
-				const diagnostic = "can't find pane: %99 — tmux server error 3"
-				await expect(
-					run(buildProgram({ env: TMUX, exec: throwingExec('', diagnostic) }), ['focus', '%99']),
-				).rejects.toThrow('exit:1')
-				const out = logs.join('\n')
-				// Translated into this CLI's own code and help...
-				expect(out).toContain('pane-not-found')
-				expect(out).toContain('cyber-mux list')
-				// ...and the backend's raw text is not passed through as the message.
-				expect(out).not.toContain("can't find pane")
-				expect(out).not.toContain('tmux server error')
-			})
-
-			it('the worktree catch-all never forwards the multiplexer raw diagnostic either', async () => {
-				catchExit()
-				captureStderr()
-				const diagnostic = 'no server running on /tmp/tmux-501/default'
-				// git succeeds (the checkout is made); the plain `open()` that places its pane is what fails,
-				// the same shape `session.tmux.ts` throws for any backend command failure.
-				const exec: Exec = (cmd, args) => {
-					if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
-					exec.lastError = diagnostic
-					return null
-				}
-				await expect(
-					run(buildProgram({ env: TMUX, exec }), ['worktree', 'add', '--branch', 'my-feature', '--at', 'pane:right']),
-				).rejects.toThrow('exit:1')
-				const out = logs.join('\n')
-				expect(out).toContain('worktree-failed')
-				// Neither the backend's name nor its raw diagnostic reaches stdout.
-				expect(out).not.toContain('tmux')
-				expect(out).not.toContain(diagnostic)
-			})
-		})
-
-		describe('--env, the CLI surface for the seam’s env option', () => {
-			/** git (rev-parse only), tmux (keyed by verb), herdr (keyed by first two args) on one fake. */
-			function envExec(calls: string[][], responses: Record<string, string | null> = {}): Exec {
-				return (cmd, args) => {
-					calls.push([cmd, ...args])
-					if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
-					if (cmd === 'tmux') return responses[args[0]!] ?? null
-					return responses[args.slice(0, 2).join(' ')] ?? null
-				}
-			}
-
-			/** herdr's worktree create/open envelope — carries the bound workspace and the worktree record. */
-			const herdrWorktreeOut = JSON.stringify({
-				result: {
-					root_pane: { pane_id: 'w9:p1', tab_id: 'w9:t1' },
-					workspace: { workspace_id: 'w9' },
-					worktree: { path: '/repo.worktrees/x', branch: 'my-feature' },
-				},
-			})
-
-			/** The tmux opens (new-window/split-window) a verb produced — where env rides as a native `-e`. */
-			function tmuxOpens(calls: string[][]) {
-				return calls.filter((c) => c[0] === 'tmux' && (c[1] === 'new-window' || c[1] === 'split-window'))
-			}
-
-			const TMUX_OPEN_RESPONSES = { 'new-window': '%20\t@1', 'split-window': '%9\t@1' }
-
-			// tmux carries env natively on every route: `open` sets it on the window, and the two worktree
-			// verbs have no herdr-style bind, so they fall back to `git worktree add` + a plain `open` that
-			// sets it just the same. The native `-e KEY=VALUE` is the proof.
-			it.each([
-				['open', ['open', '--at', 'workspace', '--env', 'ROLE=worker']],
-				['worktree add', ['worktree', 'add', '--branch', 'my-feature', '--env', 'ROLE=worker']],
-				['worktree open', ['worktree', 'open', '/repo.worktrees/x', '--env', 'ROLE=worker']],
-			])('--env sets the variable in the pane the verb opens, on every route that carries env', async (_verb, argv) => {
-				const calls: string[][] = []
-				const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: envExec(calls, TMUX_OPEN_RESPONSES) })
-				await run(program, argv)
-				const opens = tmuxOpens(calls)
-				expect(opens.length).toBeGreaterThan(0)
-				expect(opens.some((c) => c.includes('-e') && c.includes('ROLE=worker'))).toBe(true)
-			})
-
-			it.each([
-				['open', ['open', '--at', 'workspace', '--env', 'ROLE=worker', '--env', 'TIER=gpu']],
-				['worktree add', ['worktree', 'add', '--branch', 'my-feature', '--env', 'ROLE=worker', '--env', 'TIER=gpu']],
-				['worktree open', ['worktree', 'open', '/repo.worktrees/x', '--env', 'ROLE=worker', '--env', 'TIER=gpu']],
-			])('--env is repeatable, one variable per flag, on every verb that has it', async (_verb, argv) => {
-				const calls: string[][] = []
-				const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: envExec(calls, TMUX_OPEN_RESPONSES) })
-				await run(program, argv)
-				const opens = tmuxOpens(calls)
-				expect(opens.some((c) => c.includes('ROLE=worker'))).toBe(true)
-				expect(opens.some((c) => c.includes('TIER=gpu'))).toBe(true)
-			})
-
-			it.each([
-				['open', ['open', '--at', 'workspace', '--env', 'ROLE=']],
-				['worktree add', ['worktree', 'add', '--branch', 'my-feature', '--env', 'ROLE=']],
-				['worktree open', ['worktree', 'open', '/repo.worktrees/x', '--env', 'ROLE=']],
-			])('--env with an empty value sets the variable empty, rather than rejecting', async (_verb, argv) => {
-				const calls: string[][] = []
-				const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: envExec(calls, TMUX_OPEN_RESPONSES) })
-				await run(program, argv)
-				// `${k}=${v}` with an empty value is exactly `ROLE=` — set, not rejected, not dropped.
-				expect(tmuxOpens(calls).some((c) => c.includes('ROLE='))).toBe(true)
-			})
-
-			// The split point is OBSERVABLE only where key and value are emitted separately — the shell
-			// prefix on herdr's worktree bind route, which quotes the VALUE alone: `env URL='k=v'` (first
-			// split) vs `env URL=k='v'` (last split) differ, so the two worktree rows pin the split. `open`
-			// never takes that route: on the native `-e KEY=VALUE` / `--env KEY=VALUE` flag the adapter
-			// emits `${key}=${value}`, which reassembles to `URL=k=v` whatever the split, and the OS
-			// re-splits on the first `=` regardless — so the pane carries URL=k=v either way. That is not a
-			// coverage hole but a property: for `open` the split is behaviorally invariant, so its row
-			// verifies its actual oracle — the =-bearing value reaches the pane intact — which a resolver
-			// that dropped the value or truncated at the first `=` would fail.
-			it.each<{ verb: string; drive: () => Promise<string[][]>; check: (calls: string[][]) => void }>([
-				{
-					verb: 'open',
-					drive: async () => {
-						const calls: string[][] = []
-						const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: envExec(calls, TMUX_OPEN_RESPONSES) })
-						await run(program, ['open', '--at', 'workspace', '--env', 'URL=k=v'])
-						return calls
-					},
-					check: (calls) => expect(tmuxOpens(calls).some((c) => c.includes('-e') && c.includes('URL=k=v'))).toBe(true),
-				},
-				{
-					verb: 'worktree add',
-					drive: async () => {
-						const calls: string[][] = []
-						const program = buildProgram({
-							env: { CYBER_MUX: 'herdr' },
-							exec: envExec(calls, { 'worktree create': herdrWorktreeOut }),
-						})
-						await run(program, ['worktree', 'add', '--branch', 'my-feature', '--env', 'URL=k=v', '--launch', 'claude'])
-						return calls
-					},
-					check: (calls) =>
-						expect(calls.find((c) => c[0] === 'herdr' && c[1] === 'pane' && c[2] === 'run')?.[4]).toBe(
-							"env URL='k=v' claude",
-						),
-				},
-				{
-					verb: 'worktree open',
-					drive: async () => {
-						const calls: string[][] = []
-						const program = buildProgram({
-							env: { CYBER_MUX: 'herdr' },
-							exec: envExec(calls, { 'worktree open': herdrWorktreeOut }),
-						})
-						await run(program, ['worktree', 'open', '/repo.worktrees/x', '--env', 'URL=k=v', '--launch', 'claude'])
-						return calls
-					},
-					check: (calls) =>
-						expect(calls.find((c) => c[0] === 'herdr' && c[1] === 'pane' && c[2] === 'run')?.[4]).toBe(
-							"env URL='k=v' claude",
-						),
-				},
-			])('an env value containing = splits on the first = only', async ({ drive, check }) => {
-				check(await drive())
-			})
-
-			// herdr's worktree bind is the one route that cannot set env at birth, so `--env` with a command
-			// to ride on rides in as an `env KEY=VALUE` prefix on the `pane run` the launch lowers to.
-			it.each([
-				[
-					'worktree add',
-					['worktree', 'add', '--branch', 'my-feature', '--env', 'ROLE=worker', '--launch', 'claude'],
-					'worktree create',
-				],
-				[
-					'worktree open',
-					['worktree', 'open', '/repo.worktrees/x', '--env', 'ROLE=worker', '--launch', 'claude'],
-					'worktree open',
-				],
-			])('--env on the one route that cannot carry it rides in on --launch', async (_verb, argv, key) => {
-				const calls: string[][] = []
-				const program = buildProgram({ env: { CYBER_MUX: 'herdr' }, exec: envExec(calls, { [key]: herdrWorktreeOut }) })
-				await run(program, argv)
-				const paneRun = calls.find((c) => c[0] === 'herdr' && c[1] === 'pane' && c[2] === 'run')
-				expect(paneRun?.[4]).toBe("env ROLE='worker' claude")
-			})
-
-			it.each([
-				['worktree add', ['worktree', 'add', '--branch', 'my-feature', '--env', 'ROLE=worker'], 'worktree create'],
-				['worktree open', ['worktree', 'open', '/repo.worktrees/x', '--env', 'ROLE=worker'], 'worktree open'],
-			])('--env on the one route that cannot carry it, with no command to ride, warns', async (_verb, argv, key) => {
-				const stderr: string[] = []
-				vi.spyOn(process.stderr, 'write').mockImplementation((line) => {
-					stderr.push(String(line))
-					return true
-				})
-				const calls: string[][] = []
-				const program = buildProgram({ env: { CYBER_MUX: 'herdr' }, exec: envExec(calls, { [key]: herdrWorktreeOut }) })
-				await run(program, argv)
-				// The variable genuinely did not land, and the caller is told which one — not left to guess.
-				expect(stderr.join('')).toContain('ROLE')
-				expect(calls.some((c) => c[0] === 'herdr' && c[1] === 'pane' && c[2] === 'run')).toBe(false)
-			})
-
-			it.each([
-				['open', ['open', '--template', 'pool-4', '--env', 'ROLE=worker']],
-				['worktree add', ['worktree', 'add', '--branch', 'my-feature', '--template', 'pool-4', '--env', 'ROLE=worker']],
-			])("--env is refused alongside --template, which owns its own panes' env", async (_verb, argv) => {
-				const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: noAncestry })
-				await expect(run(program, argv)).rejects.toThrow()
-			})
-
-			it.each([
-				['open', 'ROLE'],
-				['open', '=worker'],
-				['worktree add', 'ROLE'],
-				['worktree add', '=worker'],
-				['worktree open', 'ROLE'],
-				['worktree open', '=worker'],
-			])('--env without a KEY=VALUE pair is rejected before any side effect', async (verb, bad) => {
-				const argv =
-					verb === 'open'
-						? ['open', '--env', bad]
-						: verb === 'worktree add'
-							? ['worktree', 'add', '--branch', 'my-feature', '--env', bad]
-							: ['worktree', 'open', '/repo.worktrees/x', '--env', bad]
-				const calls: string[][] = []
-				const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: envExec(calls) })
-				await expect(run(program, argv)).rejects.toThrow()
-				// Rejected in the arg parser, before the action runs — so no checkout, no pane, no exec at all.
-				expect(calls).toEqual([])
-			})
-
-			it("worktree add --env defaults the placement to workspace, for --launch's reason", async () => {
-				const calls: string[][] = []
-				const program = buildProgram({
-					env: { CYBER_MUX: 'herdr' },
-					exec: envExec(calls, { 'worktree create': herdrWorktreeOut }),
-				})
-				await run(program, ['worktree', 'add', '--branch', 'my-feature', '--env', 'ROLE=worker'])
-				// A bind route ran — a workspace opened, not the bare-git path an add with no pane request takes.
-				expect(calls.some((c) => c[0] === 'herdr' && c[1] === 'worktree' && c[2] === 'create')).toBe(true)
-			})
 		})
 	})
 })
 
-describe('spec:cyber-mux/template', () => {
+// Not a spec node itself — a grouping of cli-driven tests whose per-node spec wrappers live within,
+// so the bridge attributes each to its leaf library node rather than being shadowed by a coarse `template`.
+describe('cyber-mux/template — cli-driven library surface', () => {
 	const REPO_DIR = '/repo/.cyber-mux/templates'
-	const USER_DIR = '/home/u/.config/cyber-mux/templates'
 	/** Pinned, so the user directory is never the runner's real ~/.config. */
 	const XDG = { XDG_CONFIG_HOME: '/home/u/.config' }
-
-	const POOL_4 = { name: 'pool-4', arrange: 'tiled', panes: [{ label: 'w1' }, { label: 'w2' }] }
 
 	/** The two-level form: a workspace of tabs, each carrying its own tree. */
 	const POOL_TABS = {
@@ -2801,15 +1975,6 @@ describe('spec:cyber-mux/template', () => {
 		return { exec, calls, windows }
 	}
 
-	/** The same, with a SPLIT in the first tab — so "built into the region" is observable in the argv. */
-	const POOL_TABS_SPLIT = {
-		name: 'pool',
-		tabs: [
-			{ label: 'editor', arrange: 'even-horizontal', panes: [{ label: 'edit' }, { label: 'test' }] },
-			{ label: 'logs', panes: [{ label: 'tail' }] },
-		],
-	}
-
 	/** A `TemplateStore` over an in-memory file map — no templates on disk, ever. */
 	function fakeStore(
 		files: Record<string, unknown>,
@@ -2844,10 +2009,6 @@ describe('spec:cyber-mux/template', () => {
 	function repo(name: string): string {
 		return `${REPO_DIR}/${name}.json`
 	}
-	function user(name: string): string {
-		return `${USER_DIR}/${name}.json`
-	}
-
 	/** `fail()` exits the process; make that observable instead of fatal to the runner. */
 	function catchExit() {
 		return vi.spyOn(process, 'exit').mockImplementation((code) => {
@@ -2880,54 +2041,6 @@ describe('spec:cyber-mux/template', () => {
 	})
 
 	describe('the walk, across tabs', () => {
-		/**
-		 * herdr, and herdr DELIBERATELY rather than tmux: the placement is the whole claim here, and tmux
-		 * collapses `workspace` and `tab` onto the same Window — so `new-window` is what tmux emits at
-		 * EITHER placement and could never tell the two apart. herdr has a real workspace tier and spells
-		 * the tiers as different verbs (`workspace create` vs `tab create`), which is what makes the
-		 * default observable at all.
-		 */
-		function tabsExec(calls: string[][], responses: Record<string, string> = {}): Exec {
-			let n = 0
-			let tab = 0
-			return (cmd, args) => {
-				calls.push([cmd, ...args])
-				if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
-				const key = args.slice(0, 2).join(' ')
-				if (responses[key]) return responses[key]
-				if (key === 'workspace create' || key === 'tab create') {
-					tab++
-					return JSON.stringify({
-						result: { root_pane: { pane_id: `w1:p${n++}`, tab_id: `w1:t${tab}`, workspace_id: 'w1' } },
-					})
-				}
-				// A split reports the tab it landed IN, never a new one.
-				if (key === 'pane split') {
-					return JSON.stringify({
-						result: { pane: { pane_id: `w1:p${n++}`, tab_id: `w1:t${tab}`, workspace_id: 'w1' } },
-					})
-				}
-				return ''
-			}
-		}
-
-		it('a tabs template still defaults --at to workspace', async () => {
-			// A fresh space is empty by construction, and a workspace is what a set of tabs needs to live
-			// in — so the default does not change because the template grew a level.
-			const calls: string[][] = []
-			const store = fakeStore({ [repo('pool')]: POOL_TABS })
-			const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'herdr' }, exec: tabsExec(calls), store })
-			await run(program, ['open', '--template', 'pool'])
-			const opens = calls.filter((c) => c[0] === 'herdr' && c[2] === 'create')
-			// The FIRST tab lands at the workspace placement — a real `workspace create`, not a tab in
-			// whatever workspace the caller happened to be sitting in.
-			expect(opens[0]?.slice(1, 3)).toEqual(['workspace', 'create'])
-			// ...and the second tab lands inside it.
-			expect(opens[1]?.slice(1, 3)).toEqual(['tab', 'create'])
-			// Nothing is ever split: a tab is not a split of another tab's pane.
-			expect(calls.some((c) => c[1] === 'pane' && c[2] === 'split')).toBe(false)
-		})
-
 		// The route that opened the region cannot change what the template means. `worktree add --template`
 		// has its region opened by the worktree verbs BEFORE the walk runs, so an option on `open` could
 		// only ever have covered tabs 2..N — and a group missing the workspace's own first tab is worse
@@ -2967,55 +2080,9 @@ describe('spec:cyber-mux/template', () => {
 				'shell',
 			])
 		})
-
-		it("worktree add --template builds a tabs template into the worktree's own workspace", async () => {
-			// This route already forces the workspace placement, so the tabs have a workspace to live in and
-			// need no second one. It differs from `open --template` in exactly one way: the region already
-			// exists, so the first tab builds INTO it rather than opening it.
-			const calls: string[][] = []
-			const store = fakeStore({ [repo('pool')]: POOL_TABS_SPLIT })
-			const worktreeOut = JSON.stringify({
-				result: {
-					root_pane: { pane_id: 'w9:root', tab_id: 'w9:t1', workspace_id: 'w9' },
-					workspace: { workspace_id: 'w9' },
-					worktree: { path: '/repo.worktrees/feat-x', branch: 'feat-x' },
-				},
-			})
-			const program = buildProgram({
-				env: { ...XDG, CYBER_MUX: 'herdr' },
-				exec: tabsExec(calls, { 'worktree create': worktreeOut }),
-				store,
-			})
-			await withArgv(['worktree', 'add', '--format', 'json'], () =>
-				run(program, ['worktree', 'add', '--branch', 'feat-x', '--template', 'pool', '--format', 'json']),
-			)
-
-			// The worktree's own workspace is the ONLY workspace: no second one is opened for the tabs.
-			expect(calls.find((c) => c[1] === 'worktree' && c[2] === 'create')).toBeDefined()
-			expect(calls.filter((c) => c[1] === 'workspace' && c[2] === 'create')).toEqual([])
-			// The first tab is built INTO that region: its split targets the workspace's own root pane.
-			const splits = calls.filter((c) => c[1] === 'pane' && c[2] === 'split')
-			expect(splits).toHaveLength(1)
-			expect(splits[0]).toContain('w9:root')
-			// Every later tab opens as a tab in it — one `tab create` for the one later tab.
-			const tabs = calls.filter((c) => c[1] === 'tab' && c[2] === 'create')
-			expect(tabs).toHaveLength(1)
-			expect(tabs[0]).toEqual(expect.arrayContaining(['--label', 'logs']))
-
-			// And the manifest is the whole workspace: both tabs' panes, one flat list, against the
-			// worktree root.
-			const out = JSON.parse(logs.join('\n'))
-			expect(out.root).toBe('/repo.worktrees/feat-x')
-			expect(out.workspace).toBe('w9')
-			expect(out.panes.map((p: { label: string; tab: number }) => [p.label, p.tab])).toEqual([
-				['edit', 0],
-				['test', 0],
-				['tail', 1],
-			])
-		})
 	})
 
-	describe('template save', () => {
+	describe('spec:cyber-mux/template/capture', () => {
 		/**
 		 * tmux, plus a region of three panes around `%1` — a live capture from tmux 3.6b, so the
 		 * divider column that makes the ratio arithmetic interesting is really there.
@@ -3040,35 +2107,7 @@ describe('spec:cyber-mux/template', () => {
 
 		const SAVE_ENV = { ...XDG, CYBER_MUX: 'tmux', CYBER_MUX_PANE: '%0' }
 
-		it('save writes to the repo templates directory and reports the path on stdout', async () => {
-			const calls: string[][] = []
-			const store = fakeStore({})
-			const program = buildProgram({ env: SAVE_ENV, exec: saveExec(calls), store })
-			await run(program, ['template', 'save', 'pool-3'])
-			// stdout carries the written path as a structured payload — a `path` field, and NO help block,
-			// because the caller's region is the whole workspace so nothing was left out. Programmatic
-			// composition reads the path from `--format json | jq -r .path`, not this bare line.
-			expect(logs).toEqual([`path  ${repo('pool-3')}`])
-			const written = JSON.parse(store.writes[repo('pool-3')]!)
-			expect(written.name).toBe('pool-3')
-			// The geometry survives: a 0.6 split right, with a 0.7 split down inside it.
-			expect(written.root.direction).toBe('right')
-			expect(written.root.ratio).toBe(0.6)
-			expect(written.root.first.ratio).toBe(0.7)
-			// The label someone set survives...
-			expect(written.root.second).toEqual({ type: 'pane', label: 'editor' })
-			// ...while the ONE pane whose title is merely the hostname gets no label at all. tmux defaults
-			// `pane_title` to the host, so capturing it blindly would hang `label: "zeta"` on every
-			// untouched pane. The hostname is checked against the whole written template below, so a broken
-			// filter cannot hide anywhere.
-			expect(written.root.first.first).toEqual({ type: 'pane' })
-			expect(JSON.stringify(written)).not.toContain('zeta')
-			// cwd is never in a template — it comes back as a relative dir under the captured root.
-			expect(written.root.first.second).toEqual({ type: 'pane', label: 'watcher', dir: 'api' })
-			expect(JSON.stringify(written)).not.toContain('/repo')
-		})
-
-		it('save captures the region around the calling pane, not the one the user is looking at', async () => {
+		it('capture-region-around-calling-pane', async () => {
 			// The same reason `open`'s split names its pane: tmux's default is the ACTIVE pane, which
 			// tracks the user rather than us. A bare `template save` must mean "the region I am in".
 			const calls: string[][] = []
@@ -3078,16 +2117,7 @@ describe('spec:cyber-mux/template', () => {
 			expect(calls.find((c) => c[1] === 'list-panes')?.[3]).toBe('%0')
 		})
 
-		it('--from captures the region around a named pane', async () => {
-			const calls: string[][] = []
-			const program = buildProgram({ env: SAVE_ENV, exec: saveExec(calls), store: fakeStore({}) })
-			await run(program, ['template', 'save', 'pool-3', '--from', '%7'])
-			// The REGION read (`list-panes -t <pane>`), not the `-a` server-wide lookup that resolves the
-			// locator first — the region around %7 is what the capture is asserted to be about.
-			expect(calls.find((c) => c[1] === 'list-panes' && c[2] === '-t')?.[3]).toBe('%7')
-		})
-
-		it('a captured template records in its own description that it is geometry only', async () => {
+		it('capture-description-notes-geometry-only', async () => {
 			// The honest limit of the verb. A saved template is a DRAFT, and the file says so itself,
 			// since `template list` will show it beside finished ones.
 			const store = fakeStore({})
@@ -3099,74 +2129,6 @@ describe('spec:cyber-mux/template', () => {
 			// ...and what the author still owes it — the half that makes the note actionable rather than
 			// just a disclaimer.
 			expect(written.description).toMatch(/command/)
-		})
-
-		it('--description replaces the draft note', async () => {
-			const store = fakeStore({})
-			const program = buildProgram({ env: SAVE_ENV, exec: saveExec([]), store })
-			await run(program, ['template', 'save', 'pool-3', '--description', 'the review pool'])
-			expect(JSON.parse(store.writes[repo('pool-3')]!).description).toBe('the review pool')
-		})
-
-		it('--to user writes to the user templates directory instead', async () => {
-			const store = fakeStore({})
-			const program = buildProgram({ env: SAVE_ENV, exec: saveExec([]), store })
-			await run(program, ['template', 'save', 'pool-3', '--to', 'user'])
-			expect(Object.keys(store.writes)).toEqual([user('pool-3')])
-		})
-
-		it('save refuses to overwrite an existing template, and reads no region finding out', async () => {
-			// A saved template is hand-edited afterwards (the commands are added by hand), so silently
-			// overwriting one would throw that work away. Checked BEFORE the capture, so the refusal
-			// is free.
-			catchExit()
-			captureStderr()
-			const calls: string[][] = []
-			const store = fakeStore({ [repo('pool-3')]: POOL_4 })
-			const program = buildProgram({ env: SAVE_ENV, exec: saveExec(calls), store })
-			await expect(run(program, ['template', 'save', 'pool-3'])).rejects.toThrow('exit:1')
-			expect(logs.join('\n')).toContain('--force to overwrite')
-			expect(store.writes).toEqual({})
-			expect(calls.some((c) => c[1] === 'list-panes')).toBe(false)
-		})
-
-		it('--force overwrites an existing template', async () => {
-			const store = fakeStore({ [repo('pool-3')]: POOL_4 })
-			const program = buildProgram({ env: SAVE_ENV, exec: saveExec([]), store })
-			await run(program, ['template', 'save', 'pool-3', '--force'])
-			expect(JSON.parse(store.writes[repo('pool-3')]!).root).toBeDefined()
-		})
-
-		it('save validates the name before touching the filesystem or the multiplexer', async () => {
-			// A name is a lookup key that must also be a filename — `../../etc/passwd` must never get
-			// as far as being a path.
-			catchExit()
-			captureStderr()
-			const calls: string[][] = []
-			const store = fakeStore({})
-			const program = buildProgram({ env: SAVE_ENV, exec: saveExec(calls), store })
-			// A usage error now — the same malformed-name family show refuses at 2.
-			await expect(run(program, ['template', 'save', '../escape'])).rejects.toThrow('exit:2')
-			expect(logs.join('\n')).toContain('invalid template name')
-			expect(store.writes).toEqual({})
-			expect(calls).toEqual([])
-		})
-
-		it('save with no pane to capture around refuses rather than guessing', async () => {
-			// No CYBER_MUX_PANE and no --from: this process is in no pane it can name. Falling back to the
-			// backend's own default would capture whichever region the USER happens to be looking at and
-			// save it under the name the caller asked for — a confident wrong answer, worse than none.
-			catchExit()
-			captureStderr()
-			const calls: string[][] = []
-			const store = fakeStore({})
-			const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'tmux' }, exec: saveExec(calls), store })
-			// A required parameter is missing, not an operation that failed — a usage error (exit 2).
-			await expect(run(program, ['template', 'save', 'pool-3'])).rejects.toThrow('exit:2')
-			expect(logs.join('\n')).toContain('--from')
-			expect(store.writes).toEqual({})
-			// It never asked the backend for a region either — the refusal precedes the read.
-			expect(calls.some((c) => c[1] === 'list-panes')).toBe(false)
 		})
 
 		it('a pane outside the captured root loses its dir and says so', async () => {
@@ -3190,7 +2152,7 @@ describe('spec:cyber-mux/template', () => {
 			expect(logs).toEqual([`path  ${repo('pool-2')}`])
 		})
 
-		it('a label two panes share is captured onto both, because a human chose it', async () => {
+		it('capture-shared-label-onto-both', async () => {
 			// Bound at CLI level for the same reason: the Then names what stderr does NOT carry.
 			const stderr = captureStderr()
 			const store = fakeStore({})
@@ -3232,31 +2194,9 @@ describe('spec:cyber-mux/template', () => {
 			// Nothing written — a refusal must not leave a half-truth on disk.
 			expect(store.writes).toEqual({})
 		})
-
-		it("a backend that cannot report its region's geometry refuses save cleanly", async () => {
-			// describeRegion is OPTIONAL on the seam. Both real backends implement it, so the only way to
-			// reach this branch is to take it away: stand in for a backend that never had it (a future
-			// screen adapter, which fails the template floor on three other counts too). Restored in
-			// `finally`, since the adapter is a module singleton every other test shares.
-			catchExit()
-			captureStderr()
-			const store = fakeStore({})
-			const original = tmuxMuxAdapter.regions
-			try {
-				delete (tmuxMuxAdapter as { regions?: unknown }).regions
-				const program = buildProgram({ env: SAVE_ENV, exec: saveExec([]), store })
-				await expect(run(program, ['template', 'save', 'pool-3'])).rejects.toThrow('exit:1')
-			} finally {
-				;(tmuxMuxAdapter as { regions?: unknown }).regions = original
-			}
-			// Names the backend on stdout, so the reader knows WHICH mux cannot do this rather than that save broke.
-			expect(logs.join('\n')).toContain('tmux')
-			// Refuses rather than degrading: there is no half-geometry to fall back to.
-			expect(store.writes).toEqual({})
-		})
 	})
 
-	describe('capturing a whole workspace', () => {
+	describe('spec:cyber-mux/template/capture', () => {
 		/**
 		 * herdr, and herdr DELIBERATELY rather than tmux: every claim below turns on the workspace tier
 		 * being real — "every tab of the caller's WORKSPACE", "the label its TAB carries" — and tmux
@@ -3321,87 +2261,11 @@ describe('spec:cyber-mux/template', () => {
 			}
 		}
 
-		const WS_3 = { tabs: TABS_3, panes: PANES_3 }
 		const WS_2 = { tabs: TABS_2, panes: PANES_2 }
 		/** In herdr's workspace w1, in tab t1 — the caller of every test below. */
 		const HERDR_ENV = { ...XDG, CYBER_MUX: 'herdr', CYBER_MUX_PANE: 'w1:p1' }
 
-		/** The tree each tab of the fixture must capture back as — its own, not its neighbour's. */
-		const TAB_1_TREE = {
-			type: 'split',
-			direction: 'right',
-			ratio: 0.6,
-			first: { type: 'pane', label: 'edit' },
-			second: { type: 'pane', label: 'api', dir: 'api' },
-		}
-		const TAB_2_TREE = { type: 'pane', dir: 'logs' }
-		const TAB_3_TREE = {
-			type: 'split',
-			direction: 'down',
-			ratio: 0.6,
-			first: { type: 'pane' },
-			second: { type: 'pane' },
-		}
-
-		it("save --workspace captures every tab of the caller's workspace", async () => {
-			const store = fakeStore({})
-			const program = buildProgram({ env: HERDR_ENV, exec: herdrWorkspaceExec([], WS_3), store })
-			await run(program, ['template', 'save', 'pool', '--workspace'])
-			const written = JSON.parse(store.writes[repo('pool')]!)
-			// The two-level form, not the one-level one — a workspace is tabs of panes.
-			expect(written.tabs).toHaveLength(3)
-			expect(written.root).toBeUndefined()
-			// One tab per LIVE tab, EACH WITH THAT TAB'S OWN TREE. Asserted per tab rather than by count:
-			// a capture that read the caller's region three times would have the right number of tabs and
-			// the wrong contents, which is the failure worth catching.
-			expect(written.tabs.map((t: { root: unknown }) => t.root)).toEqual([TAB_1_TREE, TAB_2_TREE, TAB_3_TREE])
-		})
-
-		it("save without --workspace captures only the caller's own region", async () => {
-			const store = fakeStore({})
-			const program = buildProgram({ env: HERDR_ENV, exec: herdrWorkspaceExec([], WS_3), store })
-			await run(program, ['template', 'save', 'pool'])
-			const written = JSON.parse(store.writes[repo('pool')]!)
-			// The default subject is UNCHANGED — the caller sits in t1, and t1 is all that is captured.
-			// Widening it silently would rewrite what `save` has always meant for every existing caller.
-			expect(written.root).toEqual(TAB_1_TREE)
-			expect(written.tabs).toBeUndefined()
-		})
-
-		it('a bare save in a multi-tab workspace says what it left out, in a help block on stdout', async () => {
-			const stderr = captureStderr()
-			const store = fakeStore({})
-			const program = buildProgram({ env: HERDR_ENV, exec: herdrWorkspaceExec([], WS_3), store })
-			await run(program, ['template', 'save', 'pool'])
-			// stdout is a structured payload: the `path` field, then a help entry naming the tabs left out
-			// and the command that captures them. Per axi/'s #9 the reveal rides on STDOUT in the payload,
-			// not stderr the agent never reads — so a caller cannot believe a 3-tab workspace round-trips
-			// from the 1-tab template they just saved.
-			expect(logs[0]).toBe(`path  ${repo('pool')}`)
-			const out = logs.join('\n')
-			expect(out).toContain('3 tabs')
-			expect(out).toContain('help[0]:')
-			expect(out).toContain('cyber-mux template save pool --workspace')
-			// Nothing on stderr — the note is load-bearing scope information, not a diagnostic.
-			expect(stderr.join('')).toBe('')
-		})
-
-		it('--format json reports the saved path and any help as one structured object', async () => {
-			const store = fakeStore({})
-			const program = buildProgram({ env: HERDR_ENV, exec: herdrWorkspaceExec([], WS_3), store })
-			await withArgv(['template', 'save', 'pool', '--format', 'json'], () =>
-				run(program, ['template', 'save', 'pool', '--format', 'json']),
-			)
-			// The machine-readable half of the same payload: one JSON object carrying the path and a help
-			// array, so a consumer reads `.path` and the next move from `.help` rather than parsing prose.
-			const payload = JSON.parse(logs.join('\n'))
-			expect(payload.path).toBe(repo('pool'))
-			expect(Array.isArray(payload.help)).toBe(true)
-			expect(payload.help[0].message).toContain('3 tabs')
-			expect(payload.help[0].command).toBe('cyber-mux template save pool --workspace')
-		})
-
-		it('a captured tab keeps the label its tab carries', async () => {
+		it('capture-tab-keeps-own-label', async () => {
 			const store = fakeStore({})
 			const program = buildProgram({ env: HERDR_ENV, exec: herdrWorkspaceExec([], WS_2), store })
 			await run(program, ['template', 'save', 'pool', '--workspace'])
@@ -3443,7 +2307,7 @@ describe('spec:cyber-mux/template', () => {
 			expect([...windows2.values()].some((w) => w.name.includes('pool - pool'))).toBe(false)
 		})
 
-		it('a captured workspace is still a draft carrying no command', async () => {
+		it('capture-workspace-still-draft-no-command', async () => {
 			const store = fakeStore({})
 			const program = buildProgram({ env: HERDR_ENV, exec: herdrWorkspaceExec([], WS_2), store })
 			await run(program, ['template', 'save', 'pool', '--workspace'])
@@ -3475,7 +2339,7 @@ describe('spec:cyber-mux/template', () => {
 			}
 		}
 
-		it('on a backend with no workspace tier, an untagged region captures as a single-tab workspace', async () => {
+		it('capture-untagged-region-single-tab-workspace', async () => {
 			const calls: string[][] = []
 			const store = fakeStore({})
 			const program = buildProgram({
@@ -3493,32 +2357,1556 @@ describe('spec:cyber-mux/template', () => {
 			// only over-collect every window on the server.
 			expect(calls.some((c) => c[1] === 'list-windows')).toBe(false)
 		})
+	})
+})
 
-		it("a backend that cannot enumerate a workspace's tabs refuses save --workspace cleanly", async () => {
-			// The `regions` geometry capability is OPTIONAL on the seam — describeRegion and describeWorkspace
-			// are bundled under it, so a backend that cannot enumerate a workspace's tabs is one with no
-			// `regions` at all. Both real backends have it, so the only way to reach this branch is to take it
-			// away: stand in for a backend that never had it. Restored in `finally` — the adapter is a module
-			// singleton every other test shares.
-			catchExit()
-			captureStderr()
-			const store = fakeStore({})
-			const original = tmuxMuxAdapter.regions
-			try {
-				delete (tmuxMuxAdapter as { regions?: unknown }).regions
-				const program = buildProgram({
-					env: { ...XDG, CYBER_MUX: 'tmux', CYBER_MUX_PANE: '%0' },
-					exec: untaggedTmuxExec([]),
-					store,
-				})
-				await expect(run(program, ['template', 'save', 'pool', '--workspace'])).rejects.toThrow('exit:1')
-			} finally {
-				;(tmuxMuxAdapter as { regions?: unknown }).regions = original
-			}
-			// Names the backend on stdout, so the reader learns WHICH mux cannot do this rather than that save broke.
-			expect(logs.join('\n')).toContain('tmux')
-			// An absent optional member is a refusal, never a guess — so nothing lands on disk.
-			expect(store.writes).toEqual({})
+// ─────────────────────────────────────────────────────────────────────────────
+// CLI-surface nodes, hoisted top-level so the scenario bridge binds them by the
+// first spec: segment. Each carries its own logs/spies and the helpers its moved
+// tests need; test bodies are verbatim, retitled to their @id: scenario slug.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('spec:cyber-mux/cli/detection', () => {
+	let logs: string[]
+
+	beforeEach(() => {
+		logs = []
+		vi.spyOn(console, 'log').mockImplementation((line: string) => {
+			logs.push(line)
 		})
+		vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+		vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+	})
+
+	afterEach(() => {
+		vi.restoreAllMocks()
+	})
+
+	it('@id:detection-doctor-reports-pin-hint', async () => {
+		const program = buildProgram({ env: { CYBER_MUX: 'tmux', CYBER_MUX_PANE: '%3' }, exec: noAncestry })
+		await run(program, ['doctor'])
+		const out = logs.join('\n')
+		expect(out).toContain('tmux')
+		expect(out).toContain('%3')
+		expect(out).toContain('backend')
+		expect(out).toContain('export CYBER_MUX=tmux CYBER_MUX_PANE=%3')
+	})
+
+	it('@id:detection-mode-reports-backend', async () => {
+		const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: noAncestry })
+		await run(program, ['mode'])
+		expect(logs).toEqual(['tmux'])
+	})
+
+	it('@id:detection-mode-none', async () => {
+		const program = buildProgram({ env: { CYBER_MUX: 'none' }, exec: noAncestry })
+		await expect(run(program, ['mode'])).resolves.toBeDefined()
+		expect(logs).toEqual(['none'])
+	})
+})
+
+describe('spec:cyber-mux/cli/driving', () => {
+	let logs: string[]
+
+	beforeEach(() => {
+		logs = []
+		vi.spyOn(console, 'log').mockImplementation((line: string) => {
+			logs.push(line)
+		})
+		vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+		vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+	})
+
+	afterEach(() => {
+		vi.restoreAllMocks()
+	})
+
+	it('@id:driving-send-keys-no-tokens', async () => {
+		const calls: string[][] = []
+		const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: fakeTmuxExec(calls) })
+		await expect(run(program, ['send', 'keys', '%3'])).rejects.toThrow()
+		expect(calls).toEqual([])
+	})
+
+	it('@id:driving-send-text-no-text', async () => {
+		const calls: string[][] = []
+		const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: fakeTmuxExec(calls) })
+		await expect(run(program, ['send', 'text', '%3'])).rejects.toThrow()
+		expect(calls).toEqual([])
+	})
+
+	it('@id:driving-send-bare-group', async () => {
+		const calls: string[][] = []
+		const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: fakeTmuxExec(calls) })
+		vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+		const out: string[] = []
+		vi.spyOn(process.stdout, 'write').mockImplementation((line) => {
+			out.push(String(line))
+			return true
+		})
+		vi.spyOn(process, 'exit').mockImplementation((code) => {
+			throw new Error(`exit:${code}`)
+		})
+		// Help naming text and keys as its subcommands is written to stdout, and it exits 2 — the status
+		// that separates bad input from a failed operation.
+		await expect(run(program, ['send'])).rejects.toThrow('exit:2')
+		const help = out.join('')
+		expect(help).toContain('text')
+		expect(help).toContain('keys')
+		expect(calls).toEqual([])
+	})
+
+	it('@id:driving-submit-no-pane', async () => {
+		const calls: string[][] = []
+		const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: fakeTmuxExec(calls) })
+		vi.spyOn(process, 'exit').mockImplementation((code) => {
+			throw new Error(`exit:${code}`)
+		})
+		// A missing required argument is a usage error (exit 2), naming the argument that is missing.
+		await expect(run(program, ['submit'])).rejects.toThrow('exit:2')
+		expect(logs.join('\n')).toContain('pane')
+		expect(calls).toEqual([])
+	})
+})
+
+describe('spec:cyber-mux/cli/placement', () => {
+	let logs: string[]
+
+	beforeEach(() => {
+		logs = []
+		vi.spyOn(console, 'log').mockImplementation((line: string) => {
+			logs.push(line)
+		})
+		vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+		vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+	})
+
+	afterEach(() => {
+		vi.restoreAllMocks()
+	})
+
+	// ── --at / --launch flag surface ──
+
+	it('@id:placement-at-restricted-values', async () => {
+		const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: noAncestry })
+		await expect(run(program, ['open', '--launch', 'claude', '--at', 'bogus'])).rejects.toThrow()
+	})
+
+	it('@id:placement-at-chooses-location', async () => {
+		const calls: string[][] = []
+		const exec = fakeTmuxExec(calls, { 'split-window': '%5\t@1' })
+		const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec })
+		await run(program, ['open', '--launch', 'claude', '--at', 'pane:down'])
+		expect(calls[0]?.[0]).toBe('split-window')
+		expect(calls[0]?.[1]).toBe('-v') // pane:down maps to a vertical split
+	})
+
+	it('@id:placement-launch-optional', async () => {
+		const calls: string[][] = []
+		const exec = fakeTmuxExec(calls, { 'new-window': '%2\t@1' })
+		const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec })
+		await run(program, ['open'])
+		expect(calls).toHaveLength(1)
+		expect(calls.some((c) => c[0] === 'send-keys')).toBe(false)
+	})
+
+	it('@id:placement-launch-handoff', async () => {
+		const calls: string[][] = []
+		const exec = fakeTmuxExec(calls, { 'new-window': '%2\t@1' })
+		const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec })
+		await run(program, ['open', '--launch', 'claude'])
+		// Typed literally, then Enter — not left staged unsent.
+		expect(calls[1]).toEqual(['send-keys', '-t', '%2', '-l', 'claude'])
+		expect(calls[2]).toEqual(['send-keys', '-t', '%2', 'Enter'])
+	})
+
+	// ── --env flag surface ──
+
+	/** git (rev-parse only), tmux (keyed by verb), herdr (keyed by first two args) on one fake. */
+	function envExec(calls: string[][], responses: Record<string, string | null> = {}): Exec {
+		return (cmd, args) => {
+			calls.push([cmd, ...args])
+			if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
+			if (cmd === 'tmux') return responses[args[0]!] ?? null
+			return responses[args.slice(0, 2).join(' ')] ?? null
+		}
+	}
+
+	/** herdr's worktree create/open envelope — carries the bound workspace and the worktree record. */
+	const herdrWorktreeOut = JSON.stringify({
+		result: {
+			root_pane: { pane_id: 'w9:p1', tab_id: 'w9:t1' },
+			workspace: { workspace_id: 'w9' },
+			worktree: { path: '/repo.worktrees/x', branch: 'my-feature' },
+		},
+	})
+
+	/** The tmux opens (new-window/split-window) a verb produced — where env rides as a native `-e`. */
+	function tmuxOpens(calls: string[][]) {
+		return calls.filter((c) => c[0] === 'tmux' && (c[1] === 'new-window' || c[1] === 'split-window'))
+	}
+
+	const TMUX_OPEN_RESPONSES = { 'new-window': '%20\t@1', 'split-window': '%9\t@1' }
+
+	// tmux carries env natively on every route: `open` sets it on the window, and the two worktree
+	// verbs have no herdr-style bind, so they fall back to `git worktree add` + a plain `open` that
+	// sets it just the same. The native `-e KEY=VALUE` is the proof.
+	it.each([
+		['open', ['open', '--at', 'workspace', '--env', 'ROLE=worker']],
+		['worktree add', ['worktree', 'add', '--branch', 'my-feature', '--env', 'ROLE=worker']],
+		['worktree open', ['worktree', 'open', '/repo.worktrees/x', '--env', 'ROLE=worker']],
+	])('@id:placement-env-sets-variable', async (_verb, argv) => {
+		const calls: string[][] = []
+		const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: envExec(calls, TMUX_OPEN_RESPONSES) })
+		await run(program, argv)
+		const opens = tmuxOpens(calls)
+		expect(opens.length).toBeGreaterThan(0)
+		expect(opens.some((c) => c.includes('-e') && c.includes('ROLE=worker'))).toBe(true)
+	})
+
+	it.each([
+		['open', ['open', '--at', 'workspace', '--env', 'ROLE=worker', '--env', 'TIER=gpu']],
+		['worktree add', ['worktree', 'add', '--branch', 'my-feature', '--env', 'ROLE=worker', '--env', 'TIER=gpu']],
+		['worktree open', ['worktree', 'open', '/repo.worktrees/x', '--env', 'ROLE=worker', '--env', 'TIER=gpu']],
+	])('@id:placement-env-repeatable', async (_verb, argv) => {
+		const calls: string[][] = []
+		const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: envExec(calls, TMUX_OPEN_RESPONSES) })
+		await run(program, argv)
+		const opens = tmuxOpens(calls)
+		expect(opens.some((c) => c.includes('ROLE=worker'))).toBe(true)
+		expect(opens.some((c) => c.includes('TIER=gpu'))).toBe(true)
+	})
+
+	it.each([
+		['open', ['open', '--at', 'workspace', '--env', 'ROLE=']],
+		['worktree add', ['worktree', 'add', '--branch', 'my-feature', '--env', 'ROLE=']],
+		['worktree open', ['worktree', 'open', '/repo.worktrees/x', '--env', 'ROLE=']],
+	])('@id:placement-env-empty-value-allowed', async (_verb, argv) => {
+		const calls: string[][] = []
+		const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: envExec(calls, TMUX_OPEN_RESPONSES) })
+		await run(program, argv)
+		// `${k}=${v}` with an empty value is exactly `ROLE=` — set, not rejected, not dropped.
+		expect(tmuxOpens(calls).some((c) => c.includes('ROLE='))).toBe(true)
+	})
+
+	// The split point is OBSERVABLE only where key and value are emitted separately — the shell
+	// prefix on herdr's worktree bind route, which quotes the VALUE alone: `env URL='k=v'` (first
+	// split) vs `env URL=k='v'` (last split) differ, so the two worktree rows pin the split. `open`
+	// never takes that route: on the native `-e KEY=VALUE` / `--env KEY=VALUE` flag the adapter
+	// emits `${key}=${value}`, which reassembles to `URL=k=v` whatever the split, and the OS
+	// re-splits on the first `=` regardless — so the pane carries URL=k=v either way. That is not a
+	// coverage hole but a property: for `open` the split is behaviorally invariant, so its row
+	// verifies its actual oracle — the =-bearing value reaches the pane intact — which a resolver
+	// that dropped the value or truncated at the first `=` would fail.
+	it.each<{ verb: string; drive: () => Promise<string[][]>; check: (calls: string[][]) => void }>([
+		{
+			verb: 'open',
+			drive: async () => {
+				const calls: string[][] = []
+				const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: envExec(calls, TMUX_OPEN_RESPONSES) })
+				await run(program, ['open', '--at', 'workspace', '--env', 'URL=k=v'])
+				return calls
+			},
+			check: (calls) => expect(tmuxOpens(calls).some((c) => c.includes('-e') && c.includes('URL=k=v'))).toBe(true),
+		},
+		{
+			verb: 'worktree add',
+			drive: async () => {
+				const calls: string[][] = []
+				const program = buildProgram({
+					env: { CYBER_MUX: 'herdr' },
+					exec: envExec(calls, { 'worktree create': herdrWorktreeOut }),
+				})
+				await run(program, ['worktree', 'add', '--branch', 'my-feature', '--env', 'URL=k=v', '--launch', 'claude'])
+				return calls
+			},
+			check: (calls) =>
+				expect(calls.find((c) => c[0] === 'herdr' && c[1] === 'pane' && c[2] === 'run')?.[4]).toBe(
+					"env URL='k=v' claude",
+				),
+		},
+		{
+			verb: 'worktree open',
+			drive: async () => {
+				const calls: string[][] = []
+				const program = buildProgram({
+					env: { CYBER_MUX: 'herdr' },
+					exec: envExec(calls, { 'worktree open': herdrWorktreeOut }),
+				})
+				await run(program, ['worktree', 'open', '/repo.worktrees/x', '--env', 'URL=k=v', '--launch', 'claude'])
+				return calls
+			},
+			check: (calls) =>
+				expect(calls.find((c) => c[0] === 'herdr' && c[1] === 'pane' && c[2] === 'run')?.[4]).toBe(
+					"env URL='k=v' claude",
+				),
+		},
+	])('@id:placement-env-value-splits-first-equals', async ({ drive, check }) => {
+		check(await drive())
+	})
+
+	// herdr's worktree bind is the one route that cannot set env at birth, so `--env` with a command
+	// to ride on rides in as an `env KEY=VALUE` prefix on the `pane run` the launch lowers to.
+	it.each([
+		[
+			'worktree add',
+			['worktree', 'add', '--branch', 'my-feature', '--env', 'ROLE=worker', '--launch', 'claude'],
+			'worktree create',
+		],
+		[
+			'worktree open',
+			['worktree', 'open', '/repo.worktrees/x', '--env', 'ROLE=worker', '--launch', 'claude'],
+			'worktree open',
+		],
+	])('@id:placement-env-rides-on-launch', async (_verb, argv, key) => {
+		const calls: string[][] = []
+		const program = buildProgram({ env: { CYBER_MUX: 'herdr' }, exec: envExec(calls, { [key]: herdrWorktreeOut }) })
+		await run(program, argv)
+		const paneRun = calls.find((c) => c[0] === 'herdr' && c[1] === 'pane' && c[2] === 'run')
+		expect(paneRun?.[4]).toBe("env ROLE='worker' claude")
+	})
+
+	it.each([
+		['worktree add', ['worktree', 'add', '--branch', 'my-feature', '--env', 'ROLE=worker'], 'worktree create'],
+		['worktree open', ['worktree', 'open', '/repo.worktrees/x', '--env', 'ROLE=worker'], 'worktree open'],
+	])('@id:placement-env-warns-no-launch', async (_verb, argv, key) => {
+		const stderr: string[] = []
+		vi.spyOn(process.stderr, 'write').mockImplementation((line) => {
+			stderr.push(String(line))
+			return true
+		})
+		const calls: string[][] = []
+		const program = buildProgram({ env: { CYBER_MUX: 'herdr' }, exec: envExec(calls, { [key]: herdrWorktreeOut }) })
+		await run(program, argv)
+		// The variable genuinely did not land, and the caller is told which one — not left to guess.
+		expect(stderr.join('')).toContain('ROLE')
+		expect(calls.some((c) => c[0] === 'herdr' && c[1] === 'pane' && c[2] === 'run')).toBe(false)
+	})
+
+	it.each([
+		['open', ['open', '--template', 'pool-4', '--env', 'ROLE=worker']],
+		['worktree add', ['worktree', 'add', '--branch', 'my-feature', '--template', 'pool-4', '--env', 'ROLE=worker']],
+	])('@id:placement-env-refused-with-template', async (_verb, argv) => {
+		const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: noAncestry })
+		await expect(run(program, argv)).rejects.toThrow()
+	})
+
+	it.each([
+		['open', 'ROLE'],
+		['open', '=worker'],
+		['worktree add', 'ROLE'],
+		['worktree add', '=worker'],
+		['worktree open', 'ROLE'],
+		['worktree open', '=worker'],
+	])('@id:placement-env-malformed-rejected', async (verb, bad) => {
+		const argv =
+			verb === 'open'
+				? ['open', '--env', bad]
+				: verb === 'worktree add'
+					? ['worktree', 'add', '--branch', 'my-feature', '--env', bad]
+					: ['worktree', 'open', '/repo.worktrees/x', '--env', bad]
+		const calls: string[][] = []
+		const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: envExec(calls) })
+		await expect(run(program, argv)).rejects.toThrow()
+		// Rejected in the arg parser, before the action runs — so no checkout, no pane, no exec at all.
+		expect(calls).toEqual([])
+	})
+})
+
+describe('spec:cyber-mux/cli/lookup', () => {
+	const REPO_DIR = '/repo/.cyber-mux/templates'
+	const XDG = { XDG_CONFIG_HOME: '/home/u/.config' }
+	function repo(name: string): string {
+		return `${REPO_DIR}/${name}.json`
+	}
+
+	let logs: string[]
+
+	beforeEach(() => {
+		logs = []
+		vi.spyOn(console, 'log').mockImplementation((line: string) => {
+			logs.push(line)
+		})
+		vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+		vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+	})
+
+	afterEach(() => {
+		vi.restoreAllMocks()
+	})
+
+	function catchExit() {
+		return vi.spyOn(process, 'exit').mockImplementation((code) => {
+			throw new Error(`exit:${code}`)
+		})
+	}
+
+	function captureStderr(): string[] {
+		const lines: string[] = []
+		vi.spyOn(process.stderr, 'write').mockImplementation((line) => {
+			lines.push(String(line))
+			return true
+		})
+		return lines
+	}
+
+	/** A `TemplateStore` over an in-memory file map — no templates on disk, ever. */
+	function fakeStore(
+		files: Record<string, unknown>,
+	): TemplateStore & { reads: string[]; writes: Record<string, string> } {
+		const raw: Record<string, string> = {}
+		for (const [path, body] of Object.entries(files)) {
+			raw[path] = typeof body === 'string' ? body : JSON.stringify(body)
+		}
+		const reads: string[] = []
+		const writes: Record<string, string> = {}
+		return {
+			reads,
+			writes,
+			read(path) {
+				reads.push(path)
+				return raw[path] ?? null
+			},
+			list(dir) {
+				return Object.keys(raw)
+					.filter((p) => p.startsWith(`${dir}/`))
+					.map((p) => p.slice(dir.length + 1, -'.json'.length))
+					.sort()
+			},
+			dirExists: () => true,
+			write(path, contents) {
+				writes[path] = contents
+				raw[path] = contents
+			},
+		}
+	}
+
+	/** git (rev-parse + worktree) and tmux on one fake, each call recorded as [cmd, ...args]. */
+	function repoExec(calls: string[][], responses: Record<string, string> = {}): Exec {
+		let n = 0
+		return (cmd, args) => {
+			calls.push([cmd, ...args])
+			if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
+			if (cmd === 'tmux') {
+				if (args[0] !== 'new-window' && args[0] !== 'split-window') return ''
+				const id = n++
+				return args.includes('#{pane_id}\t#{window_id}') ? `%${id}\t@${id}` : `%${id}`
+			}
+			const key = args.slice(0, 2).join(' ')
+			if (key === 'pane split') return JSON.stringify({ result: { pane: { pane_id: `w9:p${n++}`, tab_id: 'w9:t1' } } })
+			return responses[key] ?? ''
+		}
+	}
+
+	// ── unknown-flag scope + partial apply, driven at the CLI (template family) ──
+
+	it('@id:lookup-unknown-flag-subcommand-scope', async () => {
+		// `--force` is a flag only `template save` defines; on `template list` it is unknown. Validating
+		// against the GROUP's union would accept it here and silently drop it.
+		catchExit()
+		const store = fakeStore({})
+		const program = buildProgram({ env: XDG, exec: repoExec([]), store })
+		await expect(run(program, ['template', 'list', '--force'])).rejects.toThrow('exit:2')
+		const out = logs.join('\n')
+		expect(out).toContain('--force')
+		expect(out).toContain('--format')
+		expect(out).not.toContain('--from')
+		expect(out).not.toContain('--workspace')
+	})
+
+	it('@id:lookup-partial-apply-one-payload', async () => {
+		catchExit()
+		const calls: string[][] = []
+		// A 4-pane comb: the region, then three splits. The THIRD split is refused.
+		let splits = 0
+		const exec: Exec = (cmd, args) => {
+			calls.push([cmd, ...args])
+			if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
+			if (args[0] === 'new-window') return '%0\t@0'
+			if (args[0] === 'split-window') return ++splits === 3 ? null : `%${splits}\t@0`
+			return ''
+		}
+		const store = fakeStore({
+			[repo('render-farm')]: {
+				name: 'render-farm',
+				arrange: 'even-horizontal',
+				panes: [{ label: 'a' }, { label: 'b' }, { label: 'c' }, { label: 'd' }],
+			},
+		})
+		const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'tmux' }, exec, store })
+		await withArgv(['open', '--template', 'render-farm', '--format', 'json'], async () => {
+			await expect(run(program, ['open', '--template', 'render-farm', '--format', 'json'])).rejects.toThrow('exit:1')
+		})
+		const manifest = JSON.parse(logs.join('\n'))
+		expect(manifest.panes.map((p: { label: string }) => p.label)).toEqual(['a', 'b', 'c'])
+		expect(calls.some((c) => c[1] === 'kill-pane')).toBe(false)
+	})
+
+	// ── the pane-addressing verbs and the shared error contract (pane-server family) ──
+
+	/** The hostname tmux hands an unnamed pane's title — the value the label rule must reject. */
+	const HOST = 'zeta'
+
+	interface FakePane {
+		id: string
+		label?: string
+		cwd?: string
+	}
+
+	function paneServer(calls: string[][], panes: FakePane[], responses: Record<string, string | null> = {}): Exec {
+		return (_cmd, args) => {
+			calls.push(args)
+			if (args[0] === 'list-panes' && args[1] === '-a') {
+				const fmt = args[args.indexOf('-F') + 1]
+				if (fmt === '#{pane_id}') return panes.map((p) => p.id).join('\n')
+				if (fmt === '#{pane_id} #{session_name} #{window_id}') return panes.map((p) => `${p.id} main @1`).join('\n')
+				return panes.map((p) => [p.id, 'zsh', p.cwd ?? '/repo', p.label ?? HOST, HOST].join('\t')).join('\n')
+			}
+			if (args[0] === 'list-panes' && args[1] === '-t') {
+				const of = panes.find((p) => p.id === args[2])
+				return of ? [of.id, '0', '0', '80', '24', of.cwd ?? '/repo', of.label ?? HOST, HOST].join('\t') : null
+			}
+			return responses[args[0]!] ?? null
+		}
+	}
+
+	const TMUX = { CYBER_MUX: 'tmux' }
+	/** Three panes, one of them the intended target — the other two are the ones nothing may touch. */
+	const THREE: FakePane[] = [
+		{ id: '%1', label: 'worker', cwd: '/repo/a' },
+		{ id: '%2', label: 'sidebar', cwd: '/repo/b' },
+		{ id: '%3', label: 'logs', cwd: '/repo/c' },
+	]
+
+	/** Which pane ids a run actually touched — the args of every call except the resolution read. */
+	function touched(calls: string[][]): string[] {
+		const ids = THREE.map((p) => p.id)
+		return drives(calls)
+			.flat()
+			.filter((a) => ids.includes(a))
+	}
+
+	/** A store with no templates — enough for `template save`, which only ever writes. */
+	function saveStore(): TemplateStore & { writes: Record<string, string> } {
+		const writes: Record<string, string> = {}
+		return {
+			read: () => null,
+			list: () => [],
+			write: (path, body) => {
+				writes[path] = body
+			},
+			dirExists: () => true,
+			writes,
+		}
+	}
+
+	const VERBS: { verb: string; argv: string[]; store?: boolean }[] = [
+		{ verb: 'cyber-mux read', argv: ['read', 'worker'] },
+		{ verb: 'cyber-mux submit', argv: ['submit', 'worker'] },
+		{ verb: 'cyber-mux exists', argv: ['exists', 'worker'] },
+		{ verb: 'cyber-mux focus', argv: ['focus', 'worker'] },
+		{ verb: 'cyber-mux close', argv: ['close', 'worker'] },
+		{ verb: 'cyber-mux send text', argv: ['send', 'text', 'worker', 'hi'] },
+		{ verb: 'cyber-mux send keys', argv: ['send', 'keys', 'worker', 'Up'] },
+		{
+			verb: 'cyber-mux template save --from',
+			argv: ['template', 'save', 'pool-3', '--from', 'worker'],
+			store: true,
+		},
+	]
+
+	/** The same three panes, all sharing one label — the ambiguity every verb must refuse. */
+	const ALL_WORKER: FakePane[] = [
+		{ id: '%1', label: 'worker', cwd: '/repo/a' },
+		{ id: '%2', label: 'worker', cwd: '/repo/b' },
+		{ id: '%3', label: 'worker', cwd: '/repo/c' },
+	]
+
+	it.each(VERBS)('@id:lookup-ambiguous-locator-every-verb', async ({ argv, store }) => {
+		const calls: string[][] = []
+		const exit = catchExit()
+		captureStderr()
+		const program = buildProgram({
+			env: store ? { ...TMUX, XDG_CONFIG_HOME: '/home/u/.config' } : TMUX,
+			exec: paneServer(calls, ALL_WORKER, { 'capture-pane': 'out', 'list-panes': '', 'rev-parse': '/repo/.git' }),
+			store: store ? saveStore() : undefined,
+		})
+		await expect(run(program, argv)).rejects.toThrow('exit:2')
+		expect(logs.join('\n')).toContain('ambiguous-pane')
+		expect(exit).toHaveBeenCalledWith(2)
+		expect(touched(calls)).toEqual([])
+	})
+
+	it('@id:lookup-ambiguity-report-candidate-details', async () => {
+		catchExit()
+		captureStderr()
+		const program = buildProgram({ env: TMUX, exec: paneServer([], ALL_WORKER) })
+		await expect(run(program, ['close', 'worker'])).rejects.toThrow('exit:2')
+		const err = logs.join('\n')
+		for (const c of ALL_WORKER) {
+			expect(err).toContain(c.id)
+			expect(err).toContain(c.cwd!)
+		}
+		expect(err).toContain('worker')
+		const retryCalls: string[][] = []
+		const retry = buildProgram({ env: TMUX, exec: paneServer(retryCalls, ALL_WORKER) })
+		await run(retry, ['close', '%2'])
+		expect(drives(retryCalls)).toEqual([['kill-pane', '-t', '%2']])
+	})
+
+	it('@id:lookup-ambiguity-report-stdout-only', async () => {
+		const exit = catchExit()
+		const stderr = captureStderr()
+		const program = buildProgram({
+			env: TMUX,
+			exec: paneServer(
+				[],
+				[
+					{ id: '%1', label: 'worker', cwd: '/repo/a' },
+					{ id: '%2', label: 'worker', cwd: '/repo/b' },
+				],
+			),
+		})
+		await expect(run(program, ['close', 'worker'])).rejects.toThrow('exit:2')
+		expect(logs.join('\n')).toContain('ambiguous-pane')
+		expect(stderr.join('')).toBe('')
+		expect(exit).toHaveBeenCalledWith(2)
+	})
+
+	it('@id:lookup-ambiguity-json-format', async () => {
+		catchExit()
+		const stderr = captureStderr()
+		const panes: FakePane[] = [
+			{ id: '%1', label: 'worker', cwd: '/repo/a' },
+			{ id: '%2', label: 'worker', cwd: '/repo/b' },
+		]
+		const program = buildProgram({ env: TMUX, exec: paneServer([], panes) })
+		await withArgv(['close', 'worker', '--format', 'json'], () =>
+			expect(run(program, ['close', 'worker', '--format', 'json'])).rejects.toThrow('exit:2'),
+		)
+		const parsed = JSON.parse(logs.join('\n'))
+		expect(parsed.error.code).toBe('ambiguous-pane')
+		expect(parsed.error.candidates).toEqual([
+			{ id: '%1', label: 'worker', cwd: '/repo/a' },
+			{ id: '%2', label: 'worker', cwd: '/repo/b' },
+		])
+		expect(stderr.join('')).toBe('')
+	})
+
+	it.each([
+		{ world: 'exactly one live pane matches the locator', panes: THREE, stdout: 'live', code: 0 },
+		{ world: 'no live pane matches the locator', panes: [{ id: '%2', label: 'sidebar' }], stdout: 'gone', code: 1 },
+		{ world: 'two or more live panes match the locator', panes: ALL_WORKER, stdout: 'nothing', code: 2 },
+	])('@id:lookup-exists-outcomes-by-exit-code', async ({ panes, stdout, code }) => {
+		const exit = catchExit()
+		captureStderr()
+		const program = buildProgram({ env: TMUX, exec: paneServer([], panes) })
+		const running = run(program, ['exists', 'worker'])
+		if (code === 0) {
+			await running
+			expect(exit).not.toHaveBeenCalled()
+		} else {
+			await expect(running).rejects.toThrow(`exit:${code}`)
+			expect(exit).toHaveBeenCalledWith(code)
+		}
+		if (stdout === 'nothing') {
+			expect(logs.join('\n')).toContain('ambiguous-pane')
+			expect(logs).not.toContain('live')
+			expect(logs).not.toContain('gone')
+		} else {
+			expect(logs).toEqual([stdout])
+		}
+	})
+
+	it('@id:lookup-exists-ambiguous-reports-candidates', async () => {
+		catchExit()
+		captureStderr()
+		const program = buildProgram({
+			env: TMUX,
+			exec: paneServer(
+				[],
+				[
+					{ id: '%1', label: 'worker', cwd: '/repo/a' },
+					{ id: '%2', label: 'worker', cwd: '/repo/b' },
+				],
+			),
+		})
+		await expect(run(program, ['exists', 'worker'])).rejects.toThrow('exit:2')
+		const err = logs.join('\n')
+		expect(err).toContain('ambiguous-pane')
+		expect(err).toContain('%1')
+		expect(err).toContain('%2')
+		expect(err).not.toContain('live')
+		expect(err).not.toContain('gone')
+	})
+
+	/** A tmux whose list-panes reports `panes`, but whose every other command THROWS a backend diagnostic. */
+	function throwingExec(panes: string, diagnostic: string): Exec {
+		return (_cmd, args) => {
+			if (args[0] === 'list-panes') return panes
+			throw new Error(diagnostic)
+		}
+	}
+
+	it.each([
+		{
+			world: 'no multiplexer this process is inside',
+			make: () => buildProgram({ env: {}, exec: noAncestry }),
+			argv: ['list'],
+			code: 'no-mux',
+			exit: 1,
+		},
+		{
+			world: 'a locator matching no live pane',
+			make: () => buildProgram({ env: TMUX, exec: throwingExec('', "can't find pane: %99") }),
+			argv: ['focus', '%99'],
+			code: 'pane-not-found',
+			exit: 1,
+		},
+		{
+			world: 'two live panes labeled worker',
+			make: () => buildProgram({ env: TMUX, exec: paneServer([], ALL_WORKER) }),
+			argv: ['read', 'worker'],
+			code: 'ambiguous-pane',
+			exit: 2,
+		},
+	])('@id:lookup-failure-structured-error-per-code', async ({ make, argv, code, exit }) => {
+		const errExit = catchExit()
+		const stderr = captureStderr()
+		await expect(run(make(), argv)).rejects.toThrow(`exit:${exit}`)
+		const out = logs.join('\n')
+		expect(out).toContain(code)
+		expect(stderr.join('')).toBe('')
+		expect(errExit).toHaveBeenCalledWith(exit)
+		expect(out).toContain('help:')
+		expect(out).not.toContain('see --help')
+	})
+
+	it('@id:lookup-failure-codes-distinct', async () => {
+		catchExit()
+		captureStderr()
+		await withArgv(['read', 'worker', '--format', 'json'], () =>
+			expect(
+				run(buildProgram({ env: TMUX, exec: paneServer([], ALL_WORKER) }), ['read', 'worker', '--format', 'json']),
+			).rejects.toThrow('exit:2'),
+		)
+		const ambiguousCode = JSON.parse(logs.join('\n')).error.code
+		logs.length = 0
+		await withArgv(['list', '--format', 'json'], () =>
+			expect(run(buildProgram({ env: {}, exec: noAncestry }), ['list', '--format', 'json'])).rejects.toThrow('exit:1'),
+		)
+		const noMuxCode = JSON.parse(logs.join('\n')).error.code
+		expect(ambiguousCode).toBe('ambiguous-pane')
+		expect(noMuxCode).toBe('no-mux')
+		expect(ambiguousCode).not.toBe(noMuxCode)
+	})
+
+	it.each([['read'], ['focus'], ['send', 'text']])('@id:lookup-missing-arg-usage-error', async (...verb) => {
+		const calls: string[][] = []
+		const errExit = catchExit()
+		await expect(run(buildProgram({ env: TMUX, exec: paneServer(calls, THREE) }), verb)).rejects.toThrow('exit:2')
+		expect(errExit).toHaveBeenCalledWith(2)
+		expect(logs.join('\n')).toContain('pane')
+		expect(drives(calls)).toEqual([])
+	})
+
+	it('@id:lookup-unknown-flag-lists-valid', async () => {
+		const calls: string[][] = []
+		const errExit = catchExit()
+		await expect(run(buildProgram({ env: TMUX, exec: paneServer(calls, THREE) }), ['list', '--nope'])).rejects.toThrow(
+			'exit:2',
+		)
+		expect(errExit).toHaveBeenCalledWith(2)
+		const out = logs.join('\n')
+		expect(out).toContain('--nope')
+		expect(out).toContain('--format')
+		expect(drives(calls)).toEqual([])
+	})
+
+	it('@id:lookup-help-never-unknown-flag', async () => {
+		const errExit = catchExit()
+		captureStderr()
+		const out: string[] = []
+		vi.spyOn(process.stdout, 'write').mockImplementation((line) => {
+			out.push(String(line))
+			return true
+		})
+		await expect(run(buildProgram({ env: TMUX, exec: paneServer([], THREE) }), ['list', '--help'])).rejects.toThrow(
+			'exit:0',
+		)
+		expect(errExit).toHaveBeenCalledWith(0)
+		expect(`${out.join('')}${logs.join('\n')}`).not.toContain('unknown')
+	})
+
+	it('@id:lookup-error-honors-format-json', async () => {
+		catchExit()
+		const stderr = captureStderr()
+		await withArgv(['list', '--format', 'json'], () =>
+			expect(run(buildProgram({ env: {}, exec: noAncestry }), ['list', '--format', 'json'])).rejects.toThrow('exit:1'),
+		)
+		const parsed = JSON.parse(logs.join('\n'))
+		expect(parsed.error.code).toBe('no-mux')
+		expect(stderr.join('')).toBe('')
+	})
+
+	it('@id:lookup-failed-stdout-error-alone', async () => {
+		catchExit()
+		captureStderr()
+		const out: string[] = []
+		vi.spyOn(process.stdout, 'write').mockImplementation((line) => {
+			out.push(String(line))
+			return true
+		})
+		await expect(
+			run(buildProgram({ env: TMUX, exec: throwingExec('', 'capture-pane: no such pane') }), ['read', '%1']),
+		).rejects.toThrow('exit:1')
+		expect(out).toEqual([])
+		expect(logs.join('\n')).toContain('pane-not-found')
+	})
+
+	it('@id:lookup-read-writes-raw-bytes', async () => {
+		const out: string[] = []
+		vi.spyOn(process.stdout, 'write').mockImplementation((line) => {
+			out.push(String(line))
+			return true
+		})
+		const program = buildProgram({
+			env: TMUX,
+			exec: paneServer([], [{ id: '%1', cwd: '/repo' }], { 'capture-pane': 'HELLO' }),
+		})
+		await run(program, ['read', '%1'])
+		expect(out.join('')).toContain('HELLO')
+		expect(logs.join('\n')).toBe('')
+	})
+
+	it('@id:lookup-read-lines-caps-trailing', async () => {
+		const calls: string[][] = []
+		vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+		const program = buildProgram({
+			env: TMUX,
+			exec: paneServer(calls, [{ id: '%1', cwd: '/repo' }], { 'capture-pane': 'x' }),
+		})
+		await run(program, ['read', '%1', '--lines', '5'])
+		expect(calls).toContainEqual(['capture-pane', '-p', '-t', '%1', '-S', '-5'])
+	})
+
+	it('@id:lookup-focus-beams-view', async () => {
+		const calls: string[][] = []
+		const out: string[] = []
+		vi.spyOn(process.stdout, 'write').mockImplementation((line) => {
+			out.push(String(line))
+			return true
+		})
+		const program = buildProgram({ env: TMUX, exec: paneServer(calls, [{ id: '%1', cwd: '/repo' }]) })
+		await run(program, ['focus', '%1'])
+		expect(calls.some((c) => c[0] === 'switch-client')).toBe(true)
+		expect(calls).toContainEqual(['select-pane', '-t', '%1'])
+		expect(out.join('')).toBe('')
+		expect(logs.join('\n')).toBe('')
+	})
+
+	it('@id:lookup-error-no-backend-leak', async () => {
+		catchExit()
+		captureStderr()
+		const diagnostic = "can't find pane: %99 — tmux server error 3"
+		await expect(
+			run(buildProgram({ env: TMUX, exec: throwingExec('', diagnostic) }), ['focus', '%99']),
+		).rejects.toThrow('exit:1')
+		const out = logs.join('\n')
+		expect(out).toContain('pane-not-found')
+		expect(out).toContain('cyber-mux list')
+		expect(out).not.toContain("can't find pane")
+		expect(out).not.toContain('tmux server error')
+	})
+
+	it('@id:lookup-worktree-catchall-no-leak', async () => {
+		catchExit()
+		captureStderr()
+		const diagnostic = 'no server running on /tmp/tmux-501/default'
+		const exec: Exec = (cmd, args) => {
+			if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
+			exec.lastError = diagnostic
+			return null
+		}
+		await expect(
+			run(buildProgram({ env: TMUX, exec }), ['worktree', 'add', '--branch', 'my-feature', '--at', 'pane:right']),
+		).rejects.toThrow('exit:1')
+		const out = logs.join('\n')
+		expect(out).toContain('worktree-failed')
+		expect(out).not.toContain('tmux')
+		expect(out).not.toContain(diagnostic)
+	})
+})
+
+describe('spec:cyber-mux/cli/template/apply', () => {
+	const REPO_DIR = '/repo/.cyber-mux/templates'
+	const XDG = { XDG_CONFIG_HOME: '/home/u/.config' }
+	function repo(name: string): string {
+		return `${REPO_DIR}/${name}.json`
+	}
+
+	const POOL_4 = { name: 'pool-4', arrange: 'tiled', panes: [{ label: 'w1' }, { label: 'w2' }] }
+	const AGENT_POOL_3 = {
+		name: 'agent-pool-3',
+		root: {
+			type: 'split',
+			direction: 'right',
+			ratio: 0.5,
+			first: { type: 'pane', label: 'planner', command: 'claude' },
+			second: {
+				type: 'split',
+				direction: 'down',
+				ratio: 0.5,
+				first: { type: 'pane', label: 'worker-a', command: 'claude' },
+				second: { type: 'pane', label: 'worker-b', command: 'claude' },
+			},
+		},
+	}
+	const POOL_TABS = {
+		name: 'pool',
+		tabs: [
+			{ label: 'editor', panes: [{ label: 'edit' }] },
+			{ label: 'logs', panes: [{ label: 'tail' }] },
+		],
+	}
+	const POOL_TABS_SPLIT = {
+		name: 'pool',
+		tabs: [
+			{ label: 'editor', arrange: 'even-horizontal', panes: [{ label: 'edit' }, { label: 'test' }] },
+			{ label: 'logs', panes: [{ label: 'tail' }] },
+		],
+	}
+	const worktreeOut = JSON.stringify({
+		result: {
+			root_pane: { pane_id: 'w9:root', tab_id: 'w9:t1' },
+			workspace: { workspace_id: 'w9' },
+			worktree: { path: '/repo.worktrees/feat-x', branch: 'feat-x' },
+		},
+	})
+
+	let logs: string[]
+
+	beforeEach(() => {
+		logs = []
+		vi.spyOn(console, 'log').mockImplementation((line: string) => {
+			logs.push(line)
+		})
+		vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+		vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+	})
+
+	afterEach(() => {
+		vi.restoreAllMocks()
+	})
+
+	function catchExit() {
+		return vi.spyOn(process, 'exit').mockImplementation((code) => {
+			throw new Error(`exit:${code}`)
+		})
+	}
+
+	function captureStderr(): string[] {
+		const lines: string[] = []
+		vi.spyOn(process.stderr, 'write').mockImplementation((line) => {
+			lines.push(String(line))
+			return true
+		})
+		return lines
+	}
+
+	function fakeStore(
+		files: Record<string, unknown>,
+	): TemplateStore & { reads: string[]; writes: Record<string, string> } {
+		const raw: Record<string, string> = {}
+		for (const [path, body] of Object.entries(files)) {
+			raw[path] = typeof body === 'string' ? body : JSON.stringify(body)
+		}
+		const reads: string[] = []
+		const writes: Record<string, string> = {}
+		return {
+			reads,
+			writes,
+			read(path) {
+				reads.push(path)
+				return raw[path] ?? null
+			},
+			list(dir) {
+				return Object.keys(raw)
+					.filter((p) => p.startsWith(`${dir}/`))
+					.map((p) => p.slice(dir.length + 1, -'.json'.length))
+					.sort()
+			},
+			dirExists: () => true,
+			write(path, contents) {
+				writes[path] = contents
+				raw[path] = contents
+			},
+		}
+	}
+
+	function repoExec(calls: string[][], responses: Record<string, string> = {}): Exec {
+		let n = 0
+		return (cmd, args) => {
+			calls.push([cmd, ...args])
+			if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
+			if (cmd === 'tmux') {
+				if (args[0] !== 'new-window' && args[0] !== 'split-window') return ''
+				const id = n++
+				return args.includes('#{pane_id}\t#{window_id}') ? `%${id}\t@${id}` : `%${id}`
+			}
+			const key = args.slice(0, 2).join(' ')
+			if (key === 'pane split') return JSON.stringify({ result: { pane: { pane_id: `w9:p${n++}`, tab_id: 'w9:t1' } } })
+			return responses[key] ?? ''
+		}
+	}
+
+	/** herdr with a real workspace/tab tier — so `workspace create` vs `tab create` is observable. */
+	function tabsExec(calls: string[][], responses: Record<string, string> = {}): Exec {
+		let n = 0
+		let tab = 0
+		return (cmd, args) => {
+			calls.push([cmd, ...args])
+			if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
+			const key = args.slice(0, 2).join(' ')
+			if (responses[key]) return responses[key]
+			if (key === 'workspace create' || key === 'tab create') {
+				tab++
+				return JSON.stringify({
+					result: { root_pane: { pane_id: `w1:p${n++}`, tab_id: `w1:t${tab}`, workspace_id: 'w1' } },
+				})
+			}
+			if (key === 'pane split') {
+				return JSON.stringify({
+					result: { pane: { pane_id: `w1:p${n++}`, tab_id: `w1:t${tab}`, workspace_id: 'w1' } },
+				})
+			}
+			return ''
+		}
+	}
+
+	// ── The read verbs — list, show, validate ──
+
+	it.each([
+		['list', ['template', 'list']],
+		['show pool-4', ['template', 'show', 'pool-4']],
+		['validate pool-4', ['template', 'validate', 'pool-4']],
+	])('@id:template-apply-read-verbs-no-mux', async (_name, argv) => {
+		// Their subject is a FILE, the same way `worktree list`'s subject is git.
+		const calls: string[][] = []
+		const store = fakeStore({ [repo('pool-4')]: POOL_4 })
+		const program = buildProgram({ env: XDG, exec: repoExec(calls), store })
+		await run(program, argv)
+		expect(calls.every((c) => c[0] === 'git')).toBe(true)
+	})
+
+	it('@id:template-apply-file-skips-resolution', async () => {
+		const store = fakeStore({ './scratch/pool.json': { name: 'pool', panes: [{ label: 'a' }] } })
+		const program = buildProgram({ env: XDG, exec: repoExec([]), store })
+		await run(program, ['template', 'show', '--file', './scratch/pool.json'])
+		expect(store.reads).toEqual(['./scratch/pool.json'])
+		expect(logs.join('\n')).toContain('"name": "pool"')
+	})
+
+	it('@id:template-apply-show-desugar-tree', async () => {
+		const store = fakeStore({ [repo('pool-4')]: POOL_4 })
+		const program = buildProgram({ env: XDG, exec: repoExec([]), store })
+		await run(program, ['template', 'show', 'pool-4', '--desugar'])
+		expect(JSON.parse(logs.join('\n'))).toEqual({
+			type: 'split',
+			direction: 'right',
+			ratio: 0.5,
+			first: { type: 'pane', label: 'w1' },
+			second: { type: 'pane', label: 'w2' },
+		})
+	})
+
+	it('@id:template-apply-validate-exit-0', async () => {
+		const exit = catchExit()
+		const stderr = captureStderr()
+		const store = fakeStore({ [repo('pool-4')]: POOL_4 })
+		const program = buildProgram({ env: XDG, exec: repoExec([]), store })
+		await run(program, ['template', 'validate', 'pool-4'])
+		expect(exit).not.toHaveBeenCalled()
+		expect(stderr).toEqual([])
+	})
+
+	// ── Applying is --template, the exact sibling of --launch ──
+
+	it('@id:template-apply-template-launch-exclusive', async () => {
+		catchExit()
+		const store = fakeStore({ [repo('pool-4')]: POOL_4 })
+		const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'tmux' }, exec: repoExec([]), store })
+		await expect(run(program, ['open', '--template', 'pool-4', '--launch', 'claude'])).rejects.toThrow('exit:2')
+	})
+
+	it('@id:template-apply-at-defaults-workspace', async () => {
+		const calls: string[][] = []
+		const store = fakeStore({ [repo('pool-4')]: POOL_4 })
+		const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'tmux' }, exec: repoExec(calls), store })
+		await run(program, ['open', '--template', 'pool-4'])
+		// tmux collapses workspace to a window — the region is a new-window, not a split.
+		expect(calls.find((c) => c[0] === 'tmux')?.[1]).toBe('new-window')
+	})
+
+	it('@id:template-apply-tabs-defaults-workspace', async () => {
+		const calls: string[][] = []
+		const store = fakeStore({ [repo('pool')]: POOL_TABS })
+		const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'herdr' }, exec: tabsExec(calls), store })
+		await run(program, ['open', '--template', 'pool'])
+		const opens = calls.filter((c) => c[0] === 'herdr' && c[2] === 'create')
+		expect(opens[0]?.slice(1, 3)).toEqual(['workspace', 'create'])
+		expect(opens[1]?.slice(1, 3)).toEqual(['tab', 'create'])
+		expect(calls.some((c) => c[1] === 'pane' && c[2] === 'split')).toBe(false)
+	})
+
+	it('@id:template-apply-label-defaults-name', async () => {
+		const calls: string[][] = []
+		const store = fakeStore({ [repo('pool-4')]: POOL_4 })
+		const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'tmux' }, exec: repoExec(calls), store })
+		await run(program, ['open', '--template', 'pool-4'])
+		expect(calls.find((c) => c[1] === 'new-window')).toEqual(expect.arrayContaining(['-n', 'pool-4']))
+	})
+
+	// ── The manifest is the handoff (--format json) ──
+
+	it('@id:template-apply-json-reports-panes', async () => {
+		const store = fakeStore({ [repo('agent-pool-3')]: AGENT_POOL_3 })
+		const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'tmux' }, exec: repoExec([]), store })
+		await withArgv(['open', '--template', 'agent-pool-3', '--format', 'json'], () =>
+			run(program, ['open', '--template', 'agent-pool-3', '--cwd', '/w/feat-x', '--format', 'json']),
+		)
+		const manifest = JSON.parse(logs.join('\n'))
+		expect(manifest.template).toBe('agent-pool-3')
+		expect(manifest.cwd).toBe('/w/feat-x')
+		expect(manifest).toHaveProperty('workspace')
+		expect(manifest.panes).toEqual([
+			{ label: 'planner', pane: '%0', dir: '/w/feat-x', command: 'claude', tab: null },
+			{ label: 'worker-a', pane: '%1', dir: '/w/feat-x', command: 'claude', tab: null },
+			{ label: 'worker-b', pane: '%2', dir: '/w/feat-x', command: 'claude', tab: null },
+		])
+	})
+
+	it('@id:template-apply-manifest-workspace-null-tmux', async () => {
+		const store = fakeStore({ [repo('pool-4')]: POOL_4 })
+		const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'tmux' }, exec: repoExec([]), store })
+		await withArgv(['open', '--template', 'pool-4', '--format', 'json'], () =>
+			run(program, ['open', '--template', 'pool-4', '--format', 'json']),
+		)
+		expect(JSON.parse(logs.join('\n')).workspace).toBeNull()
+	})
+
+	it('@id:template-apply-manifest-tab-per-pane', async () => {
+		const calls: string[][] = []
+		const store = fakeStore({ [repo('pool')]: POOL_TABS_SPLIT })
+		const wtOut = JSON.stringify({
+			result: {
+				root_pane: { pane_id: 'w9:root', tab_id: 'w9:t1', workspace_id: 'w9' },
+				workspace: { workspace_id: 'w9' },
+				worktree: { path: '/repo.worktrees/feat-x', branch: 'feat-x' },
+			},
+		})
+		const program = buildProgram({
+			env: { ...XDG, CYBER_MUX: 'herdr' },
+			exec: tabsExec(calls, { 'worktree create': wtOut }),
+			store,
+		})
+		await withArgv(['worktree', 'add', '--format', 'json'], () =>
+			run(program, ['worktree', 'add', '--branch', 'feat-x', '--template', 'pool', '--format', 'json']),
+		)
+
+		// The worktree's own workspace is the ONLY workspace: no second one is opened for the tabs.
+		expect(calls.find((c) => c[1] === 'worktree' && c[2] === 'create')).toBeDefined()
+		expect(calls.filter((c) => c[1] === 'workspace' && c[2] === 'create')).toEqual([])
+		// The first tab is built INTO that region: its split targets the workspace's own root pane.
+		const splits = calls.filter((c) => c[1] === 'pane' && c[2] === 'split')
+		expect(splits).toHaveLength(1)
+		expect(splits[0]).toContain('w9:root')
+		// Every later tab opens as a tab in it — one `tab create` for the one later tab.
+		const tabs = calls.filter((c) => c[1] === 'tab' && c[2] === 'create')
+		expect(tabs).toHaveLength(1)
+		expect(tabs[0]).toEqual(expect.arrayContaining(['--label', 'logs']))
+
+		// And the manifest is the whole workspace: both tabs' panes, one flat list, against the
+		// worktree root.
+		const out = JSON.parse(logs.join('\n'))
+		expect(out.root).toBe('/repo.worktrees/feat-x')
+		expect(out.workspace).toBe('w9')
+		expect(out.panes.map((p: { label: string; tab: number }) => [p.label, p.tab])).toEqual([
+			['edit', 0],
+			['test', 0],
+			['tail', 1],
+		])
+	})
+
+	// Single-tab template names no tabs, so each pane's tab comes back null (asserted below, alongside
+	// this test's dir-degradation checks — the tab:null claim is what binds it to this scenario).
+	it('@id:template-apply-manifest-tab-null-single', async () => {
+		const stderr = captureStderr()
+		const calls: string[][] = []
+		const store = fakeStore({
+			[repo('render-farm')]: {
+				name: 'render-farm',
+				panes: [{ label: 'dispatcher', dir: 'apps/render' }, { label: 'encoder' }],
+			},
+		})
+		const exec = repoExec(calls, { 'worktree create': worktreeOut })
+		const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'herdr' }, exec, store })
+		await withArgv(['worktree', 'add', '--format', 'json'], () =>
+			run(program, ['worktree', 'add', '--branch', 'feat-x', '--template', 'render-farm', '--format', 'json']),
+		)
+		// The workspace opens at the worktree root — that is what the binding pins...
+		const created = calls.find((c) => c[1] === 'worktree' && c[2] === 'create')!
+		expect(created).not.toContain('apps/render')
+		// ...so the manifest reports where the pane really is, rather than a place nothing opened.
+		const out = JSON.parse(logs.join('\n'))
+		expect(out.panes[0]).toEqual({
+			label: 'dispatcher',
+			pane: 'w9:root',
+			dir: '/repo.worktrees/feat-x',
+			command: null,
+			tab: null,
+		})
+		// Degraded loudly, on stderr, so stdout stays machine-readable.
+		expect(stderr.join('')).toContain('dispatcher')
+		expect(stderr.join('')).toContain('apps/render')
+	})
+})
+
+describe('spec:cyber-mux/cli/template/capture', () => {
+	const REPO_DIR = '/repo/.cyber-mux/templates'
+	const USER_DIR = '/home/u/.config/cyber-mux/templates'
+	const XDG = { XDG_CONFIG_HOME: '/home/u/.config' }
+	const POOL_4 = { name: 'pool-4', arrange: 'tiled', panes: [{ label: 'w1' }, { label: 'w2' }] }
+	function repo(name: string): string {
+		return `${REPO_DIR}/${name}.json`
+	}
+	function user(name: string): string {
+		return `${USER_DIR}/${name}.json`
+	}
+
+	let logs: string[]
+
+	beforeEach(() => {
+		logs = []
+		vi.spyOn(console, 'log').mockImplementation((line: string) => {
+			logs.push(line)
+		})
+		vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+		vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+	})
+
+	afterEach(() => {
+		vi.restoreAllMocks()
+	})
+
+	function catchExit() {
+		return vi.spyOn(process, 'exit').mockImplementation((code) => {
+			throw new Error(`exit:${code}`)
+		})
+	}
+
+	function captureStderr(): string[] {
+		const lines: string[] = []
+		vi.spyOn(process.stderr, 'write').mockImplementation((line) => {
+			lines.push(String(line))
+			return true
+		})
+		return lines
+	}
+
+	function fakeStore(
+		files: Record<string, unknown>,
+	): TemplateStore & { reads: string[]; writes: Record<string, string> } {
+		const raw: Record<string, string> = {}
+		for (const [path, body] of Object.entries(files)) {
+			raw[path] = typeof body === 'string' ? body : JSON.stringify(body)
+		}
+		const reads: string[] = []
+		const writes: Record<string, string> = {}
+		return {
+			reads,
+			writes,
+			read(path) {
+				reads.push(path)
+				return raw[path] ?? null
+			},
+			list(dir) {
+				return Object.keys(raw)
+					.filter((p) => p.startsWith(`${dir}/`))
+					.map((p) => p.slice(dir.length + 1, -'.json'.length))
+					.sort()
+			},
+			dirExists: () => true,
+			write(path, contents) {
+				writes[path] = contents
+				raw[path] = contents
+			},
+		}
+	}
+
+	// ── The caller's region: save's default subject and --from ──
+
+	/** tmux, plus a region of three panes around `%1` — a live capture from tmux 3.6b. */
+	function saveExec(calls: string[][], panes?: string): Exec {
+		return (cmd, args) => {
+			calls.push([cmd, ...args])
+			if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
+			if (args[0] === 'list-panes') {
+				return (
+					panes ??
+					[
+						'%0\t0\t0\t119\t34\t/repo\tzeta\tzeta',
+						'%2\t0\t35\t119\t15\t/repo/api\twatcher\tzeta',
+						'%1\t120\t0\t80\t50\t/repo\teditor\tzeta',
+					].join('\n')
+				)
+			}
+			return ''
+		}
+	}
+
+	const SAVE_ENV = { ...XDG, CYBER_MUX: 'tmux', CYBER_MUX_PANE: '%0' }
+
+	it('@id:template-capture-writes-repo-path', async () => {
+		const calls: string[][] = []
+		const store = fakeStore({})
+		const program = buildProgram({ env: SAVE_ENV, exec: saveExec(calls), store })
+		await run(program, ['template', 'save', 'pool-3'])
+		expect(logs).toEqual([`path  ${repo('pool-3')}`])
+		const written = JSON.parse(store.writes[repo('pool-3')]!)
+		expect(written.name).toBe('pool-3')
+		expect(written.root.direction).toBe('right')
+		expect(written.root.ratio).toBe(0.6)
+		expect(written.root.first.ratio).toBe(0.7)
+		expect(written.root.second).toEqual({ type: 'pane', label: 'editor' })
+		expect(written.root.first.first).toEqual({ type: 'pane' })
+		expect(JSON.stringify(written)).not.toContain('zeta')
+		expect(written.root.first.second).toEqual({ type: 'pane', label: 'watcher', dir: 'api' })
+		expect(JSON.stringify(written)).not.toContain('/repo')
+	})
+
+	it('@id:template-capture-from-names-region', async () => {
+		const calls: string[][] = []
+		const program = buildProgram({ env: SAVE_ENV, exec: saveExec(calls), store: fakeStore({}) })
+		await run(program, ['template', 'save', 'pool-3', '--from', '%7'])
+		expect(calls.find((c) => c[1] === 'list-panes' && c[2] === '-t')?.[3]).toBe('%7')
+	})
+
+	it('@id:template-capture-description-replaces-note', async () => {
+		const store = fakeStore({})
+		const program = buildProgram({ env: SAVE_ENV, exec: saveExec([]), store })
+		await run(program, ['template', 'save', 'pool-3', '--description', 'the review pool'])
+		expect(JSON.parse(store.writes[repo('pool-3')]!).description).toBe('the review pool')
+	})
+
+	it('@id:template-capture-to-user-directory', async () => {
+		const store = fakeStore({})
+		const program = buildProgram({ env: SAVE_ENV, exec: saveExec([]), store })
+		await run(program, ['template', 'save', 'pool-3', '--to', 'user'])
+		expect(Object.keys(store.writes)).toEqual([user('pool-3')])
+	})
+
+	it('@id:template-capture-refuses-overwrite', async () => {
+		catchExit()
+		captureStderr()
+		const calls: string[][] = []
+		const store = fakeStore({ [repo('pool-3')]: POOL_4 })
+		const program = buildProgram({ env: SAVE_ENV, exec: saveExec(calls), store })
+		await expect(run(program, ['template', 'save', 'pool-3'])).rejects.toThrow('exit:1')
+		expect(logs.join('\n')).toContain('--force to overwrite')
+		expect(store.writes).toEqual({})
+		expect(calls.some((c) => c[1] === 'list-panes')).toBe(false)
+	})
+
+	it('@id:template-capture-force-overwrites', async () => {
+		const store = fakeStore({ [repo('pool-3')]: POOL_4 })
+		const program = buildProgram({ env: SAVE_ENV, exec: saveExec([]), store })
+		await run(program, ['template', 'save', 'pool-3', '--force'])
+		expect(JSON.parse(store.writes[repo('pool-3')]!).root).toBeDefined()
+	})
+
+	it('@id:template-capture-validates-name-first', async () => {
+		catchExit()
+		captureStderr()
+		const calls: string[][] = []
+		const store = fakeStore({})
+		const program = buildProgram({ env: SAVE_ENV, exec: saveExec(calls), store })
+		await expect(run(program, ['template', 'save', '../escape'])).rejects.toThrow('exit:2')
+		expect(logs.join('\n')).toContain('invalid template name')
+		expect(store.writes).toEqual({})
+		expect(calls).toEqual([])
+	})
+
+	it('@id:template-capture-no-pane-refuses', async () => {
+		catchExit()
+		captureStderr()
+		const calls: string[][] = []
+		const store = fakeStore({})
+		const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'tmux' }, exec: saveExec(calls), store })
+		await expect(run(program, ['template', 'save', 'pool-3'])).rejects.toThrow('exit:2')
+		expect(logs.join('\n')).toContain('--from')
+		expect(store.writes).toEqual({})
+		expect(calls.some((c) => c[1] === 'list-panes')).toBe(false)
+	})
+
+	it('@id:template-capture-backend-no-geometry-refuses', async () => {
+		catchExit()
+		captureStderr()
+		const store = fakeStore({})
+		const original = tmuxMuxAdapter.regions
+		try {
+			delete (tmuxMuxAdapter as { regions?: unknown }).regions
+			const program = buildProgram({ env: SAVE_ENV, exec: saveExec([]), store })
+			await expect(run(program, ['template', 'save', 'pool-3'])).rejects.toThrow('exit:1')
+		} finally {
+			;(tmuxMuxAdapter as { regions?: unknown }).regions = original
+		}
+		expect(logs.join('\n')).toContain('tmux')
+		expect(store.writes).toEqual({})
+	})
+
+	// ── Capturing a whole workspace: --workspace (herdr, with a real workspace tier) ──
+
+	const TABS_3 = [
+		{ tab_id: 'w1:t1', label: 'editor' },
+		{ tab_id: 'w1:t2', label: 'logs' },
+		{ tab_id: 'w1:t3', label: 'shell' },
+	]
+	const PANES_3 = [
+		{ pane_id: 'w1:p1', tab_id: 'w1:t1', cwd: '/repo', label: 'edit' },
+		{ pane_id: 'w1:p2', tab_id: 'w1:t1', cwd: '/repo/api', label: 'api' },
+		{ pane_id: 'w1:p3', tab_id: 'w1:t2', cwd: '/repo/logs' },
+		{ pane_id: 'w1:p4', tab_id: 'w1:t3', cwd: '/repo' },
+		{ pane_id: 'w1:p5', tab_id: 'w1:t3', cwd: '/repo' },
+	]
+	const LAYOUT_OF: Record<string, Array<{ pane_id: string; rect: PaneRect }>> = {
+		'w1:t1': [
+			{ pane_id: 'w1:p1', rect: { x: 0, y: 0, width: 120, height: 50 } },
+			{ pane_id: 'w1:p2', rect: { x: 120, y: 0, width: 80, height: 50 } },
+		],
+		'w1:t2': [{ pane_id: 'w1:p3', rect: { x: 0, y: 0, width: 200, height: 50 } }],
+		'w1:t3': [
+			{ pane_id: 'w1:p4', rect: { x: 0, y: 0, width: 200, height: 30 } },
+			{ pane_id: 'w1:p5', rect: { x: 0, y: 30, width: 200, height: 20 } },
+		],
+	}
+
+	type HerdrTab = { tab_id: string; label?: string }
+	type HerdrPane = { pane_id: string; tab_id: string; cwd?: string; label?: string }
+
+	function herdrWorkspaceExec(calls: string[][], workspace: { tabs: HerdrTab[]; panes: HerdrPane[] }): Exec {
+		return (cmd, args) => {
+			calls.push([cmd, ...args])
+			if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
+			const verb = args.slice(0, 2).join(' ')
+			if (verb === 'pane get') {
+				const pane = workspace.panes.find((p) => p.pane_id === args[2])
+				return JSON.stringify({ result: { pane: { ...pane, workspace_id: 'w1' } } })
+			}
+			if (verb === 'tab list') return JSON.stringify({ result: { tabs: workspace.tabs } })
+			if (verb === 'pane list') return JSON.stringify({ result: { panes: workspace.panes } })
+			if (verb === 'pane layout') {
+				const tab = workspace.panes.find((p) => p.pane_id === args[3])?.tab_id
+				return JSON.stringify({ result: { layout: { panes: tab ? LAYOUT_OF[tab] : [] } } })
+			}
+			return ''
+		}
+	}
+
+	const WS_3 = { tabs: TABS_3, panes: PANES_3 }
+	const HERDR_ENV = { ...XDG, CYBER_MUX: 'herdr', CYBER_MUX_PANE: 'w1:p1' }
+
+	const TAB_1_TREE = {
+		type: 'split',
+		direction: 'right',
+		ratio: 0.6,
+		first: { type: 'pane', label: 'edit' },
+		second: { type: 'pane', label: 'api', dir: 'api' },
+	}
+	const TAB_2_TREE = { type: 'pane', dir: 'logs' }
+	const TAB_3_TREE = {
+		type: 'split',
+		direction: 'down',
+		ratio: 0.6,
+		first: { type: 'pane' },
+		second: { type: 'pane' },
+	}
+
+	it('@id:template-capture-workspace-captures-all-tabs', async () => {
+		const store = fakeStore({})
+		const program = buildProgram({ env: HERDR_ENV, exec: herdrWorkspaceExec([], WS_3), store })
+		await run(program, ['template', 'save', 'pool', '--workspace'])
+		const written = JSON.parse(store.writes[repo('pool')]!)
+		expect(written.tabs).toHaveLength(3)
+		expect(written.root).toBeUndefined()
+		expect(written.tabs.map((t: { root: unknown }) => t.root)).toEqual([TAB_1_TREE, TAB_2_TREE, TAB_3_TREE])
+	})
+
+	it('@id:template-capture-default-caller-region', async () => {
+		const store = fakeStore({})
+		const program = buildProgram({ env: HERDR_ENV, exec: herdrWorkspaceExec([], WS_3), store })
+		await run(program, ['template', 'save', 'pool'])
+		const written = JSON.parse(store.writes[repo('pool')]!)
+		expect(written.root).toEqual(TAB_1_TREE)
+		expect(written.tabs).toBeUndefined()
+	})
+
+	it('@id:template-capture-bare-save-reveals-left-out', async () => {
+		const stderr = captureStderr()
+		const store = fakeStore({})
+		const program = buildProgram({ env: HERDR_ENV, exec: herdrWorkspaceExec([], WS_3), store })
+		await run(program, ['template', 'save', 'pool'])
+		expect(logs[0]).toBe(`path  ${repo('pool')}`)
+		const out = logs.join('\n')
+		expect(out).toContain('3 tabs')
+		expect(out).toContain('help[0]:')
+		expect(out).toContain('cyber-mux template save pool --workspace')
+		expect(stderr.join('')).toBe('')
+	})
+
+	it('@id:template-capture-json-path-and-help', async () => {
+		const store = fakeStore({})
+		const program = buildProgram({ env: HERDR_ENV, exec: herdrWorkspaceExec([], WS_3), store })
+		await withArgv(['template', 'save', 'pool', '--format', 'json'], () =>
+			run(program, ['template', 'save', 'pool', '--format', 'json']),
+		)
+		const payload = JSON.parse(logs.join('\n'))
+		expect(payload.path).toBe(repo('pool'))
+		expect(Array.isArray(payload.help)).toBe(true)
+		expect(payload.help[0].message).toContain('3 tabs')
+		expect(payload.help[0].command).toBe('cyber-mux template save pool --workspace')
+	})
+
+	/** tmux with an unset grouping tag — a window nobody grouped, for the no-workspace-tier refusal. */
+	function untaggedTmuxExec(calls: string[][]): Exec {
+		return (cmd, args) => {
+			calls.push([cmd, ...args])
+			if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
+			if (args[0] === 'display-message') return '@1\t\tzsh'
+			if (args[0] === 'list-panes') {
+				return ['%0\t0\t0\t119\t50\t/repo\tzeta\tzeta', '%1\t120\t0\t80\t50\t/repo/api\tzeta\tzeta'].join('\n')
+			}
+			return ''
+		}
+	}
+
+	it('@id:template-capture-backend-no-tabs-refuses', async () => {
+		catchExit()
+		captureStderr()
+		const store = fakeStore({})
+		const original = tmuxMuxAdapter.regions
+		try {
+			delete (tmuxMuxAdapter as { regions?: unknown }).regions
+			const program = buildProgram({
+				env: { ...XDG, CYBER_MUX: 'tmux', CYBER_MUX_PANE: '%0' },
+				exec: untaggedTmuxExec([]),
+				store,
+			})
+			await expect(run(program, ['template', 'save', 'pool', '--workspace'])).rejects.toThrow('exit:1')
+		} finally {
+			;(tmuxMuxAdapter as { regions?: unknown }).regions = original
+		}
+		expect(logs.join('\n')).toContain('tmux')
+		expect(store.writes).toEqual({})
 	})
 })

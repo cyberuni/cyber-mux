@@ -18,9 +18,9 @@ const LIST_ONE = JSON.stringify([
 	{ window_id: 1, tab_id: 2, pane_id: 9, workspace: 'default', title: 'zsh', cwd: 'file://host/unit' },
 ])
 
-describe('spec:cyber-mux/mux', () => {
+describe('spec:cyber-mux/mux/placement', () => {
 	describe('weztermMuxAdapter', () => {
-		it('open() at pane:right splits with --right and reports the pane, resolving tab+workspace', () => {
+		it('placement-wezterm-workspace-followup-call', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'split-pane': '9', list: LIST_ONE })
 			const target = weztermMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right' })
@@ -31,6 +31,7 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls[1]).toEqual(['cli', 'list', '--format', 'json'])
 		})
 
+		// No scenario in placement.feature pins the --bottom flag itself — left as an extra.
 		it('open() at pane:down splits with --bottom', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'split-pane': '9', list: LIST_ONE })
@@ -38,7 +39,7 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls[0]).toEqual(['cli', 'split-pane', '--bottom', '--cwd', '/unit'])
 		})
 
-		it('open() at tab spawns into the current window, never --new-window', () => {
+		it('placement-at-tab-new-tab', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { spawn: '9', list: LIST_ONE })
 			const target = weztermMuxAdapter.open(exec, { cwd: '/unit', at: 'tab' })
@@ -46,6 +47,7 @@ describe('spec:cyber-mux/mux', () => {
 			expect(target).toEqual({ id: '9', tab: '2', workspace: 'default' })
 		})
 
+		// `within` has no scenario in placement.feature (nor elsewhere in this node's suite) — extra.
 		it('open() at tab with a `within` spawns into a window of THAT workspace', () => {
 			// A wezterm workspace is a set of WINDOWS, so the anchor resolves one tier down: any window
 			// already in the named workspace will do. Untargeted, `spawn` lands in the window the user is
@@ -62,13 +64,14 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls[1]).toEqual(['cli', 'spawn', '--window-id', '4', '--cwd', '/unit'])
 		})
 
+		// `within` has no scenario — extra.
 		it('open() at tab throws when the named workspace has no window left to open a tab in', () => {
 			// Never a silent fall back to an untargeted spawn: that IS the wrong-space bug.
 			const exec = fakeExec([], { spawn: '9', list: LIST_ONE })
 			expect(() => weztermMuxAdapter.open(exec, { cwd: '/unit', at: 'tab', within: 'gone' })).toThrow(/gone/)
 		})
 
-		it('open() at workspace passes --new-window and a fresh --workspace name, and reports it without an extra call', () => {
+		it('placement-wezterm-workspace-fresh-name', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { spawn: '9', list: LIST_ONE })
 			const target = weztermMuxAdapter.open(exec, { cwd: '/unit', at: 'workspace' })
@@ -79,7 +82,8 @@ describe('spec:cyber-mux/mux', () => {
 			expect(target.tab).toBe('2')
 		})
 
-		it('open() at workspace mints the workspace name from the INJECTED newId, not node:crypto', () => {
+		// Same scenario (a fresh workspace name is minted) — many-to-one, this leg pins the injected id source.
+		it('placement-wezterm-workspace-fresh-name', () => {
 			// The seam: createWeztermAdapter takes its id source, so a test drives a deterministic name
 			// instead of a UUID. The minted name is `cyber-mux-<first 8 of newId()>`.
 			const calls: string[][] = []
@@ -90,7 +94,8 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls[0]).toEqual(['cli', 'spawn', '--new-window', '--workspace', 'cyber-mux-abcdef12', '--cwd', '/unit'])
 		})
 
-		it('open() at workspace uses --label as the workspace name when given, rather than minting one', () => {
+		// Same scenario — many-to-one, this leg pins --label overriding the mint.
+		it('placement-wezterm-workspace-fresh-name', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { spawn: '9', list: LIST_ONE })
 			const target = weztermMuxAdapter.open(exec, { cwd: '/unit', at: 'workspace', label: 'my-unit' })
@@ -98,13 +103,14 @@ describe('spec:cyber-mux/mux', () => {
 			expect(target.workspace).toBe('my-unit')
 		})
 
-		it('open() at tab sets the tab title after birth, because spawn has no title flag at all', () => {
+		it('placement-wezterm-every-tab-named-after-birth', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { spawn: '9', list: LIST_ONE })
 			weztermMuxAdapter.open(exec, { cwd: '/unit', at: 'tab', label: 'ledger' })
 			expect(calls).toContainEqual(['cli', 'set-tab-title', '--tab-id', '2', 'ledger'])
 		})
 
+		// No scenario pins a pane-placement label degrading to a stderr warning — extra.
 		it('open() at pane:right degrades a --label to a stderr warning, since no pane-title primitive exists', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'split-pane': '9', list: LIST_ONE })
@@ -129,7 +135,7 @@ describe('spec:cyber-mux/mux', () => {
 		// The issue's own trap (#47): --percent sizes the NEW pane, same inversion as tmux's -l — not
 		// herdr's pass-through. Pinned at a non-midpoint ratio, which is the one value the inversion
 		// cannot hide behind.
-		it('the ratio sign convention inverts, same direction as tmux', () => {
+		it('placement-ratio-sign-convention', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'split-pane': '9', list: LIST_ONE })
 			weztermMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right', ratio: 0.333 })
@@ -137,14 +143,14 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls[0]).not.toContain('33')
 		})
 
-		it('ratio omitted leaves wezterm its own even default', () => {
+		it('placement-ratio-omitted-even-default', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'split-pane': '9', list: LIST_ONE })
 			weztermMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right' })
 			expect(calls[0]).not.toContain('--percent')
 		})
 
-		it('from names the pane a pane:* split targets', () => {
+		it('placement-from-names-split-target', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'split-pane': '9', list: LIST_ONE })
 			weztermMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right', from: { id: '3' } })
@@ -153,7 +159,7 @@ describe('spec:cyber-mux/mux', () => {
 
 		// wezterm has NO --env on spawn or split-pane at all — unlike herdr, which loses it on only one
 		// route, every wezterm open takes the same fallback herdr's worktree route does.
-		it('env is never native — it rides in as an env prefix on the launch command', () => {
+		it('placement-wezterm-env-never-native', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'split-pane': '9', list: LIST_ONE })
 			weztermMuxAdapter.open(exec, {
@@ -169,7 +175,7 @@ describe('spec:cyber-mux/mux', () => {
 			expect(sendText).toEqual(['cli', 'send-text', '--pane-id', '9', "env ROLE='worker' claude"])
 		})
 
-		it('env with no launch command warns to stderr rather than vanishing', () => {
+		it('placement-env-no-command-warns', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'split-pane': '9', list: LIST_ONE })
 			const writes: string[] = []
@@ -187,42 +193,57 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls.some((c) => c[1] === 'send-text')).toBe(false)
 		})
 
-		it('rename() on a tab uses set-tab-title', () => {
+		it('placement-rename-after-birth', () => {
 			const calls: string[][] = []
 			weztermMuxAdapter.rename(fakeExec(calls), { id: '2' }, 'tab', 'ledger')
 			expect(calls).toEqual([['cli', 'set-tab-title', '--tab-id', '2', 'ledger']])
 		})
 
 		// No CLI primitive names a pane at all — throwing is the honest answer, not a silent no-op.
-		it('rename() on a pane throws — wezterm has no way to title a pane', () => {
+		it('placement-wezterm-rename-pane-throws', () => {
 			expect(() => weztermMuxAdapter.rename(fakeExec([]), { id: '9' }, 'pane', 'ledger')).toThrow(/pane/i)
 		})
 
-		it('group() is a complete no-op — the real workspace tier is already the group', () => {
+		it('placement-wezterm-group-id-ignored', () => {
 			const calls: string[][] = []
 			weztermMuxAdapter.group(fakeExec(calls), { id: '2' }, 'my-group', 'ledger')
 			expect(calls).toEqual([])
 		})
 
-		it('sendText types literal text as a bracketed paste, pressing no Enter', () => {
+		it('placement-backend-declares-can-size', () => {
+			expect(weztermMuxAdapter.canSizeSplits).toBe(true)
+		})
+
+		// Optional omissions, not stubs: no pane geometry to build a rect from, and no worktree
+		// subcommand in the CLI at all. No scenario in this suite pins the omission itself — extra.
+		it('has no regions (describeRegion/describeWorkspace) or worktree capability', () => {
+			expect(weztermMuxAdapter.regions).toBeUndefined()
+			expect(weztermMuxAdapter.worktree).toBeUndefined()
+		})
+	})
+})
+
+describe('spec:cyber-mux/mux/driving', () => {
+	describe('weztermMuxAdapter', () => {
+		it('driving-send-text-literal-no-enter', () => {
 			const calls: string[][] = []
 			weztermMuxAdapter.sendText(fakeExec(calls), { id: '9' }, 'Enter')
 			expect(calls).toEqual([['cli', 'send-text', '--pane-id', '9', 'Enter']])
 		})
 
-		it('sendKeys presses core-vocabulary keys as their raw byte sequences via --no-paste', () => {
+		it('driving-wezterm-key-as-escape-sequence', () => {
 			const calls: string[][] = []
 			weztermMuxAdapter.sendKeys(fakeExec(calls), { id: '9' }, ['Up', 'Enter'])
 			expect(calls).toEqual([['cli', 'send-text', '--pane-id', '9', '--no-paste', '\x1b[A\r']])
 		})
 
-		it('a non-core token this adapter cannot encode is forwarded as its own literal characters', () => {
+		it('driving-wezterm-unencodable-token-literal', () => {
 			const calls: string[][] = []
 			weztermMuxAdapter.sendKeys(fakeExec(calls), { id: '9' }, ['Zzz'])
 			expect(calls).toEqual([['cli', 'send-text', '--pane-id', '9', '--no-paste', 'Zzz']])
 		})
 
-		it('submit with text types it literally then presses Enter, two calls (no atomic primitive)', () => {
+		it('driving-submit-with-text', () => {
 			const calls: string[][] = []
 			weztermMuxAdapter.submit(fakeExec(calls), { id: '9' }, 'hello')
 			expect(calls).toEqual([
@@ -231,31 +252,40 @@ describe('spec:cyber-mux/mux', () => {
 			])
 		})
 
-		it('submit with no text sends a bare Enter only', () => {
+		it('driving-submit-no-text-bare-enter', () => {
 			const calls: string[][] = []
 			weztermMuxAdapter.submit(fakeExec(calls), { id: '9' })
 			expect(calls).toEqual([['cli', 'send-text', '--pane-id', '9', '--no-paste', '\r']])
 		})
 
+		// No scenario in driving.feature covers the `read` verb at all (feature is scoped to
+		// text/keys/submit) — extra.
 		it('read passes --start-line as a negative offset for a trailing-lines capture', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'get-text': 'hello' })
 			expect(weztermMuxAdapter.read(exec, { id: '9' }, { lines: 20 })).toBe('hello')
 			expect(calls).toEqual([['cli', 'get-text', '--pane-id', '9', '--start-line', '-20']])
 		})
+	})
+})
 
+describe('spec:cyber-mux/mux/lookup', () => {
+	describe('weztermMuxAdapter', () => {
+		// No scenario pins the focus() write-verb itself (only the isPaneFocused query) — extra.
 		it('focus drives activate-pane', () => {
 			const calls: string[][] = []
 			weztermMuxAdapter.focus(fakeExec(calls), { id: '9' })
 			expect(calls).toEqual([['cli', 'activate-pane', '--pane-id', '9']])
 		})
 
+		// No scenario pins teardown anywhere in this suite — extra.
 		it('teardown kills the pane', () => {
 			const calls: string[][] = []
 			weztermMuxAdapter.teardown(fakeExec(calls), { id: '9' })
 			expect(calls).toEqual([['cli', 'kill-pane', '--pane-id', '9']])
 		})
 
+		// No scenario pins paneExists directly (only the pane-verb resolution outlines) — extra.
 		it('paneExists scans the live listing for the pane id', () => {
 			const exec = fakeExec([], { list: LIST_ONE })
 			expect(weztermMuxAdapter.paneExists(exec, { id: '9' })).toBe(true)
@@ -264,28 +294,18 @@ describe('spec:cyber-mux/mux', () => {
 
 		// No primitive to report focus at all — `undefined` is the seam's own honest answer, not a
 		// stand-in for false.
-		it('isPaneFocused always answers unknown — there is no primitive to ask', () => {
+		it('lookup-wezterm-focus-always-unknown', () => {
 			expect(weztermMuxAdapter.isPaneFocused(fakeExec([]), { id: '9' })).toBeUndefined()
 		})
 
-		it('listPanes reports every live pane, its cwd stripped of the file:// scheme, and never a label', () => {
+		it('lookup-wezterm-never-labeled', () => {
 			const exec = fakeExec([], { list: LIST_ONE })
 			expect(weztermMuxAdapter.listPanes(exec)).toEqual([{ id: '9', mux: 'wezterm', cwd: '/unit' }])
 		})
 
+		// No scenario pins the empty-listing degrade path — extra.
 		it('listPanes returns nothing when the backend cannot be read', () => {
 			expect(weztermMuxAdapter.listPanes(fakeExec([]))).toEqual([])
-		})
-
-		it('declares it can size a split', () => {
-			expect(weztermMuxAdapter.canSizeSplits).toBe(true)
-		})
-
-		// Optional omissions, not stubs: no pane geometry to build a rect from, and no worktree
-		// subcommand in the CLI at all.
-		it('has no regions (describeRegion/describeWorkspace) or worktree capability', () => {
-			expect(weztermMuxAdapter.regions).toBeUndefined()
-			expect(weztermMuxAdapter.worktree).toBeUndefined()
 		})
 	})
 })

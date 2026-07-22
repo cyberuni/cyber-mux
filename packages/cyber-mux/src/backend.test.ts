@@ -12,13 +12,13 @@ import { createZellijAdapter } from './mux.zellij.ts'
 // the test runner itself happens to be running under.
 const noAncestry: Exec = () => null
 
-describe('spec:cyber-mux/mux', () => {
+describe('spec:cyber-mux/mux/detection', () => {
 	describe('resolveMuxAdapter', () => {
-		it('the session backend is selected by environment', () => {
+		it('detection-backend-selected-by-env', () => {
 			expect(resolveMuxAdapter({ TMUX: 't' }, noAncestry)).toBe(tmuxMuxAdapter)
 		})
 
-		it('the session backend is selected by environment', () => {
+		it('detection-backend-selected-by-env', () => {
 			expect(resolveMuxAdapter({ HERDR_ENV: '1' }, noAncestry)).toBe(herdrMuxAdapter)
 		})
 
@@ -26,21 +26,21 @@ describe('spec:cyber-mux/mux', () => {
 			expect(resolveMuxAdapter({ TMUX: 't', HERDR_ENV: '1' }, noAncestry)).toBe(tmuxMuxAdapter)
 		})
 
-		it('the session backend is selected by environment', () => {
+		it('detection-backend-selected-by-env', () => {
 			expect(resolveMuxAdapter({ WEZTERM_PANE: '9' }, noAncestry)).toBe(weztermMuxAdapter)
 		})
 
-		it('the session backend is selected by environment', () => {
+		it('detection-backend-selected-by-env', () => {
 			// zellij's adapter is built per-env (bound to the ambient session name), so it is a fresh
 			// object rather than a shared singleton — pinned by name.
 			expect(resolveMuxAdapter({ ZELLIJ: '0', ZELLIJ_SESSION_NAME: 'my-session' }, noAncestry).name).toBe('zellij')
 		})
 
-		it('none of tmux, herdr, wezterm, or zellij detected errors before opening anything', () => {
+		it('detection-no-backend-errors', () => {
 			expect(() => resolveMuxAdapter({}, noAncestry)).toThrow(/tmux.*herdr.*wezterm.*zellij/)
 		})
 
-		it('a detected screen is rejected by name, not with the generic no-multiplexer error', () => {
+		it('detection-screen-rejected-by-name', () => {
 			// screen is a KNOWN mux the probe recognizes — via the fast-path override here, and via
 			// ancestry for a real screen session — but not a drivable backend (issue #45). The rejection
 			// must NAME screen and state the reason, so a caller who pinned CYBER_MUX=screen is told the
@@ -51,7 +51,7 @@ describe('spec:cyber-mux/mux', () => {
 			)
 		})
 
-		it('rejects a screen ancestor by name too, not only the pinned override', () => {
+		it('detection-screen-rejected-by-name', () => {
 			const psChain: Exec = (cmd, args) => {
 				if (cmd !== 'ps') return null
 				const pid = Number.parseInt(args[args.length - 1] ?? '', 10)
