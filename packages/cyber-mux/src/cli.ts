@@ -49,6 +49,7 @@ import {
 import {
 	gitWorktreeAdapter,
 	isWorktreeRemovable,
+	provisionWorktree,
 	pruneWorktrees,
 	resolvePrimaryRoot,
 	resolveWorktreePath,
@@ -1385,6 +1386,56 @@ function worktreeAddCommand(deps: Deps): Command {
 		)
 }
 
+/**
+ * `worktree provision` — reuse a free worktree or create a fresh one, the CLI wiring of the
+ * `provisionWorktree` seam. The verb uses the DEFAULT availability gate (`isWorktreeRemovable`, the
+ * exact set `worktree list` marks `(removable)` and `prune` removes) and offers NO flag to inject a
+ * host predicate — that is the surface divergence from the library seam, which takes one. A host that
+ * must exclude a live-session worktree calls `WorktreeApi.provision` directly. It reports what it did
+ * (`reused` | `created`), the worktree, and on reuse the recycled entry — its prior branch and the
+ * workspace it was open in; `printFields` drops the nullish reuse fields on a create.
+ */
+function worktreeProvisionCommand(deps: Deps): Command {
+	return new Command('provision')
+		.description(
+			'Reuse a free worktree or create a fresh one — the default-gate wiring of the provision seam (a worktree `list` marks "(removable)"). Reports whether it reused or created',
+		)
+		.requiredOption('--branch <branch>', 'Branch the provisioned worktree ends up on')
+		.option('--base <ref>', 'Start point for the fresh branch (default: the resolved default branch, then HEAD)')
+		.option(
+			'--path <path>',
+			'Where a fresh checkout goes when none is free to reuse (default: a sibling of the primary checkout)',
+		)
+		.addOption(FORMAT_OPTION)
+		.action((opts: { branch: string; base?: string | undefined; path?: string | undefined }) => {
+			try {
+				const primaryRoot = resolvePrimaryRoot(deps.exec)
+				const path = opts.path ?? resolveWorktreePath(primaryRoot, opts.branch)
+				const result = provisionWorktree(deps.exec, primaryRoot, {
+					create: { path, branch: opts.branch, base: opts.base },
+				})
+				const reused = result.reused
+					? {
+							root: result.reused.root,
+							branch: result.reused.branch ?? null,
+							workspace: result.reused.workspace ?? null,
+						}
+					: null
+				output({ action: result.action, root: result.worktree.root, branch: result.worktree.branch, reused }, () =>
+					printFields({
+						action: result.action,
+						root: result.worktree.root,
+						branch: result.worktree.branch,
+						'reused-from': reused ? (reused.branch ?? '(detached)') : undefined,
+						'reused-workspace': reused?.workspace ?? undefined,
+					}),
+				)
+			} catch (err) {
+				reportWorktreeFailure(err)
+			}
+		})
+}
+
 function worktreeOpenCommand(deps: Deps): Command {
 	return new Command('open')
 		.description('Open an existing git worktree — groups it with the repo where the backend can bind')
@@ -1535,6 +1586,7 @@ function worktreePruneCommand(deps: Deps): Command {
 function worktreeCommand(deps: Deps): Command {
 	const cmd = new Command('worktree').description('Git worktree helpers for spawning/tearing down a session')
 	cmd.addCommand(worktreeAddCommand(deps))
+	cmd.addCommand(worktreeProvisionCommand(deps))
 	cmd.addCommand(worktreeOpenCommand(deps))
 	cmd.addCommand(worktreeListCommand(deps))
 	cmd.addCommand(worktreeRemoveCommand(deps))

@@ -11,6 +11,14 @@ This unit owns the **read direction** of the [`template`](../README.md) capabili
 template — by name or by path — validating it, expanding its sugar, and walking it into live panes
 and tabs against a target directory supplied at apply time.
 
+This is the **engine** — the surface-independent read contract. The `cyber-mux` command line that
+drives it — the read verbs (`list`/`show`/`validate`), the `--file`/`--desugar` flags, the
+`--template` flag and its defaults, and the `--format json` manifest shape — is the **CLI surface**,
+specified in [`cli/template/apply/`](../../cli/template/apply/README.md) (cyberuni/cyberplace#360).
+The atomicity guarantee below (an unresolvable or invalid template leaves no worktree behind, opens
+nothing) is the engine's and stays here, verified against both `open --template` and
+`worktree add --template`.
+
 A **template** is a recipe for standing up a working workspace. It names three things at once, and
 re-targets all of them at a different directory on every apply:
 
@@ -263,24 +271,28 @@ a target directory supplied at apply time:
   specified there ([`mux/`](../../mux/README.md), "A split can be told which pane, how big, and what
   environment").  This node passes them down and owns what a template does with them.
 
-Every scenario in [`apply.feature`](./apply.feature) maps to one of these behaviors:
+Every scenario in [`apply.feature`](./apply.feature) maps to one of the **engine** behaviors below.
+The CLI-surface behaviors that used to sit here — `--file`/`--desugar`, the `--template` flag
+defaults, the `--format json` manifest shape, and the `list`/`show`/`validate` read verbs — moved to
+[`cli/template/apply/`](../../cli/template/apply/README.md); the rows below are trimmed to the engine
+half accordingly.
 
 | Behavior | What it covers |
 |---|---|
-| **a template is resolved by name, repo winning** | `--file` skips resolution; repo before user; shadowing reported; resolution through `resolvePrimaryRoot` so every worktree gets one answer; not-found lists the directories searched; a name that is not the stem, or would traverse, is refused |
+| **a template is resolved by name, repo winning** | repo before user; shadowing reported; resolution through `resolvePrimaryRoot` so every worktree gets one answer; not-found lists the directories searched; a name that is not the stem, or would traverse, is refused. (`--file`, which skips resolution, is the CLI surface.) |
 | **the tree, and no `cwd` in it** | `split`/`pane` nodes, explicit `type`, `right`/`down`; a template setting `cwd` fails validation naming `--cwd` and `dir`; `dir` is relative-only, absolute and `..` refused; `ratio` of 0 or 1 refused; a duplicate `label` is legal, because a label is a name rather than a key; `root` xor `panes`; every error at once with a JSON path |
-| **flat-N sugar is desugared by cyber-mux** | `panes` + `arrange` expands to a canonical tree, a pure function of `n` and `arrange`; `n = 1` yields one pane and no split; the same tree on every backend, never tmux's `select-template`; `show --desugar` prints what apply builds |
+| **flat-N sugar is desugared by cyber-mux** | `panes` + `arrange` expands to a canonical tree, a pure function of `n` and `arrange`; `n = 1` yields one pane and no split; the same tree on every backend, never tmux's `select-template`. (`show --desugar`, which prints this tree, is the CLI surface.) |
 | **the walk** | region opened blank; geometry depth-first; each split targets the pane it names via `from`, never the current one; commands submitted last in template order; `dir` joined onto the apply-time cwd; a missing `dir` fails naming the pane and the resolved path |
 | **ratio and env degrade, never reject** | a pane with `env` and no `command` is valid; a backend that cannot size a split warns once and takes its default; where the route that opened the region could not carry the **root** pane's env, that pane's command is prefixed with it and no other pane's is, and with no command to prefix exactly one stderr warning names the variables. The seam conventions themselves — the opposite sign directions, env's native tier, and the prefix-or-warn rule this node scopes but does not decide — are the pane abstraction's, specified in [`mux/`](../../mux/README.md) |
 | **resolution precedes side effects; apply does not roll back** | a bad template name leaves no worktree behind; a throw mid-walk reports what was built and exits 1 without killing anything |
-| **`--template` is `--launch`'s sibling** | mutually exclusive with `--launch`; `--at` defaults to `workspace`; `--label` defaults to the template name; `worktree add --template` reports the manifest alongside `root`/`branch` |
-| **the manifest is the handoff** | `--format json` reports `(label, pane, dir, command)` per created pane, plus `template`/`cwd`/`workspace`; `workspace` carries the workspace the region opened in, and is `null` on a backend with no workspace tier such as tmux; every pane also carries the `tab` it landed in (`null` from a single-tab template), while the pane list stays one flat list; `workspace` stays `null` on tmux even when tabs are grouped, the group tag being cyber-mux's own bookkeeping rather than a tier |
+| **`--template` is `--launch`'s sibling** | `worktree add --template` wires the walk against the worktree root and reports the manifest alongside `root`/`branch`. (The flag defaults — `--launch` mutual exclusion, `--at`/`--label` defaults — are the CLI surface.) |
+| **the manifest is the handoff** *(CLI surface)* | The walk **produces** the manifest; its `--format json` field shape — `(label, pane, dir, command, tab)` per pane, plus `template`/`cwd`/`workspace`, `workspace` null where the backend has no tier — is specified in [`cli/template/apply/`](../../cli/template/apply/README.md). The engine's own guarantee is that a mid-walk throw still reports the panes already built (*apply does not roll back*). |
 | **a workspace is tabs of panes** | `tabs` is the two-level form, each tab a tree in the same shape `root`/`panes` accept, sugar included; exactly one of `root`, `panes`, `tabs`; a tab declares exactly one of `root`/`panes`; an empty `tabs` refused; no label needs to be unique — not a pane's, not a tab's — since nothing keys on a name (the manifest's handle is the pane id and it reports a pane's tab by index); a tab may leave its label to the backend; no `cwd` reaches a tab either |
-| **the walk, across tabs** | the first tab opens the workspace and every later tab opens in it, never as a split; each tab's tree is built against its own root pane; all geometry precedes any submit, commands in template order tab by tab; `--at` still defaults to `workspace`; `worktree add --template` builds the first tab into the workspace the worktree already opened; focus is never stolen and no field asks for it; a throw part-way reports what was built and kills nothing |
+| **the walk, across tabs** | the first tab opens the workspace and every later tab opens in it, never as a split; each tab's tree is built against its own root pane; all geometry precedes any submit, commands in template order tab by tab; `worktree add --template` builds the first tab into the workspace the worktree already opened; focus is never stolen and no field asks for it; a throw part-way reports what was built and kills nothing. (That `--at` still defaults to `workspace` for a tabs template is the CLI surface.) |
 | **carrying the workspace where the backend has no tier** | a tab is labeled `<workspace> - <tab>` only where the backend lacks a workspace tier, unprefixed where it has one; the workspace label is never shortened, so shortening collisions cannot arise; the label is never parsed back — the group id is what identifies a workspace; the tab's own name is stored beside the group id, because a composed display name destroys it; every tab is grouped whichever verb opened the workspace, the first one included; herdr's root tab is renamed after birth, the one tab neither backend names at birth |
-| **managing templates needs no multiplexer** | `list`/`show`/`validate` answer with no mux; `validate` exits 0/1 with one error per line |
+| **managing templates needs no multiplexer** *(CLI surface)* | `list`/`show`/`validate` answering with no mux, and `validate` exiting 0 on a valid template, are the CLI read verbs, in [`cli/template/apply/`](../../cli/template/apply/README.md). The engine consequence for *applying* — that `open --template` with no mux fails through the adapter path — stays here. |
 
-## Logic
+## Control Flow
 
 Two sub-graphs. Every use case above enters one of them: the template verbs and both apply routes
 enter **resolve and validate** first; `open --template` and `worktree add --template` continue into
@@ -292,14 +304,12 @@ enter **resolve and validate** first; `open --template` and `worktree add --temp
 ```mermaid
 graph TD
   IN["a template verb, or --template &lt;name&gt;"]
-  IN -->|"R1: --file given"| FILE["that path is read; neither templates directory is consulted"]
   IN -->|"R2: the name is not a plain stem"| BADNAME["exit 2, no file read"]
   IN --> SRC{"the name is a plain stem: which source has it?"}
   SRC -->|"R3: the repo has it"| REPO["the repo template wins; the user copy is reported shadowed"]
   SRC -->|"R4: only the user has it"| USER["the user template; source reported as user"]
   SRC -->|"R5: the repo lookup runs through resolvePrimaryRoot"| PRIMARY["the primary checkout's answer, from every worktree"]
   SRC -->|"R6: neither has it"| MISS["exit 1, naming both directories searched"]
-  FILE --> VAL
   REPO --> VAL
   USER --> VAL
   PRIMARY --> VAL
@@ -323,7 +333,6 @@ graph TD
   DES -->|"D4: arrange omitted"| DR3
   DES -->|"D5: n = 1"| DR5["that pane alone, no split node"]
   DES -->|"D6: the desugaring is cyber-mux's own"| DR6["the same tree on every backend; tmux select-template never invoked"]
-  DES -->|"D7: show --desugar"| DR7["the tree apply will build is printed"]
   DES -->|"D8: the flat form sits inside a tab"| DR1
   DES -->|"a nested tree was written out"| TREE["the tree as written"]
   DR1 --> TREE
@@ -338,9 +347,6 @@ graph TD
 ```mermaid
 graph TD
   ENTER["open --template / worktree add --template"]
-  ENTER -->|"F1: --launch also given"| EF1["exit 2, rejecting the pair"]
-  ENTER -->|"F2: --at omitted"| EF2["the workspace placement"]
-  ENTER -->|"F3: --label omitted"| EF3["the region is labeled with the template name"]
   ENTER -->|"F4: the verb is worktree add --template"| EF4["the walk's cwd is the worktree root; the manifest rides beside root and branch"]
   ENTER -->|"F5: no multiplexer resolves"| EF5["throws, naming tmux/herdr as the required backend"]
   ENTER --> GATE{"resolve and validate, before any side effect"}
@@ -375,14 +381,14 @@ graph TD
   WSUB -->|"W5: it does not"| WS2["a blank shell; no submit"]
   WSUB -->|"W8: the walk throws part-way"| WS3["the panes already built stay open and are reported; exit 1; nothing is killed"]
   WSUB -->|"T4: focus"| WS4["the caller's focus is untouched, and no field asks for it"]
-  WS1 --> MAN{"--format json"}
-  MAN -->|"M1: the manifest is reported"| M1["template, injected cwd, workspace, and one entry per pane carrying label, pane id, dir, command"]
-  M1 -->|"M2: the backend has a workspace tier"| M2["workspace carries the workspace the region opened in"]
-  M1 -->|"M3: the backend has no workspace tier"| M3["workspace is null"]
-  M1 -->|"M4: the template declared tabs"| M4["every pane carries its tab; the pane list stays one flat list"]
-  M1 -->|"M5: the template declared one tree"| M5["each pane's tab is null"]
-  ENTER -->|"N1: the verb is list, show or validate"| N1["answered with no session backend resolved"]
 ```
+
+The CLI surface — the `--launch` mutual exclusion (F1), the `--at`/`--label` defaults (F2/F3), the
+`list`/`show`/`validate` verbs answering with no mux (N1), and the `--format json` manifest field
+shape (M1–M5) — enters the same walk but is specified in
+[`cli/template/apply/`](../../cli/template/apply/README.md). The walk here **produces** what that
+manifest reports; edge `W8` is where the engine guarantees a mid-walk throw still reports the panes
+already built.
 
 ## Scenario map
 
@@ -394,7 +400,6 @@ reaching it.
 
 | Edge | Path (Given) | Scenario |
 |---|---|---|
-| R1 `--file` given | a caller running `template show --file` | `--file skips resolution entirely` |
 | R3 the repo has it | both directories hold the name | `a repo template shadows a user template of the same name` |
 | R4 only the user has it | the repo has none of that name | `a user template resolves when the repo has none of that name` |
 | R5 repo lookup through `resolvePrimaryRoot` | a linked worktree whose branch predates the file | `the repo templates directory resolves through the primary checkout, not the caller's cwd` |
@@ -436,7 +441,6 @@ reaching it.
 | D4 `arrange` omitted | 4 panes, no arrange | `arrange omitted defaults to tiled` |
 | D5 n = 1 | a single pane | `n = 1 is legal and produces a single pane with no split` |
 | D6 the desugaring is cyber-mux's own | the same flat template on both backends | `the desugared tree is identical on every backend` |
-| D7 `show --desugar` | a flat template | `show --desugar prints exactly the tree apply will build` |
 
 ### The walk
 
@@ -457,7 +461,6 @@ reaching it.
 | T1 tabs — first tab, then each later tab | 3 tabs on a backend with a real workspace tier | `the first tab opens the workspace and every later tab opens inside it` |
 | T2 a tab's tree is built | the second tab is a split of two panes | `each tab's tree is built against that tab's own root pane` |
 | T3 geometry across every tab precedes any submit | 2 tabs, each with a command | `geometry is built across every tab before any command is submitted` |
-| F2 `--at` omitted | a tabs template | `a tabs template still defaults --at to workspace` |
 | T4 focus | 3 tabs | `apply never steals focus, and a tabs template cannot ask it to` |
 | T5 the region is already open | `worktree add --template` with a tabs template | `worktree add --template builds a tabs template into the worktree's own workspace` |
 | T6 whichever verb opened the workspace | `worktree add --template` on tmux | `a tabs template groups the same way whichever verb opened the workspace` |
@@ -493,30 +496,27 @@ reaching it.
 
 ### `--template`, the exact sibling of `--launch`
 
+The flag defaults (`--launch` mutual exclusion, `--at`/`--label` defaults) are the CLI surface, in
+[`cli/template/apply/`](../../cli/template/apply/README.md). What stays here is the engine integration.
+
 | Edge | Path (Given) | Scenario |
 |---|---|---|
-| F1 `--launch` also given | `open --template … --launch …` | `--template and --launch are mutually exclusive` |
-| F2 `--at` omitted | `open --template` with a single-tree template | `--at defaults to workspace when --template is given` |
-| F3 `--label` omitted | `open --template` | `--label defaults to the template name` |
 | F4 the verb is `worktree add --template` | a branch and a template name | `worktree add --template applies the template against the worktree root` |
 
 ### The manifest is the handoff
 
-| Edge | Path (Given) | Scenario |
-|---|---|---|
-| M1 the manifest is reported | `open --template --format json` | `--format json reports every pane apply created` |
-| M2 the backend has a workspace tier | `$HERDR_ENV` set and no `$TMUX` | `the manifest carries the workspace the region opened in` |
-| M3 the backend has no workspace tier | a single-tree apply with `$TMUX` set | `the manifest's workspace is null on tmux` |
-| M4 the template declared tabs | 2 tabs with `--format json` | `the manifest reports which tab each pane landed in` |
-| M5 the template declared one tree | a template declaring `root` | `a pane from a single-tab template reports no tab` |
-| M3 the backend has no workspace tier | a tabs template grouped on tmux | `the manifest's workspace is still null on tmux even when tabs are grouped` |
+The manifest's field shape (`--format json`, the `workspace` and per-pane `tab` fields) is the CLI
+output surface, in [`cli/template/apply/`](../../cli/template/apply/README.md). The engine produces
+what it reports; the mid-walk-throw guarantee (`W8`) is under *apply does not roll back*, above.
 
 ### Managing templates needs no multiplexer
 
+The `list`/`show`/`validate` read verbs, and `validate` exiting 0 on a valid template, are the CLI
+surface, in [`cli/template/apply/`](../../cli/template/apply/README.md). The engine consequence for
+*applying* stays here.
+
 | Edge | Path (Given) | Scenario |
 |---|---|---|
-| N1 the verb is `list`, `show` or `validate` | neither `$TMUX` nor `$HERDR_ENV` set | `list, show and validate answer with no multiplexer at all` |
-| V12 valid | a well-formed template | `validate exits 0 on a valid template` |
 | F5 no multiplexer resolves | `open --template` with neither variable set | `applying with no multiplexer fails through the existing adapter path` |
 
 Edge `V12` carries one further row, in [`capture/`](../capture/README.md): a template captured from a

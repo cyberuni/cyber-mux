@@ -63,21 +63,6 @@ Feature: mux detection — which multiplexer, and which backend adapter
     When the mux probe runs
     Then it falls back to the $TMUX hint rather than declaring no multiplexer
 
-  Scenario: doctor reports the detected mux and prints a pin hint
-    Given a caller running behind a detected multiplexer
-    When it runs cyber-mux doctor
-    Then it reports mux, via, pane, and backend
-    And it prints an export CYBER_MUX=<m> CYBER_MUX_PANE=<p> hint so the caller can pin the fast-path
-
-  # ── mode reports the selected backend ──
-
-  Scenario: mode reports the detected session backend
-    Given a caller running inside a detected multiplexer
-    When it runs cyber-mux mode
-    Then it reports the selected session-backend name (tmux or herdr)
-
-  Scenario: mode reports none when no backend is selectable
-    Given a caller in no detectable multiplexer
-    When it runs cyber-mux mode
-    Then it reports "none" rather than erroring, and exits 0
+  # The CLI read-out of this probe — the `cyber-mux doctor` pin hint and the `cyber-mux mode`
+  # backend/none report — is a surface concern and lives in ../../cli/detection/detection.feature.
 

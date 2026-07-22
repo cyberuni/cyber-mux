@@ -5,24 +5,25 @@ name: cyber-mux
 approval:
   spec:
     verdict: approve
-    by: agent
+    by: unional
     cause: dimension
     why:
-      floor: "No floor fires. Edit class verified structurally, not assumed: 50 insertions, ZERO modified or removed lines across mux.feature and mux/README.md — additive-only, so the file-level @frozen self-clears and no re-open was needed. Clearance does not fire: the untouched worktree-list provenance scenarios pin WHOSE facts these are, the new band pins HOW they render — orthogonal aspects, confirmed non-conflicting by two independent cold judges. Compatibility does not fire: package is 0.0.0, nothing shipped. No Conflict."
-      blast: "small and spec-only — three added scenarios plus one section comment in mux.feature, one Use Cases bullet and one summary-table row in mux/README.md. This CR proposes no source change; the already-shipped rendering code is its subject, not its target."
-      novelty: "low for the ~ half (axi/'s #10 already owes $HOME collapsed to ~ on the home view, making this consistency across surfaces rather than a new idea); moderate for the generalization pinned — a one-bit fact earns a marker on the column it is about rather than a column of its own, and a marker is human-surface only."
-      confidence: "high — two cold spec-judge rounds at depth 1, each re-deriving its own oracle. Round 1 failed the builder lens on three underdetermination defects (a Then whose sibling-prefix subject the Given never constructed; the marker glyphs living only in the never-frozen README; the human-vs-structured boundary pinned at the --format json flag rather than the surface, which the corpus's own owed TOON default would have hollowed out). Round 2 independently verified all three fixes real, passed builder, and caught a regression the producer introduced by taking round 1's optional band-placement nit — cleared with an additive section comment. Mechanical checks green (check:features parses both files; the judge's check-spec-state and check-suite reported OK). Self-asserted within the auto-spec leash; lands provisionally in the async review queue: ratify or kick back."
+      floor: "Clearance fires and CLEARS across six frozen library suites (detection, driving, lookup, placement, template/apply, template/capture), each re-opened by a relocation-with-conservation — the CLI-surface scenarios move to a new cli/X mirror node, the surface-independent contract stays. Ratified by the operator kickback mandate (complete the CLI surface, not just worktree). Four independent cold spec-judges verified coverage conservation scenario-by-scenario against the HEAD baseline: none lost, none narrowed. cli/lookup adds 4 NEW frozen scenarios for the previously-unspecified read/focus/close verbs, backfilled to observable behavior and confirmed accurate to src/cli.ts. No Conflict. Compatibility inert (package 0.0.0). This supersedes the split-worktree CR's approval, which the operator kicked back as incomplete (that ledger, seq 5)."
+      blast: "large but spec-mostly — 6 new cli/X mirror nodes (+ a cli/template index), 6 trimmed library suites, cli/README.md + the root placement-map reframed from a narrow divergence-only exception to a consistent CLI-surface axis. The only source touched is 3 added verb-action tests; no product code changed."
+      novelty: "high — generalizes the surface axis corpus-wide: cli/X-mirrors-mux/X becomes the standing pattern, presentation separated from contract for every capability, with worktree's genuine divergence just one instance."
+      confidence: "high — 4 cold spec-judges at depth 1, each re-deriving its own oracle. detection+driving ALIGNED (byte-identical moves); lookup ALIGNED (coverage conserved + the 4 backfilled verbs verified accurate to source); template ALIGNED (apply 69->69, capture 33->35, the apply-atomicity and capture-refusal calls judged correct). placement returned architect FAIL on ONE misfiled scenario — the --at-omitted fallback pinned a default the adapter makes, not the CLI — remediated by relocating it to mux/placement re-altituded to the adapter contract (which otherwise had no coverage of its own fallback), re-verified 1:1. Mechanical: check:features 14/14, check-spec-state OK, every suite 1:1 with its map. Ratified by unional after the backlog follow-ups were addressed (mux/README.md rollup synced to the surface split, the corpus-wide `## Logic`→`## Control Flow` heading corrected, the detection Use Cases bullet completed)."
   impl:
     verdict: approve
-    by: agent
+    by: unional
     cause: dimension
     why:
-      floor: "none at the impl gate. This is a BACKFILL and is recorded as one rather than dressed as build-to-contract: the three rendering commits landed on the branch before any spec covered them. The scenarios were written to observable behavior and then checked against it — none names a helper, module, or call shape."
-      blast: "small — no source change in this CR. The behavior verified is the already-landed rendering work: cli.ts's worktree-list column set and output.ts's tildify helper."
-      novelty: "low — verification only, over an already-green suite."
-      confidence: "high — every frozen scenario has a real verification in the shipped suite, checked one by one rather than in aggregate. Scenario 1 (marker not column): the cli.test.ts case asserting the primary renders marked, a linked worktree does not, and no LINKED header remains, plus the vanished-checkout case. Scenario 2 (~ shortening, boundary-matched): the cli.test.ts home-rooted case plus output.test.ts's five-case boundary set including the sibling-prefix near-miss and the root-home edge. Scenario 3 (no marker in a structured payload): both JSON cases, asserting the booleans survive, the path is absolute, and the branch field carries no marker text. 179 tests green across the two touched files; pnpm verify 7/7 turbo tasks green. No dedicated cold impl-judge for a spec-only CR whose subject is an already-verified implementation; self-asserted within the auto-spec leash."
+      floor: "none. The reorg is spec relocation of already-verified behavior EXCEPT the 4 new read/focus/close frozen scenarios. close was already verified (resolution tests assert kill-pane); read (raw bytes to stdout, not the JSON envelope), read --lines (capture-pane -S -n), and focus (switch-client -> select-window -> select-pane, empty stdout) lacked a direct happy-path verification, so 3 tests were added. Every relocated scenario keeps its pre-existing passing verification."
+      blast: "small — 3 added verification tests in src/cli.test.ts; no product-code change (read/focus/close already shipped)."
+      novelty: "low-moderate — verifications for verbs that shipped without spec coverage."
+      confidence: "high — the 3 new tests pass and each falsifies a wrong subject (a JSON-wrapped read, an ignored --lines, a no-op focus); the lookup cold spec-judge independently confirmed all 4 verb scenarios match src/cli.ts and the tmux/herdr adapters. Full suite green under pnpm verify. Ratified by unional."
 produced-by:
   spec-producer: sdd:start-mission
+  impl-producer: sdd:start-mission
 ---
 
 # cyber-mux — the CLI: cross-multiplexer pane control
@@ -41,10 +42,29 @@ top-level folders name what the CLI *does*. A new concept routes to the folder w
 serves; rules go to [`design/`](./design/README.md), and a concept enacted across capabilities is
 declared in `concept:` frontmatter rather than given a folder of its own.
 
+**The CLI-surface axis.** A capability is specified along two axes: its **surface-independent
+contract** (adapters, resolution, git facts, the library seams — *what the capability guarantees
+however invoked*) and its **CLI surface** (the `cyber-mux <verb>` commands, their flags, exit codes,
+stdout/stderr split, human-table/text rendering, and the AXI error contract — *how the command line
+invokes and presents it*). The contract lives in the capability node ([`mux/`](./mux/README.md),
+[`template/`](./template/README.md)); the CLI surface lives in a mirror node under
+[`cli/`](./cli/README.md), one `cli/X` per library node `mux/X` (or `template/X`). Separating
+**presentation from contract** is the principle — the CLI's flag-parsing, usage errors, output
+shape, and rendering have no library equivalent and earn their own home, so a change to how a verb
+renders never touches the contract and vice-versa.
+
+A *genuine capability divergence* (worktree's CLI verb takes only the default availability gate while
+the library seam takes an injected predicate, cyberuni/cyberplace#360) is **one** reason for the
+split but not the only one; clean presentation-vs-contract separation stands on its own. `cli/` is
+**not** a layered dumping ground: a `cli/X` node exists **only** as the counterpart to a real library
+node, and every scenario it holds must *need the CLI surface* to state (a flag, an exit code, a
+rendered marker, an error payload) — a surface-independent guarantee stays in the capability node.
+
 | Node | Owns |
 |---|---|
-| [`mux/`](./mux/README.md) | the pane abstraction, as five units — [`detection/`](./mux/detection/README.md) (which backend, and what am I inside), [`placement/`](./mux/placement/README.md) (where a pane opens and what `open` reports), [`driving/`](./mux/driving/README.md) (a pane's turn), [`lookup/`](./mux/lookup/README.md) (addressing, focus, listing, the error surface), [`worktree/`](./mux/worktree/README.md) (the git-worktree surface and its binding) |
+| [`mux/`](./mux/README.md) | the pane abstraction, as five units — [`detection/`](./mux/detection/README.md) (which backend, and what am I inside), [`placement/`](./mux/placement/README.md) (where a pane opens and what `open` reports), [`driving/`](./mux/driving/README.md) (a pane's turn), [`lookup/`](./mux/lookup/README.md) (addressing, focus, listing, the error surface), [`worktree/`](./mux/worktree/README.md) (the library git-worktree seam and its binding) |
 | [`template/`](./template/README.md) | named, reusable workspace templates, as two units — [`apply/`](./template/apply/README.md) (resolve a template and walk it into a live pool against a target cwd) and [`capture/`](./template/capture/README.md) (the inverse: read a live workspace and write a template back out) |
+| [`cli/`](./cli/README.md) | **the CLI surface** (not a capability) — one mirror node per library node per the CLI-surface axis above, holding that capability's `cyber-mux <verb>` presentation & invocation: [`cli/detection/`](./cli/detection/README.md) (doctor, mode), [`cli/placement/`](./cli/placement/README.md) (open + the `--env`/`--at` flag surface), [`cli/driving/`](./cli/driving/README.md) (send, submit), [`cli/lookup/`](./cli/lookup/README.md) (read, focus, close, list, exists + the shared AXI error contract), [`cli/worktree/`](./cli/worktree/README.md) (the worktree verbs incl. `provision`), [`cli/template/`](./cli/template/README.md) (apply-side & capture-side verbs) — each the counterpart to its library node under [`mux/`](./mux/README.md) or [`template/`](./template/README.md) |
 | [`axi.md`](./axi.md) | the Agent Experience Interface output contract every CLI command follows |
 | [`glossary.md`](./glossary.md) | the ubiquitous language — every load-bearing term defined once |
 | [`design/`](./design/README.md) | the rules & model, and the decisions log (append-only, descriptive, ungated) |
@@ -63,6 +83,7 @@ does not settle.
 | a load-bearing term | [`glossary.md`](./glossary.md) — defined once there, referenced everywhere else |
 | a shipped artifact with no testable surface of its own, spanning every command | a root file beside this spec, `spec-type: reference` |
 | a sub-grouping inside a capability | a `concept:` tag, never a third folder level |
+| a capability's CLI presentation (a verb, flag, exit code, rendered marker, or error payload) | its mirror node under [`cli/`](./cli/README.md), paired to the capability node; the surface-independent contract stays in the capability node |
 
 **Tie-breaks.**
 
@@ -77,3 +98,11 @@ does not settle.
 - **Worktree behavior routes by what it is about.** The git-facts half is plain repository work and
   lives with the capability that surfaces it; the binding half — what opens, and where — is pane
   placement, so it belongs to [`mux/`](./mux/README.md).
+- **A `cli/X` node holds only what needs the CLI surface; the contract stays in the capability.** A
+  scenario lives in `cli/X` when stating it requires a verb, a flag, an exit code, a rendered marker,
+  or an error payload; a surface-independent guarantee (an adapter's behavior, a resolution rule, a
+  git fact, a library seam) stays in the capability node `mux/X` / `template/X`. Never duplicate a
+  contract across both. The AXI error contract (structured error on stdout, per-failure codes,
+  exit-code taxonomy, no raw-diagnostic leak) is CLI presentation shared by every verb: it lives in
+  [`cli/lookup/`](./cli/lookup/README.md) and the other `cli/` nodes cross-reference it rather than
+  restating it.

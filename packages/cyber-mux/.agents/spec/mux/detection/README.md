@@ -5,13 +5,18 @@ concept: [cyber-mux, multiplexer-detection]
 
 # mux/detection — which multiplexer, and which backend adapter
 
+> The **CLI read-out** of this probe — the `cyber-mux doctor` pin hint and the `cyber-mux mode`
+> backend/`none` report — lives in [`cli/detection/`](../../cli/detection/README.md). This node owns
+> the **surface-independent probe + selection contract** those commands read.
+
 ## What
 
 Which multiplexer a caller is really running inside, and which session backend that selects. Two
 questions with one answer: `probeMultiplexer` decides *what is out there* (a fast-path env override,
 else a walk up the process ancestry), and `selectSessionAdapter` turns that into the one adapter
-every pane-opening verb drives. `doctor` prints a pin hint for the fast-path; `mode` prints the
-selected backend, or `none`.
+every pane-opening verb drives. The result is a plain read — the probe reads the environment and the
+process table and selects an adapter; the **CLI read-out** that prints it (`doctor`'s pin hint,
+`mode`'s backend/`none`) is the surface concern in [`cli/detection/`](../../cli/detection/README.md).
 
 ### Non-goals
 
@@ -22,15 +27,16 @@ environment and the process table and nothing else.
 ## Use Cases
 
 - **The session backend is selected by environment** — tmux when `$TMUX` is set, herdr when
-  `$HERDR_ENV` is set and `$TMUX` is not; an environment with neither throws asking for one.
+  `$HERDR_ENV` is set and `$TMUX` is not, wezterm when `$WEZTERM_PANE` is set, zellij when `$ZELLIJ`
+  is set; an environment naming none of them throws asking for one.
 
 - **Multiplexer detection is two-mode** — `probeMultiplexer` first trusts `$CYBER_MUX`
   (`tmux`|`herdr`|`wezterm`|`screen`|`none`) outright — this doubles as an override (`=none` forces
   no-mux even inside a real multiplexer). Failing that it walks the process ancestry from `$$`
   looking for a `tmux`/`tmux: server`, `herdr`, `wezterm`, or `screen` ancestor; `$TMUX`/`$HERDR_ENV`
   are used only as a fast-positive hint the walk falls back to when it is itself inconclusive, never
-  trusted alone. `doctor` runs discovery and prints an `export CYBER_MUX=<m> CYBER_MUX_PANE=<p>` hint
-  so a caller can pin the fast-path.
+  trusted alone. This resolved result (mux, via, pane) is what the `cyber-mux doctor` read-out prints
+  as a pin hint — the printing is [`cli/detection/`](../../cli/detection/README.md)'s.
 
 - **`screen` is DETECTED but not DRIVABLE** — the probe recognizes `screen` (an override pinning it,
   or a real screen ancestor) so it is reported truthfully, but `selectSessionAdapter` rejects it with
@@ -42,11 +48,12 @@ environment and the process table and nothing else.
   `SessionTarget.id`/`currentPane`/`LivePane.id` are load-bearing on, and the one wezterm (#47) had
   and screen lacks. Full probe + decision: the ADR log
   ([`design/decisions`](../../design/decisions/README.md)).
-## Logic
+## Control Flow
 
 ### Detection and backend selection
 
-Entered by `probeMultiplexer`, `doctor`, `mode`, and every verb that needs an adapter.
+Entered by `probeMultiplexer`, `selectSessionAdapter`, and every verb that needs an adapter (the
+`doctor` / `mode` read-out of the result is [`cli/detection/`](../../cli/detection/README.md)'s).
 
 ```mermaid
 graph TD
@@ -63,10 +70,6 @@ graph TD
   PFALL --> SEL
   SEL -->|"env names a backend"| AD["that backend's adapter"]
   SEL -->|"none of the three"| ATHROW["throw naming the required backend"]
-  PFAST --> DOC["doctor prints the pin hint"]
-  PANC --> DOC
-  AD --> MODE["mode prints the backend"]
-  PNONE --> MODENONE["mode prints none, exit 0"]
 ```
 
 ## Scenario map
@@ -89,11 +92,6 @@ Every scenario in [`detection.feature`](./detection.feature), one row each, grou
 | `$CYBER_MUX=none` → mux none | `$CYBER_MUX=none` while `$TMUX` is set | `$CYBER_MUX=none is an override even inside a real multiplexer` |
 | no `$CYBER_MUX` → walk the process ancestry | a tmux server is an ancestor | `absent the env fast-path, the probe walks the process ancestry from $$` |
 | walk inconclusive → fall back to the hint | `$TMUX` set, ancestry walk inconclusive | `$TMUX/$HERDR_ENV alone are not trusted — only a fast-positive hint the walk falls back to` |
-| probe result → `doctor` prints the pin hint | running behind a detected multiplexer | `doctor reports the detected mux and prints a pin hint` |
 
-### mode reports the selected backend
-
-| Edge | Path (Given) | Scenario |
-|---|---|---|
-| adapter selected → `mode` prints the backend | inside a detected multiplexer | `mode reports the detected session backend` |
-| no backend selectable → `mode` prints none, exit 0 | in no detectable multiplexer | `mode reports none when no backend is selectable` |
+> The CLI read-out of this contract — `doctor`'s pin hint and `mode`'s backend/`none` report —
+> lives in [`cli/detection/`](../../cli/detection/README.md), one scenario per command.

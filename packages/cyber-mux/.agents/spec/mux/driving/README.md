@@ -5,6 +5,11 @@ concept: [cyber-mux, pane-turn]
 
 # mux/driving — taking a pane's turn
 
+> The **CLI verb surface** — how `cyber-mux send` and `cyber-mux submit` reject an incomplete
+> invocation (no tokens, no text, a bare `send`, a missing pane) before anything reaches a pane —
+> lives in [`cli/driving/`](../../cli/driving/README.md). This node owns the **surface-independent
+> drive contract** those verbs invoke once the input is complete.
+
 ## What
 
 Driving a pane's input once it is open: typing literal text, pressing named keys, and submitting.
@@ -55,44 +60,29 @@ Resolving *which* pane a verb acts on, and the structured error a failure carrie
     backend command: a backend with an atomic text-plus-Enter primitive uses it, one without composes
     typing and Enter.
 
-  Every live view a bare `cyber-mux send` could derive already belongs to a verb — the pane
-  enumeration to `list`, the current pane to `doctor` — so rather than ship a second name for an
-  existing verb, a bare `send` is treated as *incomplete input*: help to **stdout**, **exit 2**.
-
-  **That is [`axi.md`](../../axi.md)'s #6 deciding it, not #8, and the difference is not
-  bookkeeping.** Bare `send` is a missing required parameter, which #6 already puts at `2` — the
-  decision needs no content-first reasoning at all. It was previously called an "acknowledged
-  amendment to #8", which conceded a divergence this repo never had to concede: AXI's #8 governs the
-  bare **binary** ("running your CLI with no arguments", its example being `$ tasks`) and says nothing
-  about a command **group** invoked without a subcommand. So #8 was never violated here — it was never
-  addressed to this case. What remains genuinely open is whether the contract *should* extend #8 to
-  groups; that question belongs to the contract, not to this node.
-
   The core vocabulary is **probed, not derived** from either backend's documentation, and it is the
   whole of the portable set: everything else diverges, `C-c` is the only portable control key, and
   the `Backspace` spelling is a judgment call the probe underdetermines. Why each of these was
   decided the way it was — and what it costs — is logged in
   [`design/decisions/`](../../design/decisions/README.md), not restated here.
 
-## Logic
+## Control Flow
 
 ### Driving a pane's turn
 
+The verb's incomplete-invocation rejections (a bare `send`, no tokens, no text, a missing pane) are
+the CLI surface's — [`cli/driving/`](../../cli/driving/README.md). This is the drive contract once the
+input is complete.
+
 ```mermaid
 graph TD
-  D["a send or submit verb"] --> WHICH{"which verb"}
-  WHICH -->|"bare send"| HELP["help on stdout, exit 2"]
-  WHICH -->|"send text"| T{"text argument"}
-  T -->|"missing"| TREJ2["rejected before anything is sent"]
-  T -->|"given"| TLIT["typed as literal characters, no Enter appended"]
-  WHICH -->|"send keys"| K{"key tokens"}
-  K -->|"none"| KREJ["rejected before anything is sent"]
+  D["a send or submit verb, invoked with complete input"] --> WHICH{"which verb"}
+  WHICH -->|"send text"| TLIT["typed as literal characters, no Enter appended"]
+  WHICH -->|"send keys"| K{"which token"}
   K -->|"core vocabulary token"| KCORE["normalized onto the backend's own name and pressed"]
   K -->|"token outside the core"| KFWD["forwarded verbatim, the backend's own semantics decide"]
   KCORE --> ENTER["Enter is a key like any other, so send keys Enter takes the turn"]
-  WHICH -->|"submit"| SP{"pane argument"}
-  SP -->|"missing"| SREJ["rejected, naming pane as missing"]
-  SP -->|"given"| STXT{"text argument"}
+  WHICH -->|"submit"| STXT{"text argument"}
   STXT -->|"text given"| STYPE["typed literally, then Enter, taking the turn"]
   STXT -->|"none or empty"| SFLUSH["a bare Enter flushes the staged buffer, retyping nothing"]
 ```
@@ -115,11 +105,11 @@ Every scenario in [`driving.feature`](./driving.feature), one row each, grouped 
 | `send keys` non-core token → forwarded verbatim | `Home` on wezterm, which can encode it | `a non-core key wezterm also knows (by the same extras a backend "knowing" Home means) is pressed` |
 | `send keys` non-core token → forwarded verbatim | a token wezterm cannot encode | `a token wezterm cannot encode is typed as its own literal characters, unable to refuse it` |
 | `send keys Enter` → Enter pressed, the turn taken | text already staged, each backend | `send keys Enter presses Enter and takes the turn, because the caller asked for it` |
-| `send keys` with no tokens → rejected | a pane named, no key tokens | `send keys with no key tokens is rejected` |
-| `send text` with no text → rejected | a pane named, no text | `send text with no text argument is rejected` |
-| bare `send` → help on stdout, exit 2 | neither `text` nor `keys` named | `bare send is incomplete input, so it fails loud with help rather than acting` |
 | `submit` with text → typed then Enter | a message as the text argument, each backend | `submit with text types the text and presses Enter, taking the pane's turn` |
 | `submit` with text → typed then Enter | a message that also names a key, each backend | `submit types its text literally, never interpreting it as a key` |
 | `submit` with no text → a bare Enter flush | text already staged, each backend | `submit with no text presses a bare Enter and retypes nothing` |
-| `submit` with no pane → rejected | no pane argument | `submit with no pane is rejected` |
 | `submit` with empty text → a bare Enter flush | text already staged, tmux and herdr | `submit with empty text is the bare flush, not a second contract` |
+
+> The verbs' incomplete-invocation rejections — `send keys` with no tokens, `send text` with no
+> text, a bare `send`, and `submit` with no pane — are the CLI surface's, one scenario each in
+> [`cli/driving/`](../../cli/driving/README.md).

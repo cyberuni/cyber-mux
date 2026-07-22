@@ -12,6 +12,11 @@ carries with it: which pane a split targets, how big it is, what environment it 
 group it belongs to, what it is called, and what the open reports back — the pane, its tab, and its
 workspace.
 
+This node owns the **surface-independent library contract**. The `cyber-mux open` **flag surface** —
+how `--at`, `--launch`, and `--env` are parsed, defaulted, validated, and refused — is its CLI
+counterpart in [`cli/placement/`](../../cli/placement/README.md); this node does not restate those
+flags, it defines what their values mean once handed to the seam.
+
 ### Non-goals
 
 **Naming a tab inside a workspace was a non-goal here, and this CR reversed it — the constraint was
@@ -26,23 +31,26 @@ So the cost is one `tab rename` on herdr's first tab, not a capability neither b
 templates ([`template/`](../../template/README.md)) are the first real customer, and the non-goal is revisited
 here rather than silently contradicted.
 
+The `--at`, `--launch`, and `--env` **flag surface** — how each is parsed, defaulted, validated, and
+refused at the CLI — is [`cli/placement/`](../../cli/placement/README.md)'s, not this node's; this node
+owns only what those flags' values mean once handed to the seam.
+
 Detecting *which* backend is in play is [`detection/`](../detection/README.md); addressing a pane
 after it exists is [`lookup/`](../lookup/README.md); binding a checkout to a workspace is
 [`worktree/`](../worktree/README.md).
 
 ## Use Cases
 
-- **Placement maps each `--at` value onto the backend** — `--at pane:right|pane:down|tab|workspace`
-  chooses where the new pane opens. Unlike `cyberlegion` (where `unit spawn` always resolved a
-  concrete `--at` before calling this layer, making the adapter's own fallback unreachable),
-  `cyber-mux open`'s `--at` is optional at the CLI: when omitted, **the adapter's own `at ?? 'tab'`
-  fallback is reachable and observable** (`session.tmux.ts`, `session.herdr.ts`) — so it carries a
-  scenario here. `tab` maps to each backend's native Tab primitive — tmux `new-window`, herdr
-  `tab create` — never a split pane. `workspace` maps to each backend's own **visible** space — herdr
-  `workspace create`, tmux `new-window` (a window visible in the status bar). Every placement opens
-  without stealing the caller's focus. `open` is placement and nothing more: the workspace it makes
-  carries no worktree record even when its cwd is a checkout, so it is never grouped with a repo —
-  that is the `worktree` verbs' job, below.
+- **Each placement value maps onto the backend's own primitive** — `pane:right|pane:down|tab|workspace`.
+  `tab` maps to each backend's native Tab primitive — tmux `new-window`, herdr `tab create` — never a
+  split pane. `workspace` maps to each backend's own **visible** space — herdr `workspace create`, tmux
+  `new-window` (a window visible in the status bar). Every placement opens without stealing the caller's
+  focus. `open` is placement and nothing more: the workspace it makes carries no worktree record even
+  when its cwd is a checkout, so it is never grouped with a repo — that is the `worktree` verbs' job,
+  below. Which value the `--at` flag carries, how it defaults when omitted (the adapter's own
+  `at ?? 'tab'` fallback, reachable exactly because the CLI flag is optional — `session.tmux.ts`,
+  `session.herdr.ts`), and how an out-of-set value is refused are the **flag surface**'s, in
+  [`cli/placement/`](../../cli/placement/README.md).
 - **A split can be told which pane, how big, and what environment** — three options on the seam's
   own open contract shape a `pane:*` placement. `from` and `ratio` are reached only through the
   adapter, never a CLI flag; `env` also has a `--env` flag (below), whose *surface* is its own
@@ -92,19 +100,12 @@ after it exists is [`lookup/`](../lookup/README.md); binding a checkout to a wor
     double-applying over a native set would push the values into `ps` output and shell history on
     every route, which is the exact cost the prefix is a last resort to avoid. The prefix is a shell
     command line, so values are quoted for one.
-  - **`--env KEY=VALUE`, repeatable, on every verb that opens a pane** (`open`, `worktree add`,
-    `worktree open`) — env is the one split option with a CLI flag, because a variable a caller
-    cannot set at birth is one they cannot set at all. Exactly one pane opens on each of those
-    routes, so "which pane" needs no rule: it is the one the verb opened — **except on herdr's
-    worktree bind route**, the one route that cannot carry env, where the flag degrades to a prefix
-    or a warning per the two bullets above. That exception is stated wherever the flag is, because a
-    CLI property silently false on one backend's one route is this project's recurring defect.
-    Refused alongside `--template` for `--launch`'s reason — the template owns what is in the panes it
-    declares. It **implies a placement** for `--launch`'s reason too: asking for something in a pane
-    is asking for the pane, and without that a bare `worktree add --env` would open nothing and drop
-    the env with nothing to carry it. A missing `=` is malformed and rejected before anything opens;
-    a present `=` with nothing after it sets the variable empty, and a value's own `=` is kept by
-    splitting on the first one only.
+  - **The `--env` CLI flag is the surface for this option** — how a `KEY=VALUE` pair is parsed,
+    repeated, refused alongside `--template`, and degraded on the one route that cannot carry env — and
+    it is the **flag surface**'s, in [`cli/placement/`](../../cli/placement/README.md). This node owns
+    what env *means* (the six bullets above); that node owns the flag that carries it. The two meet at
+    "the route that cannot carry env": what the seam does about it is here, how the flag reports it is
+    there.
 
   **Boundary — the seam does not validate `ratio`.** It renders whatever number it is given; the
   `0 < ratio < 1` bar belongs to the caller (template's schema enforces it, and is where a degenerate
@@ -222,15 +223,13 @@ after it exists is [`lookup/`](../lookup/README.md); binding a checkout to a wor
   A rename is **as read-only in its side effects as the focus probe is**: it moves no focus and opens
   nothing. Naming a space is not visiting it — the same rule every spawn path already holds.
 
-## Logic
+## Control Flow
 
 ### `open` — placement, launch, and what it reports back
 
 ```mermaid
 graph TD
-  O["open runs"] --> AT{"--at"}
-  AT -->|"outside the four values"| REJ["rejected before any pane opens"]
-  AT -->|"omitted, at ?? tab fallback"| TAB
+  O["open runs"] --> AT{"placement"}
   AT -->|"pane:right or pane:down"| SPLIT["split the target pane"]
   AT -->|"tab"| TAB["the backend's native tab"]
   AT -->|"workspace"| WS{"backend's own visible space"}
@@ -242,9 +241,9 @@ graph TD
   BG --> LAUNCH
   WT --> LAUNCH
   WH --> LAUNCH
-  WW --> LAUNCH{"--launch"}
-  LAUNCH -->|"omitted"| BLANK["a blank pane"]
-  LAUNCH -->|"given"| SUB["the command is submitted"]
+  WW --> LAUNCH{"launch command"}
+  LAUNCH -->|"none"| BLANK["a blank pane"]
+  LAUNCH -->|"given"| SUB["the command is submitted, typed and Enter pressed"]
   BLANK --> REP["report the opened pane"]
   SUB --> REP
   REP --> WSR{"backend has a workspace tier"}
@@ -282,24 +281,9 @@ graph TD
   C -->|"no"| WARN["warning on stderr naming the variables"]
 ```
 
-### `--env` — the CLI surface for the seam's env option
-
-```mermaid
-graph TD
-  V["a verb that opens a pane"] --> PARSE{"--env value"}
-  PARSE -->|"no ="| PREJ["rejected before the verb's own side effect"]
-  PARSE -->|"KEY= with nothing after"| PEMPTY["variable set empty"]
-  PARSE -->|"value containing ="| PSPLIT["split on the first = only"]
-  PARSE -->|"KEY=VALUE"| POK["accepted"]
-  POK --> TPL{"--template also passed"}
-  TPL -->|"yes"| TREJ["rejected before any pane opens, naming both flags"]
-  TPL -->|"no"| REPEAT["repeatable, one variable per flag"]
-  REPEAT --> ROUTE{"does this route carry env"}
-  ROUTE -->|"yes"| CARRY["the pane the verb opens carries it"]
-  ROUTE -->|"no, herdr's worktree bind"| L{"--launch given"}
-  L -->|"yes"| RIDE["rides in on the command"]
-  L -->|"no"| WARN2["warning names the variable that did not reach the pane"]
-```
+The `--env` **CLI flag** that carries this option — its `KEY=VALUE` parsing, repeatability,
+`--template` conflict, and per-route degrade — has its own control-flow graph in the flag surface node,
+[`cli/placement/`](../../cli/placement/README.md).
 
 ### The workspace group — carrying a grouping a backend has no tier for
 
@@ -334,13 +318,6 @@ graph TD
 
 Every scenario in [`placement.feature`](./placement.feature), one row each, grouped by use case.
 
-### Placement
-
-| Edge | Path (Given) | Scenario |
-|---|---|---|
-| `--at` given → open at that placement | `open --at pane:down` | `--at chooses where the new pane opens` |
-| `--at` omitted → the adapter's `at ?? 'tab'` fallback | `open` with no `--at` | `--at omitted falls back to tab` |
-
 ### workspace — its own visible space
 
 | Edge | Path (Given) | Scenario |
@@ -351,6 +328,7 @@ Every scenario in [`placement.feature`](./placement.feature), one row each, grou
 | `at=workspace` → the backend's own visible space | wezterm | `wezterm --at workspace spawns a new window into a freshly named workspace` |
 | `at=tab` → the backend's native tab, never a split | each of the three adapters | `--at tab opens a new tab in the current window, never a split pane` |
 | tab opened → focus not stolen | any backend, `--at tab` | `the tab placement opens in the background without stealing focus` |
+| placement omitted → the adapter's own `at ?? 'tab'` default | open() with `at` undefined | `an omitted placement falls back to tab — the adapter's own default, not the CLI's` |
 
 ### open reports the workspace the new pane landed in
 
@@ -363,7 +341,6 @@ Every scenario in [`placement.feature`](./placement.feature), one row each, grou
 | in the open output → no extra call | herdr | `the workspace costs no extra backend call` |
 | CLI report → the workspace beside the pane | `--format json` on herdr, tmux, wezterm | `open reports the workspace alongside the pane it opened` |
 | occupancy → never a worktree binding | `worktree add --at pane:right` on a backend that binds | `the workspace a pane landed in is not a worktree binding` |
-| `--at` outside the four values → rejected before any pane opens | `open` with an unlisted `--at` value | `--at accepts only pane:right, pane:down, tab, and workspace` |
 
 ### Split options — which pane, how big, what environment
 
@@ -386,19 +363,6 @@ Every scenario in [`placement.feature`](./placement.feature), one row each, grou
 | env not carried and no command → warn on stderr | a region opened with env the route lost, no command | `env a route could not carry, with no command to ride, warns rather than vanishing` |
 | env carried natively → never prefixed on top | every tier on tmux and herdr | `a route that set env natively never prefixes it on top` |
 | the prefix is a shell line → values quoted | a value containing a space and a quote | `an env value carrying a space or a quote survives the prefix intact` |
-
-### --env, the CLI surface for the seam's env option
-
-| Edge | Path (Given) | Scenario |
-|---|---|---|
-| `KEY=VALUE` on a carrying route → the opened pane carries it | `open`, `worktree add`, `worktree open` | `--env sets the variable in the pane the verb opens, on every route that carries env` |
-| bind route with `--launch` → rides in on the command | herdr worktree verbs at workspace | `--env on the one route that cannot carry it rides in on --launch` |
-| bind route with no `--launch` → warn | herdr worktree verbs at workspace | `--env on the one route that cannot carry it, with no command to ride, warns` |
-| accepted → repeatable, one variable per flag | `open`, `worktree add`, `worktree open` | `--env is repeatable, one variable per flag, on every verb that has it` |
-| `--template` also passed → rejected before any pane opens | `open` and `worktree add`, the two verbs with `--template` | `--env is refused alongside --template, which owns its own panes' env` |
-| no `=` → rejected before the verb's own side effect | each verb, `ROLE` and `=worker` | `--env without a KEY=VALUE pair is rejected before any side effect` |
-| `KEY=` with nothing after → variable set empty | each verb, carrying route | `--env with an empty value sets the variable empty, rather than rejecting` |
-| value containing `=` → split on the first `=` only | each verb, carrying route | `an env value containing = splits on the first = only` |
 
 ### The workspace group
 
@@ -432,9 +396,9 @@ Every scenario in [`placement.feature`](./placement.feature), one row each, grou
 | rename → no focus moved, no space created | a tab the caller is not focused on | `a rename moves no focus and opens nothing` |
 | backend declares whether it can size a split | each of the three adapters | `a backend declares whether it can size a split` |
 
-### --launch is optional
+### launch is optional — a blank pane is a valid open() outcome
 
 | Edge | Path (Given) | Scenario |
 |---|---|---|
-| `--launch` omitted → a blank pane | `open` with no `--launch` | `open with no --launch creates a blank pane` |
-| `--launch` given → the command is submitted | `open --launch` with a command line | `open --launch submits the command, so it actually runs` |
+| no launch command → a blank pane | `open` called with no launch command | `open with no launch command creates a blank pane` |
+| a launch command → submitted, typed and Enter pressed | `open` called with a launch command | `a launch command is submitted, so it actually runs` |

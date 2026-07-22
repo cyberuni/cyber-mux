@@ -88,22 +88,8 @@ Feature: mux driving — taking a pane's turn
       | $HERDR_ENV set and no $TMUX |
       | $WEZTERM_PANE set           |
 
-  Scenario: send keys with no key tokens is rejected
-    Given a caller running cyber-mux send keys naming a pane but no key tokens
-    When the command is parsed
-    Then it is rejected before anything is sent to the pane
-
-  Scenario: send text with no text argument is rejected
-    Given a caller running cyber-mux send text naming a pane but no text
-    When the command is parsed
-    Then it is rejected before anything is sent to the pane
-
-  Scenario: bare send is incomplete input, so it fails loud with help rather than acting
-    Given a caller running cyber-mux send naming neither text nor keys
-    When the command is parsed
-    Then help naming text and keys as its subcommands is written to stdout
-    And it exits 2, the status that separates bad input from a failed operation
-    And nothing is sent to any pane
+  # The CLI usage errors of these verbs — send keys with no tokens, send text with no text, and a
+  # bare send with no subcommand — are a surface concern and live in ../../cli/driving/driving.feature.
 
   Scenario Outline: submit with text types the text and presses Enter, taking the pane's turn
     Given a caller running cyber-mux submit against a pane with <env>
@@ -141,11 +127,7 @@ Feature: mux driving — taking a pane's turn
       | $WEZTERM_PANE set           | wezterm |
       | $ZELLIJ set                 | zellij  |
 
-  Scenario: submit with no pane is rejected
-    Given a caller running cyber-mux submit naming no pane
-    When the command is parsed
-    Then it is rejected, naming pane as the missing argument
-    And nothing is sent to any pane
+  # submit's CLI usage error — a missing pane argument — lives in ../../cli/driving/driving.feature.
 
   Scenario Outline: submit with empty text is the bare flush, not a second contract
     Given a pane with text already staged unsent in its input box, with <env>

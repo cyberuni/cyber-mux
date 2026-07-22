@@ -4,15 +4,12 @@ Feature: template apply — resolve a template and build the panes it describes
   re-targets it at a directory supplied at apply time. Nothing about the target is ever in the
   template. This unit owns the read direction: resolving a template by name, validating it,
   desugaring the flat form, and walking the tree into live panes and tabs.
+  # This is the ENGINE: the surface-independent read contract. The CLI verbs, flags, exit codes and
+  # manifest shape that drive it are the CLI surface, in ../../cli/template/apply/apply.feature.
 
   # ── Resolving a template by name ──
   # Three sources, repo before user, resolved from the primary checkout so every worktree agrees.
-
-  Scenario: --file skips resolution entirely
-    Given a caller running cyber-mux template show --file ./scratch/pool.json
-    When the template is resolved
-    Then the file at that path is the one read
-    And neither the repo nor the user templates directory is consulted
+  # (The --file escape hatch that skips resolution is a flag, on the CLI surface in cli/template/apply.)
 
   Scenario: a repo template shadows a user template of the same name
     Given a repo templates directory containing pool-4.json
@@ -232,11 +229,7 @@ Feature: template apply — resolve a template and build the panes it describes
     And tmux's own select-template is never invoked
     # select-template tiled implements tmux's grid algorithm, which herdr has no equivalent of —
     # using it would give the same template a different geometry per backend
-
-  Scenario: show --desugar prints exactly the tree apply will build
-    Given a flat template pool-4
-    When cyber-mux template show pool-4 --desugar runs
-    Then the printed tree is the one the walk splits from
+    # (show --desugar, which prints this desugared tree, is a CLI verb, in cli/template/apply.)
 
   # ── The walk ──
   # Open blank, build geometry depth-first against named panes, launch last.
@@ -311,12 +304,6 @@ Feature: template apply — resolve a template and build the panes it describes
     And the commands are submitted in template order, tab by tab
     # the single-tab reason scales: a split lands mid-render if it targets a pane already running an
     # interactive agent, and a tab is opened blank for the same reason a region is
-
-  Scenario: a tabs template still defaults --at to workspace
-    Given a caller running cyber-mux open --template with a tabs template and no --at
-    When the command runs
-    Then the workspace placement is the one used
-    # a fresh space is empty by construction, and a workspace is what a set of tabs needs to live in
 
   Scenario: apply never steals focus, and a tabs template cannot ask it to
     Given a tabs template of 3 tabs
@@ -486,22 +473,10 @@ Feature: template apply — resolve a template and build the panes it describes
     # a kill is not obviously safer than a half-built template the caller can see and finish
 
   # ── --template, the exact sibling of --launch ──
-
-  Scenario: --template and --launch are mutually exclusive
-    Given a caller running cyber-mux open --template pool-4 --launch claude
-    When the command runs
-    Then it exits 2 rejecting the pair, a usage error — two flags that cannot both be given is malformed input
-
-  Scenario: --at defaults to workspace when --template is given
-    Given a caller running cyber-mux open --template pool-4 with no --at
-    When the command runs
-    Then the region opens at the workspace placement
-    # a fresh space is empty by construction
-
-  Scenario: --label defaults to the template name
-    Given a caller running cyber-mux open --template pool-4 with no --label
-    When the command runs
-    Then the opened region is labeled pool-4
+  # The flag defaults themselves — that --template and --launch are mutually exclusive, that --at
+  # defaults to workspace, and that --label defaults to the template name — are the CLI surface, in
+  # cli/template/apply. What stays here is the ENGINE integration: worktree add --template wires the
+  # walk against the worktree root and reports the manifest beside root and branch.
 
   Scenario: worktree add --template applies the template against the worktree root
     Given a caller running cyber-mux worktree add --branch feat-x --template agent-pool-3
@@ -511,70 +486,14 @@ Feature: template apply — resolve a template and build the panes it describes
     And the manifest is reported alongside the worktree's root and branch
 
   # ── The manifest is the handoff ──
-
-  Scenario: --format json reports every pane apply created
-    Given a caller running cyber-mux open --template agent-pool-3 --format json
-    When the command runs
-    Then stdout carries the template name, the injected cwd, the workspace, and one entry per pane
-    And each entry carries its label, pane id, dir, and command
-    # the complete answer to "which panes exist and what are they for" — a dispatcher built on it
-    # needs no new cyber-mux surface
-
-  Scenario: the manifest carries the workspace the region opened in
-    Given a caller running cyber-mux open --template pool-4 --format json with $HERDR_ENV set and no $TMUX
-    When the command runs
-    Then the manifest's workspace field carries the workspace the region opened in
-    # The manifest is framed as the complete machine-readable answer to "which panes exist and what
-    # are they for" — a consumer grouping panes by workspace needs something to group on. open
-    # surfaces the workspace it landed in, so the manifest reports it rather than a flat null.
-
-  Scenario: the manifest's workspace is null on tmux
-    Given a caller running cyber-mux open --template pool-4 --format json with $TMUX set
-    When the command runs
-    Then the manifest's workspace field is null
-    # matching how reportOpenedWorktree already reports it
-
-  Scenario: the manifest reports which tab each pane landed in
-    Given a tabs template of 2 tabs applied with --format json
-    When the manifest is reported
-    Then every pane carries the tab it landed in
-    And the pane list stays one flat list of every pane apply created
-    # the manifest is still the whole handoff — a consumer grouping panes by tab needs something to
-    # group on, exactly as it needs workspace to group by space
-
-  Scenario: a pane from a single-tab template reports no tab
-    Given a template declaring root applied with --format json
-    When the manifest is reported
-    Then each pane's tab is null
-    # absent rather than false: there is no tab structure to report, and inventing one would claim the
-    # template said something it did not
-
-  Scenario: the manifest's workspace is still null on tmux even when tabs are grouped
-    Given a tabs template applied on tmux
-    When the manifest is reported
-    Then the manifest's workspace is null
-    # the grouping tag is cyber-mux's own bookkeeping, not a workspace tier. Reporting it as workspace
-    # would claim a tier tmux does not have — the same absent-rather-than-false convention that makes
-    # the field null for a single-tab apply on tmux today.
+  # The manifest's field SHAPE — every pane apply created, the workspace field (null where the backend
+  # has no workspace tier), and the per-pane tab — is the CLI --format json output surface, in
+  # cli/template/apply. The engine's part is that the walk PRODUCES what the manifest reports; that a
+  # throw mid-walk still reports the panes already built is below, under "apply does not roll back".
 
   # ── Managing templates needs no multiplexer ──
-
-  Scenario Outline: list, show and validate answer with no multiplexer at all
-    Given a caller with neither $TMUX nor $HERDR_ENV set
-    When cyber-mux template <verb> runs
-    Then it answers without resolving a session backend
-
-    Examples:
-      | verb          |
-      | list          |
-      | show pool-4   |
-      | validate pool-4 |
-
-  Scenario: validate exits 0 on a valid template
-    Given a well-formed template pool-4
-    When cyber-mux template validate pool-4 runs
-    Then it exits 0
-    And stderr is empty
+  # list/show/validate answering with no mux, and validate exiting 0 on a valid template, are the CLI
+  # read verbs, in cli/template/apply. What stays here is the engine consequence for APPLY:
 
   Scenario: applying with no multiplexer fails through the existing adapter path
     Given a caller with neither $TMUX nor $HERDR_ENV set
