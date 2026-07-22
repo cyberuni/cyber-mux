@@ -14,10 +14,10 @@ todos:
     status: completed
   - content: "Deliver: rebind every test — DONE. 261/281 bound, 0 fail (19 recovered in reconcile); dead-fixture cleanup; pnpm verify GREEN (811+8 tests, biome+typecheck clean)"
     status: completed
-  - content: "Impl gate: bridge 261/281 bound+pass 0 fail + pnpm verify green — cold impl-judge structural read, then user ratifies (leash=auto-spec)"
-    status: in_progress
-  - content: "Handoff: commit(s), PR closing #83, record 20 coverage-gap follow-ups"
-    status: pending
+  - content: "Impl gate: bridge 261/281 bound+pass 0 fail + pnpm verify green; cold impl-judge APPROVE (4/4); user-ratified — DONE (ledger seq 3)"
+    status: completed
+  - content: "Handoff: 2 commits, PR #85 (Closes #83), followups ledger seq 4-11, umbrella issue #86 — DONE"
+    status: completed
 ---
 
 # CR 83 — adopt the SDD scenario-bridge @id: binding convention across cyber-mux suites
@@ -83,6 +83,13 @@ impl-gate scenario-bridge (`verify-scenarios`) reports BOUND instead of UNBOUND.
 
 ## NEXT
 
-Start explore: pick the `@id:` slug scheme and build-to-learn on `cli/worktree` (31 scenarios) —
-tag the feature, route + rebind its tests, run the bridge to green. That validates the whole
-approach before fanning the tagging + rebinding out per node.
+Mission landed. Both gates passed (spec self-asserted within leash; impl user-ratified after a cold
+impl-judge APPROVE). **PR #85** open, `Closes #83`. Final: **261/281 bound, 0 fail**, `pnpm verify`
+green, behavior-neutral. The 20 coverage gaps → **issue #86** (agent-filed umbrella) + ledger seq 4-11.
+
+Remaining, neither blocks the CR:
+1. **Merge #85.** Pre-push suite green; CI is the shared reusable workflow.
+2. **Retire this plan** once #85 merges (source #83 auto-closes) and the CR is doctrine-distilled;
+   the combat log (`*.log.jsonl`) is deleted at that retro.
+3. A corpus-wide **formation pass** is optionally due (`sdd:manage` → audit corpus structure) — the
+   binding sweep touched every node's tests but changed no node shape; not gated on it.
