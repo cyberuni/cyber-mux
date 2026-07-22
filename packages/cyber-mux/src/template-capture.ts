@@ -1,5 +1,6 @@
 import { relative, sep } from 'node:path'
-import type { PaneRect, RegionPane, WorkspaceTab } from './mux.ts'
+import type { Exec } from './exec.ts'
+import type { MuxAdapter, MuxTarget, PaneRect, RegionPane, WorkspaceTab } from './mux.ts'
 import type { PaneNode, SplitNode, TabNode, Template, TemplateNode } from './template.ts'
 
 /**
@@ -317,4 +318,68 @@ function convert(node: RegionTree, ctx: CaptureContext): TemplateNode {
 	}
 	if (node.ratio !== undefined) split.ratio = node.ratio
 	return split
+}
+
+/**
+ * A capture asked of a backend that lacks the optional geometry seam it needs — no `describeRegion`
+ * for a region capture, no `describeWorkspace` for a `--workspace` one. An absent optional seam member
+ * is a refusal, never a guess: a backend that cannot answer cannot be captured and there is nothing to
+ * degrade to.
+ *
+ * PORTABLE and exit-code-free by design. The DECISION to refuse is the library's and lives here, at
+ * the one place that sees the adapter — the pure `captureTemplate` above takes rectangles already read
+ * and could never make it. How the refusal SURFACES — the exit code, the fix hint, the exact sentence
+ * — is the CLI's, which catches this and re-raises its own `backend-unsupported` error. `capability`
+ * names which seam was missing so the caller composes the right message without re-deriving it, and
+ * the terse `message` is a factual log line, not the user-facing copy.
+ */
+export class CaptureUnsupportedError extends Error {
+	constructor(
+		readonly backend: string,
+		readonly capability: 'region' | 'workspace',
+	) {
+		super(
+			capability === 'region'
+				? `${backend} cannot report a region's geometry`
+				: `${backend} cannot enumerate a workspace's tabs`,
+		)
+		this.name = 'CaptureUnsupportedError'
+	}
+}
+
+/**
+ * Read the live region around `target` through the adapter and derive its template — the
+ * surface-independent orchestrator `template save` drives, and the single home of the region-capture
+ * refusal. The optional `regions` seam is where a backend says whether it can report geometry at all;
+ * a backend without `describeRegion` is refused HERE (`CaptureUnsupportedError`), before any read,
+ * because the pure `captureTemplate` it would feed cannot see the adapter and so cannot make that
+ * call. A backend that CAN report reads its region and hands the rectangles to the pure capture
+ * unchanged.
+ */
+export function deriveRegionCapture(
+	adapter: MuxAdapter,
+	exec: Exec,
+	target: MuxTarget,
+	opts: CaptureTemplateOptions,
+): TemplateCapture {
+	const describeRegion = adapter.regions?.describeRegion
+	if (!describeRegion) throw new CaptureUnsupportedError(adapter.name, 'region')
+	return captureTemplate(describeRegion(exec, target), opts)
+}
+
+/**
+ * Read every tab of the workspace `target` sits in through the adapter and derive a `tabs` template —
+ * the `--workspace` orchestrator, and the single home of the workspace-capture refusal. Same shape as
+ * `deriveRegionCapture`, one member over: a backend without `describeWorkspace` cannot enumerate a
+ * workspace's tabs and is refused HERE (`CaptureUnsupportedError`), before any read.
+ */
+export function deriveWorkspaceCapture(
+	adapter: MuxAdapter,
+	exec: Exec,
+	target: MuxTarget,
+	opts: CaptureTemplateOptions,
+): TemplateCapture {
+	const describeWorkspace = adapter.regions?.describeWorkspace
+	if (!describeWorkspace) throw new CaptureUnsupportedError(adapter.name, 'workspace')
+	return captureWorkspaceTemplate(describeWorkspace(exec, target), opts)
 }

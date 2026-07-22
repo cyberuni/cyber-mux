@@ -2,9 +2,15 @@ import { describe, expect, it } from 'vitest'
 import type { Exec } from './exec.ts'
 import { herdrMuxAdapter } from './mux.herdr.ts'
 import { TMUX_TAB_NAME_OPTION, TMUX_WORKSPACE_GROUP_OPTION, tmuxMuxAdapter } from './mux.tmux.ts'
-import type { PaneRect, RegionPane, WorkspaceTab } from './mux.ts'
+import type { MuxAdapter, MuxTarget, PaneRect, RegionPane, WorkspaceTab } from './mux.ts'
 import { collectPanes, resolveTree, type SplitNode, type TemplateNode, validateTemplate } from './template.ts'
-import { captureTemplate, captureWorkspaceTemplate } from './template-capture.ts'
+import {
+	CaptureUnsupportedError,
+	captureTemplate,
+	captureWorkspaceTemplate,
+	deriveRegionCapture,
+	deriveWorkspaceCapture,
+} from './template-capture.ts'
 
 /**
  * Rects are written the way a multiplexer reports them — `x, y, width, height` in cells — so a fixture
@@ -426,6 +432,59 @@ describe('spec:cyber-mux/template/capture', () => {
 					{ name: 'captured' },
 				),
 			).toThrow(/do not form a splittable tree/)
+		})
+	})
+
+	describe('derive orchestrators — the adapter-capability refusals', () => {
+		// The refusal lives at the LIBRARY node: the pure captures above take rectangles already read and
+		// never see the adapter, so a "this backend cannot report geometry" decision can only be made by
+		// the orchestrator that reads THROUGH the adapter. These drive that orchestrator against an adapter
+		// missing the optional `regions` seam member each mode needs, proving the refusal at its own
+		// surface rather than only through the CLI observable. An exec that throws if touched proves the
+		// refusal is BEFORE any read — nothing is produced.
+		const target: MuxTarget = { id: '%0' }
+		const explodingExec = (() => {
+			throw new Error('the capture must refuse before reading anything through exec')
+		}) as unknown as Exec
+		const adapterWithout = (regions: MuxAdapter['regions']): MuxAdapter =>
+			({ name: 'screen', regions }) as unknown as MuxAdapter
+
+		it('capture-geometry-unsupported-refused', () => {
+			// A backend with no region-geometry primitive: `regions` is absent entirely, so `describeRegion`
+			// is unreachable. The capture is refused and nothing is produced.
+			const adapter = adapterWithout(undefined)
+			expect(() => deriveRegionCapture(adapter, explodingExec, target, { name: 'captured' })).toThrow(
+				CaptureUnsupportedError,
+			)
+			try {
+				deriveRegionCapture(adapter, explodingExec, target, { name: 'captured' })
+			} catch (err) {
+				expect(err).toBeInstanceOf(CaptureUnsupportedError)
+				expect((err as CaptureUnsupportedError).backend).toBe('screen')
+				expect((err as CaptureUnsupportedError).capability).toBe('region')
+			}
+		})
+
+		it('capture-workspace-enumerate-unsupported-refused', () => {
+			// A backend whose adapter can report a single region but cannot enumerate a workspace's tabs:
+			// `regions.describeWorkspace` is absent while `describeRegion` is present, so a `--workspace`
+			// capture is refused where a bare one would not be. The capture is refused and nothing is
+			// produced.
+			const adapter = adapterWithout({
+				describeRegion: () => {
+					throw new Error('a workspace capture must not fall back to the region read')
+				},
+			} as unknown as MuxAdapter['regions'])
+			expect(() => deriveWorkspaceCapture(adapter, explodingExec, target, { name: 'captured' })).toThrow(
+				CaptureUnsupportedError,
+			)
+			try {
+				deriveWorkspaceCapture(adapter, explodingExec, target, { name: 'captured' })
+			} catch (err) {
+				expect(err).toBeInstanceOf(CaptureUnsupportedError)
+				expect((err as CaptureUnsupportedError).backend).toBe('screen')
+				expect((err as CaptureUnsupportedError).capability).toBe('workspace')
+			}
 		})
 	})
 })

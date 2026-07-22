@@ -279,6 +279,14 @@ The `save` verb's observable of these refusals (exit 1, naming the backend, writ
 CLI surface. What stays here is the capability contract — an absent optional seam member is a
 refusal, never a guess — and the geometry-impossibility refusal.
 
+The contract has a surface of its own: the **derive orchestrators** (`deriveRegionCapture` /
+`deriveWorkspaceCapture`) read a region, or a workspace, *through* the adapter and are the one place
+the geometry-capability decision is made — the pure `captureTemplate`/`captureWorkspaceTemplate`
+above take rectangles already read and never see the adapter, so they cannot make it. A backend
+without the seam member each mode needs is refused there, before any read, as a portable typed error
+(`CaptureUnsupportedError`); the `save` verb **delegates** to the orchestrator and maps that refusal
+to its own exit-1 observable, so the decision is specified once and enforced once.
+
 | Edge | Path (Given) | Scenario |
 |---|---|---|
 | Q7 the backend has no region-geometry primitive | a backend lacking the region-geometry seam | `a region whose geometry the backend cannot report is refused, not guessed at` |

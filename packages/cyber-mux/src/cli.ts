@@ -17,7 +17,7 @@ import {
 	type Template,
 	validateTemplate,
 } from './template.ts'
-import { captureTemplate, captureWorkspaceTemplate } from './template-capture.ts'
+import { CaptureUnsupportedError, deriveRegionCapture, deriveWorkspaceCapture } from './template-capture.ts'
 import {
 	applyEdits,
 	type EditAnswer,
@@ -574,29 +574,6 @@ function templateSaveCommand(deps: Deps): Command {
 							)
 						}
 						const a = adapter(deps)
-						// Both geometry reads are optional capabilities, exactly as the worktree binding is — and
-						// each mode asks only for the one it needs, so a backend is never refused for lacking a
-						// member this run would not have called. A backend that cannot answer cannot be captured
-						// and there is nothing to degrade to, so this refuses NAMING the backend rather than
-						// guessing a tree.
-						const describeRegion = a.regions?.describeRegion
-						if (!opts.workspace && !describeRegion) {
-							throw new CliError(
-								'backend-unsupported',
-								`${a.name} cannot report a region's geometry — template save needs a backend that can`,
-								'run template save on a backend that reports geometry (tmux or herdr)',
-								1,
-							)
-						}
-						const describeWorkspace = a.regions?.describeWorkspace
-						if (opts.workspace && !describeWorkspace) {
-							throw new CliError(
-								'backend-unsupported',
-								`${a.name} cannot enumerate a workspace's tabs — template save --workspace needs a backend that can`,
-								'run template save --workspace on a backend that enumerates tabs (tmux or herdr)',
-								1,
-							)
-						}
 						// `--from` names a pane explicitly; otherwise capture around the pane THIS process sits in,
 						// which is what makes a bare `template save pool-4` mean "the screen I am looking at".
 						//
@@ -615,9 +592,14 @@ function templateSaveCommand(deps: Deps): Command {
 							)
 						}
 						const captureOpts = { name, description: opts.description ?? CAPTURED_DESCRIPTION }
+						// The geometry-capability refusal lives in the derive orchestrators, not here: each reads
+						// through the adapter and refuses NAMING the backend when its optional seam member is absent
+						// (`CaptureUnsupportedError`, mapped to `backend-unsupported` in the catch below). Each mode
+						// asks only for the member it needs, so a backend is never refused for lacking one this run
+						// would not have called.
 						const { template, warnings } = opts.workspace
-							? captureWorkspaceTemplate(describeWorkspace!(deps.exec, target), captureOpts)
-							: captureTemplate(describeRegion!(deps.exec, target), captureOpts)
+							? deriveWorkspaceCapture(a, deps.exec, target, captureOpts)
+							: deriveRegionCapture(a, deps.exec, target, captureOpts)
 						deps.store.write(path, `${JSON.stringify(template, null, 2)}\n`)
 						// A capture warning (a dir outside the repo root) is a diagnostic, not part of the answer —
 						// it stays on stderr, where `capture.feature` pins it. The PAYLOAD is stdout.
@@ -637,6 +619,10 @@ function templateSaveCommand(deps: Deps): Command {
 						// region no splits could have built, or an empty one — reported under this CLI's own code,
 						// never the backend's raw text. Exit 1: the capture failed, the invocation was well-formed.
 						if (err instanceof CliError) throw err
+						// The library's geometry-capability refusal: the DECISION is the orchestrator's; the exit
+						// code, the fix hint and the exact sentence are this CLI's, composed from the backend name
+						// and which seam was missing. Exit 1 — a genuine operation failure, not a usage error.
+						if (err instanceof CaptureUnsupportedError) throw backendUnsupported(err)
 						throw new CliError(
 							'unsplittable-region',
 							'this region could not be captured — it is not a tree any sequence of splits could have produced',
@@ -663,6 +649,28 @@ function templateSaveCommand(deps: Deps): Command {
  * right — a window nobody grouped is a workspace of one, and nothing was left out. The `command`
  * re-states the caller's own `name` with `--workspace`, the flag that captures every tab.
  */
+/**
+ * The CLI surface of the library's geometry-capability refusal: exit 1 (a genuine operation failure,
+ * not a usage error), naming the backend, with the flag-specific fix hint. The DECISION to refuse is
+ * the orchestrator's (`CaptureUnsupportedError`); this composes only the presentation from the two
+ * structured fields the error carries, so the sentence lives in one place per surface.
+ */
+function backendUnsupported(err: CaptureUnsupportedError): CliError {
+	return err.capability === 'region'
+		? new CliError(
+				'backend-unsupported',
+				`${err.backend} cannot report a region's geometry — template save needs a backend that can`,
+				'run template save on a backend that reports geometry (tmux or herdr)',
+				1,
+			)
+		: new CliError(
+				'backend-unsupported',
+				`${err.backend} cannot enumerate a workspace's tabs — template save --workspace needs a backend that can`,
+				'run template save --workspace on a backend that enumerates tabs (tmux or herdr)',
+				1,
+			)
+}
+
 function noteTabsLeftOut(deps: Deps, adapter: MuxAdapter, target: MuxTarget, name: string): HelpEntry | null {
 	const describeWorkspace = adapter.regions?.describeWorkspace
 	if (!describeWorkspace) return null
