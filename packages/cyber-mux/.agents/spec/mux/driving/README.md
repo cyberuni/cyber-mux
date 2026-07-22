@@ -66,7 +66,7 @@ Resolving *which* pane a verb acts on, and the structured error a failure carrie
   decided the way it was — and what it costs — is logged in
   [`design/decisions/`](../../design/decisions/README.md), not restated here.
 
-## Logic
+## Control Flow
 
 ### Driving a pane's turn
 

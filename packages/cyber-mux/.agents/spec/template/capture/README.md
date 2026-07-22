@@ -176,7 +176,7 @@ engine half.
 | **capturing a whole workspace** | one derived tab per live tab, each with its own tree; a captured tab's label is the tab's own name rather than the composed display name, so a round trip never compounds the prefix; captured tabs keep their labels; re-applying reproduces the tabs and every pane size; still a draft carrying no command; an untagged region derives as a single-tab workspace. (The `--workspace` flag, the bare-save reveal, and the declares-tabs shape are the CLI surface.) |
 | **the adapter-capability refusals** | an absent optional seam member is a refusal, never a guess: a backend that cannot enumerate a workspace's tabs, and one that cannot report a region's geometry, both refuse and produce nothing; a region no sequence of splits could have produced is refused too. (The `save` verb's observable of each — exit 1 naming the backend, writing nothing — is the CLI surface.) |
 
-## Logic
+## Control Flow
 
 One sub-graph — the derivation. `template save` drives it directly (the verb surface is in
 [`cli/template/capture/`](../../cli/template/capture/README.md)); capture never routes through

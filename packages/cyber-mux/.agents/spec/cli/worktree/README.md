@@ -72,7 +72,7 @@ divergence cannot live in a single capability-first node, so the CLI surface ear
   go) and **`--force` applies** it; a worktree that fails the gate is skipped and reported with the
   reason it was kept.
 
-## Logic
+## Control Flow
 
 ### The verb dispatch
 

@@ -5,22 +5,22 @@ name: cyber-mux
 approval:
   spec:
     verdict: approve
-    by: agent
+    by: unional
     cause: dimension
     why:
       floor: "Clearance fires and CLEARS across six frozen library suites (detection, driving, lookup, placement, template/apply, template/capture), each re-opened by a relocation-with-conservation — the CLI-surface scenarios move to a new cli/X mirror node, the surface-independent contract stays. Ratified by the operator kickback mandate (complete the CLI surface, not just worktree). Four independent cold spec-judges verified coverage conservation scenario-by-scenario against the HEAD baseline: none lost, none narrowed. cli/lookup adds 4 NEW frozen scenarios for the previously-unspecified read/focus/close verbs, backfilled to observable behavior and confirmed accurate to src/cli.ts. No Conflict. Compatibility inert (package 0.0.0). This supersedes the split-worktree CR's approval, which the operator kicked back as incomplete (that ledger, seq 5)."
       blast: "large but spec-mostly — 6 new cli/X mirror nodes (+ a cli/template index), 6 trimmed library suites, cli/README.md + the root placement-map reframed from a narrow divergence-only exception to a consistent CLI-surface axis. The only source touched is 3 added verb-action tests; no product code changed."
       novelty: "high — generalizes the surface axis corpus-wide: cli/X-mirrors-mux/X becomes the standing pattern, presentation separated from contract for every capability, with worktree's genuine divergence just one instance."
-      confidence: "high — 4 cold spec-judges at depth 1, each re-deriving its own oracle. detection+driving ALIGNED (byte-identical moves); lookup ALIGNED (coverage conserved + the 4 backfilled verbs verified accurate to source); template ALIGNED (apply 69->69, capture 33->35, the apply-atomicity and capture-refusal calls judged correct). placement returned architect FAIL on ONE misfiled scenario — the --at-omitted fallback pinned a default the adapter makes, not the CLI — remediated by relocating it to mux/placement re-altituded to the adapter contract (which otherwise had no coverage of its own fallback), re-verified 1:1. Mechanical: check:features 14/14, check-spec-state OK, every suite 1:1 with its map. Self-asserted within the auto-spec leash; lands provisionally for operator ratification of the whole reorg."
+      confidence: "high — 4 cold spec-judges at depth 1, each re-deriving its own oracle. detection+driving ALIGNED (byte-identical moves); lookup ALIGNED (coverage conserved + the 4 backfilled verbs verified accurate to source); template ALIGNED (apply 69->69, capture 33->35, the apply-atomicity and capture-refusal calls judged correct). placement returned architect FAIL on ONE misfiled scenario — the --at-omitted fallback pinned a default the adapter makes, not the CLI — remediated by relocating it to mux/placement re-altituded to the adapter contract (which otherwise had no coverage of its own fallback), re-verified 1:1. Mechanical: check:features 14/14, check-spec-state OK, every suite 1:1 with its map. Ratified by unional after the backlog follow-ups were addressed (mux/README.md rollup synced to the surface split, the corpus-wide `## Logic`→`## Control Flow` heading corrected, the detection Use Cases bullet completed)."
   impl:
     verdict: approve
-    by: agent
+    by: unional
     cause: dimension
     why:
       floor: "none. The reorg is spec relocation of already-verified behavior EXCEPT the 4 new read/focus/close frozen scenarios. close was already verified (resolution tests assert kill-pane); read (raw bytes to stdout, not the JSON envelope), read --lines (capture-pane -S -n), and focus (switch-client -> select-window -> select-pane, empty stdout) lacked a direct happy-path verification, so 3 tests were added. Every relocated scenario keeps its pre-existing passing verification."
       blast: "small — 3 added verification tests in src/cli.test.ts; no product-code change (read/focus/close already shipped)."
       novelty: "low-moderate — verifications for verbs that shipped without spec coverage."
-      confidence: "high — the 3 new tests pass and each falsifies a wrong subject (a JSON-wrapped read, an ignored --lines, a no-op focus); the lookup cold spec-judge independently confirmed all 4 verb scenarios match src/cli.ts and the tmux/herdr adapters. Full suite green under pnpm verify at handoff. Self-asserted within the auto-spec leash."
+      confidence: "high — the 3 new tests pass and each falsifies a wrong subject (a JSON-wrapped read, an ignored --lines, a no-op focus); the lookup cold spec-judge independently confirmed all 4 verb scenarios match src/cli.ts and the tmux/herdr adapters. Full suite green under pnpm verify. Ratified by unional."
 produced-by:
   spec-producer: sdd:start-mission
   impl-producer: sdd:start-mission

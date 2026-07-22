@@ -95,7 +95,7 @@ reads the live pane list, which answers ids and labels in one read.
   `title` field is always the ambient running-program name, never something an author chose, so
   exporting it would manufacture the same collision the hostname guard exists to prevent.
 
-## Logic
+## Control Flow
 
 ### Reporting whether a pane is focused, and what the listing carries
 

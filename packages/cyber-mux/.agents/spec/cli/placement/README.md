@@ -61,7 +61,7 @@ cannot live in a single capability-first node, so the CLI surface earns its own 
   opening, a checkout created, a workspace opened — so each is named); a present `=` with nothing after
   it sets the variable empty, and a value's own `=` is kept by splitting on the **first** one only.
 
-## Logic
+## Control Flow
 
 ### `--at` — selecting and validating the placement
 

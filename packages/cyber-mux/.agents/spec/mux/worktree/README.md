@@ -94,7 +94,7 @@ business; the worktree **binding** is a different question and neither answers f
   exists — including for a checkout already gone from disk, where the release still fires and no git
   removal runs.
 
-## Logic
+## Control Flow
 
 ### The worktree seam
 

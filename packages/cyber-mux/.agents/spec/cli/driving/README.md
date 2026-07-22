@@ -56,7 +56,7 @@ does not restate that contract.
   argument and sending nothing to any pane. (The text argument is optional — a bare-Enter flush is a
   complete invocation; that behavior is [`mux/driving/`](../../mux/driving/README.md)'s.)
 
-## Logic
+## Control Flow
 
 ### Rejecting an incomplete send/submit invocation
 

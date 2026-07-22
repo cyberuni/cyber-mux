@@ -292,7 +292,7 @@ half accordingly.
 | **carrying the workspace where the backend has no tier** | a tab is labeled `<workspace> - <tab>` only where the backend lacks a workspace tier, unprefixed where it has one; the workspace label is never shortened, so shortening collisions cannot arise; the label is never parsed back — the group id is what identifies a workspace; the tab's own name is stored beside the group id, because a composed display name destroys it; every tab is grouped whichever verb opened the workspace, the first one included; herdr's root tab is renamed after birth, the one tab neither backend names at birth |
 | **managing templates needs no multiplexer** *(CLI surface)* | `list`/`show`/`validate` answering with no mux, and `validate` exiting 0 on a valid template, are the CLI read verbs, in [`cli/template/apply/`](../../cli/template/apply/README.md). The engine consequence for *applying* — that `open --template` with no mux fails through the adapter path — stays here. |
 
-## Logic
+## Control Flow
 
 Two sub-graphs. Every use case above enters one of them: the template verbs and both apply routes
 enter **resolve and validate** first; `open --template` and `worktree add --template` continue into

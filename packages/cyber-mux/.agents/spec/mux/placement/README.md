@@ -223,7 +223,7 @@ after it exists is [`lookup/`](../lookup/README.md); binding a checkout to a wor
   A rename is **as read-only in its side effects as the focus probe is**: it moves no focus and opens
   nothing. Naming a space is not visiting it — the same rule every spawn path already holds.
 
-## Logic
+## Control Flow
 
 ### `open` — placement, launch, and what it reports back
 

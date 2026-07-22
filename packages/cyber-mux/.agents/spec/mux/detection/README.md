@@ -27,7 +27,8 @@ environment and the process table and nothing else.
 ## Use Cases
 
 - **The session backend is selected by environment** — tmux when `$TMUX` is set, herdr when
-  `$HERDR_ENV` is set and `$TMUX` is not; an environment with neither throws asking for one.
+  `$HERDR_ENV` is set and `$TMUX` is not, wezterm when `$WEZTERM_PANE` is set, zellij when `$ZELLIJ`
+  is set; an environment naming none of them throws asking for one.
 
 - **Multiplexer detection is two-mode** — `probeMultiplexer` first trusts `$CYBER_MUX`
   (`tmux`|`herdr`|`wezterm`|`screen`|`none`) outright — this doubles as an override (`=none` forces
@@ -47,7 +48,7 @@ environment and the process table and nothing else.
   `SessionTarget.id`/`currentPane`/`LivePane.id` are load-bearing on, and the one wezterm (#47) had
   and screen lacks. Full probe + decision: the ADR log
   ([`design/decisions`](../../design/decisions/README.md)).
-## Logic
+## Control Flow
 
 ### Detection and backend selection
 

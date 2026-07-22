@@ -37,7 +37,7 @@ what, and that `mode` degrades to `none` rather than the throw the underlying se
   needs to branch on it. Where the underlying selection would throw for no drivable backend, `mode`
   answers `none` and exits 0 — a read-out never fails a caller who only asked what is there.
 
-## Logic
+## Control Flow
 
 ### The two read-out commands
 
