@@ -359,15 +359,15 @@ Decisions (`46-zellij-adapter` — the fourth backend, and the pane-identity gat
   trailing-N primitive); env is non-native on `new-pane`/`new-tab`, so every open rides the same
   `envFallback` prefix-or-warn compensation wezterm uses.
 
-Decisions (`worktree-acquire` — reuse a free worktree instead of always creating one, issue #79):
+Decisions (`worktree-provision` — reuse a free worktree instead of always creating one, issue #79):
 
-- **`acquire` is `prune`'s twin, and shares its selection predicate** — DECIDED: the reuse-candidate set
+- **`provision` is `prune`'s twin, and shares its selection predicate** — DECIDED: the reuse-candidate set
   is *exactly* the disposable set. `pruneWorktrees` REMOVES every worktree `isWorktreeRemovable` clears;
-  `acquireWorktree` RECYCLES one, and its **default availability gate IS `isWorktreeRemovable`** — the
+  `provisionWorktree` RECYCLES one, and its **default availability gate IS `isWorktreeRemovable`** — the
   same `linked && !prunable && merged && !dirty && !workspace` composite prune deletes on. Structured
-  identically (`acquireWorktree(exec, primaryRoot, opts)` raw + `WorktreeApi.acquire` bound, mirroring
+  identically (`provisionWorktree(exec, primaryRoot, opts)` raw + `WorktreeApi.provision` bound, mirroring
   `pruneWorktrees`/`prune`), so the two can never disagree about which worktrees are free — prune could
-  have deleted precisely the checkout acquire hands back. The primary checkout is filtered out
+  have deleted precisely the checkout provision hands back. The primary checkout is filtered out
   (`.filter(entry => entry.linked)`) **before** the gate runs, matching prune's own absolute refusal, so
   even a host predicate that forgot the check can never return the primary.
 
@@ -410,6 +410,6 @@ Decisions (`worktree-acquire` — reuse a free worktree instead of always creati
     exists so a bare call is still deterministic.
 
 - **`dryRun` was NOT added, unlike prune** — DECIDED, on scope. Prune's `dryRun` exists because prune is
-  the CLI's *default* invocation and a bare run must be safe to preview; `acquire` is an *action a caller
+  the CLI's *default* invocation and a bare run must be safe to preview; `provision` is an *action a caller
   asks for by name* and returns what it did (`action: 'reused' | 'created'`), so a preview mode has no
-  bare-invocation to protect. Left as a clean follow-up if a CLI `worktree acquire` verb ever wants one.
+  bare-invocation to protect. Left as a clean follow-up if a CLI `worktree provision` verb ever wants one.

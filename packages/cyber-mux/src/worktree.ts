@@ -397,7 +397,7 @@ export function pruneWorktrees(
 }
 
 /** What a freshly-created worktree needs when none is free to reuse — the `add` path's inputs, minus
- * `primaryRoot` (supplied positionally to `acquireWorktree`, exactly as it is to `pruneWorktrees`). */
+ * `primaryRoot` (supplied positionally to `provisionWorktree`, exactly as it is to `pruneWorktrees`). */
 export interface WorktreeCreateSpec {
 	/** Where a fresh checkout goes — the caller's resolved path (e.g. `resolveWorktreePath`). */
 	path: string
@@ -409,22 +409,22 @@ export interface WorktreeCreateSpec {
 	base?: string | undefined
 }
 
-/** Whether `acquireWorktree` reused an existing checkout or created a fresh one. */
-export type WorktreeAcquireAction = 'reused' | 'created'
+/** Whether `provisionWorktree` reused an existing checkout or created a fresh one. */
+export type WorktreeProvisionAction = 'reused' | 'created'
 
-/** What `acquireWorktree` did — the twin of `WorktreePruneResult`. `worktree` is the handed-back
+/** What `provisionWorktree` did — the twin of `WorktreePruneResult`. `worktree` is the handed-back
  * checkout on its new branch; `reused` is the entry that was recycled, carried in full so the caller
  * can report the reclaim — including its prior branch and its `workspace` (occupancy). Absent when a
  * fresh checkout was created. */
-export interface WorktreeAcquireResult {
-	action: WorktreeAcquireAction
+export interface WorktreeProvisionResult {
+	action: WorktreeProvisionAction
 	worktree: Worktree
 	reused?: WorktreeEntry | undefined
 }
 
 /**
  * Reuse a free worktree instead of creating a fresh one — the mirror of `pruneWorktrees`. Prune
- * REMOVES every disposable worktree; acquire RECYCLES one, and both ask the same question through the
+ * REMOVES every disposable worktree; provision RECYCLES one, and both ask the same question through the
  * same predicate, so they can never disagree about which worktrees are free.
  *
  * `available` is the injected availability gate, defaulting to `isWorktreeRemovable` — the exact
@@ -438,14 +438,14 @@ export interface WorktreeAcquireResult {
  * at `base`, then `reset --hard`, then `clean -fdx`. The `merged` gate in the default predicate proves
  * the old branch's work has landed, so repointing it destroys nothing the trunk does not already hold
  * — the same safety prune leans on to delete the whole checkout, here spent on reusing it instead
- * (see the `worktree-acquire` ADR for the ratified semantics). `base` defaults to the resolved default
+ * (see the `worktree-provision` ADR for the ratified semantics). `base` defaults to the resolved default
  * branch, then `HEAD`.
  *
  * The primary checkout is filtered out before the gate even runs, matching prune and
  * `isWorktreeRemovable`'s own absolute refusal of it — so even a host predicate that forgot the check
  * can never hand back the primary.
  */
-export function acquireWorktree(
+export function provisionWorktree(
 	exec: Exec,
 	primaryRoot: string,
 	opts: {
@@ -453,7 +453,7 @@ export function acquireWorktree(
 		available?: ((entry: WorktreeEntry) => boolean) | undefined
 		fs?: WorktreeFs | undefined
 	},
-): WorktreeAcquireResult {
+): WorktreeProvisionResult {
 	const fs = opts.fs ?? nodeWorktreeFs
 	const available = opts.available ?? isWorktreeRemovable
 	const entries = listWorktreesFromGit(exec, primaryRoot, fs).filter((entry) => entry.linked)
@@ -520,14 +520,14 @@ export interface WorktreeApi {
 	prune(opts?: { primaryRoot?: string | undefined; dryRun?: boolean | undefined } | undefined): WorktreePruneResult
 	/**
 	 * Reuse a free worktree or create a fresh one; `primaryRoot` defaults to `primaryRoot()` —
-	 * `acquireWorktree` bound. `available` defaults to `isWorktreeRemovable`; a host injects its own to
+	 * `provisionWorktree` bound. `available` defaults to `isWorktreeRemovable`; a host injects its own to
 	 * add a live-session check (or to loosen occupancy).
 	 */
-	acquire(opts: {
+	provision(opts: {
 		primaryRoot?: string | undefined
 		create: WorktreeCreateSpec
 		available?: ((entry: WorktreeEntry) => boolean) | undefined
-	}): WorktreeAcquireResult
+	}): WorktreeProvisionResult
 	/** Symlink-resolved, native-cased path — `normalizeWorktreePath` bound. */
 	normalizePath(path: string): string
 }
@@ -545,8 +545,8 @@ export function worktreeApi(deps?: WorktreeDeps | undefined): WorktreeApi {
 		add: (opts) => gitWorktreeAdapter.add(exec, opts),
 		removeSafely: (path, opts) => removeWorktreeSafely(exec, path, { ...opts, fs }),
 		prune: (opts) => pruneWorktrees(exec, opts?.primaryRoot ?? resolvePrimaryRoot(exec), { dryRun: opts?.dryRun, fs }),
-		acquire: (opts) =>
-			acquireWorktree(exec, opts.primaryRoot ?? resolvePrimaryRoot(exec), {
+		provision: (opts) =>
+			provisionWorktree(exec, opts.primaryRoot ?? resolvePrimaryRoot(exec), {
 				create: opts.create,
 				available: opts.available,
 				fs,

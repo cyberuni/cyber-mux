@@ -35,43 +35,43 @@ Feature: mux worktree — git worktree helpers and the workspace binding
     When remove runs
     Then it removes the worktree without checking whether it is dirty
 
-  # ── acquire — reuse a free worktree instead of always creating one, the twin of prune ──
-  # prune REMOVES every disposable worktree; acquire RECYCLES one, through the SAME default gate
+  # ── provision — reuse a free worktree instead of always creating one, the twin of prune ──
+  # prune REMOVES every disposable worktree; provision RECYCLES one, through the SAME default gate
   # (isWorktreeRemovable), so the two can never disagree about which worktrees are free. Availability
   # is an injected predicate: the clean/landed/on-disk/unoccupied part is generic git and is the
   # default here, but "no live agent session is attached" is a host concept this seam never knows.
 
-  Scenario: acquire reuses a free worktree, resetting it to a pristine tree on a fresh branch
-    Given a caller running cyber-mux worktree acquire with a pool holding a merged, clean, unoccupied worktree
-    When acquire runs
+  Scenario: provision reuses a free worktree, resetting it to a pristine tree on a fresh branch
+    Given a caller running cyber-mux worktree provision with a pool holding a merged, clean, unoccupied worktree
+    When provision runs
     Then it reuses that worktree rather than creating a new checkout
     And it resets it to a fresh branch at base, then reset --hard, then clean -fdx — a pristine tree
     And it reports the action as reused, with the recycled worktree's prior branch and workspace
 
-  Scenario: acquire branches a reused worktree from an explicit base
-    Given a caller running cyber-mux worktree acquire --base <base> with a free worktree to reuse
-    When acquire runs
+  Scenario: provision branches a reused worktree from an explicit base
+    Given a caller running cyber-mux worktree provision --base <base> with a free worktree to reuse
+    When provision runs
     Then the reused worktree's fresh branch starts at <base> rather than the resolved default branch
 
-  Scenario: acquire creates a fresh worktree when none is available
-    Given a caller running cyber-mux worktree acquire with a pool holding no available worktree
-    When acquire runs
+  Scenario: provision creates a fresh worktree when none is available
+    Given a caller running cyber-mux worktree provision with a pool holding no available worktree
+    When provision runs
     Then it creates a fresh checkout with plain git and recycles nothing
     And it reports the action as created, with no recycled worktree
 
-  Scenario: acquire never reuses an unmerged worktree under the default gate
-    Given a caller running cyber-mux worktree acquire with a pool whose only free-looking worktrees are unmerged
-    When acquire runs with the default availability gate
+  Scenario: provision never reuses an unmerged worktree under the default gate
+    Given a caller running cyber-mux worktree provision with a pool whose only free-looking worktrees are unmerged
+    When provision runs with the default availability gate
     Then it treats none of them as reusable and creates a fresh checkout instead
 
-  Scenario: acquire never hands back a worktree the availability predicate excludes
+  Scenario: provision never hands back a worktree the availability predicate excludes
     Given a host availability predicate that excludes the first candidate because a live session is bound to it
-    When acquire runs
+    When provision runs
     Then it skips that worktree and reuses the next free one, never the excluded one
 
-  Scenario: acquire never reuses the primary checkout
+  Scenario: provision never reuses the primary checkout
     Given an availability predicate that would clear every worktree, including the primary checkout
-    When acquire runs
+    When provision runs
     Then the primary checkout is filtered out before the gate and is never handed back
 
   # ── worktree/workspace binding — only the backend that binds can group ──

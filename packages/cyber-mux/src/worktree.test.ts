@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { Exec } from './exec.ts'
 import {
-	acquireWorktree,
 	assertDistinctFromPrimary,
 	gitWorktreeAdapter,
 	isWorktreeRemovable,
 	listWorktreesFromGit,
+	provisionWorktree,
 	pruneWorktrees,
 	removeWorktreeSafely,
 	resolvePrimaryRoot,
@@ -389,9 +389,9 @@ describe('spec:cyber-mux/mux', () => {
 		})
 	})
 
-	describe('acquireWorktree', () => {
+	describe('provisionWorktree', () => {
 		// Primary on main + two landed (merged, clean) candidates and one unmerged worktree — the pool
-		// acquire recycles from, the twin of prune's own porcelain.
+		// provision recycles from, the twin of prune's own porcelain.
 		const porcelain = [
 			'worktree /repo',
 			'branch refs/heads/main',
@@ -426,7 +426,7 @@ describe('spec:cyber-mux/mux', () => {
 
 		it('reuses the first available worktree, resetting it to a pristine tree on a fresh branch', () => {
 			const calls: string[][] = []
-			const result = acquireWorktree(gitFake(calls, bothLanded), '/repo', {
+			const result = provisionWorktree(gitFake(calls, bothLanded), '/repo', {
 				create: { path: '/repo.worktrees/new', branch: 'feat/new' },
 				fs: fakeFs,
 			})
@@ -444,7 +444,7 @@ describe('spec:cyber-mux/mux', () => {
 
 		it('branches the reused worktree from an explicit base when one is given', () => {
 			const calls: string[][] = []
-			acquireWorktree(gitFake(calls, bothLanded), '/repo', {
+			provisionWorktree(gitFake(calls, bothLanded), '/repo', {
 				create: { path: '/repo.worktrees/new', branch: 'feat/new', base: 'release/1.0' },
 				fs: fakeFs,
 			})
@@ -454,7 +454,7 @@ describe('spec:cyber-mux/mux', () => {
 
 		it('creates a fresh worktree when none is available, recycling nothing', () => {
 			const calls: string[][] = []
-			const result = acquireWorktree(gitFake(calls, bothLanded), '/repo', {
+			const result = provisionWorktree(gitFake(calls, bothLanded), '/repo', {
 				create: { path: '/repo.worktrees/new', branch: 'feat/new', base: 'origin/main' },
 				available: () => false,
 				fs: fakeFs,
@@ -477,8 +477,8 @@ describe('spec:cyber-mux/mux', () => {
 
 		it('the default gate is isWorktreeRemovable, so an unmerged worktree is never reused', () => {
 			const calls: string[][] = []
-			// Only the primary's own branch is merged — no linked worktree qualifies, so acquire creates.
-			const result = acquireWorktree(gitFake(calls, { merged: 'main', status: () => '' }), '/repo', {
+			// Only the primary's own branch is merged — no linked worktree qualifies, so provision creates.
+			const result = provisionWorktree(gitFake(calls, { merged: 'main', status: () => '' }), '/repo', {
 				create: { path: '/repo.worktrees/new', branch: 'feat/new', base: 'origin/main' },
 				fs: fakeFs,
 			})
@@ -489,9 +489,9 @@ describe('spec:cyber-mux/mux', () => {
 		it('never hands back a held worktree — the injected predicate excludes it and the next free one is picked', () => {
 			const calls: string[][] = []
 			// A host predicate standing in for "a live session is bound to /landed": it is disqualified even
-			// though the generic gate would clear it, so acquire recycles /landed2 instead.
+			// though the generic gate would clear it, so provision recycles /landed2 instead.
 			const held = '/repo.worktrees/landed'
-			const result = acquireWorktree(gitFake(calls, bothLanded), '/repo', {
+			const result = provisionWorktree(gitFake(calls, bothLanded), '/repo', {
 				create: { path: '/repo.worktrees/new', branch: 'feat/new', base: 'origin/main' },
 				available: (entry: WorktreeEntry) => entry.root !== held && isWorktreeRemovable(entry),
 				fs: fakeFs,
@@ -506,7 +506,7 @@ describe('spec:cyber-mux/mux', () => {
 			const calls: string[][] = []
 			// A predicate that says yes to everything still cannot reach the primary — it is filtered before
 			// the gate runs, matching prune's own absolute refusal.
-			const result = acquireWorktree(gitFake(calls, bothLanded), '/repo', {
+			const result = provisionWorktree(gitFake(calls, bothLanded), '/repo', {
 				create: { path: '/repo.worktrees/new', branch: 'feat/new', base: 'origin/main' },
 				available: () => true,
 				fs: fakeFs,
@@ -525,7 +525,7 @@ describe('spec:cyber-mux/mux', () => {
 				return ''
 			}
 			expect(() =>
-				acquireWorktree(failingSwitch, '/repo', {
+				provisionWorktree(failingSwitch, '/repo', {
 					create: { path: '/repo.worktrees/new', branch: 'feat/new', base: 'origin/main' },
 					fs: fakeFs,
 				}),
@@ -742,16 +742,16 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls[1]).toEqual(['-C', '/repo', 'worktree', 'list', '--porcelain'])
 		})
 
-		it('acquire() defaults its root to primaryRoot() and creates when the pool is empty', () => {
+		it('provision() defaults its root to primaryRoot() and creates when the pool is empty', () => {
 			const calls: string[][] = []
 			const exec: Exec = (_cmd, args) => {
 				calls.push(args)
 				if (args.includes('--git-common-dir')) return '/repo/.git'
-				// An empty worktree list: nothing to reuse, so acquire falls through to add.
+				// An empty worktree list: nothing to reuse, so provision falls through to add.
 				if (args[2] === 'worktree' && args[3] === 'list') return ''
 				return ''
 			}
-			const result = worktreeApi({ exec }).acquire({
+			const result = worktreeApi({ exec }).provision({
 				create: { path: '/repo.worktrees/x', branch: 'b', base: 'origin/main' },
 			})
 			expect(result).toEqual({ action: 'created', worktree: { root: '/repo.worktrees/x', branch: 'b' } })
