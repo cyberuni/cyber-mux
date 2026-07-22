@@ -40,27 +40,31 @@ Feature: mux worktree — git worktree helpers and the workspace binding
   # (isWorktreeRemovable), so the two can never disagree about which worktrees are free. Availability
   # is an injected predicate: the clean/landed/on-disk/unoccupied part is generic git and is the
   # default here, but "no live agent session is attached" is a host concept this seam never knows.
+  # SURFACE: provision ships as the library seam provisionWorktree / WorktreeApi.provision
+  # (src/worktree.ts), NOT a `cyber-mux worktree provision` CLI verb — the worktree-provision ADR
+  # defers that verb as an unshipped follow-up. So each Given below names the seam, not a CLI
+  # invocation; "When provision runs" stays surface-neutral (the operation, however it is reached).
 
   Scenario: provision reuses a free worktree, resetting it to a pristine tree on a fresh branch
-    Given a caller running cyber-mux worktree provision with a pool holding a merged, clean, unoccupied worktree
+    Given a caller invoking the provisionWorktree seam with a pool holding a merged, clean, unoccupied worktree
     When provision runs
     Then it reuses that worktree rather than creating a new checkout
     And it resets it to a fresh branch at base, then reset --hard, then clean -fdx — a pristine tree
     And it reports the action as reused, with the recycled worktree's prior branch and workspace
 
   Scenario: provision branches a reused worktree from an explicit base
-    Given a caller running cyber-mux worktree provision --base <base> with a free worktree to reuse
+    Given a caller invoking provisionWorktree with an explicit base <base> and a free worktree to reuse
     When provision runs
     Then the reused worktree's fresh branch starts at <base> rather than the resolved default branch
 
   Scenario: provision creates a fresh worktree when none is available
-    Given a caller running cyber-mux worktree provision with a pool holding no available worktree
+    Given a caller invoking the provisionWorktree seam with a pool holding no available worktree
     When provision runs
     Then it creates a fresh checkout with plain git and recycles nothing
     And it reports the action as created, with no recycled worktree
 
   Scenario: provision never reuses an unmerged worktree under the default gate
-    Given a caller running cyber-mux worktree provision with a pool whose only free-looking worktrees are unmerged
+    Given a caller invoking the provisionWorktree seam with a pool whose only free-looking worktrees are unmerged
     When provision runs with the default availability gate
     Then it treats none of them as reusable and creates a fresh checkout instead
 
