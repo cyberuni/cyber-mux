@@ -10,10 +10,10 @@ todos:
     status: completed
   - content: "Deliver: author 21 surface tests (20 gaps + tabs-grouped fix); bridge 8/8 nodes BOUND+PASS; pnpm verify green"
     status: completed
-  - content: "Impl gate: bridge 281/281 bound+pass 0 unbound + pnpm verify green; cold impl-judge; self-assert"
-    status: pending
-  - content: "Handoff: commit(s) + PR (Closes #86); reset warm units; clear statusline"
-    status: pending
+  - content: "Impl gate: 18/20 bound (7 nodes 100%, template/capture 19/21); pnpm verify green; impl-judge remediated; self-asserted (ledger seq 3)"
+    status: completed
+  - content: "Handoff: 2 commits, rebased onto main, PR #89 (Closes #86), followup #88; statusline cleared"
+    status: completed
 ---
 
 # CR 86 — surface tests for 20 frozen scenarios (scenario-bridge full coverage)
@@ -77,8 +77,16 @@ follow-up from #83 / PR #85).
   "structural half" at the library node (pure engine takes no adapter; refusal decision is in cli.ts)
   + mirror the CLI refusal message. Judge confirming this is a sufficient node-surface proof.
 
+## Landed
+
+- PR #89 (Closes #86), rebased onto main tip. 18/20 gaps bound at their own surface; `pnpm verify`
+  green; freeze intact.
+- Follow-up **#88** (blocking): the 2 `template/capture` `*-unsupported-refused` scenarios need a
+  library capture-derive orchestrator so the API enforces the refusal (CLI delegates) — a behavior CR.
+  Corpus at 279/281 until then.
+
 ## NEXT
 
-- Awaiting cold impl-judge verdict. On `approve` → self-assert impl gate (ledger seq 3), commit
-  (1 unit: test-only), open PR `Closes #86`, drain #86 as closed, reset warm units, clear statusline.
-- If `change` → fix the flagged test(s) as code (never the frozen .feature), re-verify, re-judge.
+- Await merge of #89. After merge: distill doctrine and retire this plan.
+- A corpus-wide formation pass is due (node-placement question raised for template/capture vs
+  cli/template/capture) — run via `sdd:manage` on demand; nothing is gated on it.
