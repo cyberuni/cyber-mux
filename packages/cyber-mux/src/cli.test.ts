@@ -370,6 +370,90 @@ describe('spec:cyber-mux/mux', () => {
 				expect(calls.at(-1)).toEqual(['-C', '/repo', 'worktree', 'add', '-b', 'b', '/x', 'origin/main'])
 			})
 
+			describe('worktree provision (the CLI verb over provisionWorktree, default gate only)', () => {
+				// Primary on main + one landed (merged, clean) linked worktree — the pool the verb recycles
+				// from. Routes by verb so the seam's internal list/merged/status reads and the recycle/add
+				// writes each get their own answer, plus the CLI's own rev-parse for the primary root.
+				const porcelain = [
+					'worktree /repo',
+					'branch refs/heads/main',
+					'',
+					'worktree /repo.worktrees/landed',
+					'branch refs/heads/feat/landed',
+					'',
+				].join('\n')
+				const provisionGit =
+					(calls: string[][], merged: string): Exec =>
+					(_cmd, args) => {
+						calls.push(args)
+						if (args[0] === 'rev-parse') return '/repo/.git'
+						if (args.includes('symbolic-ref')) return 'origin/main'
+						if (args.includes('--merged')) return merged
+						if (args[2] === 'status') return ''
+						if (args[2] === 'worktree' && args[3] === 'list') return porcelain
+						return ''
+					}
+
+				it('reuses a free worktree in the pool and reports the reclaim', async () => {
+					const calls: string[][] = []
+					const program = buildProgram({ env: {}, exec: provisionGit(calls, 'main\nfeat/landed') })
+					await withArgv(['worktree', 'provision', '--branch', 'feat/new', '--format', 'json'], () =>
+						run(program, ['worktree', 'provision', '--branch', 'feat/new', '--format', 'json']),
+					)
+					const payload = JSON.parse(logs.join('\n'))
+					expect(payload.action).toBe('reused')
+					expect(payload.branch).toBe('feat/new')
+					// The recycled entry in full: its prior branch and the workspace it was open in.
+					expect(payload.reused).toMatchObject({ root: '/repo.worktrees/landed', branch: 'feat/landed' })
+					expect(payload.reused).toHaveProperty('workspace')
+					// Reuse means NO new checkout, and a pristine reset of the recycled one.
+					expect(calls.some((c) => c[2] === 'worktree' && c[3] === 'add')).toBe(false)
+					expect(calls).toContainEqual(['-C', '/repo.worktrees/landed', 'switch', '-c', 'feat/new', 'origin/main'])
+				})
+
+				it('creates a fresh checkout at the sibling path when the pool holds no reusable worktree', async () => {
+					const calls: string[][] = []
+					// Only the primary's own branch is merged — no linked worktree qualifies, so it creates.
+					const program = buildProgram({ env: {}, exec: provisionGit(calls, 'main') })
+					await withArgv(['worktree', 'provision', '--branch', 'feat/new', '--format', 'json'], () =>
+						run(program, ['worktree', 'provision', '--branch', 'feat/new', '--format', 'json']),
+					)
+					const payload = JSON.parse(logs.join('\n'))
+					expect(payload.action).toBe('created')
+					expect(payload.reused).toBeNull()
+					// Created at the sibling default, with plain git, recycling nothing.
+					expect(calls).toContainEqual(['-C', '/repo', 'worktree', 'add', '-b', 'feat/new', '/repo.worktrees/feat/new'])
+					expect(calls.some((c) => c[2] === 'switch')).toBe(false)
+				})
+
+				it('--base starts the provisioned branch at the given ref', async () => {
+					const calls: string[][] = []
+					const program = buildProgram({ env: {}, exec: provisionGit(calls, 'main\nfeat/landed') })
+					await run(program, ['worktree', 'provision', '--branch', 'feat/new', '--base', 'release/1.0'])
+					expect(calls).toContainEqual(['-C', '/repo.worktrees/landed', 'switch', '-c', 'feat/new', 'release/1.0'])
+				})
+
+				it('--path lands a created checkout at the given path', async () => {
+					const calls: string[][] = []
+					// Nothing merged among linked worktrees → create, at the explicit --path rather than the sibling.
+					const program = buildProgram({ env: {}, exec: provisionGit(calls, 'main') })
+					await run(program, ['worktree', 'provision', '--branch', 'feat/new', '--path', '/custom/spot'])
+					// Create with no --base: git's own default (HEAD), no base arg — the resolved-default-branch
+					// fallback is the REUSE path's, not create's (see the worktree-provision ADR).
+					expect(calls).toContainEqual(['-C', '/repo', 'worktree', 'add', '-b', 'feat/new', '/custom/spot'])
+				})
+
+				it('offers no availability-predicate injection — only --branch, --base, --path, --format', () => {
+					const program = buildProgram({ env: {}, exec: () => null })
+					const worktree = program.commands.find((c) => c.name() === 'worktree')!
+					const provision = worktree.commands.find((c) => c.name() === 'provision')!
+					const flags = provision.options.map((o) => o.long)
+					expect(flags).toEqual(['--branch', '--base', '--path', '--format'])
+					// The surface divergence: no flag reaches the seam's injectable `available` predicate.
+					expect(flags.some((f) => /avail|predicate|gate|exclude/i.test(f ?? ''))).toBe(false)
+				})
+			})
+
 			/** herdr replies keyed by the first two args; git is answered on the same fake, by binary. */
 			function fakeRepoExec(calls: string[][], responses: Record<string, string | null> = {}): Exec {
 				return (cmd, args) => {
