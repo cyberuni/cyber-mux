@@ -46,9 +46,9 @@ function template(name: string): string {
 	return JSON.stringify({ name, panes: [{ label: 'a' }, { label: 'b' }] })
 }
 
-describe('spec:cyber-mux/template', () => {
+describe('spec:cyber-mux/template/apply', () => {
 	describe('templateDirs', () => {
-		it('resolves the repo directory through the primary checkout, not the caller’s cwd', () => {
+		it('apply-repo-dir-via-primary-checkout', () => {
 			// Load-bearing rather than incidental: cyber-mux is used across many worktrees of one project,
 			// and a worktree branched from a commit that predates a template would otherwise see a stale
 			// template, or none at all. `resolvePrimaryRoot` gives one canonical answer from every worktree.
@@ -79,7 +79,7 @@ describe('spec:cyber-mux/template', () => {
 			)
 		})
 
-		it('a repo template shadows a user template of the same name', () => {
+		it('apply-repo-shadows-user', () => {
 			// Deliberate: a project that ships a template is making a statement about how the project is
 			// worked on, and a personal template of the same name must not silently displace it.
 			const store = fakeStore({
@@ -94,7 +94,7 @@ describe('spec:cyber-mux/template', () => {
 			expect(store.calls.reads).toEqual([`${REPO_DIR}/pool-4.json`])
 		})
 
-		it('a user template resolves when the repo has none of that name', () => {
+		it('apply-user-fallback', () => {
 			const store = fakeStore({ [`${USER_DIR}/scratch.json`]: template('scratch') })
 			const resolved = resolveTemplate({ name: 'scratch', store, exec: gitExec, env: ENV })
 			expect(resolved.source).toBe('user')
@@ -110,7 +110,7 @@ describe('spec:cyber-mux/template', () => {
 			expect(resolveTemplate({ name: 'pool-4', store, exec: gitExec, env: ENV }).path).toBe(`${REPO_DIR}/pool-4.json`)
 		})
 
-		it('a name that resolves nowhere lists both directories it searched', () => {
+		it('apply-unresolved-name-lists-dirs', () => {
 			const store = fakeStore({})
 			expect(() => resolveTemplate({ name: 'pool-9', store, exec: gitExec, env: ENV })).toThrow(
 				new RegExp(`${REPO_DIR}.*${USER_DIR}`),
@@ -125,7 +125,7 @@ describe('spec:cyber-mux/template', () => {
 			'Pool-4',
 			'-pool',
 			'pool_4',
-		])('refuses the name "%s" before any file is read', (name) => {
+		])('apply-name-not-plain-stem-refused', (name) => {
 			const store = fakeStore({})
 			expect(() => resolveTemplate({ name, store, exec: gitExec, env: ENV })).toThrow(/invalid template name/)
 			expect(store.calls.reads).toEqual([])

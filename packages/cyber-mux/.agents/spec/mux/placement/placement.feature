@@ -8,6 +8,7 @@ Feature: mux placement — where a new pane opens, and what open reports back
 
   # ── workspace — its own visible space, mapped to each backend's own-visible-space unit ──
 
+  @id:placement-at-workspace-visible-space
   Scenario Outline: --at workspace opens the pane's own VISIBLE space on each backend
     Given a caller running cyber-mux open --at workspace with <env>
     When open runs
@@ -20,12 +21,14 @@ Feature: mux placement — where a new pane opens, and what open reports back
       | $WEZTERM_PANE set           | wezterm |
       | $ZELLIJ set                 | zellij  |
 
+  @id:placement-tmux-workspace-visible-window
   Scenario: tmux --at workspace opens a visible window in the current session, never a detached session
     Given a caller running cyber-mux open --at workspace with $TMUX set
     When open runs
     Then the tmux adapter opens a new window in the caller's current session, visible in its status bar
     And it does not open a detached (new-session) session the attached client cannot see or beam to
 
+  @id:placement-herdr-workspace-unattached
   Scenario: herdr --at workspace creates its own workspace, unattached to any repo
     Given a caller running cyber-mux open --at workspace with $HERDR_ENV set and no $TMUX
     When open runs
@@ -35,6 +38,7 @@ Feature: mux placement — where a new pane opens, and what open reports back
     # verbs' job — see the worktree/workspace binding section below.
     And the workspace is not bound to any repo, even when its cwd is a worktree checkout
 
+  @id:placement-wezterm-workspace-fresh-name
   Scenario: wezterm --at workspace spawns a new window into a freshly named workspace
     Given a caller running cyber-mux open --at workspace with $WEZTERM_PANE set
     When open runs
@@ -45,6 +49,7 @@ Feature: mux placement — where a new pane opens, and what open reports back
     # gave one.
     And the new window does not join the caller's current workspace
 
+  @id:placement-at-tab-new-tab
   Scenario Outline: --at tab opens a new tab in the current window, never a split pane
     Given a caller running cyber-mux open --at tab with <env>
     When open runs
@@ -58,11 +63,13 @@ Feature: mux placement — where a new pane opens, and what open reports back
       | $WEZTERM_PANE set           | wezterm |
       | $ZELLIJ set                 | zellij  |
 
+  @id:placement-tab-no-focus-steal
   Scenario: the tab placement opens in the background without stealing focus
     Given a caller running cyber-mux open --at tab
     When open runs
     Then the new tab is opened without moving input focus off the caller's session
 
+  @id:placement-omitted-defaults-to-tab
   Scenario: an omitted placement falls back to tab — the adapter's own default, not the CLI's
     Given the open contract is invoked with no placement — at is undefined
     When the backend adapter opens the pane
@@ -80,6 +87,7 @@ Feature: mux placement — where a new pane opens, and what open reports back
   # (further down). The seam is the fact's source; every surface that reports it — the bare `open`
   # report and the template manifest (see template/) — reads it from there rather than asking again.
 
+  @id:placement-open-returns-workspace
   Scenario Outline: open returns the workspace the new pane landed in
     Given a caller running cyber-mux open --at <placement> with $HERDR_ENV set and no $TMUX
     When open runs
@@ -91,6 +99,7 @@ Feature: mux placement — where a new pane opens, and what open reports back
       | tab        | the workspace the new tab was created in                   |
       | pane:right | the workspace the split landed in — the caller's own       |
 
+  @id:placement-wezterm-workspace-never-absent
   Scenario Outline: wezterm reports the workspace on every placement, never absent
     Given a caller running cyber-mux open --at <placement> with $WEZTERM_PANE set
     When open runs
@@ -104,6 +113,7 @@ Feature: mux placement — where a new pane opens, and what open reports back
       | tab        | the workspace of the window the tab was created in        |
       | pane:right | the workspace the split landed in — the caller's own       |
 
+  @id:placement-wezterm-workspace-followup-call
   Scenario: wezterm's workspace and tab cost a follow-up call, unlike herdr's free report
     Given a caller running cyber-mux open with $WEZTERM_PANE set
     When open runs
@@ -112,6 +122,7 @@ Feature: mux placement — where a new pane opens, and what open reports back
     # way tmux's -F format or herdr's JSON envelope does. The `workspace` placement is the one
     # exception: the workspace name is what open() itself picked, so reporting it costs nothing.
 
+  @id:placement-tmux-no-workspace-tier
   Scenario: a backend with no workspace tier returns no workspace at all
     Given a caller running cyber-mux open with $TMUX set
     When open runs
@@ -119,6 +130,7 @@ Feature: mux placement — where a new pane opens, and what open reports back
     # Absent, not a false "none". tmux has no workspace tier — `workspace` and `tab` both collapse to
     # a Window — so it has nothing to report, which is not the same as reporting nothing is there.
 
+  @id:placement-herdr-workspace-free
   Scenario: the workspace costs no extra backend call
     Given a caller running cyber-mux open with $HERDR_ENV set and no $TMUX
     When open runs
@@ -126,6 +138,7 @@ Feature: mux placement — where a new pane opens, and what open reports back
     # Every herdr route already emits the pane's own workspace_id. Probing for it separately would
     # buy nothing and cost a round trip per open.
 
+  @id:placement-open-reports-workspace-with-pane
   Scenario Outline: open reports the workspace alongside the pane it opened
     Given a caller running cyber-mux open --format json with <env>
     When open runs
@@ -141,6 +154,7 @@ Feature: mux placement — where a new pane opens, and what open reports back
       | $TMUX set                   | a null workspace — no workspace tier to report from |
       | $WEZTERM_PANE set           | the workspace it landed in                         |
 
+  @id:placement-workspace-not-worktree-binding
   Scenario: the workspace a pane landed in is not a worktree binding
     Given a caller running cyber-mux worktree add --branch my-feature --at pane:right on a backend that binds
     When add runs
@@ -158,6 +172,7 @@ Feature: mux placement — where a new pane opens, and what open reports back
   # than here — what the flag DOES is that block's business, what env MEANS is this one's. The template
   # capability is another such caller; what a template DOES with these is template's business.
 
+  @id:placement-from-names-split-target
   Scenario Outline: from names the pane a pane:* split targets
     Given a caller opening at pane:right through the <adapter> adapter, with from naming a pane
     When open runs
@@ -169,6 +184,7 @@ Feature: mux placement — where a new pane opens, and what open reports back
       | herdr   | the pane id passed positionally, no --from |
       | wezterm | --pane-id and the pane id                  |
 
+  @id:placement-from-omitted-tracks-focus
   Scenario Outline: from omitted leaves each backend its own default, which tracks the USER's focus
     Given a caller opening at pane:right through the <adapter> adapter, with no from
     When open runs
@@ -187,6 +203,7 @@ Feature: mux placement — where a new pane opens, and what open reports back
     # exactly when a program is driving. Naming the pane is the only way pane:right means the same
     # thing on both backends.
 
+  @id:placement-from-ignored-by-tab-workspace
   Scenario Outline: from is ignored by tab and workspace, which split nothing
     Given a caller opening at <at> through the <adapter> adapter, with from naming a pane
     When open runs
@@ -201,6 +218,7 @@ Feature: mux placement — where a new pane opens, and what open reports back
       | tab       | wezterm |
       | workspace | wezterm |
 
+  @id:placement-ratio-sign-convention
   Scenario Outline: the ratio sign convention converts in opposite directions per backend
     Given a caller opening at pane:right through the <adapter> adapter, with ratio 0.333
     When open runs
@@ -217,6 +235,7 @@ Feature: mux placement — where a new pane opens, and what open reports back
     # 1 - ratio. Applying the inversion to both backends, or to neither, is the single most likely
     # way to get a split backwards, and fails one of these rows.
 
+  @id:placement-ratio-omitted-even-default
   Scenario Outline: ratio omitted leaves each backend its own even default
     Given a caller opening at pane:right through the <adapter> adapter, with no ratio
     When open runs
@@ -228,6 +247,7 @@ Feature: mux placement — where a new pane opens, and what open reports back
       | herdr   |
       | wezterm |
 
+  @id:placement-ratio-not-for-tab-workspace
   Scenario Outline: ratio is a split concept — a tab or workspace is never sized against a pane
     Given a caller opening at <at> through the tmux adapter, with a ratio
     When open runs
@@ -238,6 +258,7 @@ Feature: mux placement — where a new pane opens, and what open reports back
       | tab       |
       | workspace |
 
+  @id:placement-wezterm-ratio-not-for-tab-workspace
   Scenario Outline: ratio is a split concept on wezterm too — a tab or workspace is never sized against a pane
     Given a caller opening at <at> through the wezterm adapter, with a ratio
     When open runs
@@ -248,6 +269,7 @@ Feature: mux placement — where a new pane opens, and what open reports back
       | tab       |
       | workspace |
 
+  @id:placement-env-native-at-birth
   Scenario Outline: env is set natively at the birth of whatever tier is opened
     Given a caller opening at <at> through the <adapter> adapter, with env ROLE=worker
     When open runs
@@ -266,6 +288,7 @@ Feature: mux placement — where a new pane opens, and what open reports back
     # pane pool's root pane is born by the region open and never by a split, so a seam that scoped
     # env to pane:* would drop it silently exactly where a caller needs it.
 
+  @id:placement-wezterm-env-never-native
   Scenario Outline: env is native at NO tier on wezterm — every route takes the fallback, not just one
     Given a caller opening at <at> through the wezterm adapter, with env ROLE=worker
     When open runs
@@ -281,6 +304,7 @@ Feature: mux placement — where a new pane opens, and what open reports back
     # Unlike herdr, which is native everywhere but ONE route, wezterm's CLI has no --env flag on
     # spawn or split-pane at all — every route is the exception here, not just the worktree one.
 
+  @id:placement-env-each-var-own-flag
   Scenario Outline: each env variable gets its own flag, in the order given
     Given a caller opening through the <adapter> adapter, with env ROLE=worker and TIER=gpu
     When open runs
@@ -291,6 +315,7 @@ Feature: mux placement — where a new pane opens, and what open reports back
       | tmux    |
       | herdr   |
 
+  @id:placement-env-no-launch-blank-shell
   Scenario Outline: env with no launch opens a blank shell carrying the env
     Given a caller opening through the <adapter> adapter, with env and no launch
     When open runs
@@ -302,6 +327,7 @@ Feature: mux placement — where a new pane opens, and what open reports back
       | tmux    |
       | herdr   |
 
+  @id:placement-herdr-worktree-env-dropped
   Scenario: herdr's worktree verbs cannot set env at birth, and drop it rather than failing
     Given a caller creating or opening a worktree workspace through the herdr adapter, with env
     When it runs
@@ -321,6 +347,7 @@ Feature: mux placement — where a new pane opens, and what open reports back
   # template is its only caller, env has two callers — so the rule lives here, where env's MEANING
   # already does, and a caller cannot quietly invent its own.
 
+  @id:placement-route-reports-env-carried
   Scenario Outline: whether a route carried env is reported by the route, because only it knows
     Given a caller opening a region with env via <route>
     When it runs
@@ -340,6 +367,7 @@ Feature: mux placement — where a new pane opens, and what open reports back
     # carried" unconditionally is as wrong as one reporting "carried" unconditionally, which is why
     # both directions are pinned here.
 
+  @id:placement-env-rides-command-prefix
   Scenario: env a route could not carry rides in on the command instead
     Given a region opened with env the route could not carry, and a command to run in it
     When the command is run
@@ -348,6 +376,7 @@ Feature: mux placement — where a new pane opens, and what open reports back
     # A last resort, and its cost is why: the values land in ps output and the pane's shell history.
     # It is still strictly better than the silent drop it replaces.
 
+  @id:placement-env-no-command-warns
   Scenario: env a route could not carry, with no command to ride, warns rather than vanishing
     Given a region opened with env the route could not carry, and no command to run in it
     When it runs
@@ -357,6 +386,7 @@ Feature: mux placement — where a new pane opens, and what open reports back
     # the honest outcome is to say so — a caller that asked for env and silently did not get it is
     # the quiet failure this whole block exists to prevent.
 
+  @id:placement-native-env-no-double-prefix
   Scenario Outline: a route that set env natively never prefixes it on top
     Given a region opened at <at> with env the <adapter> adapter carried natively, and a command
     When the command is run
@@ -377,6 +407,7 @@ Feature: mux placement — where a new pane opens, and what open reports back
     # output and shell history on every route, which is exactly the cost the prefix is a last resort
     # to avoid paying. Only the route that lost env may compensate for it.
 
+  @id:placement-env-value-quoted-in-prefix
   Scenario: an env value carrying a space or a quote survives the prefix intact
     Given a region opened with env the route could not carry, whose value contains a space and a quote
     When the command is run
@@ -389,6 +420,7 @@ Feature: mux placement — where a new pane opens, and what open reports back
   # backend with a real workspace tier that is free — the tier IS the group. On one without, the seam
   # carries an opaque group id the backend can store and be filtered by.
 
+  @id:placement-group-id-opaque
   Scenario: the open contract carries an opaque workspace group id
     Given a caller opening a tab with a workspace group id
     When open runs
@@ -397,6 +429,7 @@ Feature: mux placement — where a new pane opens, and what open reports back
     # the group id and the label are separate on purpose: a label is chosen by a human and may contain
     # anything, so recovering a grouping by parsing one is unsound
 
+  @id:placement-tmux-group-id-window-option
   Scenario: a backend with no workspace tier stores the group id natively
     Given a caller opening a tab through the tmux adapter, with a workspace group id
     When open runs
@@ -404,6 +437,7 @@ Feature: mux placement — where a new pane opens, and what open reports back
     # tmux has no Workspace level, so the grouping has nowhere structural to live; a window option is
     # tmux's own mechanism for exactly this and survives a window rename
 
+  @id:placement-herdr-group-id-ignored
   Scenario: a backend with a real workspace tier ignores the group id
     Given a caller opening a tab through the herdr adapter, with a workspace group id
     When open runs
@@ -411,6 +445,7 @@ Feature: mux placement — where a new pane opens, and what open reports back
     # herdr's workspace IS the group and every pane and tab record already carries its workspace_id —
     # a second grouping would be a duplicate the backend never reads
 
+  @id:placement-wezterm-group-id-ignored
   Scenario: wezterm also ignores the group id, for the same reason herdr does
     Given a caller opening a tab through the wezterm adapter, with a workspace group id
     When open runs
@@ -419,12 +454,14 @@ Feature: mux placement — where a new pane opens, and what open reports back
     # left for a tag to add. Coarser than herdr's (per-WINDOW, since every tab in a window already
     # shares its workspace, and there is no move-tab-to-workspace primitive), but the same answer.
 
+  @id:placement-group-id-not-invented
   Scenario: a group id is never invented for a caller that did not ask for one
     Given a caller opening a tab through the tmux adapter, with no workspace group id
     When open runs
     Then no window option is set
     # a window nobody grouped stays ungrouped, and reads back as a workspace of one
 
+  @id:placement-group-existing-space
   Scenario: a space already open is grouped by the same verb open uses
     Given a caller grouping a tab that is already open through the tmux adapter
     When the grouping runs
@@ -435,6 +472,7 @@ Feature: mux placement — where a new pane opens, and what open reports back
     # the moment the open returns. tmux has no birth flag for a window option anyway, so grouping is
     # ALREADY a second call after the window exists; routing open through this verb adds none.
 
+  @id:placement-tmux-name-stored-separately-from-group
   Scenario: a backend whose display name is composed stores the space's own name beside the group
     Given a caller grouping a tab through the tmux adapter, naming the tab editor
     When the grouping runs
@@ -445,6 +483,7 @@ Feature: mux placement — where a new pane opens, and what open reports back
     # ambiguous. The same rule the group id follows, one tier down: the display name is a human's to
     # read, and an opaque option carries what a machine reads back.
 
+  @id:placement-herdr-stores-neither-group-nor-name
   Scenario: a backend with a real workspace tier stores neither
     Given a caller grouping a tab through the herdr adapter
     When the grouping runs
@@ -452,6 +491,7 @@ Feature: mux placement — where a new pane opens, and what open reports back
     # its tier IS the group and its tab label IS the tab's own name, never composed -- so both are
     # facts the backend already holds
 
+  @id:placement-group-id-not-reported-as-workspace
   Scenario: the group id is not a workspace, and open never reports it as one
     Given a caller opening a tab through the tmux adapter, with a workspace group id
     When open reports the pane
@@ -464,6 +504,7 @@ Feature: mux placement — where a new pane opens, and what open reports back
   # The same move, and the same argument, as the workspace above: the backend already answered when
   # the pane was opened, so a surface that hid it would discard a fact it already held.
 
+  @id:placement-open-reports-tab
   Scenario Outline: open reports the tab the new pane landed in
     Given a caller opening at <at> through the <adapter> adapter
     When open runs
@@ -487,6 +528,7 @@ Feature: mux placement — where a new pane opens, and what open reports back
     # -F the pane id already rides out on. Either way the backend already answered when the pane was
     # opened, so it costs no extra call — the argument the workspace field is already reported on.
 
+  @id:placement-reported-tab-names-root
   Scenario: the reported tab is what names a new workspace's root tab
     Given a caller creating a workspace through the herdr adapter
     When the workspace's root tab is renamed using the tab open reported
@@ -499,6 +541,7 @@ Feature: mux placement — where a new pane opens, and what open reports back
   # --label names a space AT birth wherever the backend's CLI allows. One tier cannot be: a new
   # workspace's root tab. So the seam also names a space that already exists.
 
+  @id:placement-rename-after-birth
   Scenario Outline: a space is named after birth on every backend
     Given a caller renaming an already-open <tier> through the <adapter> adapter
     When the rename runs
@@ -518,6 +561,7 @@ Feature: mux placement — where a new pane opens, and what open reports back
     # `pane` row: unlike the other two, it cannot name a pane at all — see the dedicated scenario
     # below rather than a silent gap in this table.
 
+  @id:placement-wezterm-rename-pane-throws
   Scenario: wezterm cannot name a pane at any tier — rename throws rather than silently doing nothing
     Given a caller renaming an already-open pane through the wezterm adapter
     When the rename runs
@@ -525,6 +569,7 @@ Feature: mux placement — where a new pane opens, and what open reports back
     # set-tab-title/set-window-title exist; there is no pane equivalent in the CLI at all. Throwing is
     # the honest answer — a silent no-op would report a rename that never happened as if it had.
 
+  @id:placement-wezterm-every-tab-named-after-birth
   Scenario: every new tab on wezterm is named after birth, not just a new workspace's root tab
     Given a caller opening a tab through the wezterm adapter, with a label
     When open runs
@@ -532,6 +577,7 @@ Feature: mux placement — where a new pane opens, and what open reports back
     # spawn has no title flag at all (unlike tmux's -n or herdr's --label), so EVERY new tab takes
     # this route — not just the one root-tab case herdr has.
 
+  @id:placement-herdr-root-tab-rename-only
   Scenario: renaming is the only way to name a new workspace's root tab
     Given a caller creating a workspace through the herdr adapter
     When the workspace's root tab is given a name
@@ -540,6 +586,7 @@ Feature: mux placement — where a new pane opens, and what open reports back
     # whole of the constraint the tab-naming non-goal generalized from — it binds the ROOT tab alone,
     # and every later tab takes --label at birth like any other space.
 
+  @id:placement-rename-no-focus-no-create
   Scenario: a rename moves no focus and opens nothing
     Given a caller renaming a tab the caller is not focused on
     When the rename runs
@@ -547,6 +594,7 @@ Feature: mux placement — where a new pane opens, and what open reports back
     And no space is created
     # a write as read-only in its side effects as isPaneFocused is: naming a space is not visiting it
 
+  @id:placement-backend-declares-can-size
   Scenario Outline: a backend declares whether it can size a split
     Given a caller asking the <adapter> adapter whether it can size a split
     When it reads the declaration
@@ -568,12 +616,14 @@ Feature: mux placement — where a new pane opens, and what open reports back
   # or omitted is ../../cli/placement/placement.feature's; what open() DOES with a launch command, or
   # its absence, is this band's.
 
+  @id:placement-open-no-launch-blank-pane
   Scenario: open with no launch command creates a blank pane
     Given open called with no launch command
     When open runs
     Then a new pane opens through the adapter
     And no launch command is sent or run into it
 
+  @id:placement-launch-command-submitted
   Scenario: a launch command is submitted, so it actually runs
     Given open called with a launch command
     When open runs

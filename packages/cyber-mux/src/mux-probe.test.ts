@@ -13,9 +13,9 @@ function psChain(chain: Record<number, [number, string]>): Exec {
 	}
 }
 
-describe('spec:cyber-mux/mux', () => {
+describe('spec:cyber-mux/mux/detection', () => {
 	describe('probeMultiplexer — env fast-path', () => {
-		it('$CYBER_MUX is trusted outright as a fast-path', () => {
+		it('detection-cyber-mux-fast-path', () => {
 			const noExec: Exec = () => null
 			expect(probeMultiplexer(noExec, { CYBER_MUX: 'tmux', CYBER_MUX_PANE: '%3' })).toEqual({
 				mux: 'tmux',
@@ -24,7 +24,7 @@ describe('spec:cyber-mux/mux', () => {
 			})
 		})
 
-		it('$CYBER_MUX=none is an override even inside a real multiplexer', () => {
+		it('detection-cyber-mux-none-override', () => {
 			const noExec: Exec = () => null
 			expect(probeMultiplexer(noExec, { CYBER_MUX: 'none', TMUX: 't' })).toEqual({ mux: 'none', via: 'env' })
 		})
@@ -51,7 +51,7 @@ describe('spec:cyber-mux/mux', () => {
 	})
 
 	describe('probeMultiplexer — ancestry discovery', () => {
-		it('absent the env fast-path, the probe walks the process ancestry from $$', () => {
+		it('detection-ancestry-walk-fallback', () => {
 			const pid = process.pid
 			const exec = psChain({
 				[pid]: [pid + 1, 'node'],
@@ -122,7 +122,7 @@ describe('spec:cyber-mux/mux', () => {
 			expect(probeMultiplexer(exec, {}).mux).toBe('tmux')
 		})
 
-		it('$TMUX/$HERDR_ENV alone are not trusted — only a fast-positive hint the walk falls back to', () => {
+		it('detection-hint-not-trusted-alone', () => {
 			const noPs: Exec = () => null // ps unavailable
 			expect(probeMultiplexer(noPs, { TMUX: 't', TMUX_PANE: '%2' })).toEqual({
 				mux: 'tmux',

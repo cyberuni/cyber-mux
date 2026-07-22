@@ -172,13 +172,13 @@ function herdrSplits(calls: string[][]) {
 		})
 }
 
-describe('spec:cyber-mux/template', () => {
+describe('spec:cyber-mux/template/apply', () => {
 	afterEach(() => {
 		vi.restoreAllMocks()
 	})
 
 	describe('the walk', () => {
-		it('opens the region blank and makes its pane the tree’s root, never a pane to close', () => {
+		it('apply-region-opens-blank-root', () => {
 			// `open`'s `launch` couples creation to launching, so reusing it would mean splitting a pane
 			// already running an interactive agent — the split lands mid-render. The root pane is not a
 			// wasted pane either: it is the region the walk splits INTO.
@@ -221,7 +221,7 @@ describe('spec:cyber-mux/template', () => {
 			expect(manifest.workspace).toBeNull()
 		})
 
-		it('builds every split before the first command is submitted', () => {
+		it('apply-geometry-before-commands', () => {
 			const calls: string[][] = []
 			const exec = tmuxExec(calls)
 			openTemplate(exec, tmuxMuxAdapter, agentPool3, { cwd: '/target', dirExists: anyDir, newId: fakeNewId })
@@ -232,7 +232,7 @@ describe('spec:cyber-mux/template', () => {
 			expect(lastSplit).toBeLessThan(firstSubmit)
 		})
 
-		it('names the pane every split splits, never relying on the backend’s own default', () => {
+		it('apply-split-names-pane-explicitly', () => {
 			// The defaults disagree and both track the USER: herdr's `--current` falls back to the
 			// UI-focused pane, tmux always splits the session's active pane. A tree walk must also split a
 			// pane created two steps earlier, which no default can express.
@@ -246,7 +246,7 @@ describe('spec:cyber-mux/template', () => {
 			expect(splits[1]?.from).toEqual({ id: 'p2' })
 		})
 
-		it('submits commands last, in template order', () => {
+		it('apply-commands-submitted-in-order', () => {
 			const { adapter, calls } = fakeAdapter()
 			openTemplate(noExec, adapter, agentPool3, { cwd: '/target', dirExists: anyDir, newId: fakeNewId })
 			expect(calls.submits).toEqual([
@@ -256,7 +256,7 @@ describe('spec:cyber-mux/template', () => {
 			])
 		})
 
-		it('a pane with no command opens a blank shell and gets no submit', () => {
+		it('apply-no-command-blank-shell', () => {
 			const { adapter, calls } = fakeAdapter()
 			const template: Template = {
 				name: 'build-trio',
@@ -275,7 +275,7 @@ describe('spec:cyber-mux/template', () => {
 			expect(calls.submits).toEqual([{ pane: 'p1', text: 'nvim' }])
 		})
 
-		it('joins dir onto the apply-time cwd', () => {
+		it('apply-dir-joined-onto-cwd', () => {
 			const { adapter, calls } = fakeAdapter()
 			const template: Template = {
 				name: 'build-trio',
@@ -301,7 +301,7 @@ describe('spec:cyber-mux/template', () => {
 			expect(manifest.cwd).toBe('/target/root')
 		})
 
-		it('a dir absent from this worktree fails naming the pane and the resolved path, opening nothing', () => {
+		it('apply-dir-absent-fails', () => {
 			// A branch that predates a directory is a real case, so the error has to be actionable.
 			const { adapter, calls } = fakeAdapter()
 			const template: Template = {
@@ -379,7 +379,7 @@ describe('spec:cyber-mux/template', () => {
 			],
 		}
 
-		it('the first tab opens the workspace and every later tab opens inside it', () => {
+		it('apply-tabs-first-opens-workspace', () => {
 			// A workspace is what a set of tabs needs to live in; every later tab belongs INSIDE it. A
 			// `pane:*` placement anywhere here would make a tab a split of the tab before it.
 			const { adapter, calls } = fakeAdapter({ workspace: 'w7' })
@@ -416,7 +416,7 @@ describe('spec:cyber-mux/template', () => {
 			for (const create of creates) expect(create.slice(0, 4)).toEqual(['tab', 'create', '--workspace', 'w1'])
 		})
 
-		it("each tab's tree is built against that tab's own root pane", () => {
+		it('apply-tab-tree-against-own-root', () => {
 			// The same rule the single-tab walk holds: a split names its pane rather than trusting the
 			// backend's default, which tracks the user rather than the caller. Across tabs it also keeps a
 			// tab's splits inside that tab.
@@ -444,7 +444,7 @@ describe('spec:cyber-mux/template', () => {
 			expect(splits[0]?.from).toEqual({ id: 'p2' })
 		})
 
-		it('geometry is built across every tab before any command is submitted', () => {
+		it('apply-tabs-geometry-before-commands', () => {
 			// The single-tab reason scales: a split lands mid-render if it targets a pane already running
 			// an interactive agent, and a tab is opened blank for the same reason a region is.
 			const { adapter, calls } = fakeAdapter({ workspace: 'w7' })
@@ -485,7 +485,7 @@ describe('spec:cyber-mux/template', () => {
 			])
 		})
 
-		it('apply never steals focus, and a tabs template cannot ask it to', () => {
+		it('apply-tabs-never-steals-focus', () => {
 			// Unchanged from every spawn path: a caller who wants to land somewhere calls focus with a pane
 			// id from the manifest. A multi-tab apply lands MORE spaces at once, which makes stealing focus
 			// worse rather than more justified.
@@ -507,7 +507,7 @@ describe('spec:cyber-mux/template', () => {
 			expect(asking.log).toEqual(calls.log)
 		})
 
-		it('a throw part-way through a tabs walk reports the tabs already built and kills nothing', () => {
+		it('apply-tabs-partial-throw-reports-built', () => {
 			// Apply does not roll back, and adding a level does not buy an atomicity the node never
 			// offered.
 			// Opens: 1 = tab 1's workspace, 2 = tab 2's root — which is the one that fails.
@@ -572,7 +572,7 @@ describe('spec:cyber-mux/template', () => {
 			],
 		}
 
-		it('on a backend with no workspace tier, a tab is labeled with its workspace and its own name', () => {
+		it('apply-tab-label-prefixed-no-workspace-tier', () => {
 			// tmux collapses workspace and tab onto the same Window, so a template's tabs would otherwise be
 			// an unlabeled pile — the prefix is what keeps them recognizable as a group in the status bar.
 			const calls: string[][] = []
@@ -591,7 +591,7 @@ describe('spec:cyber-mux/template', () => {
 			expect(naming.some((c) => c.includes('editor') || c.includes('logs'))).toBe(false)
 		})
 
-		it('on a backend with a real workspace tier, a tab carries its own label unprefixed', () => {
+		it('apply-tab-label-unprefixed-with-workspace-tier', () => {
 			// herdr's UI already groups by the real workspace label, so a prefix would be redundant noise —
 			// the concept maps onto what the backend actually has.
 			const calls: string[][] = []
@@ -664,7 +664,7 @@ describe('spec:cyber-mux/template', () => {
 			})
 		})
 
-		it('the workspace label is never shortened, so two workspaces never collide by shortening', () => {
+		it('apply-workspace-label-never-shortened', () => {
 			// Two labels that any shortening rule would collapse onto the same prefix. The label is the one
 			// the caller already chose, so the caller owns its length — and not shortening is what makes the
 			// collision impossible rather than merely handled.
@@ -686,7 +686,7 @@ describe('spec:cyber-mux/template', () => {
 			expect(named[0]).not.toBe(named[1])
 		})
 
-		it("herdr's root tab is named after birth, because it is the one tab that cannot be named at birth", () => {
+		it('apply-herdr-root-tab-named-after-birth', () => {
 			// herdr labels a new workspace's root tab `1` with no flag to change it; `tab create --label`
 			// names every subsequent tab at birth.
 			const calls: string[][] = []
@@ -710,7 +710,7 @@ describe('spec:cyber-mux/template', () => {
 			expect(renames).toHaveLength(1)
 		})
 
-		it("the manifest's workspace is still null on tmux even when tabs are grouped", () => {
+		it('apply-tabs-group-consistent-across-verbs', () => {
 			// The grouping tag is cyber-mux's own bookkeeping, not a workspace tier. Reporting it as the
 			// workspace would claim a tier tmux does not have.
 			const calls: string[][] = []
@@ -807,7 +807,7 @@ describe('spec:cyber-mux/template', () => {
 			expect(calls.find((c) => c[0] === 'split-window')!.join(' ')).toContain('-e ROLE=worker')
 		})
 
-		it('a pane with env and no command is valid: the env is set, and nothing is submitted to it', () => {
+		it('apply-env-no-command-blank-shell', () => {
 			// A coherent warm pane for something to attach to later. Both backends set env natively, so
 			// the command-prefix fallback the env rule once rested on has no customer.
 			const template: Template = {
@@ -833,7 +833,7 @@ describe('spec:cyber-mux/template', () => {
 			expect(calls.filter((c) => c[0] === 'pane' && c[1] === 'run').map((c) => c[2])).toEqual([manifest.panes[0]?.pane])
 		})
 
-		it('a backend that cannot size a split warns exactly once and still builds every pane', () => {
+		it('apply-ratio-unsupported-warns-once', () => {
 			// Degrade, never reject: the schema is backend-agnostic, so a template's validity cannot
 			// depend on which multiplexer happens to be running. A wrong-looking split is not worth
 			// failing an otherwise-correct pool over.
@@ -866,7 +866,7 @@ describe('spec:cyber-mux/template', () => {
 	})
 
 	describe('one template, one geometry, every backend', () => {
-		it('tmux and herdr receive the same splits, in the same order, with the same directions and ratios', () => {
+		it('apply-desugar-identical-cross-backend', () => {
 			const tmuxCalls: string[][] = []
 			openTemplate(tmuxExec(tmuxCalls), tmuxMuxAdapter, pool4, { cwd: '/target', dirExists: anyDir, newId: fakeNewId })
 			const herdrCalls: string[][] = []
@@ -896,7 +896,7 @@ describe('spec:cyber-mux/template', () => {
 	})
 
 	describe('apply does not roll back', () => {
-		it('a throw mid-walk reports what was built, kills nothing, and surfaces the failure', () => {
+		it('apply-mid-walk-throw-reports-built', () => {
 			// A kill is not obviously safer than a half-built template the caller can see and finish. This is
 			// the price of owning the engine rather than delegating to an atomic tree-apply, and it is
 			// paid uniformly — a guarantee only herdr could make is not one cyber-mux can offer.
@@ -955,7 +955,7 @@ describe('spec:cyber-mux/template', () => {
 	})
 
 	describe('applyTemplateToRegion', () => {
-		it('builds into a region someone else already opened, reporting its workspace', () => {
+		it('apply-worktree-add-template-against-root', () => {
 			// The worktree flow: the worktree's own workspace IS the region, and its root pane is the
 			// tree's root — so the walk splits into it rather than opening a second space.
 			const { adapter, calls } = fakeAdapter()
@@ -978,7 +978,7 @@ describe('spec:cyber-mux/template', () => {
 			expect(manifest.panes[0]).toMatchObject({ label: 'planner', pane: 'w9:p1' })
 		})
 
-		it('anchors every later tab to the workspace the region already lives in', () => {
+		it('apply-worktree-add-tabs-template', () => {
 			// The same anchor `open --template` needs, from the other end: here the workspace was opened
 			// by the worktree verbs and is TOLD to the walk, so a tab that trusted the backend's default
 			// would land beside the caller instead of in the worktree's own workspace.
@@ -1183,7 +1183,7 @@ describe('spec:cyber-mux/template', () => {
 				expect(stderr).not.toHaveBeenCalled()
 			})
 
-			it('a root pane whose env the region open could not carry has it prefixed onto its command', () => {
+			it('apply-root-env-prefixed-onto-command', () => {
 				const { adapter, calls } = fakeAdapter()
 				applyTemplateToRegion(noExec, adapter, farm, {
 					root: { id: 'w9:root', tab: 'w9:t1' },
@@ -1200,7 +1200,7 @@ describe('spec:cyber-mux/template', () => {
 				expect(calls.submits[1]).toEqual({ pane: 'p1', text: 'encode' })
 			})
 
-			it('a root pane whose env could not be carried, with no command to prefix, warns once', () => {
+			it('apply-root-env-no-command-warns-once', () => {
 				// Several panes across several tabs, whose root pane has env but no command to ride it in on.
 				const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
 				const { adapter, calls } = fakeAdapter({ workspace: 'w9' })

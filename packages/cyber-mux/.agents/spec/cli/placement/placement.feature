@@ -10,11 +10,13 @@ Feature: cyber-mux open — the CLI placement surface
   # visible-space, native-tab, and split mappings — is the library's, in ../../mux/placement; this band
   # owns only that the flag is read, defaulted when omitted, and refused when out of set.
 
+  @id:placement-at-chooses-location
   Scenario: --at chooses where the new pane opens
     Given a caller running cyber-mux open --at pane:down
     When open runs
     Then the pane opens at that placement
 
+  @id:placement-at-restricted-values
   Scenario: --at accepts only pane:right, pane:down, tab, and workspace
     Given a caller running cyber-mux open
     When it passes an --at value outside pane:right|pane:down|tab|workspace
@@ -28,11 +30,13 @@ Feature: cyber-mux open — the CLI placement surface
   # What the contract DOES with it — submit-and-run versus a blank pane — is the library's, in
   # ../../mux/placement/placement.feature; this band owns only the flag's optionality and its handoff.
 
+  @id:placement-launch-optional
   Scenario: open with no --launch still opens a pane — the flag is optional
     Given a caller running cyber-mux open with no --launch
     When open runs
     Then the verb opens a pane rather than treating the absent flag as an error
 
+  @id:placement-launch-handoff
   Scenario: open --launch hands its command line to the pane the verb opens
     Given a caller running cyber-mux open --launch with a command line
     When open runs
@@ -47,6 +51,7 @@ Feature: cyber-mux open — the CLI placement surface
   # contract in ../../mux/placement/placement.feature; this block owns only the FLAG: how KEY=VALUE is
   # parsed, that it repeats, that it is refused alongside --template, and where it degrades.
 
+  @id:placement-env-sets-variable
   Scenario Outline: --env sets the variable in the pane the verb opens, on every route that carries env
     Given a caller running <verb> with --env ROLE=worker, on a route that carries env natively
     When it runs
@@ -69,6 +74,7 @@ Feature: cyber-mux open — the CLI placement surface
     # false on one backend's one route, which is this project's recurring defect rather than a
     # hypothetical one.
 
+  @id:placement-env-rides-on-launch
   Scenario Outline: --env on the one route that cannot carry it rides in on --launch
     Given a caller running <verb> --env ROLE=worker --launch a command, at workspace on herdr
     When it runs
@@ -86,6 +92,7 @@ Feature: cyber-mux open — the CLI placement surface
     # open each take no env parameter and each refuse the flag. Covering only one is how a compensation
     # gets wired on the verb that has a scenario and forgotten on the verb that does not.
 
+  @id:placement-env-warns-no-launch
   Scenario Outline: --env on the one route that cannot carry it, with no command to ride, warns
     Given a caller running <verb> --env ROLE=worker with no --launch, at workspace on herdr
     When it runs
@@ -103,6 +110,7 @@ Feature: cyber-mux open — the CLI placement surface
     # would make identical flags succeed on tmux and fail on herdr — the backend leak the seam
     # exists to prevent.
 
+  @id:placement-env-repeatable
   Scenario Outline: --env is repeatable, one variable per flag, on every verb that has it
     Given a caller running <verb> with --env ROLE=worker and --env TIER=gpu, on a route that carries env
     When it runs
@@ -119,6 +127,7 @@ Feature: cyber-mux open — the CLI placement surface
     # verb rather than one — a flag wired repeatably where a scenario watches and non-repeatably where
     # none does is this project's recurring defect wearing its plainest disguise.
 
+  @id:placement-env-refused-with-template
   Scenario Outline: --env is refused alongside --template, which owns its own panes' env
     Given a caller running <verb> with both --template and --env
     When it runs
@@ -136,6 +145,7 @@ Feature: cyber-mux open — the CLI placement surface
     # Both verbs that HAVE --template, not just one — `worktree open` carries no --template at all, so
     # the pair is unreachable there and pinning it would specify what no route can reach.
 
+  @id:placement-env-malformed-rejected
   Scenario Outline: --env without a KEY=VALUE pair is rejected before any side effect
     Given a caller running <verb> with --env <bad>
     When it runs
@@ -161,6 +171,7 @@ Feature: cyber-mux open — the CLI placement surface
     # A missing `=` and an empty KEY are both malformed; a missing `=` cannot be read as a key with
     # no value, because the shell hands over one word either way and only the `=` distinguishes them.
 
+  @id:placement-env-empty-value-allowed
   Scenario Outline: --env with an empty value sets the variable empty, rather than rejecting
     Given a caller running <verb> with --env ROLE=, on a route that carries env
     When it runs
@@ -176,6 +187,7 @@ Feature: cyber-mux open — the CLI placement surface
     # rather than content. Only a MISSING `=` is malformed; a present one with nothing after it is an
     # answer.
 
+  @id:placement-env-value-splits-first-equals
   Scenario Outline: an env value containing = splits on the first = only
     Given a caller running <verb> with --env URL=k=v, on a route that carries env
     When it runs

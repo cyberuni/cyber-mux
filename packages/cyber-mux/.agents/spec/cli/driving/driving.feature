@@ -9,11 +9,13 @@ Feature: cyber-mux send/submit invocation — rejecting incomplete input
 
   # ── send text / send keys reject incomplete input before touching a pane ──
 
+  @id:driving-send-keys-no-tokens
   Scenario: send keys with no key tokens is rejected
     Given a caller running cyber-mux send keys naming a pane but no key tokens
     When the command is parsed
     Then it is rejected before anything is sent to the pane
 
+  @id:driving-send-text-no-text
   Scenario: send text with no text argument is rejected
     Given a caller running cyber-mux send text naming a pane but no text
     When the command is parsed
@@ -21,6 +23,7 @@ Feature: cyber-mux send/submit invocation — rejecting incomplete input
 
   # ── the bare send group — invoked without a subcommand (axi/ #6: a missing required parameter) ──
 
+  @id:driving-send-bare-group
   Scenario: bare send is incomplete input, so it fails loud with help rather than acting
     Given a caller running cyber-mux send naming neither text nor keys
     When the command is parsed
@@ -30,6 +33,7 @@ Feature: cyber-mux send/submit invocation — rejecting incomplete input
 
   # ── submit rejects a missing pane ──
 
+  @id:driving-submit-no-pane
   Scenario: submit with no pane is rejected
     Given a caller running cyber-mux submit naming no pane
     When the command is parsed

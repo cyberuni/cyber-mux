@@ -14,7 +14,7 @@ import {
 	worktreeApi,
 } from './worktree.ts'
 
-describe('spec:cyber-mux/mux', () => {
+describe('spec:cyber-mux/mux/worktree', () => {
 	describe('gitWorktreeAdapter', () => {
 		it('add() runs git worktree add against the primary root and returns the new worktree', () => {
 			const calls: string[][] = []
@@ -235,7 +235,7 @@ describe('spec:cyber-mux/mux', () => {
 			expect(isWorktreeRemovable(entries.get('/repo.worktrees/open')!)).toBe(false)
 		})
 
-		it('a detached HEAD lists with no merged verdict rather than a false one', () => {
+		it('worktree-disposability-absent-not-false', () => {
 			const entries = byRoot(gitFake({ originHead: 'origin/main', merged: 'main', status: () => '' }))
 			const spike = entries.get('/repo.worktrees/spike')!
 			expect(spike.merged).toBeUndefined()
@@ -243,7 +243,7 @@ describe('spec:cyber-mux/mux', () => {
 			expect(isWorktreeRemovable(spike)).toBe(false)
 		})
 
-		it('a prunable entry lists with no dirty verdict, and git is never asked for one', () => {
+		it('worktree-disposability-absent-not-false', () => {
 			const calls: string[][] = []
 			const entries = byRoot(gitFake({ originHead: 'origin/main', merged: 'main\nfeat/gone', status: () => '', calls }))
 			const gone = entries.get('/repo.worktrees/gone')!
@@ -256,14 +256,14 @@ describe('spec:cyber-mux/mux', () => {
 			expect(isWorktreeRemovable(gone)).toBe(false)
 		})
 
-		it('falls back to the primary checkout branch when origin/HEAD does not resolve', () => {
+		it('worktree-merged-against-resolved-default', () => {
 			const calls: string[][] = []
 			byRoot(gitFake({ originHead: null, merged: 'main\nfeat/landed', status: () => '', calls }))
 			const mergedCall = calls.find((args) => args.includes('--merged'))!
 			expect(mergedCall.at(-1)).toBe('main')
 		})
 
-		it('leaves merged absent everywhere when no default branch resolves at all', () => {
+		it('worktree-merged-against-resolved-default', () => {
 			// A detached primary with no origin: nothing to compare against, so nothing is claimed.
 			const detachedPrimary = [
 				'worktree /repo',
@@ -424,7 +424,7 @@ describe('spec:cyber-mux/mux', () => {
 
 		const bothLanded = { merged: 'main\nfeat/landed\nfeat/landed2', status: () => '' }
 
-		it('reuses the first available worktree, resetting it to a pristine tree on a fresh branch', () => {
+		it('worktree-provision-reuses-free', () => {
 			const calls: string[][] = []
 			const result = provisionWorktree(gitFake(calls, bothLanded), '/repo', {
 				create: { path: '/repo.worktrees/new', branch: 'feat/new' },
@@ -442,7 +442,7 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls.some((a) => a[2] === 'worktree' && a[3] === 'add')).toBe(false)
 		})
 
-		it('branches the reused worktree from an explicit base when one is given', () => {
+		it('worktree-provision-explicit-base', () => {
 			const calls: string[][] = []
 			provisionWorktree(gitFake(calls, bothLanded), '/repo', {
 				create: { path: '/repo.worktrees/new', branch: 'feat/new', base: 'release/1.0' },
@@ -452,7 +452,7 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls).toContainEqual(['-C', '/repo.worktrees/landed', 'reset', '--hard', 'release/1.0'])
 		})
 
-		it('creates a fresh worktree when none is available, recycling nothing', () => {
+		it('worktree-provision-creates-fresh', () => {
 			const calls: string[][] = []
 			const result = provisionWorktree(gitFake(calls, bothLanded), '/repo', {
 				create: { path: '/repo.worktrees/new', branch: 'feat/new', base: 'origin/main' },
@@ -475,7 +475,7 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls.some((a) => a[2] === 'switch')).toBe(false)
 		})
 
-		it('the default gate is isWorktreeRemovable, so an unmerged worktree is never reused', () => {
+		it('worktree-provision-skips-unmerged', () => {
 			const calls: string[][] = []
 			// Only the primary's own branch is merged — no linked worktree qualifies, so provision creates.
 			const result = provisionWorktree(gitFake(calls, { merged: 'main', status: () => '' }), '/repo', {
@@ -486,7 +486,7 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls.some((a) => a[2] === 'switch')).toBe(false)
 		})
 
-		it('never hands back a held worktree — the injected predicate excludes it and the next free one is picked', () => {
+		it('worktree-provision-respects-predicate', () => {
 			const calls: string[][] = []
 			// A host predicate standing in for "a live session is bound to /landed": it is disqualified even
 			// though the generic gate would clear it, so provision recycles /landed2 instead.
@@ -502,7 +502,7 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls).toContainEqual(['-C', '/repo.worktrees/landed2', 'switch', '-c', 'feat/new', 'origin/main'])
 		})
 
-		it('the primary checkout is never a reuse candidate, even under a predicate that would clear it', () => {
+		it('worktree-provision-skips-primary', () => {
 			const calls: string[][] = []
 			// A predicate that says yes to everything still cannot reach the primary — it is filtered before
 			// the gate runs, matching prune's own absolute refusal.
@@ -566,7 +566,7 @@ describe('spec:cyber-mux/mux', () => {
 			)
 		})
 
-		it('removes a clean worktree without needing --force', () => {
+		it('worktree-remove-ignores-disposability-signal', () => {
 			const calls: string[][] = []
 			const exec: Exec = (_cmd, args) => {
 				calls.push(args)
@@ -621,7 +621,7 @@ describe('spec:cyber-mux/mux', () => {
 		})
 
 		describe('releaseBinding ordering', () => {
-			it('does NOT release the binding when the dirty check refuses — a refused removal has no side effect', () => {
+			it('worktree-remove-refuses-dirty-before-release', () => {
 				const exec: Exec = (_cmd, args) => (args[2] === 'status' ? ' M some/file' : '')
 				let released = false
 				expect(() =>
@@ -649,7 +649,7 @@ describe('spec:cyber-mux/mux', () => {
 				expect(released).toBe(false)
 			})
 
-			it('releases the binding BEFORE git removes the checkout — no workspace left on a dead directory', () => {
+			it('worktree-remove-releases-before-git', () => {
 				const order: string[] = []
 				const exec: Exec = (_cmd, args) => {
 					if (args[2] === 'worktree') order.push('git-remove')
@@ -662,7 +662,7 @@ describe('spec:cyber-mux/mux', () => {
 				expect(order).toEqual(['release', 'git-remove'])
 			})
 
-			it('releases the binding of a checkout already gone from disk, still without a git removal', () => {
+			it('worktree-remove-releases-orphan-binding', () => {
 				const calls: string[][] = []
 				const exec: Exec = (_cmd, args) => {
 					calls.push(args)

@@ -8,6 +8,7 @@ Feature: cyber-mux detection read-out — doctor and mode
 
   # ── doctor reports the detected mux and prints a pin hint ──
 
+  @id:detection-doctor-reports-pin-hint
   Scenario: doctor reports the detected mux and prints a pin hint
     Given a caller running behind a detected multiplexer
     When it runs cyber-mux doctor
@@ -16,11 +17,13 @@ Feature: cyber-mux detection read-out — doctor and mode
 
   # ── mode reports the selected backend ──
 
+  @id:detection-mode-reports-backend
   Scenario: mode reports the detected session backend
     Given a caller running inside a detected multiplexer
     When it runs cyber-mux mode
     Then it reports the selected session-backend name (tmux or herdr)
 
+  @id:detection-mode-none
   Scenario: mode reports none when no backend is selectable
     Given a caller in no detectable multiplexer
     When it runs cyber-mux mode

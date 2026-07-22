@@ -413,3 +413,37 @@ Decisions (`worktree-provision` — reuse a free worktree instead of always crea
   the CLI's *default* invocation and a bare run must be safe to preview; `provision` is an *action a caller
   asks for by name* and returns what it did (`action: 'reused' | 'created'`), so a preview mode has no
   bare-invocation to protect. Left as a clean follow-up if a CLI `worktree provision` verb ever wants one.
+
+Decisions (`83-adopt-scenario-bridge-binding` — adopt the SDD scenario-bridge `@id:` binding convention corpus-wide, issue #83):
+
+- **every suite adopts the `@id:` binding convention, corpus-wide, this CR** — DECIDED: all 14 frozen
+  suites (281 scenarios) get an `@id:<slug>` on every `Scenario`/`Scenario Outline`, and their proving
+  tests bind to it. Before this, the impl-gate scenario-bridge (`verify-scenarios`) reported UNBOUND for
+  every scenario, so each impl-judge pass paid the full by-hand re-derivation the bridge exists to remove.
+  The issue proposed doing it per-node-as-touched; the requester chose the full sweep. **No behavior
+  change:** adding an `@id:` tag is additive and narrows nothing, so it self-clears the freeze; retitling
+  tests changes no assertion. The convention itself is external (the `verify-scenarios` skill) and is
+  pointed to, not restated — the local standing rule lives in [`../README.md`](../README.md).
+
+- **mechanism is `@id:<slug>` tags, not verbatim-name binding** — DECIDED over the fallback. The bridge
+  keys a scenario by its `@id:<slug>` tag if present, else its verbatim name. Tags were chosen: they
+  survive a later scenario rename, give the test an ergonomic short leaf title (the scenario names here
+  are long sentences), and are the bridge's primary convention. Cost: it edits the frozen `.feature`
+  files (a tag line per scenario) — accepted because the edit is additive.
+
+- **THE HOIST rule — a node wrapper must be the FIRST `spec:` segment** — DECIDED, learned at the
+  exemplar (`cli/worktree`). The bridge takes the first `spec:` segment in the ` > `-joined describe chain
+  and stops. The tests had one coarse top wrapper per file (`describe('spec:cyber-mux/mux')` /
+  `.../template`), so a *nested* leaf-node wrapper (`spec:cyber-mux/cli/worktree`) is shadowed and stays
+  unbound. The fix is to **hoist** each leaf node to a **top-level** `describe('spec:cyber-mux/<node>')`
+  (its own `logs`/`beforeEach`), the shape the pre-existing top-level `spec:cyber-mux/template` block
+  already used. A single test file that proved several nodes is split into several top-level node
+  wrappers.
+
+- **coverage gaps are recorded, never fabricated** — DECIDED. Some `cli/X` scenarios have no direct
+  CLI-surface test — only a library-seam test at the paired `mux/X` node proves the behavior (e.g. 7 of
+  `cli/worktree`'s 31: remove-dirty/gone, placement-fallback, label). This CR **binds what exists** and
+  records each true gap as a `backlog` follow-up (a `cli/X` scenario wanting a direct CLI test); it does
+  **not** author the missing tests (out of the issue's binding scope) and does **not** invent a binding.
+  The impl-judge hand-derives those few — the pre-existing state — so the CR is a strict net improvement,
+  not a regression.
