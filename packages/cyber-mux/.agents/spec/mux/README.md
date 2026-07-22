@@ -13,6 +13,13 @@ below, each with its own `.feature`. The unit registry, mail, and doorbell that 
 on top of a pane once opened stayed behind in `cyberlegion`; this repo owns only backend selection,
 placement, multiplexer detection, per-pane send/read/focus/close, and the worktree surface.
 
+> **The CLI surface of each unit lives under [`cli/`](../cli/README.md).** Each `mux/X` unit holds its
+> **surface-independent contract** (adapters, detection/selection, resolution, drive primitives, git
+> facts); the `cyber-mux <verb>` presentation for it — the verbs, flags, exit codes, table rendering,
+> and the shared AXI error contract — lives in the mirror node `cli/X`, per the CLI-surface axis in the
+> [root spec](../spec.md). So where a row below still reads as owning a verb's read-out or usage error,
+> that surface now belongs to `cli/X`; the unit owns the contract that verb invokes.
+
 ## The units
 
 | Unit | Owns |

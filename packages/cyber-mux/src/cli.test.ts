@@ -2421,6 +2421,50 @@ describe('spec:cyber-mux/mux', () => {
 				expect(logs.join('\n')).toContain('pane-not-found')
 			})
 
+			it("read writes the addressed pane's captured bytes straight to stdout, not through the JSON envelope", async () => {
+				const out: string[] = []
+				vi.spyOn(process.stdout, 'write').mockImplementation((line) => {
+					out.push(String(line))
+					return true
+				})
+				const program = buildProgram({
+					env: TMUX,
+					exec: paneServer([], [{ id: '%1', cwd: '/repo' }], { 'capture-pane': 'HELLO' }),
+				})
+				await run(program, ['read', '%1'])
+				// The raw capture rides process.stdout.write; the result never routes through console.log/--format.
+				expect(out.join('')).toContain('HELLO')
+				expect(logs.join('\n')).toBe('')
+			})
+
+			it('read --lines caps the capture to the trailing n lines', async () => {
+				const calls: string[][] = []
+				vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+				const program = buildProgram({
+					env: TMUX,
+					exec: paneServer(calls, [{ id: '%1', cwd: '/repo' }], { 'capture-pane': 'x' }),
+				})
+				await run(program, ['read', '%1', '--lines', '5'])
+				// tmux caps with `-S -<n>` on capture-pane; without --lines that flag is absent.
+				expect(calls).toContainEqual(['capture-pane', '-p', '-t', '%1', '-S', '-5'])
+			})
+
+			it("focus beams the attached client's view to the addressed pane, writing nothing on success", async () => {
+				const calls: string[][] = []
+				const out: string[] = []
+				vi.spyOn(process.stdout, 'write').mockImplementation((line) => {
+					out.push(String(line))
+					return true
+				})
+				const program = buildProgram({ env: TMUX, exec: paneServer(calls, [{ id: '%1', cwd: '/repo' }]) })
+				await run(program, ['focus', '%1'])
+				// The beam is switch-client → select-window → select-pane; the verb-action writes nothing.
+				expect(calls.some((c) => c[0] === 'switch-client')).toBe(true)
+				expect(calls).toContainEqual(['select-pane', '-t', '%1'])
+				expect(out.join('')).toBe('')
+				expect(logs.join('\n')).toBe('')
+			})
+
 			it("an error never leaks the multiplexer's own output", async () => {
 				catchExit()
 				captureStderr()
