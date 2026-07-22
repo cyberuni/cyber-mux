@@ -1,1 +1,0 @@
-{"seq": 1, "ts": "2026-07-22T16:46:18Z", "kind": "report", "role": "impl-producer", "agent": "general-purpose", "outcome": "pass", "summary": "build-to-learn: bound cli/worktree exemplar 24/31; found the hoist trap (bridge stops at first spec: segment) and 7 CLI-surface coverage gaps proven only at the library node"}
