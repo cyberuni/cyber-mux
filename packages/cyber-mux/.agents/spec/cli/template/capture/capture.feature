@@ -11,6 +11,7 @@ Feature: cyber-mux template save — the CLI capture surface
   # ── The subject: which region --from names ──
   # save's default subject is the caller's own region (the library engine's rule). --from overrides it.
 
+  @id:template-capture-from-names-region
   Scenario: --from captures the region around a named pane
     Given a caller running cyber-mux template save pool-3 --from a pane in another region
     When the command runs
@@ -20,12 +21,14 @@ Feature: cyber-mux template save — the CLI capture surface
   # --workspace widens the subject to every tab of the workspace; a bare save stays the caller's
   # region and says, on stdout, what it left out.
 
+  @id:template-capture-workspace-captures-all-tabs
   Scenario: save --workspace captures every tab of the caller's workspace
     Given a caller in a workspace of 3 tabs
     When cyber-mux template save pool --workspace runs
     Then the written template declares tabs
     And it carries one tab per tab of the workspace, each with that tab's own tree
 
+  @id:template-capture-default-caller-region
   Scenario: save without --workspace captures only the caller's own region
     Given a caller in a workspace of 3 tabs
     When cyber-mux template save pool runs
@@ -33,6 +36,7 @@ Feature: cyber-mux template save — the CLI capture surface
     And it carries only the caller's own region
     # the default subject is unchanged — widening it silently would rewrite what save has always meant
 
+  @id:template-capture-bare-save-reveals-left-out
   Scenario: a bare save in a multi-tab workspace says what it left out, in a help block on stdout
     Given a caller in a workspace of 3 tabs
     When cyber-mux template save pool runs with no --workspace
@@ -48,6 +52,7 @@ Feature: cyber-mux template save — the CLI capture surface
 
   # ── The draft note: --description ──
 
+  @id:template-capture-description-replaces-note
   Scenario: --description replaces the draft note
     Given a caller running cyber-mux template save pool-3 --description "the review pool"
     When the command runs
@@ -55,6 +60,7 @@ Feature: cyber-mux template save — the CLI capture surface
 
   # ── save writes a file ──
 
+  @id:template-capture-writes-repo-path
   Scenario: save writes to the repo templates directory and reports the path on stdout
     Given a caller running cyber-mux template save pool-3
     When the command runs
@@ -66,6 +72,7 @@ Feature: cyber-mux template save — the CLI capture surface
     # Programmatic composition reads the path from --format json, not bare stdout:
     #   cyber-mux template save pool-3 --format json | jq -r .path
 
+  @id:template-capture-json-path-and-help
   Scenario: --format json reports the saved path and any help as one structured object
     Given a caller in a workspace of 3 tabs running cyber-mux template save pool --format json
     When the command runs
@@ -75,12 +82,14 @@ Feature: cyber-mux template save — the CLI capture surface
     # the machine-readable half of the same payload — path plus the same #9 reveal, so a consumer that
     # branches on the help never has to parse a prose line off stderr
 
+  @id:template-capture-to-user-directory
   Scenario: --to user writes to the user templates directory instead
     Given a caller running cyber-mux template save pool-3 --to user
     When the command runs
     Then the template is written under the user templates directory
     And nothing is written to the repo templates directory
 
+  @id:template-capture-refuses-overwrite
   Scenario: save refuses to overwrite an existing template, and reads no region finding out
     Given a repo templates directory already containing pool-3.json
     When cyber-mux template save pool-3 runs
@@ -91,6 +100,7 @@ Feature: cyber-mux template save — the CLI capture surface
     # a capture is hand-edited afterwards — the commands are added by hand — so overwriting one
     # silently would throw that work away. Checked before the capture, so the refusal is free.
 
+  @id:template-capture-force-overwrites
   Scenario: --force overwrites an existing template
     Given a repo templates directory already containing pool-3.json
     When cyber-mux template save pool-3 --force runs
@@ -104,6 +114,7 @@ Feature: cyber-mux template save — the CLI capture surface
   # backend refusals — that an absent optional seam member is a refusal, never a guess — is the
   # engine's, in ../../../template/capture; these rows own the verb's observable refusal.
 
+  @id:template-capture-validates-name-first
   Scenario: save validates the name before touching the filesystem or the multiplexer
     Given a caller running cyber-mux template save "../escape"
     When the command runs
@@ -112,6 +123,7 @@ Feature: cyber-mux template save — the CLI capture surface
     And no region is read
     # a name is a lookup key that must also be a filename, exactly as it is for show and validate
 
+  @id:template-capture-no-pane-refuses
   Scenario: save with no pane to capture around refuses rather than guessing
     Given a caller in no pane at all
     And no --from
@@ -121,6 +133,7 @@ Feature: cyber-mux template save — the CLI capture surface
     # falling back to the backend's own default would capture whichever region the user happens to be
     # looking at and name it after the caller's intent — a wrong answer is worse than no answer here
 
+  @id:template-capture-backend-no-tabs-refuses
   Scenario: a backend that cannot enumerate a workspace's tabs refuses save --workspace cleanly
     Given a backend that cannot report its workspace's tabs
     When cyber-mux template save pool --workspace runs
@@ -129,6 +142,7 @@ Feature: cyber-mux template save — the CLI capture surface
     # the same refusal shape as a backend that cannot report a region's geometry — an absent optional
     # seam member is a refusal, never a guess
 
+  @id:template-capture-backend-no-geometry-refuses
   Scenario: a backend that cannot report its region's geometry refuses save cleanly
     Given a backend with no region-geometry primitive
     When cyber-mux template save pool-3 runs

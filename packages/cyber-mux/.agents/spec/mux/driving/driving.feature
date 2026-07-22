@@ -8,6 +8,7 @@ Feature: mux driving — taking a pane's turn
   # not write; `submit` always supplies one. `Enter` is itself a key, so `send keys <pane> Enter`
   # presses it and takes the turn — at the caller's explicit request, not the verb's initiative.
 
+  @id:driving-send-text-literal-no-enter
   Scenario Outline: send text types literal text and presses no Enter
     Given a caller running cyber-mux send text against a pane with <env>
     When it passes a word that is also the name of a key
@@ -20,6 +21,7 @@ Feature: mux driving — taking a pane's turn
       | $HERDR_ENV set and no $TMUX |
       | $WEZTERM_PANE set           |
 
+  @id:driving-send-keys-core-vocab
   Scenario Outline: send keys presses core-vocabulary keys and types nothing
     Given a caller running cyber-mux send keys against a pane with <env>
     When it passes several keys from the portable core vocabulary
@@ -32,30 +34,35 @@ Feature: mux driving — taking a pane's turn
       | $HERDR_ENV set and no $TMUX |
       | $WEZTERM_PANE set           |
 
+  @id:driving-backspace-renamed-key
   Scenario: Backspace is the core's one renamed key, and tmux gets tmux's name for it
     Given a caller running cyber-mux send keys Backspace against a pane with $TMUX set
     When send keys runs
     Then tmux deletes the character before the cursor
     And the word Backspace is never delivered to the pane as literal characters
 
+  @id:driving-non-core-key-known-by-backend
   Scenario: a non-core key that the backend does know is pressed
     Given a caller running cyber-mux send keys Home against a pane with $TMUX set
     When send keys runs
     Then the token reaches tmux unchanged, rather than being rejected by cyber-mux
     And tmux presses Home, a key the core vocabulary does not carry
 
+  @id:driving-non-core-token-refused
   Scenario: a non-core token that the backend does not know is refused where the backend refuses
     Given a caller running cyber-mux send keys Home against a pane with $HERDR_ENV set and no $TMUX
     When send keys runs
     Then the token reaches herdr unchanged
     And herdr refuses it, reporting that key as unsupported
 
+  @id:driving-unknown-token-not-rescued
   Scenario: a token no backend knows is not rescued by cyber-mux on a backend that cannot refuse it
     Given a caller running cyber-mux send keys with a token that names no key at all, with $TMUX set
     When send keys runs
     Then the token reaches tmux unchanged
     And tmux types it as literal characters, because tmux has no way to refuse a key name
 
+  @id:driving-wezterm-key-as-escape-sequence
   Scenario: wezterm has no send-keys primitive at all — a key is its own raw terminal byte sequence
     Given a caller running cyber-mux send keys Up against a pane with $WEZTERM_PANE set
     When send keys runs
@@ -63,11 +70,13 @@ Feature: mux driving — taking a pane's turn
     # There is no key-name-taking verb in wezterm's CLI to forward a name TO — only send-text. The
     # core vocabulary is realized client-side as bytes rather than backend-side as a name.
 
+  @id:driving-wezterm-non-core-key-known
   Scenario: a non-core key wezterm also knows (by the same extras a backend "knowing" Home means) is pressed
     Given a caller running cyber-mux send keys Home against a pane with $WEZTERM_PANE set
     When send keys runs
     Then Home is typed as its own escape sequence, not as the literal word "Home"
 
+  @id:driving-wezterm-unencodable-token-literal
   Scenario: a token wezterm cannot encode is typed as its own literal characters, unable to refuse it
     Given a caller running cyber-mux send keys with a token that names no key at all, with $WEZTERM_PANE set
     When send keys runs
@@ -75,6 +84,7 @@ Feature: mux driving — taking a pane's turn
     # Nothing here ASKS wezterm anything — there is no backend to refuse a name, so an unencodable
     # token can only ever be typed, the same terminal case tmux's own key lookup falls back to.
 
+  @id:driving-send-keys-enter-submits
   Scenario Outline: send keys Enter presses Enter and takes the turn, because the caller asked for it
     Given a pane with text already staged unsent in its input box, with <env>
     When cyber-mux send keys runs against it passing Enter
@@ -91,6 +101,7 @@ Feature: mux driving — taking a pane's turn
   # The CLI usage errors of these verbs — send keys with no tokens, send text with no text, and a
   # bare send with no subcommand — are a surface concern and live in ../../cli/driving/driving.feature.
 
+  @id:driving-submit-with-text
   Scenario Outline: submit with text types the text and presses Enter, taking the pane's turn
     Given a caller running cyber-mux submit against a pane with <env>
     When it passes a message as the optional text argument
@@ -102,6 +113,7 @@ Feature: mux driving — taking a pane's turn
       | $HERDR_ENV set and no $TMUX |
       | $WEZTERM_PANE set           |
 
+  @id:driving-submit-text-literal-not-key
   Scenario Outline: submit types its text literally, never interpreting it as a key
     Given a caller running cyber-mux submit against a pane with <env>
     When it passes a message that is also the name of a key as the text argument
@@ -114,6 +126,7 @@ Feature: mux driving — taking a pane's turn
       | $HERDR_ENV set and no $TMUX |
       | $WEZTERM_PANE set           |
 
+  @id:driving-submit-no-text-bare-enter
   Scenario Outline: submit with no text presses a bare Enter and retypes nothing
     Given a pane with text already staged unsent in its input box, with <env>
     When cyber-mux submit runs against it with no text argument
@@ -129,6 +142,7 @@ Feature: mux driving — taking a pane's turn
 
   # submit's CLI usage error — a missing pane argument — lives in ../../cli/driving/driving.feature.
 
+  @id:driving-submit-empty-text-bare-flush
   Scenario Outline: submit with empty text is the bare flush, not a second contract
     Given a pane with text already staged unsent in its input box, with <env>
     When cyber-mux submit runs against it with an empty text argument

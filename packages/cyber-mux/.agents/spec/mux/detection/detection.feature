@@ -6,6 +6,7 @@ Feature: mux detection — which multiplexer, and which backend adapter
   # ── The session backend is selected by environment ──
   # The backend is a parameter of one contract, not a second subject — one adapter per env.
 
+  @id:detection-backend-selected-by-env
   Scenario Outline: the session backend is selected by environment
     Given a caller with <env>
     When cyber-mux open runs
@@ -18,6 +19,7 @@ Feature: mux detection — which multiplexer, and which backend adapter
       | $WEZTERM_PANE set           | wezterm |
       | $ZELLIJ set                 | zellij  |
 
+  @id:detection-no-backend-errors
   Scenario: no backend detected errors before opening anything
     Given a caller with none of $TMUX, $HERDR_ENV, $WEZTERM_PANE, or $ZELLIJ set
     When cyber-mux open runs
@@ -27,6 +29,7 @@ Feature: mux detection — which multiplexer, and which backend adapter
     # existed. Widening the Given/Then to name all four keeps the SAME coverage — a caller with none
     # of them still throws — rather than changing what is asserted.
 
+  @id:detection-screen-rejected-by-name
   Scenario: a detected screen is rejected by name, not with the generic no-backend error
     Given a caller whose multiplexer is detected as screen — a $CYBER_MUX=screen override, or a screen ancestor
     When cyber-mux open runs
@@ -43,21 +46,25 @@ Feature: mux detection — which multiplexer, and which backend adapter
 
   # ── Multiplexer detection is two-mode ──
 
+  @id:detection-cyber-mux-fast-path
   Scenario: $CYBER_MUX is trusted outright as a fast-path
     Given $CYBER_MUX=tmux and $CYBER_MUX_PANE=%3 are set
     When the mux probe runs
     Then it reports mux=tmux, pane=%3, via=env, without walking the process ancestry
 
+  @id:detection-cyber-mux-none-override
   Scenario: $CYBER_MUX=none is an override even inside a real multiplexer
     Given $CYBER_MUX=none is set while $TMUX is also set
     When the mux probe runs
     Then it reports mux=none
 
+  @id:detection-ancestry-walk-fallback
   Scenario: absent the env fast-path, the probe walks the process ancestry from $$
     Given no $CYBER_MUX is set and a tmux server is an ancestor of the current process
     When the mux probe runs
     Then it reports mux=tmux via=ancestry, found by walking ppid/comm up from the current pid
 
+  @id:detection-hint-not-trusted-alone
   Scenario: $TMUX/$HERDR_ENV alone are not trusted — only a fast-positive hint the walk falls back to
     Given $TMUX is set but the ancestry walk itself is inconclusive
     When the mux probe runs

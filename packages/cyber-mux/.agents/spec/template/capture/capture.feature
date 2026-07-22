@@ -12,6 +12,7 @@ Feature: template capture — read a live region back into a template
   # ── Capturing a live region: which region, and what tree ──
   # save is the inverse of apply. The seam reports one rectangle per pane; cyber-mux derives the tree.
 
+  @id:capture-region-around-calling-pane
   Scenario: save captures the region around the calling pane, not the one the user is looking at
     Given a caller in a pane whose region the caller is not focused on
     When cyber-mux template save pool-3 runs with no --from
@@ -20,6 +21,7 @@ Feature: template capture — read a live region back into a template
     # the caller, and they only coincide while a human is typing
     # (--from, which overrides this default subject, is a flag, on the CLI surface in cli/template/capture.)
 
+  @id:capture-geometry-seam-per-pane-rectangle
   Scenario: the geometry seam reports one rectangle per pane, not a backend's own tree
     Given a region on any backend
     When the geometry seam reports it
@@ -29,6 +31,7 @@ Feature: template capture — read a live region back into a template
     # with parent links only inside an undocumented id convention. A rectangle is the one fact both
     # report exactly, and a region built by splitting is always guillotine-cuttable from rectangles.
 
+  @id:capture-ratio-matches-split-not-sizes
   Scenario: a captured ratio is the one the split was made with, not the one the pane sizes imply
     Given a region split at ratio 0.7 on a backend that draws a divider between panes
     When the region is captured
@@ -37,6 +40,7 @@ Feature: template capture — read a live region back into a template
     # a 50-row region. first/(first+second) reads 0.69; the complement, 1 - second/total, puts the
     # divider where the backend's own sizing flag puts it and reads the 0.7 the split was made with.
 
+  @id:capture-reapply-reproduces-region
   Scenario: re-applying a captured template reproduces the region it was captured from
     Given a region of 4 panes built by splitting
     When it is captured and the captured template is applied to a fresh region of the same size
@@ -44,6 +48,7 @@ Feature: template capture — read a live region back into a template
     # the property the whole derivation exists to hold — a capture that does not round-trip is a
     # confident lie about the user's screen
 
+  @id:capture-nary-row-as-right-comb
   Scenario: an n-ary row captures as the right-comb the flat sugar desugars to
     Given a region of 3 equal panes side by side
     When it is captured
@@ -52,6 +57,7 @@ Feature: template capture — read a live region back into a template
     # binary, so the capture must comb it — and must comb it the way the desugarer does, or a pool
     # would not survive the round trip. Capture and the flat sugar meet at the same canonical form.
 
+  @id:capture-ambiguous-grid-matches-tiled
   Scenario: an ambiguous grid captures columns-first, matching tiled rather than its transpose
     Given a region of 4 panes in a 2x2 grid
     When it is captured
@@ -63,6 +69,7 @@ Feature: template capture — read a live region back into a template
   # ── The capture is a draft ──
   # It recovers geometry, never commands — and the file has to say so itself.
 
+  @id:capture-no-command-either-backend
   Scenario Outline: no pane in a captured template carries a command, on either backend
     Given a region on the <backend> adapter whose panes are running commands
     When it is captured
@@ -78,6 +85,7 @@ Feature: template capture — read a live region back into a template
     # `node /run/user/1000/fnm_multishells/.../bin/nr web dev`), which is machine-local and so not
     # portable into a template meant to be checked in and run elsewhere
 
+  @id:capture-description-notes-geometry-only
   Scenario: a captured template records in its own description that it is geometry only
     Given a caller running cyber-mux template save pool-3 with no --description
     When the command runs
@@ -90,6 +98,7 @@ Feature: template capture — read a live region back into a template
   # ── The capture subtracts the target back out ──
   # Apply's injection, run backwards: apply joins cwd + dir, so capture divides it out.
 
+  @id:capture-pane-under-root-relative-dir
   Scenario: a pane under the captured root becomes a relative dir
     Given a region whose root pane runs in the target and another pane runs in the target's services/api
     When it is captured
@@ -98,6 +107,7 @@ Feature: template capture — read a live region back into a template
     And no absolute path appears anywhere in the written template
     # the rule the whole capability exists to enforce, holding in the writing direction too
 
+  @id:capture-pane-outside-root-loses-dir
   Scenario: a pane outside the captured root loses its dir and says so
     Given a region one of whose panes runs outside the captured root
     When it is captured
@@ -107,12 +117,14 @@ Feature: template capture — read a live region back into a template
     # dir must stay under the apply-time target, so emitting ../elsewhere would fail the very
     # validator this capture has to satisfy — there is nowhere to put this pane's location
 
+  @id:capture-template-passes-validate
   Scenario: a captured template passes validate
     Given a template captured from a live region
     When cyber-mux template validate runs on it
     Then it exits 0
     # the round trip that matters: a capture that its own validator rejects is not a template
 
+  @id:capture-shared-label-onto-both
   Scenario: a label two panes share is captured onto both, because a human chose it
     Given a region where two panes are both labeled worker
     When it is captured
@@ -124,6 +136,7 @@ Feature: template capture — read a live region back into a template
     # live model has no uniqueness rule and neither does the schema: a pool of three panes all named
     # worker is a thing a person may legitimately mean.
 
+  @id:capture-author-label-not-default-title
   Scenario: a label the author set is captured, and a backend's default pane title is not
     Given a tmux region where one pane's title was set to reviewer and every other pane carries tmux's default title
     When it is captured
@@ -140,11 +153,13 @@ Feature: template capture — read a live region back into a template
   # left out, and the declares-root-vs-tabs shape are the CLI surface, in cli/template/capture. What
   # stays here is the derivation across tabs and the label handling it does.
 
+  @id:capture-tab-keeps-own-label
   Scenario: a captured tab keeps the label its tab carries
     Given a workspace whose tabs are labeled editor and logs
     When it is captured with --workspace
     Then the captured tabs are labeled editor and logs
 
+  @id:capture-tab-label-not-composed
   Scenario: a captured tab's label is the tab's own name, never the composed one
     Given a workspace labeled pool on tmux whose tab displays as "pool - editor"
     When it is captured with --workspace
@@ -155,6 +170,7 @@ Feature: template capture — read a live region back into a template
     # would re-prefix it on every round trip. Capture is the inverse of apply or it is a lie about the
     # user's screen.
 
+  @id:capture-reapply-workspace-reproduces-tabs
   Scenario: re-applying a captured workspace reproduces the tabs it was captured from
     Given a workspace of 2 tabs, each of 2 panes built by splitting
     When it is captured with --workspace and the captured template is applied to a fresh workspace
@@ -163,6 +179,7 @@ Feature: template capture — read a live region back into a template
     # the round-trip property the derivation exists to hold, now at the tab level as well as the pane
     # level — a capture that does not round-trip is a confident lie about the user's screen
 
+  @id:capture-workspace-still-draft-no-command
   Scenario: a captured workspace is still a draft carrying no command
     Given a workspace of 2 tabs whose panes were launched with commands
     When it is captured with --workspace
@@ -171,6 +188,7 @@ Feature: template capture — read a live region back into a template
     # unchanged and for the unchanged reason: a running pane's command line is machine-local rather
     # than portable, and adding a level does not change what is worth writing into a template
 
+  @id:capture-untagged-region-single-tab-workspace
   Scenario: on a backend with no workspace tier, an untagged region captures as a single-tab workspace
     Given a caller in a tmux window carrying no grouping tag
     When cyber-mux template save pool --workspace runs
@@ -178,6 +196,7 @@ Feature: template capture — read a live region back into a template
     # a window nobody grouped is a workspace of one — the honest answer, and the reason the tag is read
     # rather than the label parsed
 
+  @id:capture-workspace-enumerate-unsupported-refused
   Scenario: a workspace whose tabs the backend cannot enumerate is refused, not guessed at
     Given a backend whose adapter cannot enumerate a workspace's tabs
     When a workspace capture is derived
@@ -192,6 +211,7 @@ Feature: template capture — read a live region back into a template
   # CLI surface, in cli/template/capture. What stays here is the adapter-capability contract behind
   # the geometry refusal: an optional seam member the backend lacks is a refusal, never a guess.
 
+  @id:capture-geometry-unsupported-refused
   Scenario: a region whose geometry the backend cannot report is refused, not guessed at
     Given a backend with no region-geometry primitive
     When a region capture is derived
@@ -201,6 +221,7 @@ Feature: template capture — read a live region back into a template
     # verb's observable of this refusal (exit 1 naming the backend, no file written) is the CLI
     # surface, in cli/template/capture.
 
+  @id:capture-non-guillotine-region-refused
   Scenario: a region no sequence of splits could have produced is refused
     Given a region whose panes no straight cut separates without crossing one
     When it is captured

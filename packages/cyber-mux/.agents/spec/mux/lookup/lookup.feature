@@ -7,11 +7,13 @@ Feature: mux lookup — resolving a pane, the focus probe, and the listing conte
 
   # ── Reporting whether a pane is currently focused (on screen for an attached client) ──
 
+  @id:lookup-tmux-focused-attached-client
   Scenario: tmux reports a pane focused when an attached client is currently viewing it
     Given a tmux pane that is the active pane of the current window in a session with an attached client
     When the backend is asked whether that pane is focused
     Then it reports focused
 
+  @id:lookup-tmux-not-focused-conditions
   Scenario Outline: tmux reports a pane not focused when <condition>
     Given a tmux pane where <condition>
     When the backend is asked whether that pane is focused
@@ -23,16 +25,19 @@ Feature: mux lookup — resolving a pane, the focus probe, and the listing conte
       | its window is not the current window    |
       | its session has no attached client      |
 
+  @id:lookup-herdr-focused
   Scenario: herdr reports a pane focused when its pane record is focused
     Given a herdr pane whose pane record reports it is currently being viewed by a client
     When the backend is asked whether that pane is focused
     Then it reports focused
 
+  @id:lookup-herdr-not-focused
   Scenario: herdr reports a pane not focused when its pane record is not focused
     Given a herdr pane whose pane record reports no client is currently viewing it
     When the backend is asked whether that pane is focused
     Then it reports not-focused
 
+  @id:lookup-focus-unknown-not-boolean
   Scenario Outline: a focus query that cannot be answered is unknown, not a boolean
     Given <condition>
     When it is asked whether a pane is focused
@@ -44,6 +49,7 @@ Feature: mux lookup — resolving a pane, the focus probe, and the listing conte
       | a pane the backend can no longer resolve     |
       | a focus query that errors                    |
 
+  @id:lookup-wezterm-focus-always-unknown
   Scenario: wezterm always reports unknown — it has no focus primitive at all, not just a per-query gap
     Given a wezterm pane, any pane
     When the backend is asked whether that pane is focused
@@ -56,11 +62,13 @@ Feature: mux lookup — resolving a pane, the focus probe, and the listing conte
   # A label is a human name, not a key. The listing reports every live pane with the label a name
   # resolves from — and the label it reports is the one a person set, never a backend's default.
 
+  @id:lookup-listing-enumerates-all-panes
   Scenario: the live pane listing enumerates every live pane, including one running no agent/harness
     Given a backend with a mix of panes, some running an agent/harness and some running none
     When the live panes are listed
     Then every live pane is reported, whether or not it is running an agent/harness
 
+  @id:lookup-listing-carries-label
   Scenario Outline: the live pane listing carries each pane's label, so a name resolves from it
     Given a <backend> pane a person has labeled
     When the live panes are listed
@@ -74,6 +82,7 @@ Feature: mux lookup — resolving a pane, the focus probe, and the listing conte
   # tmux has no unset title — it defaults pane_title to the hostname, so an untouched pane reports a
   # name nobody chose. Exporting that would label EVERY pane in the session identically, and the
   # hostname would then resolve to every one of them: ambiguity manufactured out of nothing.
+  @id:lookup-tmux-unnamed-no-label
   Scenario: a tmux pane nobody named carries no label, so the hostname addresses no pane
     Given a tmux pane whose title has never been set
     When the live panes are listed
@@ -82,11 +91,13 @@ Feature: mux lookup — resolving a pane, the focus probe, and the listing conte
 
   # The contrast that shows the tmux rule is a workaround, not the shape of the thing: herdr has the
   # honest primitive, so an unnamed pane needs no rule to be read as unnamed.
+  @id:lookup-herdr-unnamed-no-label
   Scenario: a herdr pane nobody named carries no label, with no comparison needed to tell
     Given a herdr pane that has never been renamed
     When the live panes are listed
     Then that pane reports no label, because herdr omits the name outright until one is set
 
+  @id:lookup-wezterm-never-labeled
   Scenario: a wezterm pane never carries a label, because nothing can ever set one
     Given a wezterm pane, any pane
     When the live panes are listed
@@ -103,6 +114,7 @@ Feature: mux lookup — resolving a pane, the focus probe, and the listing conte
   # Refusing them at authoring time was only ever a guess about what the author meant; at LOOKUP time
   # the ambiguity is a fact, the candidates are known, and the caller is present to resolve it.
 
+  @id:lookup-verb-resolves-by-name
   Scenario Outline: every pane verb addresses a pane by name as readily as by id
     Given three live panes, labeled worker, sidebar and logs
     When a caller runs <verb> naming worker rather than the pane's id
@@ -120,6 +132,7 @@ Feature: mux lookup — resolving a pane, the focus probe, and the listing conte
       | cyber-mux send keys          |
       | cyber-mux template save --from |
 
+  @id:lookup-wezterm-name-never-resolves
   Scenario: a name never resolves a wezterm pane — only an id can
     Given a live wezterm pane and a caller naming some word as if it were a label
     When a caller runs any pane verb naming that word
@@ -131,6 +144,7 @@ Feature: mux lookup — resolving a pane, the focus probe, and the listing conte
   # An ambiguous name is handled identically by every pane verb: it acts on none of the matching panes,
   # none guessing which was meant. The PAYLOAD of that failure — reported on stdout under ambiguous-pane
   # at exit 2 — is the CLI surface in ../../cli/lookup.
+  @id:lookup-ambiguous-name-fails-all-verbs
   Scenario Outline: an ambiguous name fails the same way on every pane verb, acting on none
     Given three live panes all labeled worker
     When a caller runs <verb> naming worker
@@ -151,6 +165,7 @@ Feature: mux lookup — resolving a pane, the focus probe, and the listing conte
   # An id outranks a name, so every caller that works today keeps working: an id can never be made
   # to mean something else by a person renaming an unrelated pane. Ambiguity is a fuzzy-tier
   # condition only — the same ladder git, Docker and tmux resolve their own targets by.
+  @id:lookup-id-outranks-label-collision
   Scenario: an id addresses the pane whose id it is, even when another pane is labeled with that id
     Given a live pane whose id is a string, and a different live pane labeled with that same string
     When a caller names that string
@@ -162,12 +177,14 @@ Feature: mux lookup — resolving a pane, the focus probe, and the listing conte
   # resolver that asks the live list finds the label. Docker sniffs (`sg-` → an id) and it is the
   # cheaper rule — refused here because encoding a backend's id format in the CLI is the backend leak
   # this seam exists to prevent, and a new backend would owe a new syntax rule.
+  @id:lookup-id-matched-not-by-shape
   Scenario: an id is recognized by matching a live pane, never by the shape of the string
     Given a live pane labeled %9, and no live pane whose id is %9
     When a caller names %9
     Then it resolves to the pane labeled %9
     And it is neither reported as a pane that does not exist, nor refused for looking like an id
 
+  @id:lookup-name-matches-one-resolves
   Scenario: a name matching exactly one live pane resolves to it and the command proceeds
     Given three live panes, exactly one of them labeled worker
     When a caller names worker
@@ -176,11 +193,13 @@ Feature: mux lookup — resolving a pane, the focus probe, and the listing conte
 
   # Zero matches is the not-found path, distinct from two-or-more. The exit-1 rendering of a
   # pane-not-found is the CLI surface in ../../cli/lookup (the error-surface outline).
+  @id:lookup-name-matches-none-not-found
   Scenario: a name matching no live pane is not found, rather than ambiguous
     Given no live pane labeled worker, and no live pane whose id is worker
     When a caller names worker
     Then it fails as a pane that could not be resolved, not as an ambiguity
 
+  @id:lookup-name-matches-many-fails
   Scenario: a name matching two or more live panes fails rather than guessing which was meant
     Given three live panes all labeled worker
     When a caller names worker
@@ -190,6 +209,7 @@ Feature: mux lookup — resolving a pane, the focus probe, and the listing conte
     # and each candidate's id is directly usable as the retry. The RENDERING of those entries as a
     # structured error on stdout is the CLI surface in ../../cli/lookup.
 
+  @id:lookup-label-with-spaces-resolves
   Scenario: a label containing spaces resolves to its pane
     Given a tmux pane labeled my worker
     When a caller names my worker

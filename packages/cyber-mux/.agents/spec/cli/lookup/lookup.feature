@@ -9,6 +9,7 @@ Feature: cyber-mux lookup — the pane-addressing verbs and the shared error con
   # Each resolves its <pane> argument to a single pane through the shared id/label ladder in
   # ../../mux/lookup before acting; an ambiguous locator fails through the shared error contract below.
 
+  @id:lookup-read-writes-raw-bytes
   Scenario: read writes the addressed pane's captured output straight to stdout, as raw bytes
     Given a live pane labeled worker with captured output
     When a caller runs cyber-mux read worker
@@ -18,12 +19,14 @@ Feature: cyber-mux lookup — the pane-addressing verbs and the shared error con
     # read is the one verb whose stdout is raw bytes rather than the --format json envelope: it always
     # writes the capture directly, because the capture IS what the caller asked for.
 
+  @id:lookup-read-lines-caps-trailing
   Scenario: read --lines caps the capture to the trailing n lines
     Given a live pane labeled worker whose scrollback holds more than five lines
     When a caller runs cyber-mux read worker --lines 5
     Then stdout carries only the trailing five lines of the pane's output
     And it exits 0
 
+  @id:lookup-focus-beams-view
   Scenario: focus beams the attached client's view to the addressed pane
     Given a live pane labeled worker on a backend with an attached client
     When a caller runs cyber-mux focus worker
@@ -33,6 +36,7 @@ Feature: cyber-mux lookup — the pane-addressing verbs and the shared error con
     # The focus VERB, not the read-only focus PROBE in ../../mux/lookup: the probe reports
     # focused/not-focused/unknown and opens nothing, while this verb drives the client's view to a pane.
 
+  @id:lookup-close-terminates-pane
   Scenario: close terminates the addressed pane
     Given a live pane labeled worker
     When a caller runs cyber-mux close worker
@@ -49,6 +53,7 @@ Feature: cyber-mux lookup — the pane-addressing verbs and the shared error con
   # so the outcome rides the exit code rather than a word. The word-only alternative is what
   # systemctl is-active does, reporting `inactive` for both a stopped unit and a unit that does not
   # exist: only its exit code tells them apart.
+  @id:lookup-exists-outcomes-by-exit-code
   Scenario Outline: exists distinguishes its three outcomes by exit code, not by prose
     Given <world>
     When a caller runs cyber-mux exists naming that locator
@@ -61,6 +66,7 @@ Feature: cyber-mux lookup — the pane-addressing verbs and the shared error con
       | no live pane matches the locator          | gone                          | 1    |
       | two or more live panes match the locator  | the ambiguous-pane error      | 2    |
 
+  @id:lookup-exists-ambiguous-reports-candidates
   Scenario: an ambiguous exists reports its candidates rather than answering the question
     Given two live panes labeled worker
     When a caller runs cyber-mux exists naming worker
@@ -79,6 +85,7 @@ Feature: cyber-mux lookup — the pane-addressing verbs and the shared error con
   # An ambiguous locator fails identically across every pane verb, and the PAYLOAD is the "same way":
   # reported on stdout under ambiguous-pane at exit 2. The resolution decision behind it — that an
   # ambiguous name acts on none of the panes, uniformly across verbs — is the contract in ../../mux/lookup.
+  @id:lookup-ambiguous-locator-every-verb
   Scenario Outline: an ambiguous locator is reported under ambiguous-pane on every pane verb
     Given three live panes all labeled worker
     When a caller runs <verb> naming worker
@@ -96,6 +103,7 @@ Feature: cyber-mux lookup — the pane-addressing verbs and the shared error con
       | cyber-mux send keys          |
       | cyber-mux template save --from |
 
+  @id:lookup-ambiguity-report-candidate-details
   Scenario: the ambiguity report carries what tells the candidates apart, and what retries them
     Given three live panes all labeled worker, each in a different working directory
     When a caller names worker
@@ -107,6 +115,7 @@ Feature: cyber-mux lookup — the pane-addressing verbs and the shared error con
   # report whose whole purpose is handing a caller the candidates to retry with is the last thing that
   # belongs on the ignored stream. A verb either succeeds and writes its result or fails and writes its
   # error, never both, so the exit code tells the two apart before anything is parsed.
+  @id:lookup-ambiguity-report-stdout-only
   Scenario: the ambiguity report is a structured error on stdout, where the agent reads
     Given two live panes labeled worker
     When a caller names worker
@@ -114,6 +123,7 @@ Feature: cyber-mux lookup — the pane-addressing verbs and the shared error con
     And stderr is left empty, carrying no part of the answer
     And it exits 2
 
+  @id:lookup-ambiguity-json-format
   Scenario: --format json emits the ambiguity as a structured error carrying its candidates
     Given two live panes labeled worker
     When a caller names worker with --format json
@@ -123,6 +133,7 @@ Feature: cyber-mux lookup — the pane-addressing verbs and the shared error con
   # This surface rule holds for EVERY verb, template included; the examples stay on the shared,
   # non-template surface so this node owns the shape, not any command's specifics. Each template verb's
   # own code, exit and message live in template/'s suite, and they follow this same shape.
+  @id:lookup-failure-structured-error-per-code
   Scenario Outline: a failure is a structured error on stdout, under the code for THAT failure
     Given <world>
     When a caller runs <verb>
@@ -141,6 +152,7 @@ Feature: cyber-mux lookup — the pane-addressing verbs and the shared error con
   # stdout would satisfy "carries a stable code" on every row while leaving a caller exactly as unable
   # to tell one failure from another as parsing prose left them — and that is the CHEAPEST edit at the
   # one helper this surface owns, so it is the wrong impl most likely to be built.
+  @id:lookup-failure-codes-distinct
   Scenario: two different failures never share one code
     Given a caller who hits an ambiguous locator and a caller who hits no multiplexer
     When each failure is reported
@@ -150,6 +162,7 @@ Feature: cyber-mux lookup — the pane-addressing verbs and the shared error con
   # A usage error is a missing or malformed ARGUMENT — the fix is a different invocation, not a retry.
   # A required argument the parser never received is exactly that, and it is the same family as the
   # unknown flag: both exit 2, having called no backend.
+  @id:lookup-missing-arg-usage-error
   Scenario Outline: a missing required argument is a usage error, not a failed operation
     Given a caller running <verb> without the pane argument it requires
     When the command is parsed
@@ -162,6 +175,7 @@ Feature: cyber-mux lookup — the pane-addressing verbs and the shared error con
       | cyber-mux focus     |
       | cyber-mux send text |
 
+  @id:lookup-unknown-flag-lists-valid
   Scenario: an unknown flag is a usage error, and says what the valid flags are
     Given a caller running cyber-mux list with a flag that command does not define
     When the command is parsed
@@ -172,6 +186,7 @@ Feature: cyber-mux lookup — the pane-addressing verbs and the shared error con
     # next move after an unknown flag is `--help`. Folding that answer into the error collapses a
     # two-turn correction into one.
 
+  @id:lookup-unknown-flag-subcommand-scope
   Scenario: an unknown flag is rejected against the SUBCOMMAND's flags, not the group's
     Given a caller running cyber-mux template list with --force, a flag only cyber-mux template save defines
     When the command is parsed
@@ -183,12 +198,14 @@ Feature: cyber-mux lookup — the pane-addressing verbs and the shared error con
     # takes --from/--workspace/--description/--force and list takes none of them. send cannot — its
     # text and keys subcommands define identical flag sets, so no flag exists that separates them.
 
+  @id:lookup-help-never-unknown-flag
   Scenario: --help is never an unknown flag
     Given a caller running any cyber-mux command with --help
     When the command is parsed
     Then help is written to stdout and it exits 0
     And no flag validation rejects it, on any command
 
+  @id:lookup-error-honors-format-json
   Scenario: a structured error honors --format json
     Given a caller whose command fails with --format json
     When the error is reported
@@ -201,6 +218,7 @@ Feature: cyber-mux lookup — the pane-addressing verbs and the shared error con
   # which may report a negative or partial outcome inside itself and carry a nonzero exit, as exists's
   # `gone` and apply's partial manifest do — or a structured ERROR, when the operation produced no
   # result at all. Never a result and a separate error object concatenated.
+  @id:lookup-failed-stdout-error-alone
   Scenario: a failed verb's stdout is its structured error alone, with no result before it
     Given a caller running cyber-mux read against a pane whose capture fails
     When the failure is reported
@@ -210,6 +228,7 @@ Feature: cyber-mux lookup — the pane-addressing verbs and the shared error con
     # structured payload — the one place a mixture would be genuinely unparseable. It holds because a
     # failed read captures nothing: there are no bytes for an error to land amid.
 
+  @id:lookup-partial-apply-one-payload
   Scenario: a partially-applied template is one result payload, not a result plus an error
     Given a tabs template whose second tab fails to open
     When cyber-mux applies it
@@ -220,6 +239,7 @@ Feature: cyber-mux lookup — the pane-addressing verbs and the shared error con
     # one case that looks like "result AND error on stdout" and is not. The nonzero exit and the named
     # failing tab live INSIDE the one manifest payload, which is what keeps the invariant true here.
 
+  @id:lookup-error-no-backend-leak
   Scenario: an error never leaks the multiplexer's own output
     Given a caller running a verb whose backend command fails with a tmux or herdr diagnostic
     When the failure is reported
@@ -233,6 +253,7 @@ Feature: cyber-mux lookup — the pane-addressing verbs and the shared error con
   # worktree refusals (a dirty-checkout guard, a primary-checkout guard) are safe to forward verbatim,
   # while a failure from opening or binding the worktree's pane comes from the multiplexer and carries
   # its raw diagnostic the same way the scenario above already forbids for every other verb.
+  @id:lookup-worktree-catchall-no-leak
   Scenario: the worktree catch-all never forwards the multiplexer's raw diagnostic either
     Given a caller running cyber-mux worktree add whose backend fails opening the worktree's pane
     When the failure is reported
@@ -241,6 +262,7 @@ Feature: cyber-mux lookup — the pane-addressing verbs and the shared error con
 
   # ── The list rendering keeps each field whole ──
 
+  @id:lookup-list-space-rendered-whole
   Scenario: a listed label or working directory containing a space is rendered whole, never split across columns
     Given a tmux pane labeled my worker, whose working directory path also contains a space
     When a caller runs cyber-mux list and reads the human table

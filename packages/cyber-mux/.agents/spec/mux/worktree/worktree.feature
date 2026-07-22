@@ -17,6 +17,7 @@ Feature: worktree seam — the library git-worktree contract
   # this seam with the DEFAULT gate only; it cannot inject a predicate. Each Given below names the
   # seam; "When provision runs" stays surface-neutral (the operation, however it is reached).
 
+  @id:worktree-provision-reuses-free
   Scenario: provision reuses a free worktree, resetting it to a pristine tree on a fresh branch
     Given a caller invoking the provisionWorktree seam with a pool holding a merged, clean, unoccupied worktree
     When provision runs
@@ -24,27 +25,32 @@ Feature: worktree seam — the library git-worktree contract
     And it resets it to a fresh branch at base, then reset --hard, then clean -fdx — a pristine tree
     And it reports the action as reused, with the recycled worktree's prior branch and workspace
 
+  @id:worktree-provision-explicit-base
   Scenario: provision branches a reused worktree from an explicit base
     Given a caller invoking provisionWorktree with an explicit base <base> and a free worktree to reuse
     When provision runs
     Then the reused worktree's fresh branch starts at <base> rather than the resolved default branch
 
+  @id:worktree-provision-creates-fresh
   Scenario: provision creates a fresh worktree when none is available
     Given a caller invoking the provisionWorktree seam with a pool holding no available worktree
     When provision runs
     Then it creates a fresh checkout with plain git and recycles nothing
     And it reports the action as created, with no recycled worktree
 
+  @id:worktree-provision-skips-unmerged
   Scenario: provision never reuses an unmerged worktree under the default gate
     Given a caller invoking the provisionWorktree seam with a pool whose only free-looking worktrees are unmerged
     When provision runs with the default availability gate
     Then it treats none of them as reusable and creates a fresh checkout instead
 
+  @id:worktree-provision-respects-predicate
   Scenario: provision never hands back a worktree the availability predicate excludes
     Given a host availability predicate — a LIBRARY-ONLY injected gate — that excludes the first candidate because a live session is bound to it
     When provision runs
     Then it skips that worktree and reuses the next free one, never the excluded one
 
+  @id:worktree-provision-skips-primary
   Scenario: provision never reuses the primary checkout
     Given an availability predicate that would clear every worktree, including the primary checkout
     When provision runs
@@ -54,12 +60,14 @@ Feature: worktree seam — the library git-worktree contract
   # listWorktreesFromGit reads path/branch/linked/prunable/merged/dirty from git; a backend that also
   # enumerates worktrees is merely re-reading git, and contributes only the binding.
 
+  @id:worktree-facts-from-git-not-backend
   Scenario: the library reads every worktree fact from git, whatever the backend
     Given a backend that also enumerates worktrees and reports a branch of its own
     When listWorktreesFromGit / WorktreeApi.list reads the worktrees
     Then every path, branch, linked, and prunable value it returns is git's answer, not the backend's
     And two backends can never yield a different branch for the same worktree — the backend contributes only the binding
 
+  @id:worktree-merged-against-resolved-default
   Scenario: the default branch merged is measured against is resolved, never assumed
     Given a repo whose default branch is not named main
     When listWorktreesFromGit computes each worktree's merged signal
@@ -69,6 +77,7 @@ Feature: worktree seam — the library git-worktree contract
     # for a local-only repo and costs no extra read.
     And a repo with no resolvable default branch yields no merged verdict rather than a guessed one
 
+  @id:worktree-disposability-absent-not-false
   Scenario: a disposability signal git cannot determine is absent, never false
     Given worktrees including one on a detached HEAD and one whose checkout is gone from disk
     When listWorktreesFromGit reads each worktree and isWorktreeRemovable is asked of it
@@ -80,30 +89,35 @@ Feature: worktree seam — the library git-worktree contract
   # removeWorktreeSafely runs cyber-mux's gates, then a releaseBinding callback the host supplies,
   # then git — gates BEFORE release, release BEFORE git — and the backend is never asked to remove.
 
+  @id:worktree-remove-ignores-disposability-signal
   Scenario: the library's remove consults no disposability signal, and the listing never acts
     Given a worktree isWorktreeRemovable would clear
     When removeWorktreeSafely is called on it
     Then it applies exactly the gates it always did, consulting no disposability signal — removability is reported, never a removal trigger
     And listWorktreesFromGit is a pure read: nothing in the listing deletes or prunes a worktree of its own accord
 
+  @id:worktree-remove-refuses-dirty-before-release
   Scenario: removeWorktreeSafely refuses uncommitted changes BEFORE releasing the binding
     Given a dirty worktree passed to removeWorktreeSafely with a releaseBinding callback and no force
     When removeWorktreeSafely runs
     Then it refuses, naming --force as the way to discard the changes
     And releaseBinding is never called — a refused removal has no side effect
 
+  @id:worktree-remove-releases-before-git
   Scenario: removeWorktreeSafely releases the binding before git removes the checkout
     Given a clean worktree passed to removeWorktreeSafely with a releaseBinding callback
     When removeWorktreeSafely runs and every gate passes
     Then releaseBinding is called first, and only then does git remove the checkout
     And no binding is left pointing at a directory that no longer exists
 
+  @id:worktree-remove-releases-orphan-binding
   Scenario: removeWorktreeSafely releases the binding of a checkout already gone from disk
     Given a path with nothing checked out there, passed to removeWorktreeSafely with a releaseBinding callback
     When removeWorktreeSafely runs
     Then releaseBinding is called, and no git removal command runs
     And the orphan this prevents — a binding pointing at a checkout that is gone — cannot persist
 
+  @id:worktree-remove-not-delegated-to-backend
   Scenario: worktree removal is never delegated to the backend
     Given a backend with a worktree-removal primitive of its own, wired to removeWorktreeSafely as its releaseBinding
     When removeWorktreeSafely removes a worktree on it
