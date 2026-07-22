@@ -759,6 +759,16 @@ describe('spec:cyber-mux/mux/driving', () => {
 		expect(calls).toEqual([['send-keys', '-t', '%3', 'Home', 'M-x']])
 	})
 
+	it('driving-unknown-token-not-rescued', () => {
+		// A token that names no key at all in tmux's vocabulary, and no rename maps it either. tmux
+		// has no way to REFUSE a key name — send-keys just types whatever it does not recognize as a
+		// key, so the token reaches tmux unchanged and lands as literal characters on the pane.
+		const calls: string[][] = []
+		const exec = fakeExec(calls)
+		tmuxMuxAdapter.sendKeys(exec, { id: '%3' }, ['Zzz'])
+		expect(calls).toEqual([['send-keys', '-t', '%3', 'Zzz']])
+	})
+
 	it('driving-send-keys-enter-submits', () => {
 		const calls: string[][] = []
 		const exec = fakeExec(calls)

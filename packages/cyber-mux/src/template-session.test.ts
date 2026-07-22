@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Exec } from './exec.ts'
 import { herdrMuxAdapter } from './mux.herdr.ts'
-import { TMUX_WORKSPACE_GROUP_OPTION, tmuxMuxAdapter } from './mux.tmux.ts'
+import { TMUX_TAB_NAME_OPTION, TMUX_WORKSPACE_GROUP_OPTION, tmuxMuxAdapter } from './mux.tmux.ts'
 import type { MuxAdapter, MuxOpenOptions, OpenedPane } from './mux.ts'
 import type { Template } from './template.ts'
 import { applyTemplateToRegion, openTemplate, TemplateApplyError } from './template-session.ts'
@@ -662,6 +662,60 @@ describe('spec:cyber-mux/template/apply', () => {
 				// No prefix reaches herdr anywhere, on this route either.
 				expect(calls.flat().some((arg) => arg.includes(' - '))).toBe(false)
 			})
+		})
+
+		it('apply-tab-label-never-parsed-back', () => {
+			// The scenario's When is ENUMERATION: a workspace labeled "acme - beta" whose tab is labeled
+			// main is applied, so tmux displays the window as the composed "acme - beta - main" and the
+			// walk stores `main` beside the workspace tag. When the workspace's tabs are then enumerated,
+			// the workspace is identified by its grouping TAG and the tab by its OWN stored name — never
+			// by splitting the composed display name, which is ambiguous under every split rule ("acme"
+			// + "beta - main" reads exactly as well as "acme - beta" + "main"). Read-side round-trip proof
+			// at the apply node; its capture-node twin is `capture-tab-label-not-composed`.
+
+			// First: apply writes the composed display name AND stores the raw tab label beside the tag —
+			// so what enumeration reads back is exactly what the walk wrote, not a re-parse of the display.
+			const applied: string[][] = []
+			openTemplate(
+				tmuxExec(applied),
+				tmuxMuxAdapter,
+				{ name: 'acme - beta', tabs: [{ label: 'main', panes: [{ label: 'edit' }] }] },
+				{
+					cwd: '/target',
+					dirExists: anyDir,
+					newId: fakeNewId,
+				},
+			)
+			expect(applied.filter((c) => c[0] === 'rename-window')).toEqual([
+				['rename-window', '-t', '@0', 'acme - beta - main'],
+			])
+			expect(applied.find((c) => c[0] === 'set-option' && c.includes(TMUX_TAB_NAME_OPTION))?.at(-1)).toBe('main')
+
+			// Then: enumerate that applied workspace. The window DISPLAYS the ambiguous composition and
+			// carries `main` in the tab-name option beside the workspace group id — exactly the state the
+			// walk left. describeWorkspace must recover the tab by the option, never by parsing the display.
+			const reads: string[][] = []
+			const exec: Exec = (_cmd, args) => {
+				reads.push(args)
+				if (args[0] === 'display-message') return '@0\tws-7\tmain\tacme - beta - main'
+				if (args[0] === 'list-windows') return '@0\tmain\tacme - beta - main'
+				if (args[0] === 'list-panes') return '%0\t0\t0\t200\t50\t/repo\tzeta\tzeta'
+				return null
+			}
+			const tabs = tmuxMuxAdapter.regions!.describeWorkspace(exec, { id: '%0' })
+			// The workspace is found by its GROUPING TAG, filtered server-side — not by any label prefix.
+			expect(reads.find((c) => c[0] === 'list-windows')).toEqual([
+				'list-windows',
+				'-a',
+				'-F',
+				`#{window_id}\t#{${TMUX_TAB_NAME_OPTION}}\t#{window_name}`,
+				'-f',
+				`#{==:#{${TMUX_WORKSPACE_GROUP_OPTION}},ws-7}`,
+			])
+			// Nothing the composed label says reaches any query — a parse-back would have `acme` in argv.
+			expect(reads.flat().some((arg) => arg.includes('acme'))).toBe(false)
+			// The tab's own name comes from the stored option — `main`, not a fragment split off the display.
+			expect(tabs.map((tab) => tab.label)).toEqual(['main'])
 		})
 
 		it('apply-workspace-label-never-shortened', () => {
