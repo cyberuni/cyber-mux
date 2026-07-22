@@ -88,13 +88,13 @@ describe('spec:cyber-mux/library — published surface', () => {
 		it('./worktree exports the git-worktree adapter and its seam', () => {
 			expect(Object.keys(wt).sort()).toEqual([
 				'WorktreeGitError',
-				'acquireWorktree',
 				'assertDistinctFromPrimary',
 				'gitWorktreeAdapter',
 				'isWorktreeRemovable',
 				'listWorktreesFromGit',
 				'nodeWorktreeFs',
 				'normalizeWorktreePath',
+				'provisionWorktree',
 				'pruneWorktrees',
 				'removeWorktreeSafely',
 				'resolvePrimaryRoot',
