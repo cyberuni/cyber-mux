@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Exec } from './exec.ts'
+import type { MuxPlacement } from './mux.ts'
 import { createWeztermAdapter, weztermMuxAdapter } from './mux.wezterm.ts'
 
 /**
@@ -29,6 +30,20 @@ describe('spec:cyber-mux/mux/placement', () => {
 			// unlike tmux/herdr, the tab/workspace cost a SEPARATE list call — spawn/split-pane report
 			// only the bare pane id.
 			expect(calls[1]).toEqual(['cli', 'list', '--format', 'json'])
+		})
+
+		// Every wezterm pane belongs to SOME workspace, even the implicit "default" one — unlike tmux,
+		// which has no tier at all to report, this is never absent on any placement.
+		it.each<{ at: MuxPlacement }>([
+			{ at: 'workspace' },
+			{ at: 'tab' },
+			{ at: 'pane:right' },
+		])('placement-wezterm-workspace-never-absent', ({ at }) => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { spawn: '9', 'split-pane': '9', list: LIST_ONE })
+			const target = weztermMuxAdapter.open(exec, { cwd: '/unit', at })
+			expect(target.workspace).toBeDefined()
+			expect(typeof target.workspace).toBe('string')
 		})
 
 		// No scenario in placement.feature pins the --bottom flag itself — left as an extra.
@@ -150,6 +165,19 @@ describe('spec:cyber-mux/mux/placement', () => {
 			expect(calls[0]).not.toContain('--percent')
 		})
 
+		// A ratio is a split concept — a tab or workspace opens with `spawn`, which has no --percent
+		// flag at all, because a window is never sized against a pane.
+		it.each<{ at: MuxPlacement }>([
+			{ at: 'tab' },
+			{ at: 'workspace' },
+		])('placement-wezterm-ratio-not-for-tab-workspace', ({ at }) => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { spawn: '9', list: LIST_ONE })
+			weztermMuxAdapter.open(exec, { cwd: '/unit', at, ratio: 0.333 })
+			const spawnCall = calls.find((c) => c[1] === 'spawn')!
+			expect(spawnCall).not.toContain('--percent')
+		})
+
 		it('placement-from-names-split-target', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'split-pane': '9', list: LIST_ONE })
@@ -237,6 +265,15 @@ describe('spec:cyber-mux/mux/driving', () => {
 			expect(calls).toEqual([['cli', 'send-text', '--pane-id', '9', '--no-paste', '\x1b[A\r']])
 		})
 
+		it('driving-wezterm-non-core-key-known', () => {
+			// Home is not in the core vocabulary, but wezterm's own key table (the same extras tmux
+			// "knows" Home by) carries it — so it becomes its own ANSI escape sequence, never the
+			// literal word "Home".
+			const calls: string[][] = []
+			weztermMuxAdapter.sendKeys(fakeExec(calls), { id: '9' }, ['Home'])
+			expect(calls).toEqual([['cli', 'send-text', '--pane-id', '9', '--no-paste', '\x1b[H']])
+		})
+
 		it('driving-wezterm-unencodable-token-literal', () => {
 			const calls: string[][] = []
 			weztermMuxAdapter.sendKeys(fakeExec(calls), { id: '9' }, ['Zzz'])
@@ -301,6 +338,20 @@ describe('spec:cyber-mux/mux/lookup', () => {
 		it('lookup-wezterm-never-labeled', () => {
 			const exec = fakeExec([], { list: LIST_ONE })
 			expect(weztermMuxAdapter.listPanes(exec)).toEqual([{ id: '9', mux: 'wezterm', cwd: '/unit' }])
+		})
+
+		it('lookup-wezterm-name-never-resolves', () => {
+			// A live wezterm pane, and a caller naming some word as if it were a label. Every pane verb
+			// resolves a name by matching it against listPanes()'s `label` field (the CLI's resolver) —
+			// so this is provable right here: no wezterm pane ever carries that field at all, so no name
+			// can ever match one, the same failure as a name matching no live pane anywhere else.
+			const list = JSON.stringify([
+				{ window_id: 1, tab_id: 2, pane_id: 9, workspace: 'default', title: 'worker', cwd: 'file://host/unit' },
+			])
+			const exec = fakeExec([], { list })
+			const panes = weztermMuxAdapter.listPanes(exec)
+			for (const pane of panes) expect(pane.label).toBeUndefined()
+			expect(panes.filter((p) => p.label === 'worker')).toEqual([])
 		})
 
 		// No scenario pins the empty-listing degrade path — extra.
