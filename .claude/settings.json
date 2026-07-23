@@ -1,0 +1,25 @@
+{
+	"hooks": {
+		"SessionStart": [
+			{
+				"hooks": [
+					{
+						"type": "command",
+						"command": "npx cyberlegion mail hook --event SessionStart"
+					}
+				]
+			}
+		],
+		"PostToolUse": [
+			{
+				"hooks": [
+					{
+						"type": "command",
+						"command": "npx cyberlegion mail hook --event PostToolUse"
+					}
+				],
+				"matcher": "Write|Edit"
+			}
+		]
+	}
+}
