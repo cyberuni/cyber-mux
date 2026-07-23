@@ -4021,6 +4021,26 @@ describe('spec:cyber-mux/cli/template/capture', () => {
 		expect(store.writes).toEqual({})
 	})
 
+	it('@id:template-capture-backend-refusal-outranks-missing-pane', async () => {
+		// Both refusal conditions at once: a geometry-incapable backend AND no pane to capture around
+		// (no CYBER_MUX_PANE, no --from). The backend-capability refusal is unconditional — --from cannot
+		// rescue it — so it must win: exit 1 naming the backend, not exit 2 for the missing pane.
+		catchExit()
+		captureStderr()
+		const store = fakeStore({})
+		const original = tmuxMuxAdapter.regions
+		try {
+			delete (tmuxMuxAdapter as { regions?: unknown }).regions
+			const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'tmux' }, exec: saveExec([]), store })
+			await expect(run(program, ['template', 'save', 'pool-3'])).rejects.toThrow('exit:1')
+		} finally {
+			;(tmuxMuxAdapter as { regions?: unknown }).regions = original
+		}
+		expect(logs.join('\n')).toContain('tmux')
+		expect(logs.join('\n')).not.toContain('--from')
+		expect(store.writes).toEqual({})
+	})
+
 	// ── Capturing a whole workspace: --workspace (herdr, with a real workspace tier) ──
 
 	const TABS_3 = [

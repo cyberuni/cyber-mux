@@ -150,3 +150,15 @@ Feature: cyber-mux template save — the CLI capture surface
     And no template is written
     # geometry reporting is an optional capability, exactly as the worktree binding already is —
     # a backend that cannot answer cannot be captured, and there is nothing to degrade to
+
+  @id:template-capture-backend-refusal-outranks-missing-pane
+  Scenario: a geometry-incapable backend is refused for the backend, not for a missing pane
+    Given a backend with no region-geometry primitive
+    And a caller in no pane at all, with no --from
+    When cyber-mux template save pool-3 runs
+    Then it exits 1 naming that backend, not 2 for the missing pane
+    And no template is written
+    # the backend-capability refusal is UNCONDITIONAL — a backend that cannot report geometry cannot be
+    # captured for any pane, so no --from rescues it. It therefore outranks the missing-pane usage error
+    # (exit 2), which would send the caller down a dead end: pass --from, rerun, and get exit 1 anyway.
+    # The truer answer is the one that names why this backend cannot be captured at all.
