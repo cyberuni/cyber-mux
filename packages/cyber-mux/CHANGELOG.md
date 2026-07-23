@@ -1,5 +1,41 @@
 # cyber-mux
 
+## 0.4.0
+
+### Minor Changes
+
+- 2b04288: Add the `cyber-mux worktree provision` CLI verb — the command-line surface over the
+  `provisionWorktree` seam. It reuses a free worktree (the set `worktree list` marks `(removable)` and
+  `prune` removes) or creates a fresh checkout at the sibling path, and reports whether it `reused` or
+  `created`, the worktree, and on reuse the recycled entry. Flags: `--branch` (required), `--base`,
+  `--path`, `--format`.
+
+  The verb uses the **default availability gate only** and offers no flag to inject a host predicate —
+  that is the deliberate surface divergence from the library seam, which takes an injectable one. A
+  host that must exclude, say, a live-session worktree calls `WorktreeApi.provision` directly.
+
+  The worktree spec is now split by public surface to make that divergence first-class: the
+  `cyber-mux worktree <verb>` surface (verbs, flag defaults, table rendering, and this new verb) is
+  specified under `cli/worktree/`, while the surface-independent library contract (the seam, git-owns-
+  facts, removal ordering, and the injectable predicate) stays in `mux/worktree/`.
+
+- 7df7b93: Add `worktree provision` — reuse a free worktree instead of always creating a fresh one. The twin of
+  `prune`: prune removes disposable worktrees, `provisionWorktree` / `WorktreeApi.provision` recycles one
+  through the same default gate (`isWorktreeRemovable`), else creates. Availability is an injected
+  predicate so a host can add its own "no live session bound" check without leaking that concept into
+  the worktree seam. A reused worktree is reset to a pristine tree on a fresh branch (`switch -c` →
+  `reset --hard` → `clean -fdx`). The result reports whether it reused or created, and carries the
+  recycled worktree in full.
+
+### Patch Changes
+
+- bad1d3f: Validate `MuxOpenOptions.ratio` at the seam: a sizing adapter (`tmux`, `herdr`, `wezterm`) now rejects
+  a ratio outside `0 < ratio < 1` with a named error instead of rendering it into a silently broken split
+  (above 1 produced a negative length; 0 or 1 gave a whole-region split). The check lives with the size
+  render (`assertRatioInRange`), so a backend that cannot size a split (`zellij`, which drops the ratio)
+  is unaffected, and `template`'s schema still refuses a degenerate ratio earlier per node. The range was
+  already documented as a contract precondition; it is now enforced. Resolves #18.
+
 ## 0.3.0
 
 ### Minor Changes
