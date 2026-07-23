@@ -12,8 +12,10 @@ todos:
     status: done
   - content: "Impl gate DONE: cold impl-judge IMPLEMENTATION_PASS, 7/7 (2 library + 5 CLI siblings); mutation-tested the 2 new tests (3/3 mutants caught); error strings byte-identical vs origin/main; no scope/absorption/published-surface issues. gate:impl self-asserted. 1 backlog followup (exit-code ordering corner)."
     status: done
-  - content: "Handoff: no changeset (no published-surface change); commit (code+README, then SDD records); push + PR Closes #88; surface backlog followup"
-    status: in_progress
+  - content: "Handoff: no changeset; commits (code+README, SDD records); push + PR #90 Closes #88"
+    status: done
+  - content: "Followup RESOLVED in-session ('just fix it'): backend-unsupported (exit 1) outranks missing-pane (exit 2); cli.ts refuses before target resolution (single-source via CaptureUnsupportedError); pinned by additive frozen scenario template-capture-backend-refusal-outranks-missing-pane + test. cli/template/capture 15/15."
+    status: done
 ---
 
 ## CR
@@ -54,6 +56,9 @@ transition. No changeset (new exports internal, not in published ./template surf
 green (845+8). Ledger shard 88-capture-derive-orchestrator.f9647d records leash + gate:spec + gate:impl
 + 1 backlog followup; combat log records the spec-gate governance-preflight correction.
 
-Remaining: PR landed with Closes #88. Open followup (backlog, ledger): the exit-code ordering corner
-(no-pane + unsupported-backend now exits 2 not 1) — decide deliberately (pin a scenario or document as
-unspecified). Not filed as an issue yet — awaiting the user's go-ahead.
+PR #90 landed with Closes #88. The exit-code ordering followup was RESOLVED in-session (user: "just
+fix it"): backend-unsupported (exit 1) now outranks missing-pane (exit 2) — cli.ts refuses on the
+absent seam member before target resolution, throwing the library's CaptureUnsupportedError (mapped
+once), pinned by the additive frozen scenario template-capture-backend-refusal-outranks-missing-pane
+and its test. cli/template/capture 14→15/15 BOUND+PASS. Nothing outstanding to file. Combat log seq 2
+records the resolution.
