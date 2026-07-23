@@ -1090,6 +1090,50 @@ describe('spec:cyber-mux/template/apply', () => {
 			expect(warning).toContain('apps/web')
 		})
 
+		it('both degrade paths in one apply warn twice — one fact per pane, never collapsed', () => {
+			// Issue #12. The two guards are structurally independent — one is a BACKEND limit (this
+			// backend cannot size a split), the other a ROUTE constraint (the region's cwd is pinned to
+			// the worktree root, so the root pane cannot honor a `dir`). A template that trips both must
+			// say BOTH things: they are different facts about different panes, so two warnings is correct
+			// and nobody may later "helpfully" collapse them into one warn-once.
+			const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+			const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+			const { adapter } = fakeAdapter({ canSizeSplits: false })
+			const template: Template = {
+				name: 'build-trio',
+				root: {
+					type: 'split',
+					direction: 'right',
+					ratio: 0.5,
+					// The root leaf carries a `dir` the pinned region cannot honor → root-directory degrade.
+					first: { type: 'pane', label: 'editor', dir: 'apps/web' },
+					second: { type: 'pane', label: 'spare' },
+				},
+			}
+			const manifest = applyTemplateToRegion(noExec, adapter, template, {
+				root: { id: 'w9:root', tab: 'w9:t1' },
+				cwd: '/repo.worktrees/feat-x',
+				workspace: 'w9',
+				rootEnvHonored: true,
+				dirExists: anyDir,
+				newId: fakeNewId,
+			})
+			// Exactly two warnings, and they are DISTINCT facts — not the same one twice.
+			expect(stderr).toHaveBeenCalledTimes(2)
+			const warnings = stderr.mock.calls.map((c) => String(c[0]))
+			// The route constraint names the pane that lost its dir...
+			const rootDir = warnings.find((w) => w.includes('editor') && w.includes('apps/web'))
+			// ...and the backend limit names the size it could not honor.
+			const ratio = warnings.find((w) => w.includes('cannot size a split'))
+			expect(rootDir).toBeDefined()
+			expect(ratio).toBeDefined()
+			expect(rootDir).not.toBe(ratio)
+			// stdout stays machine-readable through both degrades — the manifest still reports where the
+			// root pane REALLY is, and no warning ever lands on it.
+			expect(stdout).not.toHaveBeenCalled()
+			expect(manifest.panes[0]).toMatchObject({ label: 'editor', pane: 'w9:root', dir: '/repo.worktrees/feat-x' })
+		})
+
 		it('a split-born pane’s dir is still honored on this route — only the root pane degrades', () => {
 			vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
 			const { adapter, calls } = fakeAdapter()
