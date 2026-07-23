@@ -574,6 +574,18 @@ function templateSaveCommand(deps: Deps): Command {
 							)
 						}
 						const a = adapter(deps)
+						// The geometry-capability refusal is UNCONDITIONAL and so outranks the missing-pane usage
+						// error below: a backend that cannot report geometry (or enumerate a workspace) cannot be
+						// captured for ANY pane, so no --from rescues it. Telling such a caller to "pass --from"
+						// would send them down a dead end — pass it, rerun, and get exit 1 anyway. So the
+						// backend-unsupported refusal (exit 1) is raised BEFORE the target is resolved. The DECISION
+						// stays in the library: throw its typed `CaptureUnsupportedError`, mapped to
+						// `backend-unsupported` in the catch below, so the message and exit code are single-source.
+						// Each mode asks only for the member it needs (a backend is never refused for lacking one
+						// this run would not call), matching the derive orchestrator's own check.
+						if (!(opts.workspace ? a.regions?.describeWorkspace : a.regions?.describeRegion)) {
+							throw new CaptureUnsupportedError(a.name, opts.workspace ? 'workspace' : 'region')
+						}
 						// `--from` names a pane explicitly; otherwise capture around the pane THIS process sits in,
 						// which is what makes a bare `template save pool-4` mean "the screen I am looking at".
 						//
@@ -592,11 +604,10 @@ function templateSaveCommand(deps: Deps): Command {
 							)
 						}
 						const captureOpts = { name, description: opts.description ?? CAPTURED_DESCRIPTION }
-						// The geometry-capability refusal lives in the derive orchestrators, not here: each reads
-						// through the adapter and refuses NAMING the backend when its optional seam member is absent
-						// (`CaptureUnsupportedError`, mapped to `backend-unsupported` in the catch below). Each mode
-						// asks only for the member it needs, so a backend is never refused for lacking one this run
-						// would not have called.
+						// The orchestrators re-check the same seam member and refuse the same way — that check is
+						// their own library contract (it is what makes the template/capture refusal provable at that
+						// node, independent of this verb). The early guard above only fixes the ORDER relative to the
+						// missing-pane error; reaching here, the member is already known present.
 						const { template, warnings } = opts.workspace
 							? deriveWorkspaceCapture(a, deps.exec, target, captureOpts)
 							: deriveRegionCapture(a, deps.exec, target, captureOpts)
