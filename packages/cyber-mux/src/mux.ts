@@ -64,6 +64,12 @@ export interface MuxOpenOptions {
 	 * meaningful for a `pane:*` placement; `0 < ratio < 1`, and omitting it takes the backend's own
 	 * even (50/50) default.
 	 *
+	 * The range is a PRECONDITION the seam enforces, not a hint: a sizing backend rejects a ratio
+	 * outside `0 < ratio < 1` (it would render a negative or whole-region split) rather than pass it
+	 * through — see `assertRatioInRange` (`ratio.ts`). A backend that cannot size a split renders no
+	 * ratio and so never checks one; callers degrade to the even default there. `template`'s schema
+	 * refuses a degenerate ratio earlier, per node, so the two layers do different jobs.
+	 *
 	 * The sign convention is the trap, and the two real backends convert in OPPOSITE directions:
 	 * herdr's `--ratio` sizes the original pane, so it is exactly this value and passes through
 	 * unconverted; tmux's `-l` sizes the NEW pane, so it takes `1 - ratio`. Applying the inversion to

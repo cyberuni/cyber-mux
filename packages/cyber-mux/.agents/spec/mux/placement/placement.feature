@@ -269,6 +269,33 @@ Feature: mux placement — where a new pane opens, and what open reports back
       | tab       |
       | workspace |
 
+  @id:placement-ratio-out-of-range-rejected
+  Scenario Outline: a ratio outside 0 < ratio < 1 is rejected at the seam, never rendered into a broken split
+    Given a caller opening at pane:right through the <adapter> adapter, with ratio <ratio>
+    When open runs
+    Then open throws, naming that ratio must be strictly between 0 and 1
+    And no split command reaches the backend
+
+    Examples:
+      | adapter | ratio |
+      | tmux    | 1.5   |
+      | tmux    | 0     |
+      | herdr   | 1.5   |
+      | herdr   | 0     |
+      | wezterm | 1.5   |
+      | wezterm | 0     |
+
+    # The range is a PRECONDITION the seam enforces, not a hint the caller is trusted to honor. Above 1
+    # the sizing render goes negative (tmux -l -50%, wezterm --percent -50); 0 or 1 hands one side the
+    # whole region and the other nothing. Rendered rather than refused, each is a SILENTLY broken split,
+    # which is the exact silent-wrong output this seam's loud-over-quiet preference refuses. The guard
+    # lives with the size render, so it throws before the split command is issued. Range VALIDITY is a
+    # universal property of what a ratio is — true on every backend — and so belongs here; the DEGRADE
+    # policy for a backend that cannot size a split at all stays the caller's, unchanged. A backend that
+    # renders no ratio (zellij, which drops it) reaches no guard — a dropped value is never checked.
+    # `template`'s schema still refuses a degenerate ratio earlier, per node, with a path-qualified
+    # message: two layers, different jobs, the seam the backstop for a direct caller with no schema.
+
   @id:placement-env-native-at-birth
   Scenario Outline: env is set natively at the birth of whatever tier is opened
     Given a caller opening at <at> through the <adapter> adapter, with env ROLE=worker

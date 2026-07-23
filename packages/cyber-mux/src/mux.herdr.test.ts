@@ -292,6 +292,20 @@ describe('spec:cyber-mux/mux/placement', () => {
 			expect(calls[0]).not.toContain('--ratio')
 		})
 
+		// The seam refuses a ratio outside `0 < ratio < 1` before `--ratio` reaches herdr, rather than
+		// pass `--ratio 5` (or `0`) through to a split herdr would then size wrong. It throws before any
+		// exec call, so no split command is issued.
+		it.each([1.5, 0])('placement-ratio-out-of-range-rejected', (ratio) => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, {
+				'pane split': JSON.stringify({ result: { pane: { pane_id: 'w3:pB', tab_id: 'w3:t1' } } }),
+			})
+			expect(() => herdrMuxAdapter.open(exec, { cwd: '/u', at: 'pane:right', ratio })).toThrow(
+				/ratio must be strictly between 0 and 1/,
+			)
+			expect(calls).toEqual([])
+		})
+
 		it('placement-env-each-var-own-flag', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, {

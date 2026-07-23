@@ -447,3 +447,62 @@ Decisions (`83-adopt-scenario-bridge-binding` — adopt the SDD scenario-bridge 
   **not** author the missing tests (out of the issue's binding scope) and does **not** invent a binding.
   The impl-judge hand-derives those few — the pre-existing state — so the CR is a strict net improvement,
   not a regression.
+
+Decisions (`18-seam-ratio-range` — should the seam validate `MuxOpenOptions.ratio`, or is the range the caller's, issue #18):
+
+- **the SEAM validates `0 < ratio < 1`, and the range is a precondition rather than a caller
+  convention** — DECIDED, resolving a fork the split-options fold-back (CR 10) left deliberately open.
+  The prior state was a recorded boundary: adapters rendered whatever number they were handed, the
+  `0 < ratio < 1` bar lived only in `template/`'s schema, and a caller reaching an adapter directly —
+  the only way to set a ratio today, no CLI flag exposes it — got no check. That renders a *silently
+  broken* split for an out-of-range value: above 1 the sizing math goes negative (`tmux -l -50%`,
+  `wezterm --percent -50`), and 0 or 1 hands one side the whole region and the other nothing. Neither
+  adapter refused either. The issue framed it as a genuine fork — validate at the seam, or keep the
+  range the caller's with the schema its only home — and called both defensible. **Chosen: validate at
+  the seam**, on the corpus's own dominant principle. This seam prefers a loud refusal to a silent
+  wrong answer everywhere else it has faced the choice (screen's honest rejection over a half-faithful
+  adapter, wezterm's pane-rename throw over a silent no-op, `absent` over a false `none`); an
+  out-of-range ratio rendered into a negative length is precisely that silent-wrong output, and the
+  one place the seam was still paying the cost it refuses elsewhere. The `MuxOpenOptions.ratio`
+  contract already *documented* `0 < ratio < 1`; leaving it unenforced made the contract a claim no
+  code stood behind — the same shape as the `screen` value that was named-but-unbacked (`45`), here
+  producing garbage rather than a lie.
+
+- **range validity is the seam's; degrade policy stays the caller's — the env decision draws exactly
+  this line** — DECIDED, and it is why this does not contradict the recorded reason the ratio DEGRADE
+  policy lives with `template`. The env grill (`placement.feature`, `--env` block) kept ratio's degrade
+  policy with the caller *because template is its only caller*, and moved env's *meaning* to the seam
+  *because env has two*. Those are two different questions about ratio: **degrade policy** — what to do
+  when a backend cannot size a split *at all* — is genuinely a caller choice (warn once, take the even
+  default), unchanged here; **range validity** — whether 5, 0, or −1 is a legal ratio — is a universal
+  property of what a ratio IS, true on every backend, the seam's own vocabulary. By the env decision's
+  own logic the universal invariant belongs at the seam, so a second caller (the corpus already
+  anticipates "another such caller") cannot quietly reach an adapter with a malformed value. The two
+  are fully compatible: this CR moves only the invariant, and touches no degrade path.
+
+- **the guard lives WITH the size render, so a backend that renders no ratio checks none** — DECIDED.
+  `assertRatioInRange` (`ratio.ts`, a shared module in the `env-fallback.ts` mold — one cross-adapter
+  rule in one place so it cannot be wired on one adapter and forgotten on another) is called by each
+  sizing backend's size helper (`toTmuxSize`, `toWeztermSize`, herdr's new `toHerdrRatio`). It throws
+  before the split command is built, so no broken split is ever issued. A backend that cannot size a
+  split (`zellij`) renders no ratio and so never reaches the guard — a dropped value is never checked,
+  valid or not, which is the same even-default degrade its callers already take. This keeps the
+  adapters honest renderers (the check is a precondition at the render's mouth, not scattered logic)
+  while closing the footgun.
+
+- **`template`'s schema is KEPT as the earlier, per-node layer — two layers, different jobs** —
+  DECIDED, not collapsed into the seam guard. The schema refuses a degenerate ratio at
+  `template validate` time, per node, with a path-qualified message (`root.first.ratio: must be a
+  number strictly between 0 and 1 — got …`) — a better authoring signal than a bare seam throw, and it
+  catches the whole template before any pane opens. The seam guard is the backstop for a *direct*
+  caller that has no schema in front of it. Defense in depth is idiomatic here (env's meaning at the
+  seam plus its flag surface at the CLI; occupancy vs binding as separate reports), so the overlap is
+  deliberate, not a duplication to remove.
+
+- **decided rather than mailed, and recorded for the owner's ratification at the PR** — DECIDED. The
+  issue called the fork 50/50, which would ordinarily be the owner's call. It is not a coin-flip once
+  the seam's loud-over-quiet principle is weighed against a concrete silent-corruption failure, so the
+  decision was made on that principle and recorded here — in the append-only, descriptive log that is
+  the owner's ratification point at review — rather than deferred. If the owner prefers the thin-seam
+  boundary, the change is a small, cleanly revertable guard plus one additive scenario, and this entry
+  is the full rationale to revert against.
