@@ -11,6 +11,7 @@ import type {
 	WorktreeWorkspace,
 	WorktreeWorkspaceCapability,
 } from './mux.ts'
+import { assertRatioInRange } from './ratio.ts'
 import { normalizeWorktreePath } from './worktree.ts'
 
 /**
@@ -81,7 +82,7 @@ export const herdrMuxAdapter: MuxAdapter = {
 			// what `ratio` means. tmux's `-l` sizes the new pane and therefore inverts — the one place
 			// the two backends convert in opposite directions. Measured against 0.7.4 (splitting a
 			// 201-column region at `--ratio 0.333` left the original 67 columns), not documented.
-			const size = opts.ratio != null ? ['--ratio', String(opts.ratio)] : []
+			const size = opts.ratio != null ? ['--ratio', toHerdrRatio(opts.ratio)] : []
 			const out = exec('herdr', [
 				'pane',
 				'split',
@@ -406,6 +407,17 @@ function herdrPaneDetails(exec: Exec, workspace?: string | undefined): Map<strin
  */
 function envFlags(env: Record<string, string> | undefined): string[] {
 	return env ? Object.entries(env).flatMap(([k, v]) => ['--env', `${k}=${v}`]) : []
+}
+
+/**
+ * `--ratio` takes the seam's number VERBATIM — herdr sizes the ORIGINAL pane, so no inversion, unlike
+ * tmux's `-l` and wezterm's `--percent`. The guard is the same one those two render helpers call: the
+ * seam refuses an out-of-range ratio here rather than pass `--ratio 5` (or `0`) through to a split herdr
+ * would then size wrong.
+ */
+function toHerdrRatio(ratio: number): string {
+	assertRatioInRange(ratio)
+	return String(ratio)
 }
 
 /**

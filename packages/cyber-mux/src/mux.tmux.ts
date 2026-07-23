@@ -1,6 +1,7 @@
 import type { Exec } from './exec.ts'
 import { withReason } from './exec.ts'
 import type { LivePane, MuxAdapter, MuxReadOptions, OpenedPane, RegionPane, WorkspaceTab } from './mux.ts'
+import { assertRatioInRange } from './ratio.ts'
 
 /**
  * The tmux window user option `MuxOpenOptions.workspaceGroup` is stored in. A user option (the
@@ -439,6 +440,7 @@ function splitOpenReport(out: string, command: string): [string, string] {
  * the same thing without first querying the region's size.
  */
 function toTmuxSize(ratio: number): string {
+	assertRatioInRange(ratio)
 	return `${Math.round((1 - ratio) * 100)}%`
 }
 

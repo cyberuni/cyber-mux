@@ -107,9 +107,20 @@ after it exists is [`lookup/`](../lookup/README.md); binding a checkout to a wor
     "the route that cannot carry env": what the seam does about it is here, how the flag reports it is
     there.
 
-  **Boundary — the seam does not validate `ratio`.** It renders whatever number it is given; the
-  `0 < ratio < 1` bar belongs to the caller (template's schema enforces it, and is where a degenerate
-  ratio is refused). An adapter author owes the rendering, not the range check.
+  **The seam enforces `0 < ratio < 1` — it is a precondition, not a hint.** A sizing backend rejects a
+  ratio outside the range rather than render it, because outside the range there is no split it names:
+  above 1 the sizing render goes negative (tmux `-l -50%`, wezterm `--percent -50`), and 0 or 1 hands
+  one side the whole region and the other nothing. Rendered rather than refused, each is a *silently
+  broken* split — the exact silent-wrong output this seam's loud-over-quiet preference refuses, and the
+  reason the range moved from a caller convention to a seam guard (`45-screen-adapter`-style decision,
+  recorded in the [decisions log](../../design/decisions/README.md)). The check lives with the size
+  render (`assertRatioInRange`, `ratio.ts`, called by each backend's size helper), so it throws before
+  the split command is issued and a backend that renders no ratio (zellij drops it) reaches no guard —
+  a dropped value is never checked. What stays the caller's is the **degrade policy** — what to do when
+  a backend cannot size a split *at all* — never the range: range validity is a universal property of
+  what a ratio is. `template`'s schema still refuses a degenerate ratio *earlier*, per node, with a
+  path-qualified message; the two are layers with different jobs, the seam the backstop for a direct
+  caller that has no schema in front of it.
 
 - **A caller can group the spaces it opens, on a backend with no tier to group them in** — one more
   option on the open contract, and the same shape as the three above: not a CLI flag, reached through
@@ -353,6 +364,7 @@ Every scenario in [`placement.feature`](./placement.feature), one row each, grou
 | `ratio` omitted → no sizing flag, an even split | each of the three adapters | `ratio omitted leaves each backend its own even default` |
 | `ratio` given on tab or workspace → no sizing flag | tmux | `ratio is a split concept — a tab or workspace is never sized against a pane` |
 | `ratio` given on tab or workspace → no sizing flag | wezterm | `ratio is a split concept on wezterm too — a tab or workspace is never sized against a pane` |
+| `ratio` outside `0 < ratio < 1` → rejected before the split is issued | each sizing adapter (tmux, herdr, wezterm), ratio 1.5 and 0 | `a ratio outside 0 < ratio < 1 is rejected at the seam, never rendered into a broken split` |
 | tier has a native env flag → set at birth | every tier on tmux and herdr | `env is set natively at the birth of whatever tier is opened` |
 | no native env flag on this route → the fallback | every tier on wezterm | `env is native at NO tier on wezterm — every route takes the fallback, not just one` |
 | tier has a native env flag → one flag per variable, in order | tmux and herdr, two variables | `each env variable gets its own flag, in the order given` |

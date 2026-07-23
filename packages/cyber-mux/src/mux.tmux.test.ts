@@ -218,6 +218,18 @@ describe('spec:cyber-mux/mux/placement', () => {
 		expect(calls[0]).not.toContain('70%')
 	})
 
+	// The seam refuses a ratio outside `0 < ratio < 1` rather than render `-l -50%` (above 1) or a
+	// whole-region `-l 100%` (0). It throws BEFORE the split command reaches tmux, so no broken split
+	// is created — the loud-over-quiet answer the boundary now takes.
+	it.each([1.5, 0])('placement-ratio-out-of-range-rejected', (ratio) => {
+		const calls: string[][] = []
+		const exec = fakeExec(calls, { 'split-window': '%9\t@1' })
+		expect(() => tmuxMuxAdapter.open(exec, { cwd: '/u', at: 'pane:right', ratio })).toThrow(
+			/ratio must be strictly between 0 and 1/,
+		)
+		expect(calls).toEqual([])
+	})
+
 	it('placement-env-each-var-own-flag', () => {
 		const calls: string[][] = []
 		const exec = fakeExec(calls, { 'split-window': '%9\t@1' })

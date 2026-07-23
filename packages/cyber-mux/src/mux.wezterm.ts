@@ -2,6 +2,7 @@ import { envFallback } from './env-fallback.ts'
 import { type Exec, withReason } from './exec.ts'
 import type { LivePane, MuxAdapter, MuxReadOptions, OpenedPane } from './mux.ts'
 import { type NewId, nodeNewId } from './new-id.ts'
+import { assertRatioInRange } from './ratio.ts'
 
 /**
  * WezTerm backend — detected via `$WEZTERM_PANE`. Drives WezTerm's built-in multiplexer through
@@ -314,6 +315,7 @@ function weztermCwd(cwd: string | undefined): string | undefined {
  * probe note, #47) — the same inversion tmux's `-l` needs, unlike herdr's pass-through.
  */
 function toWeztermSize(ratio: number): string {
+	assertRatioInRange(ratio)
 	return String(Math.round((1 - ratio) * 100))
 }
 

@@ -165,6 +165,18 @@ describe('spec:cyber-mux/mux/placement', () => {
 			expect(calls[0]).not.toContain('--percent')
 		})
 
+		// The seam refuses a ratio outside `0 < ratio < 1` before `--percent` reaches wezterm, rather than
+		// render `--percent -50` (above 1) or `--percent 100` (0). It throws before any exec call, so no
+		// split-pane command is issued.
+		it.each([1.5, 0])('placement-ratio-out-of-range-rejected', (ratio) => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'split-pane': '9', list: LIST_ONE })
+			expect(() => weztermMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right', ratio })).toThrow(
+				/ratio must be strictly between 0 and 1/,
+			)
+			expect(calls).toEqual([])
+		})
+
 		// A ratio is a split concept — a tab or workspace opens with `spawn`, which has no --percent
 		// flag at all, because a window is never sized against a pane.
 		it.each<{ at: MuxPlacement }>([
