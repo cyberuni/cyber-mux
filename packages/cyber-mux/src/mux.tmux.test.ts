@@ -954,4 +954,20 @@ describe('spec:cyber-mux/mux/lookup', () => {
 		// the CLI's resolver compares against.
 		expect(panes.filter((p) => p.label === 'my worker').map((p) => p.id)).toEqual(['%1'])
 	})
+
+	it('lookup-listing-agent-status-absent-non-herdr', () => {
+		// tmux carries no agent-state feed at all, so no pane ever reports agentStatus — absent, never a
+		// false 'unknown'. The tmux row of the outline; the wezterm/zellij rows live in their own files.
+		const exec = fakeExec([], { 'list-panes': '%1\tclaude\t/repo/a\tworker\tzeta\n%3\tzsh\t/repo/b\tsidebar\tzeta' })
+		const panes = tmuxMuxAdapter.listPanes(exec)
+		for (const pane of panes) expect(pane.agentStatus).toBeUndefined()
+	})
+})
+
+describe('spec:cyber-mux/agent', () => {
+	it('agent-lifecycle-absent-non-herdr', () => {
+		// tmux has no native per-pane agent-state wait, so the optional capability is genuinely absent —
+		// its absence IS the refusal deriveAgentWait turns into AgentLifecycleUnsupportedError.
+		expect(tmuxMuxAdapter.agentLifecycle).toBeUndefined()
+	})
 })

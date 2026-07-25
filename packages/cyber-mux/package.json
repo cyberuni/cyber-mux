@@ -35,6 +35,10 @@
 			"types": "./dist/template.d.mts",
 			"default": "./dist/template.mjs"
 		},
+		"./agent": {
+			"types": "./dist/agent.d.mts",
+			"default": "./dist/agent.mjs"
+		},
 		"./package.json": "./package.json"
 	},
 	"files": [

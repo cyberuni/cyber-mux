@@ -4186,3 +4186,100 @@ describe('spec:cyber-mux/cli/template/capture', () => {
 		expect(store.writes).toEqual({})
 	})
 })
+
+describe('spec:cyber-mux/cli/agent', () => {
+	let logs: string[]
+
+	beforeEach(() => {
+		logs = []
+		vi.spyOn(console, 'log').mockImplementation((line: string) => {
+			logs.push(line)
+		})
+		vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+		vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+	})
+
+	afterEach(() => {
+		vi.restoreAllMocks()
+	})
+
+	function catchExit() {
+		return vi.spyOn(process, 'exit').mockImplementation((code) => {
+			throw new Error(`exit:${code}`)
+		})
+	}
+
+	const HERDR_ENV = { CYBER_MUX: 'herdr' }
+	/** A herdr pane list carrying the 0.7.5 per-pane agent_status feed. */
+	const PANE_LIST_WORKING = JSON.stringify({
+		result: { panes: [{ pane_id: 'w3:p1', agent: 'claude', agent_status: 'working', cwd: '/repo' }] },
+	})
+	/** herdr's `agent wait` envelope — the reached status at `.result.agent.agent_status`. */
+	const WAIT_REACHED = (status: string) =>
+		JSON.stringify({ result: { agent: { pane_id: 'w3:p1', agent_status: status }, type: 'agent_info' } })
+
+	// ── agent status: a snapshot that degrades, never refuses ──
+
+	it('cli-agent-status-prints-herdr', async () => {
+		const program = buildProgram({ env: HERDR_ENV, exec: fakeHerdrExec([], { 'pane list': PANE_LIST_WORKING }) })
+		await run(program, ['agent', 'status', 'w3:p1'])
+		expect(logs.join('\n')).toContain('working')
+	})
+
+	it('cli-agent-status-json-payload', async () => {
+		await withArgv(['agent', 'status', 'w3:p1', '--format', 'json'], async () => {
+			const program = buildProgram({ env: HERDR_ENV, exec: fakeHerdrExec([], { 'pane list': PANE_LIST_WORKING }) })
+			await run(program, ['agent', 'status', 'w3:p1', '--format', 'json'])
+		})
+		expect(JSON.parse(logs.join('\n'))).toEqual({ pane: 'w3:p1', agentStatus: 'working' })
+	})
+
+	it('cli-agent-status-no-feed-degrades', async () => {
+		// A tmux pane — no agent-state feed. The pane still resolves and prints; no agentStatus, exit 0.
+		const exit = catchExit()
+		const paneList = '%1\tclaude\t/repo\tworker\tzeta'
+		const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: fakeTmuxExec([], { 'list-panes': paneList }) })
+		await run(program, ['agent', 'status', '%1'])
+		expect(logs.join('\n')).toContain('%1')
+		expect(logs.join('\n')).not.toContain('agentStatus')
+		// Degraded truthfully, not refused — no non-zero exit was taken.
+		expect(exit).not.toHaveBeenCalled()
+	})
+
+	// ── agent wait: drives herdr's capability, or refuses naming the backend ──
+
+	it('cli-agent-wait-drives-herdr', async () => {
+		const calls: string[][] = []
+		const program = buildProgram({
+			env: HERDR_ENV,
+			exec: fakeHerdrExec(calls, { 'pane list': PANE_LIST_WORKING, 'agent wait': WAIT_REACHED('idle') }),
+		})
+		await run(program, ['agent', 'wait', 'w3:p1', '--until', 'idle', '--timeout', '5000'])
+		expect(logs.join('\n')).toContain('idle')
+		expect(calls.find((c) => c[0] === 'agent' && c[1] === 'wait')).toEqual([
+			'agent',
+			'wait',
+			'w3:p1',
+			'--until',
+			'idle',
+			'--timeout',
+			'5000',
+		])
+	})
+
+	it('cli-agent-wait-unsupported-refused', async () => {
+		// The outline's three rows — every backend with no agent-lifecycle capability is refused with
+		// backend-unsupported at exit 1, the help line naming the herdr-only constraint. The refusal is
+		// BEFORE any exec (the exec here returns null unconditionally and is never consulted for it).
+		for (const backend of ['tmux', 'wezterm', 'zellij']) {
+			logs.length = 0
+			catchExit()
+			const program = buildProgram({ env: { CYBER_MUX: backend }, exec: () => null })
+			await expect(run(program, ['agent', 'wait', 'p1'])).rejects.toThrow('exit:1')
+			const out = logs.join('\n')
+			expect(out).toContain('backend-unsupported')
+			expect(out).toContain(backend)
+			expect(out.toLowerCase()).toContain('herdr')
+		}
+	})
+})

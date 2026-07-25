@@ -2,6 +2,7 @@ import { resolve } from 'node:path'
 import { envFallback } from './env-fallback.ts'
 import { type Exec, withReason } from './exec.ts'
 import type {
+	AgentStatus,
 	LivePane,
 	MuxAdapter,
 	MuxReadOptions,
@@ -218,8 +219,13 @@ export const herdrMuxAdapter: MuxAdapter = {
 			.filter(
 				(
 					p,
-				): p is { pane_id: string; agent?: string | undefined; cwd?: string | undefined; label?: string | undefined } =>
-					typeof p?.pane_id === 'string',
+				): p is {
+					pane_id: string
+					agent?: string | undefined
+					agent_status?: unknown | undefined
+					cwd?: string | undefined
+					label?: string | undefined
+				} => typeof p?.pane_id === 'string',
 			)
 			.map((p): LivePane => {
 				const harness = p.agent || undefined
@@ -230,10 +236,16 @@ export const herdrMuxAdapter: MuxAdapter = {
 				// because it lacks this primitive. Each key is OMITTED when absent (conditional spread)
 				// rather than carried as an explicit `undefined`, so these stay absent-or-present fields.
 				const label = p.label || undefined
+				// herdr 0.7.5's per-pane agent-state feed (`agent_status`). Absent/empty/unrecognized folds
+				// to OMITTED — never a false `'unknown'` — the same absent-not-false rule `harness`/`label`
+				// follow: a missing feed is the field simply not being there. (`'unknown'` IS a valid value,
+				// herdr's own for a pane it cannot classify, and passes through when present.)
+				const agentStatus = toAgentStatus(p.agent_status)
 				return {
 					id: p.pane_id,
 					mux: 'herdr' as const,
 					...(harness !== undefined ? { harness } : {}),
+					...(agentStatus !== undefined ? { agentStatus } : {}),
 					...(p.cwd !== undefined ? { cwd: p.cwd } : {}),
 					...(label !== undefined ? { label } : {}),
 				}
@@ -311,6 +323,62 @@ export const herdrMuxAdapter: MuxAdapter = {
 			return tabs
 		},
 	},
+
+	agentLifecycle: {
+		waitForState(exec, target, opts) {
+			// `herdr agent wait <id> [--until <s>]… [--timeout <ms>]`, addressing the pane id directly
+			// (verified against 0.7.5: `w3A:p1` worked). `--until` is REPEATED once per requested state,
+			// and OMITTED entirely when the caller passed none — so herdr's own default set (idle|done|
+			// blocked) applies rather than cyber-mux restating it, and a future change to that default is
+			// not silently pinned here. `--timeout` is likewise omitted for an indefinite wait, herdr's own
+			// no-timeout behavior.
+			const until = opts.until ?? []
+			const args = [
+				'agent',
+				'wait',
+				target.id,
+				...until.flatMap((state) => ['--until', state]),
+				...(opts.timeoutMs != null ? ['--timeout', String(opts.timeoutMs)] : []),
+			]
+			const status = parseReachedAgentStatus(exec('herdr', args))
+			if (!status) {
+				throw new Error(withReason(exec, `herdr agent wait reported no reached agent_status for pane ${target.id}`))
+			}
+			return status
+		},
+	},
+}
+
+/**
+ * The set of `agent_status` values herdr 0.7.5 reports — the runtime witness of the `AgentStatus`
+ * type, so a string read off a herdr envelope can be NARROWED to it rather than cast. A value outside
+ * this set is treated as absent (the feed said something this build does not model), never forced into
+ * the type.
+ */
+const AGENT_STATUSES: readonly AgentStatus[] = ['idle', 'working', 'blocked', 'done', 'unknown']
+
+/** A value narrowed to `AgentStatus`, or `undefined` for anything else (a non-string, an empty string,
+ * or a status this build does not model) — the normalization both the listing and the wait share. */
+function toAgentStatus(value: unknown): AgentStatus | undefined {
+	return typeof value === 'string' && (AGENT_STATUSES as readonly string[]).includes(value)
+		? (value as AgentStatus)
+		: undefined
+}
+
+/**
+ * The `AgentStatus` a `herdr agent wait` run reached, read defensively from its JSON envelope —
+ * `{"result":{"agent":{…,"agent_status":"idle",…},"type":"agent_info"}}` (verified against 0.7.5), so
+ * the reached status lives at `.result.agent.agent_status`. Every unresolvable shape — `out` is null
+ * (an Exec failure), the JSON does not parse, or the field is missing/empty/unmodeled — folds to
+ * `undefined`, exactly as `parsePaneRecord`/`isPaneFocused` fold, so the caller states its own failure.
+ */
+function parseReachedAgentStatus(out: string | null): AgentStatus | undefined {
+	if (out == null) return undefined
+	try {
+		return toAgentStatus(JSON.parse(out)?.result?.agent?.agent_status)
+	} catch {
+		return undefined
+	}
 }
 
 /**

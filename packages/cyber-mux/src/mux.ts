@@ -187,6 +187,15 @@ export interface OpenedPane extends MuxTarget {
 	workspace?: string | undefined
 }
 
+/**
+ * The lifecycle state a per-pane agent-state feed reports — herdr's native `agent_status`
+ * (`herdr` 0.7.5). `unknown` is herdr's OWN value for a pane whose agent it cannot classify, NOT a
+ * cyber-mux stand-in for "no feed": a backend with no feed at all reports no `agentStatus` field on
+ * `LivePane` rather than `'unknown'`, the same absent-not-false convention `harness` and `label`
+ * follow.
+ */
+export type AgentStatus = 'idle' | 'working' | 'blocked' | 'done' | 'unknown'
+
 /** A pane the backend can currently see, as reported by `listPanes` (bulk enumeration). */
 export interface LivePane {
 	/** Backend-native pane id. */
@@ -212,6 +221,17 @@ export interface LivePane {
 	 * resolved where the caller is — at lookup — rather than refused at authoring time.
 	 */
 	label?: string | undefined
+	/**
+	 * The pane's agent-lifecycle state, when the backend has a per-pane agent-state feed (herdr only —
+	 * herdr 0.7.5's `agent_status`).
+	 *
+	 * **Absent means the backend has no agent-state feed**, exactly as `harness` means "the backend
+	 * cannot report a harness" — NOT `'unknown'`, which is herdr's own value for a pane whose agent it
+	 * genuinely cannot classify. tmux, wezterm and zellij carry no such feed at all, so this field is
+	 * simply not present on their panes; a caller must never read its absence as `'unknown'`. The
+	 * blocking wait built on this feed is the separate, herdr-only `AgentLifecycle` capability.
+	 */
+	agentStatus?: AgentStatus | undefined
 }
 
 export interface MuxReadOptions {
@@ -440,6 +460,39 @@ export interface RegionInspector {
 	describeWorkspace(exec: Exec, target: MuxTarget): WorkspaceTab[]
 }
 
+/** What a `waitForState` blocks on: the states that end the wait, and how long it may run. */
+export interface AgentWaitOptions {
+	/**
+	 * The agent states any one of which ends the wait. Omit to let the backend apply its OWN default
+	 * (herdr's is `idle|done|blocked`) — cyber-mux never restates that default in the command it runs,
+	 * so a future change to herdr's default is not silently pinned by this binding.
+	 */
+	until?: AgentStatus[] | undefined
+	/** Milliseconds before the wait gives up; omit for an indefinite wait (the backend's own default). */
+	timeoutMs?: number | undefined
+}
+
+/**
+ * The optional capability a backend implements when it has a NATIVE, blocking per-pane agent-state
+ * wait (herdr's `agent wait`, built on the 0.7.5 `agent_status` feed) — present ONLY on a backend with
+ * that primitive, absent on every backend without one.
+ *
+ * Absent rather than a degraded emulation, the same all-or-nothing convention `worktree` and `regions`
+ * follow: a lookalike wait built from `read()` polling would silently disagree with herdr's own state
+ * derivation on the same question, so a backend that lacks the primitive is not present here in a weak
+ * form — it is not present at all, and the orchestrator (`deriveAgentWait`, `agent.ts`) refuses rather
+ * than guesses. `waitForState` never sees the adapter: it only ever runs against the one backend that
+ * has it, which is why the emulate-or-refuse decision lives one level up.
+ */
+export interface AgentLifecycle {
+	/**
+	 * Block until the target pane's agent reaches one of `opts.until` (or the backend's own default set
+	 * when omitted), or `opts.timeoutMs` elapses. Returns the `AgentStatus` actually reached, so the
+	 * caller learns WHICH requested state (or the timeout) ended the wait, not merely that it ended.
+	 */
+	waitForState(exec: Exec, target: MuxTarget, opts: AgentWaitOptions): AgentStatus
+}
+
 export interface MuxAdapter {
 	/** Backend name, e.g. "tmux" or "herdr". */
 	readonly name: string
@@ -597,4 +650,12 @@ export interface MuxAdapter {
 	 * one object: the two reads share a single all-or-nothing precondition.
 	 */
 	readonly regions?: RegionInspector | undefined
+	/**
+	 * The optional native agent-lifecycle-wait capability (`AgentLifecycle`), present only on a backend
+	 * with a blocking per-pane agent-state primitive (herdr) and absent on one without (tmux, wezterm,
+	 * zellij). `agent wait` gates on it — refusing by NAMING the backend rather than emulating, because
+	 * a wait has no truthful degrade. Its ABSENCE is the refusal; see `deriveAgentWait` in `agent.ts`,
+	 * the single place that sees the adapter and so the single place the refusal can be made.
+	 */
+	readonly agentLifecycle?: AgentLifecycle | undefined
 }

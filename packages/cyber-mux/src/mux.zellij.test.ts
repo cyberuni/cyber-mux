@@ -271,5 +271,21 @@ describe('spec:cyber-mux/mux/lookup', () => {
 			const exec = fakeExec([], { 'list-panes': 'not json' })
 			expect(zellijMuxAdapter.listPanes(exec)).toEqual([])
 		})
+
+		it('lookup-listing-agent-status-absent-non-herdr', () => {
+			// zellij carries no agent-state feed at all, so no pane ever reports agentStatus — absent,
+			// never a false 'unknown'. The zellij row of the outline.
+			const exec = fakeExec([], { 'list-panes': LIST_ONE })
+			const panes = zellijMuxAdapter.listPanes(exec)
+			for (const pane of panes) expect(pane.agentStatus).toBeUndefined()
+		})
+	})
+})
+
+describe('spec:cyber-mux/agent', () => {
+	it('agent-lifecycle-absent-non-herdr', () => {
+		// zellij has no native per-pane agent-state wait, so the optional capability is genuinely absent
+		// — its absence IS the refusal deriveAgentWait turns into AgentLifecycleUnsupportedError.
+		expect(zellijMuxAdapter.agentLifecycle).toBeUndefined()
 	})
 })

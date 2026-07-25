@@ -31,6 +31,7 @@ the behavior lives in the surface nodes below.
 | [`lookup/`](./lookup/README.md) | [`mux/lookup/`](../mux/lookup/README.md) | `read`, `focus`, `close`, `list`, `exists` — the pane verbs, **and the shared AXI error/usage contract every `cyber-mux` verb routes through** (structured error on stdout, per-failure codes, the exit-code taxonomy, `--format json`, no raw-diagnostic leak). |
 | [`worktree/`](./worktree/README.md) | [`mux/worktree/`](../mux/worktree/README.md) | `add`, `provision`, `open`, `list`, `remove`, `prune` — flag defaults, table rendering, and the `provision` verb's default-gate-only invocation. |
 | [`template/`](./template/README.md) | [`template/apply/`](../template/apply/README.md), [`template/capture/`](../template/capture/README.md) | `template list/show/validate` (apply-side) and `template save` (capture-side) — the verbs, flags, and manifest/`--format` output over the template engine. Two subnodes mirror the two-node library split. |
+| [`agent/`](./agent/README.md) | [`agent/`](../agent/README.md) | `agent status`, `agent wait` — the snapshot read that degrades truthfully on a no-feed backend, and the blocking wait that refuses with `backend-unsupported` where the capability is absent. |
 
 Every `cli/` node cross-references [`lookup/`](./lookup/README.md) for the shared AXI failure contract
 rather than restating it.

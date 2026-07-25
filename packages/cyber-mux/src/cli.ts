@@ -1,10 +1,11 @@
 import { join } from 'node:path'
 import { Command, CommanderError, Option } from 'commander'
+import { AgentLifecycleUnsupportedError, deriveAgentWait } from './agent.ts'
 import { callerPane, resolveMuxAdapter } from './backend.ts'
 import { AmbiguousPaneError, CliError, reportError } from './cli-error.ts'
 import { AT_OPTION, ENV_OPTION, FORMAT_OPTION, LABEL_OPTION } from './cli-options.ts'
 import { type Exec, nodeExec } from './exec.ts'
-import type { LivePane, MuxAdapter, MuxPlacement, MuxTarget } from './mux.ts'
+import type { AgentStatus, LivePane, MuxAdapter, MuxPlacement, MuxTarget } from './mux.ts'
 import { currentPane, probeMultiplexer } from './mux-probe.ts'
 import { nodeNewId } from './new-id.ts'
 import { type HelpEntry, isAutomatedOutput, output, printFields, printHelp, printTable, tildify } from './output.ts'
@@ -1299,6 +1300,126 @@ function existsCommand(deps: Deps): Command {
 		)
 }
 
+/**
+ * The CLI surface of the library's agent-wait refusal: exit 1 (a genuine operation failure, not a
+ * usage error), naming the backend, with a fix hint pointing at the herdr-only constraint. The
+ * DECISION to refuse is the orchestrator's (`AgentLifecycleUnsupportedError`); this composes only the
+ * presentation, so the sentence lives in one place — the exact mirror of how `backendUnsupported`
+ * surfaces `CaptureUnsupportedError` for `template save`.
+ */
+function agentUnsupported(err: AgentLifecycleUnsupportedError): CliError {
+	return new CliError(
+		'backend-unsupported',
+		`${err.backend} cannot wait on agent-lifecycle state — agent wait needs a backend with a native per-pane agent-state feed (herdr)`,
+		'run agent wait on herdr, the only backend with a native agent-state feed',
+		1,
+	)
+}
+
+/**
+ * `agent status <pane>` — a SNAPSHOT that degrades, never refuses. It resolves a pane through the
+ * shared ladder and prints its `agentStatus`, a fact independent of whether the backend can WAIT on it
+ * (that is `agent wait`'s herdr-only capability). A backend with no agent-state feed still answers
+ * truthfully — the pane, with no status — and exits 0: refusing here would turn a caller away from a
+ * fact the backend CAN answer (which pane this is) because of one it can't (what its agent is doing),
+ * and the two are independent.
+ */
+function agentStatusCommand(deps: Deps): Command {
+	return new Command('status')
+		.description("Print a pane's agent-lifecycle status (herdr); degrades to no status on a backend with no feed")
+		.argument('<pane>', 'Target pane id or label')
+		.addOption(FORMAT_OPTION)
+		.action(
+			guarded((pane: string) => {
+				const a = adapter(deps)
+				const target = resolveTarget(deps, a, pane)
+				// The status rides on the same live listing a name resolves from. A listing that cannot be
+				// read degrades to "no status" rather than failing the snapshot — the pane is still named.
+				let agentStatus: AgentStatus | undefined
+				try {
+					agentStatus = a.listPanes(deps.exec).find((p) => p.id === target.id)?.agentStatus
+				} catch {
+					agentStatus = undefined
+				}
+				output({ pane: target.id, agentStatus: agentStatus ?? null }, () =>
+					printFields({ pane: target.id, agentStatus }),
+				)
+			}),
+		)
+}
+
+/**
+ * `agent wait <pane>` — a blocking DRIVE of herdr's native `agent wait`, or a refusal naming the
+ * backend on one without the capability. Unlike `agent status`, waiting has no truthful degrade, so a
+ * backend with no agent-lifecycle primitive is refused (`backend-unsupported`, exit 1) rather than
+ * answered with a guess — the exact mirror of how `template save` refuses a geometry-incapable backend.
+ *
+ * The refusal is checked BEFORE the pane is resolved so a name that resolves nowhere never masks the
+ * herdr-only refusal; the orchestrator (`deriveAgentWait`) re-checks the same seam member, that check
+ * being its own library contract. `--until` is repeatable (omit to take herdr's default set) and
+ * `--timeout` is optional (omit for an indefinite wait).
+ */
+function agentWaitCommand(deps: Deps): Command {
+	return new Command('wait')
+		.description("Block until a pane's agent reaches a state (herdr); refused on a backend with no agent-state feed")
+		.argument('<pane>', 'Target pane id or label')
+		.option(
+			'--until <status...>',
+			'Agent states any of which ends the wait (idle, working, blocked, done, unknown); omit for herdr’s default',
+		)
+		.option('--timeout <ms>', 'Milliseconds before the wait gives up; omit to wait indefinitely', (v) =>
+			Number.parseInt(v, 10),
+		)
+		.addOption(FORMAT_OPTION)
+		.addHelpText(
+			'after',
+			'\nagent wait drives a native per-pane agent-state feed, which only herdr has — tmux, wezterm and\n' +
+				'zellij are refused with backend-unsupported. Use agent status for a snapshot that works everywhere.',
+		)
+		.action(
+			guarded((pane: string, opts: { until?: string[] | undefined; timeout?: number | undefined }) => {
+				const a = adapter(deps)
+				// Refuse a backend with no agent-lifecycle capability up front — the library's decision,
+				// surfaced here as backend-unsupported. Checked before the pane is resolved so it outranks any
+				// resolution outcome, and kept out of the try below so it is never re-dressed as a wait failure.
+				if (!a.agentLifecycle) throw agentUnsupported(new AgentLifecycleUnsupportedError(a.name))
+				const target = resolveTarget(deps, a, pane)
+				let reached: AgentStatus
+				try {
+					reached = deriveAgentWait(a, deps.exec, target, {
+						until: opts.until as AgentStatus[] | undefined,
+						timeoutMs: opts.timeout,
+					})
+				} catch (err) {
+					if (err instanceof CliError) throw err
+					// Belt-and-braces: the early guard already refused a capability-less backend, but the
+					// orchestrator re-checks as its own contract, so honor its typed refusal here too.
+					if (err instanceof AgentLifecycleUnsupportedError) throw agentUnsupported(err)
+					// A wait the backend accepted but could not complete (an unparseable envelope, a lost pane).
+					throw new CliError(
+						'agent-wait-failed',
+						err instanceof Error ? err.message : String(err),
+						'check the pane still exists with: cyber-mux exists <pane>',
+						1,
+					)
+				}
+				output({ pane: target.id, agentStatus: reached }, () => console.log(reached))
+			}),
+		)
+}
+
+/**
+ * The `agent` group reaches the herdr agent-lifecycle capability: `status` (a snapshot that degrades
+ * truthfully) and `wait` (a blocking drive of herdr's native wait, refused on every backend without
+ * it). The state feed itself is herdr's; this group is how the CLI reads and blocks on it.
+ */
+function agentCommand(deps: Deps): Command {
+	const cmd = new Command('agent').description("Inspect and wait on a pane's agent-lifecycle state (herdr)")
+	cmd.addCommand(agentStatusCommand(deps))
+	cmd.addCommand(agentWaitCommand(deps))
+	return cmd
+}
+
 function worktreeAddCommand(deps: Deps): Command {
 	return new Command('add')
 		.description('Create a git worktree, and open it when given a placement — grouped where the backend can')
@@ -1718,6 +1839,7 @@ export function buildProgram(cliDeps: CliDeps = DEFAULT_DEPS): Command {
 	program.addCommand(existsCommand(deps))
 	program.addCommand(worktreeCommand(deps))
 	program.addCommand(templateCommand(deps))
+	program.addCommand(agentCommand(deps))
 
 	return exitOverrideTree(program)
 }

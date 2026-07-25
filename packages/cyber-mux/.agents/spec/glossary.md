@@ -63,6 +63,14 @@ the tiers collapse, is [`mux/`](./mux/README.md)'s behavior.
 | **nudge** | the send-and-verify-turn-taken helper: taking the turn in a pane and confirming the turn was actually taken. |
 | **submit** | the only verb that presses Enter *for* the caller. `send text` and `send keys` never add an Enter the caller did not write. |
 
+## Agent lifecycle
+
+| Term | Meaning |
+|---|---|
+| **`AgentStatus`** | the per-pane agent state herdr's feed reports: `idle \| working \| blocked \| done \| unknown`. Read from a pane's snapshot (`LivePane.agentStatus`) or as the state a wait reached. |
+| **`AgentLifecycle`** | the optional `waitForState` capability that blocks until a pane's agent reaches one of a requested set of `AgentStatus` values (or times out) — herdr's `agent wait`, normalized across the seam. Absent, never emulated, on a backend with no equivalent primitive. |
+| **refuse, not emulate** | the stance this capability takes on tmux, wezterm, and zellij: a lookalike wait built by polling `read()` output would silently disagree with herdr's own state derivation, so an absent `AgentLifecycle` is a named refusal (`AgentLifecycleUnsupportedError`) rather than a guess. |
+
 ## The output contract
 
 | Term | Meaning |

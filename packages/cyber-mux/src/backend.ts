@@ -2,6 +2,8 @@ import { type Exec, nodeExec } from './exec.ts'
 import { herdrMuxAdapter } from './mux.herdr.ts'
 import { tmuxMuxAdapter } from './mux.tmux.ts'
 import type {
+	AgentStatus,
+	AgentWaitOptions,
 	CreateWorktreeWorkspaceOptions,
 	LivePane,
 	MuxAdapter,
@@ -94,6 +96,11 @@ export interface BoundRegionInspector {
 	describeWorkspace(target: MuxTarget, deps?: MuxDeps | undefined): WorkspaceTab[]
 }
 
+/** The agent-lifecycle-wait capability with its `Exec` bound — see `MuxSession`. */
+export interface BoundAgentLifecycle {
+	waitForState(target: MuxTarget, opts: AgentWaitOptions, deps?: MuxDeps | undefined): AgentStatus
+}
+
 /**
  * A `MuxAdapter` with its `Exec` BOUND — the consumer-facing surface `resolveMux` returns.
  *
@@ -131,6 +138,7 @@ export interface MuxSession {
 	): Promise<NudgeResult>
 	readonly worktree?: BoundWorktreeWorkspaceCapability | undefined
 	readonly regions?: BoundRegionInspector | undefined
+	readonly agentLifecycle?: BoundAgentLifecycle | undefined
 }
 
 /**
@@ -166,6 +174,16 @@ export function resolveMux(env: NodeJS.ProcessEnv, deps?: MuxDeps | undefined): 
 		nudge: (target, message, opts, d) => nudge(raw, pick(d), target, message, opts),
 		...(raw.worktree ? { worktree: bindWorktree(raw.worktree, pick) } : {}),
 		...(raw.regions ? { regions: bindRegions(raw.regions, pick) } : {}),
+		...(raw.agentLifecycle ? { agentLifecycle: bindAgentLifecycle(raw.agentLifecycle, pick) } : {}),
+	}
+}
+
+function bindAgentLifecycle(
+	agent: NonNullable<MuxAdapter['agentLifecycle']>,
+	pick: (d?: MuxDeps | undefined) => Exec,
+): BoundAgentLifecycle {
+	return {
+		waitForState: (target, opts, d) => agent.waitForState(pick(d), target, opts),
 	}
 }
 

@@ -217,3 +217,28 @@ Feature: mux lookup — resolving a pane, the focus probe, and the listing conte
     And no part of the label is treated as a separate token
     # The rendering half — that the list table lists the label and working directory whole, never
     # corrupting the column beside them — is the CLI surface in ../../cli/lookup.
+
+  # ── The live pane listing reports agentStatus, herdr-only (CR 94) ──
+  # herdr 0.7.5 added a per-pane agent-state feed. listPanes reports it on LivePane.agentStatus,
+  # exactly the way the existing herdr-only harness field already works: filled where the backend can
+  # answer, OMITTED — never a false "unknown" — where it cannot. No refusal either way; a field that
+  # simply isn't there. The blocking herdr agent wait primitive built on top of this feed is its own
+  # capability, specified in ../../agent/agent.feature.
+
+  @id:lookup-listing-reports-agent-status-herdr
+  Scenario: herdr's live pane listing reports each pane's agentStatus
+    Given a herdr pane whose agent_status field reports working
+    When the live panes are listed
+    Then that pane's entry carries agentStatus working
+
+  @id:lookup-listing-agent-status-absent-non-herdr
+  Scenario Outline: <backend>'s live pane listing omits agentStatus, because the backend has no agent-state feed
+    Given a <backend> pane
+    When the live panes are listed
+    Then that pane's entry carries no agentStatus, absent rather than unknown
+
+    Examples:
+      | backend |
+      | tmux    |
+      | wezterm |
+      | zellij  |
