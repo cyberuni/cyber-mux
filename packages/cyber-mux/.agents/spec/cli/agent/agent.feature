@@ -63,3 +63,22 @@ Feature: cyber-mux agent — the CLI agent-lifecycle surface
       | tmux    |
       | wezterm |
       | zellij  |
+
+  @id:cli-agent-wait-unsupported-outranks-missing-pane
+  Scenario Outline: an agent-lifecycle-incapable backend is refused for the backend, not for a missing pane
+    Given a <backend> session
+    When cyber-mux agent wait runs with no pane argument at all
+    Then it exits 1 under the code backend-unsupported, not 2 for the missing pane
+    And no candidate listing is attempted
+    # the same deeper-error-first ordering template save pins for its geometry refusal
+    # (template-capture-backend-refusal-outranks-missing-pane): the capability refusal is
+    # UNCONDITIONAL — no pane on this backend can be waited on, so listing panes to pick from would
+    # send the caller down a dead end: pick one, rerun, and get exit 1 anyway. This is also why agent
+    # wait sits outside the shared missing-pane candidate-listing Examples in
+    # ../lookup/lookup.feature — on herdr the shared rule applies unchanged.
+
+    Examples:
+      | backend |
+      | tmux    |
+      | wezterm |
+      | zellij  |

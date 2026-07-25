@@ -56,6 +56,17 @@ address their pane through the shared id/label resolution ladder
   exit **1**, `help` naming the herdr-only constraint — the exact mirror of how `template save`
   surfaces `CaptureUnsupportedError` as its own `backend-unsupported`.
 
+  **The refusal outranks a missing pane argument (CR 95).** The shared error contract now answers a
+  missing `<pane>` by listing the live panes as candidates
+  ([`cli/lookup/`](../lookup/README.md)) — but on a non-herdr backend, `agent wait` with no pane is
+  refused `backend-unsupported` (exit 1) **before** any candidate listing, because the capability
+  refusal is unconditional: no pane on that backend can be waited on, so handing the caller panes to
+  pick from would send them down a dead end — pick one, rerun, get exit 1 anyway. The same
+  deeper-error-first ordering `template save` pins for its geometry refusal. This is also why
+  `agent wait` sits outside the shared missing-pane candidate-listing Examples in
+  [`cli/lookup/`](../lookup/README.md); on herdr, where the capability is present, the shared rule
+  applies unchanged.
+
 ## Control Flow
 
 ### `agent status` — a snapshot that never refuses
@@ -73,7 +84,9 @@ graph TD
 
 ```mermaid
 graph TD
-  WT["agent wait <pane> [--until ...] [--timeout <ms>]"] --> RES["resolve the locator via the shared ladder (mux/lookup)"]
+  WT["agent wait <pane> [--until ...] [--timeout <ms>]"] --> CAP{"WT3: is the pane argument present, and is the capability"}
+  CAP -->|"WT3: no pane, on tmux, wezterm, or zellij"| WT3["backend-unsupported outranks the missing pane: exit 1, no candidate listing attempted"]
+  CAP -->|"pane given"| RES["resolve the locator via the shared ladder (mux/lookup)"]
   RES -->|"ambiguous or not found"| ERR["the shared error contract (mux/lookup)"]
   RES -->|"resolves"| DW["deriveAgentWait(adapter, exec, target, opts)"]
   DW -->|"WT1: herdr"| WT1["waits, then prints the reached AgentStatus; exit 0"]
@@ -99,3 +112,4 @@ capability and refusal decision these verbs drive is in [`agent/`](../../agent/R
 |---|---|---|
 | WT1 herdr → drives the wait, prints the reached state | `agent wait <pane> --until idle --timeout 5000` on herdr | `agent wait drives the capability on herdr and reports the reached state` |
 | WT2 tmux, wezterm, or zellij → `backend-unsupported`, exit 1 | `agent wait <pane>` on each non-herdr backend | `agent wait refuses with backend-unsupported on a backend with no agent-lifecycle capability` |
+| WT3 no pane on a non-herdr backend → the refusal outranks the missing pane | `agent wait` with no pane argument, on each non-herdr backend | `an agent-lifecycle-incapable backend is refused for the backend, not for a missing pane` |

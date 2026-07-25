@@ -70,7 +70,12 @@ it drives it and renders its outcomes.
   (agent-bearing or not) and which labels a listing carries, per backend — is adapter listing
   behavior, specified as the library contract in [`mux/lookup/`](../../mux/lookup/README.md); this verb
   presents it and adds no rendering rule of its own beyond the shared table, save that a value
-  containing a space is rendered whole (below).
+  containing a space is rendered whole (below) and that the **agent-status column is herdr-only**
+  (CR 95): on herdr each row carries the pane's `agentStatus` (the snapshot field from
+  [`mux/lookup/`](../../mux/lookup/README.md), CR 94); on tmux, wezterm, and zellij the column is
+  **omitted**, because the field is constant-absent there and a column that separates nothing wastes
+  the row's slot — the exact reasoning [`axi.md`](../../axi.md) #2 gives for `list` already dropping
+  the constant `mux` column ("a field earns its slot by discriminating, not by being known").
 
 - **`exists <pane>`** (`existsCommand`) — probe whether a single pane is still live, distinguishing its
   three outcomes **by exit code, not by prose**: `0` live, `1` gone, `2` an ambiguous locator (which
@@ -86,6 +91,22 @@ it drives it and renders its outcomes.
   and names them; `--help` always passes; the error honors `--format json`; stdout carries **exactly
   one** payload (a result or an error, never both); a backend diagnostic is **translated**, never
   forwarded — including through the `worktree` verbs' shared catch-all.
+
+  **A missing `<pane>` lists the live panes as candidates (CR 95).** A pane verb invoked without its
+  pane argument is still a usage error at exit 2 — but the error no longer stops at naming the
+  missing argument: the agent's deterministic next move after "missing `<pane>`" is `cyber-mux list`,
+  so the error folds that answer in. The backend **is** queried and the live panes are reported as
+  candidates — each with its id, label, and working directory, each id directly usable as the missing
+  argument — the same rendering and code family as the `ambiguous-pane` report, which is its exact
+  sibling: both are exit-2 usage errors whose fix is a different pane argument, and both hand the
+  caller the candidates rather than spending a round trip. The old "having called no backend"
+  guarantee is deliberately retired for the missing-pane case (a ratified re-open) — enumeration is
+  how the candidates are known. An unknown **flag** keeps it: a pure parse error with no pane
+  involved still calls no backend. Two deeper errors outrank the missing pane, because each names why
+  no pane choice can succeed: **no-mux** (exit 1 — with no multiplexer there is nothing to
+  enumerate), and `agent wait`'s **backend-unsupported** on a non-herdr backend (exit 1 — pinned in
+  [`cli/agent/`](../agent/README.md), the same deeper-error-first ordering `template save` pins for
+  its geometry refusal).
 
 ## Control Flow
 
@@ -112,7 +133,10 @@ graph TD
 graph TD
   F["any cyber-mux verb fails"] --> ERR["a structured error on stdout, under its own discriminating code, with a help line naming this CLI's fixing command"]
   ERR --> KIND{"what kind of failure"}
-  KIND -->|"unknown flag, missing required argument, ambiguous locator"| E2["exit 2, no backend called; an unknown flag names the SUBCOMMAND's valid flags; --help always passes"]
+  KIND -->|"unknown flag"| E2F["exit 2, no backend called, a pure parse error; names the SUBCOMMAND's valid flags; --help always passes"]
+  KIND -->|"MP1: missing pane argument, a backend present"| E2P["exit 2; the backend is queried and the live panes are listed as candidates (id, label, cwd), the ambiguous-pane shape"]
+  KIND -->|"MP2: missing pane argument, no multiplexer"| E1M["no-mux outranks: exit 1, nothing to enumerate, no candidate listing attempted"]
+  KIND -->|"ambiguous locator"| E2A["exit 2, the candidates reported under ambiguous-pane"]
   KIND -->|"operation failed"| E1["exit 1"]
   ERR --> FMT{"--format json"}
   FMT -->|"yes"| JSON["the same code, emitted as JSON on stdout"]
@@ -152,7 +176,8 @@ resolution/probe/listing contract these verbs drive is in
 | ambiguity report → honors `--format json` | two panes labeled worker, `--format json` | `--format json emits the ambiguity as a structured error carrying its candidates` |
 | any verb fails → structured error on stdout under its own code | no-mux, pane-not-found, and ambiguous-pane failures | `a failure is a structured error on stdout, under the code for THAT failure` |
 | codes discriminate → no shared catch-all | an ambiguous locator and a missing multiplexer | `two different failures never share one code` |
-| missing required argument → exit 2, no backend called | `read`, `focus`, `send text` without the pane argument | `a missing required argument is a usage error, not a failed operation` |
+| MP1 missing pane, backend present → exit 2, the live panes listed as candidates | every pane verb (incl. `agent status`) without its pane argument | `a missing pane argument is a usage error that lists the live panes as candidates` |
+| MP2 missing pane, no multiplexer → no-mux outranks, exit 1 | a pane verb with no pane argument, inside no mux | `a missing multiplexer is reported before a missing pane argument, because there is nothing to enumerate` |
 | unknown flag → exit 2 with the command's valid flags | `list` with a flag it does not define | `an unknown flag is a usage error, and says what the valid flags are` |
 | unknown flag → validated against the subcommand's set | `template list` with `--force`, a `template save` flag | `an unknown flag is rejected against the SUBCOMMAND's flags, not the group's` |
 | `--help` → passes on every command, exit 0 | any command with `--help` | `--help is never an unknown flag` |
@@ -167,3 +192,4 @@ resolution/probe/listing contract these verbs drive is in
 | Edge | Path (Given) | Scenario |
 |---|---|---|
 | a listed value containing a space → rendered whole, not split across columns | a tmux pane labeled `my worker`, cwd containing a space | `a listed label or working directory containing a space is rendered whole, never split across columns` |
+| agent-status column → present on herdr, omitted where the field is constant-absent | a herdr pane reporting `working`, and a tmux listing | `list carries an agent-status column on herdr, and omits it on a backend with no feed` |
