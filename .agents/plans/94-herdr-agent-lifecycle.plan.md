@@ -2,7 +2,7 @@
 cr: 94-herdr-agent-lifecycle
 project: cyber-mux
 source: https://github.com/cyberuni/cyber-mux/issues/94
-status: approved
+status: implemented
 todos:
   - content: "Intake: CR opened from #94; design ref + plan + leash written; nodes placed provisionally"
     status: completed

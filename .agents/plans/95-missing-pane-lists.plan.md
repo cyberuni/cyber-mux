@@ -2,7 +2,7 @@
 cr: 95-missing-pane-lists
 project: cyber-mux
 source: https://github.com/cyberuni/cyber-mux/issues/95
-status: approved
+status: implemented
 todos:
   - content: "Intake: CR #95 opened (companion to #94); user ratified the freeze re-open (Clearance) of lookup-missing-arg-usage-error; leash + clearance in ledger"
     status: completed
