@@ -75,3 +75,67 @@ Feature: agent — the herdr agent-lifecycle capability
       | tmux    |
       | wezterm |
       | zellij  |
+
+  # ── The agentApi facade (cyber-mux/agent subpath) ──
+  # The exec-bound facade paralleling worktreeApi/templateApi: agentApi(env, deps?) resolves the
+  # backend adapter from env once and exposes supported/status/wait with the seams already bound.
+  # It ADDS no logic of its own — supported reads the same capability presence deriveAgentWait
+  # gates on, status reads the same LivePane.agentStatus the listing carries, and wait routes
+  # through deriveAgentWait itself, so the refusal is specified once and enforced once.
+
+  @id:agent-api-supported-reflects-backend
+  Scenario Outline: agentApi's supported reflects whether the backend reports agent-lifecycle state
+    Given an environment resolving to the <backend> backend
+    When agentApi(env).supported() is called
+    Then it returns <answer>
+
+    Examples:
+      | backend | answer |
+      | herdr   | true   |
+      | tmux    | false  |
+      | wezterm | false  |
+      | zellij  | false  |
+
+  @id:agent-api-status-reads-snapshot
+  Scenario: agentApi's status returns the pane's agentStatus snapshot on herdr
+    Given an environment resolving to herdr, and a pane whose agent-state feed reports working
+    When agentApi(env).status(pane) is called
+    Then it returns working
+    # the same snapshot the live listing carries (LivePane.agentStatus, ../mux/lookup) — the facade
+    # reads it for one pane rather than redefining it
+
+  @id:agent-api-status-undefined-no-feed
+  Scenario Outline: agentApi's status returns undefined on a backend with no agent-state feed
+    Given an environment resolving to the <backend> backend, and a live pane on it
+    When agentApi(env).status(pane) is called
+    Then it returns undefined
+    # absent-not-false, exactly as LivePane.agentStatus omits the field there: a snapshot the backend
+    # cannot take is undefined, never a guessed "unknown" — and never a refusal, matching agent
+    # status's degrade on the CLI surface
+
+    Examples:
+      | backend |
+      | tmux    |
+      | wezterm |
+      | zellij  |
+
+  @id:agent-api-wait-drives-herdr
+  Scenario: agentApi's wait drives the capability on herdr and returns the reached status
+    Given an environment resolving to herdr, and a pane whose agent reaches idle
+    When agentApi(env).wait(pane, opts) is called
+    Then it returns the AgentStatus idle
+
+  @id:agent-api-wait-routes-through-refusal
+  Scenario Outline: agentApi's wait routes through deriveAgentWait's refusal on a backend without the capability
+    Given an environment resolving to the <backend> backend
+    When agentApi(env).wait(pane) is called
+    Then it throws AgentLifecycleUnsupportedError naming <backend>
+    And no exec runs
+    # identical to calling deriveAgentWait directly — the facade adds no second refusal path that
+    # could drift from the orchestrator's
+
+    Examples:
+      | backend |
+      | tmux    |
+      | wezterm |
+      | zellij  |

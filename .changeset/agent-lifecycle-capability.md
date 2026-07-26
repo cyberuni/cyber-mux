@@ -17,6 +17,11 @@ Add the agent-lifecycle capability, normalized by truthful refusal rather than e
   `agent wait`, reporting the reached state. On tmux, wezterm and zellij — which have no native
   per-pane agent-state primitive — it is refused with `backend-unsupported` (exit 1) naming the
   herdr-only constraint, the exact mirror of how `template save` refuses a geometry-incapable backend.
+- **`agentApi(env, deps?)`** — the exec-bound `cyber-mux/agent` facade paralleling
+  `worktreeApi`/`templateApi`: it resolves the backend from `env` once and exposes
+  `supported()` / `status(target)` / `wait(target, opts?)` with the seams bound. It adds no logic of
+  its own — `supported` reads the same capability presence, `status` the same `LivePane.agentStatus`,
+  and `wait` routes through `deriveAgentWait`, so the refusal stays specified and enforced once.
 
 The refuse-not-emulate normalization is deliberate: a lookalike wait built from output polling would
 silently disagree with herdr's own state derivation, so a backend without the primitive is refused

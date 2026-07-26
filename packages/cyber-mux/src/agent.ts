@@ -1,4 +1,5 @@
-import type { Exec } from './exec.ts'
+import { resolveMuxAdapter } from './backend.ts'
+import { type Exec, nodeExec } from './exec.ts'
 import type { AgentStatus, AgentWaitOptions, MuxAdapter, MuxTarget } from './mux.ts'
 
 /**
@@ -52,4 +53,43 @@ export function deriveAgentWait(
 	const agentLifecycle = adapter.agentLifecycle
 	if (!agentLifecycle) throw new AgentLifecycleUnsupportedError(adapter.name)
 	return agentLifecycle.waitForState(exec, target, opts)
+}
+
+/**
+ * The `agent` subpath facade with its `Exec` and backend BOUND — the exec-bound parallel of
+ * `worktreeApi`/`templateApi`. `agentApi(env, deps?)` resolves the backend adapter from `env` ONCE
+ * (`resolveMuxAdapter`, defaulting `exec` to `nodeExec`) and exposes `supported`/`status`/`wait` with
+ * the seams already threaded, so a caller never re-plumbs an adapter or a runner into them.
+ *
+ * It ADDS no logic of its own: `supported` reads the very capability presence `deriveAgentWait` gates
+ * on, `status` reads the same `LivePane.agentStatus` the listing already carries (for one pane rather
+ * than redefining it), and `wait` routes THROUGH `deriveAgentWait` — so the emulate-or-refuse decision
+ * stays specified once and enforced once, with no second refusal path here that could drift from it.
+ */
+export interface AgentApi {
+	/** Whether this backend reports agent-lifecycle state at all (herdr yes; tmux/wezterm/zellij no). */
+	supported(): boolean
+	/** A pane's current agent state, or `undefined` when the backend has no feed (absent-not-false). */
+	status(target: MuxTarget): AgentStatus | undefined
+	/**
+	 * Block until the pane's agent reaches one of `opts.until` (or the backend's default set); throws
+	 * `AgentLifecycleUnsupportedError` naming the backend on one without the capability, via
+	 * `deriveAgentWait`. A bare `wait(target)` takes herdr's own defaults (`opts ?? {}`).
+	 */
+	wait(target: MuxTarget, opts?: AgentWaitOptions | undefined): AgentStatus
+}
+
+/**
+ * Bind the agent-lifecycle capability to an environment and runner once, returning an `AgentApi` whose
+ * methods no longer take an `Exec`. `deps.exec` defaults to `nodeExec`; `env` is bound like
+ * `resolveMux(env)` because it is what the probe resolves the backend from.
+ */
+export function agentApi(env: NodeJS.ProcessEnv, deps?: { exec?: Exec | undefined } | undefined): AgentApi {
+	const exec = deps?.exec ?? nodeExec
+	const adapter = resolveMuxAdapter(env, exec)
+	return {
+		supported: () => adapter.agentLifecycle !== undefined,
+		status: (target) => adapter.listPanes(exec).find((p) => p.id === target.id)?.agentStatus,
+		wait: (target, opts) => deriveAgentWait(adapter, exec, target, opts ?? {}),
+	}
 }

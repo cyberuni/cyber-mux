@@ -89,6 +89,22 @@ that lacks their concept.
   decision-in-the-library, presentation-in-the-CLI split `CaptureUnsupportedError` /
   `backend-unsupported` already established for `template save`.
 
+- **`agentApi(env, deps?)` — the exec-bound subpath facade** — the same ergonomic tier `worktreeApi`
+  and `templateApi` give their subpaths: bind the seams once (the backend adapter resolved from
+  `env`, the `Exec` defaulted), and every method drops them. It exposes exactly three methods and
+  **adds no logic of its own** — each one is an existing contract of this node or its sibling, bound:
+  - **`supported(): boolean`** — whether the resolved backend reports agent-lifecycle state: `true`
+    on herdr, `false` on tmux, wezterm, and zellij. The same capability presence `deriveAgentWait`
+    gates on, read as a predicate so a caller can branch without try/catch.
+  - **`status(target): AgentStatus | undefined`** — the pane's snapshot, read from the live listing
+    (`LivePane.agentStatus`, [`mux/lookup/`](../mux/lookup/README.md)); `undefined` on a no-feed
+    backend — absent-not-false, never a guessed `unknown`, and never a refusal (the same degrade the
+    CLI's `agent status` surfaces).
+  - **`wait(target, opts?): AgentStatus`** — blocks until the agent reaches a requested state,
+    routing **through `deriveAgentWait` itself**: on tmux, wezterm, and zellij it throws the same
+    `AgentLifecycleUnsupportedError`, identical to calling the orchestrator directly, so the refusal
+    stays specified once and enforced once with no second path to drift.
+
 ## Control Flow
 
 ### `waitForState` — herdr's binding
@@ -125,6 +141,22 @@ graph TD
   C -->|"absent"| REFUSE["AgentLifecycleUnsupportedError(backend) thrown, before any exec"]
 ```
 
+### `agentApi` — the exec-bound facade
+
+```mermaid
+graph TD
+  API["agentApi(env, deps?) — the backend adapter resolved from env, the seams bound once"] --> M{"which method"}
+  M -->|"F1: supported()"| SUP{"does the resolved backend report agent-lifecycle state"}
+  SUP -->|"herdr"| SUPY["true"]
+  SUP -->|"tmux, wezterm, or zellij"| SUPN["false"]
+  M -->|"F2/F3: status(target)"| STAT{"does the backend feed agentStatus"}
+  STAT -->|"F2: herdr"| STATY["the pane's snapshot AgentStatus, from the live listing"]
+  STAT -->|"F3: no feed"| STATN["undefined — absent-not-false, never a refusal"]
+  M -->|"F4/F5: wait(target, opts?)"| WAITD["routes through deriveAgentWait, adding no refusal logic of its own"]
+  WAITD -->|"F4: herdr"| WAITY["the reached AgentStatus is returned"]
+  WAITD -->|"F5: tmux, wezterm, or zellij"| WAITN["AgentLifecycleUnsupportedError(backend), before any exec — identical to calling deriveAgentWait directly"]
+```
+
 ## Scenario map
 
 Every scenario in [`agent.feature`](./agent.feature), one row each, grouped by use case. The CLI
@@ -150,3 +182,13 @@ rendering of the refusal — exit code, `code`, help — is in [`cli/agent/`](..
 | Edge | Path (Given) | Scenario |
 |---|---|---|
 | `agentLifecycle` absent → refused before any exec | tmux, wezterm, and zellij adapters | `deriveAgentWait refuses before any exec when agentLifecycle is absent` |
+
+### `agentApi` — the exec-bound facade
+
+| Edge | Path (Given) | Scenario |
+|---|---|---|
+| F1 `supported()` → true on herdr, false elsewhere | an env resolving to each of the four backends | `agentApi's supported reflects whether the backend reports agent-lifecycle state` |
+| F2 `status()` on herdr → the pane's snapshot | a herdr pane whose feed reports `working` | `agentApi's status returns the pane's agentStatus snapshot on herdr` |
+| F3 `status()` on a no-feed backend → `undefined` | a live pane on each of tmux, wezterm, and zellij | `agentApi's status returns undefined on a backend with no agent-state feed` |
+| F4 `wait()` on herdr → the reached status | a herdr pane whose agent reaches `idle` | `agentApi's wait drives the capability on herdr and returns the reached status` |
+| F5 `wait()` without the capability → the orchestrator's refusal | an env resolving to each non-herdr backend | `agentApi's wait routes through deriveAgentWait's refusal on a backend without the capability` |
