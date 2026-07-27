@@ -95,6 +95,15 @@ reads the live pane list, which answers ids and labels in one read.
   `title` field is always the ambient running-program name, never something an author chose, so
   exporting it would manufacture the same collision the hostname guard exists to prevent.
 
+- **The live pane listing reports each pane's `agentStatus`, herdr-only (CR 94)** — herdr 0.7.5 added
+  a per-pane agent-state feed (`AgentStatus = idle | working | blocked | done | unknown`), and the
+  listing carries it per pane, filled from the backend's own `agent_status` field where it answers.
+  tmux, wezterm, and zellij have no such feed, so `agentStatus` is **absent** for their panes — never
+  a false `unknown` — the same absent-rather-than-false convention the existing herdr-only `harness`
+  field already follows: a field that simply isn't there, not a refusal. The blocking wait built on
+  top of this feed (`herdr agent wait`) is a separate capability, specified in
+  [`agent/`](../../agent/README.md); this bullet owns only the snapshot the listing carries.
+
 ## Control Flow
 
 ### Reporting whether a pane is focused, and what the listing carries
@@ -114,6 +123,9 @@ graph TD
   LS --> AUTH{"is a pane's name one a person set"}
   AUTH -->|"yes"| KEEP["reported beside the pane id, read whole"]
   AUTH -->|"no, a backend default"| DROP["no label reported"]
+  LS --> AGT{"AGT: does the backend feed agentStatus"}
+  AGT -->|"AGT1: herdr"| AGTY["filled from the pane's agent-state feed"]
+  AGT -->|"AGT2: tmux, wezterm, or zellij"| AGTN["omitted, absent rather than unknown"]
 ```
 
 ### Resolving a pane locator
@@ -168,3 +180,15 @@ rendering of these outcomes — exit codes, the structured error, `--format` —
 | zero matches → not found, distinct from ambiguous | no pane labeled or ided worker | `a name matching no live pane is not found, rather than ambiguous` |
 | two or more label matches → fail acting on none, yield candidates to choose from | three panes all labeled worker | `a name matching two or more live panes fails rather than guessing which was meant` |
 | whole spaced label → taken as one locator | a tmux pane labeled `my worker` | `a label containing spaces resolves to its pane` |
+
+### The live pane listing reports `agentStatus`, herdr-only (CR 94)
+
+herdr 0.7.5's per-pane agent-state feed. `listPanes` fills `LivePane.agentStatus` where the backend
+can answer and omits it where it cannot — the same absent-not-false convention the existing
+herdr-only `harness` field already follows; no refusal either way. The blocking `herdr agent wait`
+primitive built on top of this feed is its own capability, in [`agent/`](../../agent/README.md).
+
+| Edge | Path (Given) | Scenario |
+|---|---|---|
+| AGT1 herdr feeds `agentStatus` → filled from `agent_status` | a herdr pane whose feed reports `working` | `herdr's live pane listing reports each pane's agentStatus` |
+| AGT2 no feed → `agentStatus` omitted | a pane on each of tmux, wezterm, and zellij | `<backend>'s live pane listing omits agentStatus, because the backend has no agent-state feed` |

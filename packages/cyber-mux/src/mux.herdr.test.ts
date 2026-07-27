@@ -57,6 +57,14 @@ const PANE_IN_SPLIT = (paneId: string, ws: string) =>
 const describeRegion = herdrMuxAdapter.regions?.describeRegion
 if (!describeRegion) throw new Error('the herdr adapter must implement describeRegion')
 
+/**
+ * The agent-lifecycle capability — herdr is the one backend that has it, so the optional member is
+ * asserted once here rather than guessed at each use: if it ever goes missing the agent tests below
+ * fail loudly on that fact instead of silently skipping.
+ */
+const agentLifecycle = herdrMuxAdapter.agentLifecycle
+if (!agentLifecycle) throw new Error('the herdr adapter must implement the agentLifecycle capability')
+
 describe('spec:cyber-mux/mux/placement', () => {
 	describe('herdrMuxAdapter (mocked exec — herdr is not installed in this environment)', () => {
 		// The outline is ONE key, so every Examples row folds under this one static title. The
@@ -910,6 +918,82 @@ describe('spec:cyber-mux/mux/lookup', () => {
 			const listOut = JSON.stringify({ result: { panes: [{ pane_id: 'w3:p2', cwd: '/repo/b' }] } })
 			const panes = herdrMuxAdapter.listPanes(fakeExec([], { 'pane list': listOut }))
 			expect(panes[0]?.label).toBeUndefined()
+		})
+
+		it('lookup-listing-reports-agent-status-herdr', () => {
+			// herdr 0.7.5 carries `agent_status` at the top level of each pane record — listPanes reports
+			// it on LivePane.agentStatus, exactly the way the herdr-only `harness` field already works.
+			const listOut = JSON.stringify({
+				result: { panes: [{ pane_id: 'w3:p1', agent: 'claude', agent_status: 'working', cwd: '/repo/a' }] },
+			})
+			expect(herdrMuxAdapter.listPanes(fakeExec([], { 'pane list': listOut }))).toEqual([
+				{ id: 'w3:p1', mux: 'herdr', harness: 'claude', agentStatus: 'working', cwd: '/repo/a' },
+			])
+		})
+
+		// No matching scenario — an extra pinning the absent-not-false rule for a herdr pane whose feed
+		// reports nothing (blank/unmodeled agent_status is OMITTED, never a false 'unknown').
+		it('listPanes() omits agentStatus for a herdr pane whose agent_status is empty or unmodeled', () => {
+			const listOut = JSON.stringify({
+				result: {
+					panes: [
+						{ pane_id: 'w3:p1', agent_status: '' },
+						{ pane_id: 'w3:p2', agent_status: 'bogus-state' },
+					],
+				},
+			})
+			const panes = herdrMuxAdapter.listPanes(fakeExec([], { 'pane list': listOut }))
+			for (const pane of panes) expect(pane.agentStatus).toBeUndefined()
+		})
+	})
+})
+
+describe('spec:cyber-mux/agent', () => {
+	describe('herdrMuxAdapter agentLifecycle (mocked exec — herdr is not installed in this environment)', () => {
+		/** herdr's `agent wait` envelope, verified against 0.7.5 — the reached status at `.result.agent.agent_status`. */
+		const reachedOut = (status: string) =>
+			JSON.stringify({ result: { agent: { pane_id: 'w3:p1', agent_status: status }, type: 'agent_info' } })
+
+		it('agent-wait-herdr-builds-command', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'agent wait': reachedOut('done') })
+			const reached = agentLifecycle.waitForState(exec, { id: 'w3:p1' }, { until: ['idle', 'done'], timeoutMs: 5000 })
+			expect(calls[0]).toEqual(['agent', 'wait', 'w3:p1', '--until', 'idle', '--until', 'done', '--timeout', '5000'])
+			expect(reached).toBe('done')
+		})
+
+		it('agent-wait-herdr-until-omitted-uses-herdr-default', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'agent wait': reachedOut('idle') })
+			// No until list — cyber-mux sends no --until flag, so herdr applies its own default set.
+			agentLifecycle.waitForState(exec, { id: 'w3:p1' }, { timeoutMs: 5000 })
+			expect(calls[0]).not.toContain('--until')
+		})
+
+		it('agent-wait-herdr-timeout-omitted-indefinite', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'agent wait': reachedOut('idle') })
+			// No timeoutMs — cyber-mux sends no --timeout flag, so the wait is indefinite (herdr's own behavior).
+			agentLifecycle.waitForState(exec, { id: 'w3:p1' }, { until: ['idle'] })
+			expect(calls[0]).not.toContain('--timeout')
+		})
+
+		it('agent-wait-herdr-parses-reached-status', () => {
+			// The JSON envelope reports it reached idle — waitForState returns that AgentStatus, so the
+			// caller learns WHICH state ended the wait, not merely that it ended.
+			const reached = agentLifecycle.waitForState(
+				fakeExec([], { 'agent wait': reachedOut('idle') }),
+				{ id: 'w3:p1' },
+				{},
+			)
+			expect(reached).toBe('idle')
+		})
+
+		// No matching scenario — an extra pinning the defensive parse: an unresolvable envelope throws
+		// (naming the pane), rather than returning a bogus status, matching parsePaneRecord.
+		it('waitForState throws when herdr reports no reachable agent_status', () => {
+			expect(() => agentLifecycle.waitForState(() => null, { id: 'w3:p1' }, {})).toThrow(/agent wait/)
+			expect(() => agentLifecycle.waitForState(() => 'not json', { id: 'w3:p1' }, {})).toThrow(/agent wait/)
 		})
 	})
 })

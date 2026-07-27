@@ -5,6 +5,7 @@ import { statSync } from 'node:fs'
 // exactly what a downstream consumer gets. Testing against `src` would not catch a broken exports
 // map, a missing entry, or `dts: true` emitting nothing.
 import * as lib from 'cyber-mux'
+import * as agent from 'cyber-mux/agent'
 import * as tpl from 'cyber-mux/template'
 import * as wt from 'cyber-mux/worktree'
 import { describe, expect, it } from 'vitest'
@@ -38,8 +39,16 @@ describe('spec:cyber-mux/library — published surface', () => {
 			expect(typeof tpl.templateApi).toBe('function')
 		})
 
+		it('the ./agent subpath yields the agent-lifecycle orchestrator and its refusal', () => {
+			expect(typeof agent.deriveAgentWait).toBe('function')
+			expect(typeof agent.agentApi).toBe('function')
+			expect(typeof agent.AgentLifecycleUnsupportedError).toBe('function')
+			// The refusal error is real and names the backend it refused.
+			expect(new agent.AgentLifecycleUnsupportedError('tmux').backend).toBe('tmux')
+		})
+
 		it('emits non-empty .d.mts declarations for every entry (dts: true actually produced types)', () => {
-			for (const entry of ['index', 'worktree', 'template', 'cli']) {
+			for (const entry of ['index', 'worktree', 'template', 'agent', 'cli']) {
 				expect(statSync(`dist/${entry}.d.mts`).size).toBeGreaterThan(200)
 			}
 		})
@@ -82,6 +91,7 @@ describe('spec:cyber-mux/library — published surface', () => {
 				expect(lib).not.toHaveProperty(forbidden)
 				expect(wt).not.toHaveProperty(forbidden)
 				expect(tpl).not.toHaveProperty(forbidden)
+				expect(agent).not.toHaveProperty(forbidden)
 			}
 		})
 
@@ -124,6 +134,12 @@ describe('spec:cyber-mux/library — published surface', () => {
 			for (const engine of ['openTemplate', 'applyTemplateToRegion', 'captureTemplate']) {
 				expect(tpl).not.toHaveProperty(engine)
 			}
+		})
+
+		it('./agent exports the agent-lifecycle orchestrator and its refusal (types carry no runtime name)', () => {
+			// Only the runtime VALUES appear in Object.keys — the AgentStatus/AgentLifecycle/AgentWaitOptions
+			// types ride the surface via `mux.ts` on the `.` barrel and produce no runtime export here.
+			expect(Object.keys(agent).sort()).toEqual(['AgentLifecycleUnsupportedError', 'agentApi', 'deriveAgentWait'])
 		})
 	})
 

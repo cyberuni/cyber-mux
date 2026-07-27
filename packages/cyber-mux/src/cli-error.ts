@@ -74,6 +74,37 @@ export class AmbiguousPaneError extends CliError {
 	}
 }
 
+/** The stable code a missing-pane usage error carries — the same code FAMILY as the ambiguity: both
+ * are exit-2 usage errors whose fix is a different pane argument, and both hand the caller the live
+ * panes to retry with rather than sending them on a second round trip. */
+export const MISSING_PANE_CODE = 'missing-pane'
+
+/**
+ * A pane verb invoked with no `<pane>` at all — a usage error (exit 2), the same shape the ambiguity
+ * uses. The old "having called no backend" guarantee is deliberately gone (CR 95): the backend IS
+ * queried so the live panes can be listed as candidates, since the caller's deterministic next move
+ * after "missing pane" is `cyber-mux list`. Folding that answer into the error collapses a two-turn
+ * correction into one, exactly as the ambiguity report already does.
+ *
+ * Carries its `candidates` in `extra` under the same key `AmbiguousPaneError` uses, so the one
+ * renderer prints them `<id>  <label>  <cwd>` with no special case. When the backend could NOT be
+ * enumerated the list is empty and the help points at `cyber-mux list` instead of the ids.
+ */
+export class MissingPaneError extends CliError {
+	constructor(readonly candidates: PaneCandidate[]) {
+		super(
+			MISSING_PANE_CODE,
+			'no pane given — this command needs a target pane',
+			candidates.length > 0
+				? `pass one of the ids below: ${candidates.map((c) => c.id).join(' ')}`
+				: 'list the live panes with: cyber-mux list',
+			2,
+			{ candidates },
+		)
+		this.name = 'MissingPaneError'
+	}
+}
+
 /**
  * The ONE renderer — every coded failure reaches stdout through here, and exits.
  *

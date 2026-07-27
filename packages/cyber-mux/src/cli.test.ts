@@ -2624,14 +2624,16 @@ describe('spec:cyber-mux/cli/driving', () => {
 		const calls: string[][] = []
 		const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: fakeTmuxExec(calls) })
 		await expect(run(program, ['send', 'keys', '%3'])).rejects.toThrow()
-		expect(calls).toEqual([])
+		// Rejected before a keystroke reaches the pane. The pane IS resolved first (a `list-panes` read,
+		// filtered by `drives`) so a bare `send keys` lists candidates — but no send-keys primitive fires.
+		expect(drives(calls)).toEqual([])
 	})
 
 	it('@id:driving-send-text-no-text', async () => {
 		const calls: string[][] = []
 		const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: fakeTmuxExec(calls) })
 		await expect(run(program, ['send', 'text', '%3'])).rejects.toThrow()
-		expect(calls).toEqual([])
+		expect(drives(calls)).toEqual([])
 	})
 
 	it('@id:driving-send-bare-group', async () => {
@@ -2661,10 +2663,13 @@ describe('spec:cyber-mux/cli/driving', () => {
 		vi.spyOn(process, 'exit').mockImplementation((code) => {
 			throw new Error(`exit:${code}`)
 		})
-		// A missing required argument is a usage error (exit 2), naming the argument that is missing.
+		// A missing pane is a usage error (exit 2), naming pane as the missing argument. Since CR 95 the
+		// backend IS enumerated so the error can list the live panes as candidates (see
+		// lookup-missing-pane-lists-candidates), so "nothing is sent to any pane" is checked with `drives`
+		// — the resolution read is not a keystroke reaching a pane.
 		await expect(run(program, ['submit'])).rejects.toThrow('exit:2')
 		expect(logs.join('\n')).toContain('pane')
-		expect(calls).toEqual([])
+		expect(drives(calls)).toEqual([])
 	})
 })
 
@@ -3300,13 +3305,63 @@ describe('spec:cyber-mux/cli/lookup', () => {
 		expect(ambiguousCode).not.toBe(noMuxCode)
 	})
 
-	it.each([['read'], ['focus'], ['send', 'text']])('@id:lookup-missing-arg-usage-error', async (...verb) => {
+	// CR 95, a ratified re-open of the old lookup-missing-arg-usage-error: a missing <pane> stays a
+	// usage error (exit 2) but the error no longer stops at naming the argument — it enumerates the
+	// backend and lists the live panes as candidates, the same rendering and code family the ambiguity
+	// report uses. `agent wait` is deliberately absent (its backend refusal outranks the missing pane —
+	// see cli/agent).
+	const MISSING_PANE_VERBS: { verb: string; argv: string[] }[] = [
+		{ verb: 'cyber-mux read', argv: ['read'] },
+		{ verb: 'cyber-mux focus', argv: ['focus'] },
+		{ verb: 'cyber-mux close', argv: ['close'] },
+		{ verb: 'cyber-mux submit', argv: ['submit'] },
+		{ verb: 'cyber-mux send text', argv: ['send', 'text'] },
+		{ verb: 'cyber-mux send keys', argv: ['send', 'keys'] },
+		{ verb: 'cyber-mux exists', argv: ['exists'] },
+		{ verb: 'cyber-mux agent status', argv: ['agent', 'status'] },
+	]
+
+	it.each(MISSING_PANE_VERBS)('@id:lookup-missing-pane-lists-candidates', async ({ argv }) => {
 		const calls: string[][] = []
 		const errExit = catchExit()
-		await expect(run(buildProgram({ env: TMUX, exec: paneServer(calls, THREE) }), verb)).rejects.toThrow('exit:2')
+		captureStderr()
+		await expect(run(buildProgram({ env: TMUX, exec: paneServer(calls, THREE) }), argv)).rejects.toThrow('exit:2')
+		// Exit 2 (a usage error), not 1 (a failed operation).
 		expect(errExit).toHaveBeenCalledWith(2)
-		expect(logs.join('\n')).toContain('pane')
+		const out = logs.join('\n')
+		// The same code FAMILY as ambiguous-pane — a distinct, stable code a caller matches on.
+		expect(out).toContain('missing-pane')
+		// Each live pane is listed as a candidate with its id, label and cwd — the same rendering the
+		// ambiguity report uses.
+		for (const p of THREE) {
+			expect(out).toContain(p.id)
+			expect(out).toContain(p.label!)
+			expect(out).toContain(p.cwd!)
+		}
+		// The enumeration read is the ONLY backend traffic — nothing was driven to a pane.
 		expect(drives(calls)).toEqual([])
+
+		// Each candidate's id is directly usable as the pane argument that completes the invocation:
+		// appending the first id resolves the pane, so the error is no longer a missing pane (send
+		// text/keys then ask for their own payload — that the pane part is complete is the point).
+		logs.length = 0
+		await run(buildProgram({ env: TMUX, exec: paneServer([], THREE) }), [...argv, THREE[0]!.id]).catch(() => {})
+		expect(logs.join('\n')).not.toContain('missing-pane')
+	})
+
+	it('@id:lookup-no-mux-outranks-missing-pane', async () => {
+		// No multiplexer at all: `adapter(deps)` fails with no-mux (exit 1) BEFORE resolveTarget can
+		// enumerate, so the deeper error surfaces first and no candidate listing is attempted — telling
+		// the caller to pick a pane would send them down a dead end (pick one, rerun, hit no-mux anyway).
+		const calls: string[][] = []
+		const errExit = catchExit()
+		captureStderr()
+		await expect(run(buildProgram({ env: {}, exec: noAncestry }), ['read'])).rejects.toThrow('exit:1')
+		expect(errExit).toHaveBeenCalledWith(1)
+		const out = logs.join('\n')
+		expect(out).toContain('no-mux')
+		expect(out).not.toContain('missing-pane')
+		expect(calls).toEqual([])
 	})
 
 	it('@id:lookup-unknown-flag-lists-valid', async () => {
@@ -3466,6 +3521,27 @@ describe('spec:cyber-mux/cli/lookup', () => {
 		const cells = row.trim().split(/ {2,}/)
 		expect(cells).toContain('my worker')
 		expect(cells).toContain(cwd)
+	})
+
+	it('@id:lookup-list-agent-status-column-herdr-only', async () => {
+		// herdr carries a per-pane agent-state feed, so the listing earns an `agent` column reporting
+		// each pane's status.
+		const herdrPanes = JSON.stringify({
+			result: { panes: [{ pane_id: 'w3:p1', agent: 'claude', agent_status: 'working', cwd: '/repo' }] },
+		})
+		await run(buildProgram({ env: { CYBER_MUX: 'herdr' }, exec: fakeHerdrExec([], { 'pane list': herdrPanes }) }), [
+			'list',
+		])
+		// printTable renders the header uppercased (AGENT), the row value verbatim (working).
+		const herdrOut = logs.join('\n')
+		expect(herdrOut.toLowerCase()).toContain('agent')
+		expect(herdrOut).toContain('working')
+
+		// tmux has no such feed — LivePane.agentStatus is constant-absent, so the column would separate
+		// nothing (axi.md #2, the same rule that drops the constant `mux` column) and is omitted entirely.
+		logs.length = 0
+		await run(buildProgram({ env: TMUX, exec: paneServer([], THREE) }), ['list'])
+		expect(logs.join('\n').toLowerCase()).not.toContain('agent')
 	})
 })
 
@@ -4184,5 +4260,118 @@ describe('spec:cyber-mux/cli/template/capture', () => {
 		}
 		expect(logs.join('\n')).toContain('tmux')
 		expect(store.writes).toEqual({})
+	})
+})
+
+describe('spec:cyber-mux/cli/agent', () => {
+	let logs: string[]
+
+	beforeEach(() => {
+		logs = []
+		vi.spyOn(console, 'log').mockImplementation((line: string) => {
+			logs.push(line)
+		})
+		vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+		vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+	})
+
+	afterEach(() => {
+		vi.restoreAllMocks()
+	})
+
+	function catchExit() {
+		return vi.spyOn(process, 'exit').mockImplementation((code) => {
+			throw new Error(`exit:${code}`)
+		})
+	}
+
+	const HERDR_ENV = { CYBER_MUX: 'herdr' }
+	/** A herdr pane list carrying the 0.7.5 per-pane agent_status feed. */
+	const PANE_LIST_WORKING = JSON.stringify({
+		result: { panes: [{ pane_id: 'w3:p1', agent: 'claude', agent_status: 'working', cwd: '/repo' }] },
+	})
+	/** herdr's `agent wait` envelope — the reached status at `.result.agent.agent_status`. */
+	const WAIT_REACHED = (status: string) =>
+		JSON.stringify({ result: { agent: { pane_id: 'w3:p1', agent_status: status }, type: 'agent_info' } })
+
+	// ── agent status: a snapshot that degrades, never refuses ──
+
+	it('cli-agent-status-prints-herdr', async () => {
+		const program = buildProgram({ env: HERDR_ENV, exec: fakeHerdrExec([], { 'pane list': PANE_LIST_WORKING }) })
+		await run(program, ['agent', 'status', 'w3:p1'])
+		expect(logs.join('\n')).toContain('working')
+	})
+
+	it('cli-agent-status-json-payload', async () => {
+		await withArgv(['agent', 'status', 'w3:p1', '--format', 'json'], async () => {
+			const program = buildProgram({ env: HERDR_ENV, exec: fakeHerdrExec([], { 'pane list': PANE_LIST_WORKING }) })
+			await run(program, ['agent', 'status', 'w3:p1', '--format', 'json'])
+		})
+		expect(JSON.parse(logs.join('\n'))).toEqual({ pane: 'w3:p1', agentStatus: 'working' })
+	})
+
+	it('cli-agent-status-no-feed-degrades', async () => {
+		// A tmux pane — no agent-state feed. The pane still resolves and prints; no agentStatus, exit 0.
+		const exit = catchExit()
+		const paneList = '%1\tclaude\t/repo\tworker\tzeta'
+		const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: fakeTmuxExec([], { 'list-panes': paneList }) })
+		await run(program, ['agent', 'status', '%1'])
+		expect(logs.join('\n')).toContain('%1')
+		expect(logs.join('\n')).not.toContain('agentStatus')
+		// Degraded truthfully, not refused — no non-zero exit was taken.
+		expect(exit).not.toHaveBeenCalled()
+	})
+
+	// ── agent wait: drives herdr's capability, or refuses naming the backend ──
+
+	it('cli-agent-wait-drives-herdr', async () => {
+		const calls: string[][] = []
+		const program = buildProgram({
+			env: HERDR_ENV,
+			exec: fakeHerdrExec(calls, { 'pane list': PANE_LIST_WORKING, 'agent wait': WAIT_REACHED('idle') }),
+		})
+		await run(program, ['agent', 'wait', 'w3:p1', '--until', 'idle', '--timeout', '5000'])
+		expect(logs.join('\n')).toContain('idle')
+		expect(calls.find((c) => c[0] === 'agent' && c[1] === 'wait')).toEqual([
+			'agent',
+			'wait',
+			'w3:p1',
+			'--until',
+			'idle',
+			'--timeout',
+			'5000',
+		])
+	})
+
+	it('cli-agent-wait-unsupported-refused', async () => {
+		// The outline's three rows — every backend with no agent-lifecycle capability is refused with
+		// backend-unsupported at exit 1, the help line naming the herdr-only constraint. The refusal is
+		// BEFORE any exec (the exec here returns null unconditionally and is never consulted for it).
+		for (const backend of ['tmux', 'wezterm', 'zellij']) {
+			logs.length = 0
+			catchExit()
+			const program = buildProgram({ env: { CYBER_MUX: backend }, exec: () => null })
+			await expect(run(program, ['agent', 'wait', 'p1'])).rejects.toThrow('exit:1')
+			const out = logs.join('\n')
+			expect(out).toContain('backend-unsupported')
+			expect(out).toContain(backend)
+			expect(out.toLowerCase()).toContain('herdr')
+		}
+	})
+
+	it('cli-agent-wait-unsupported-outranks-missing-pane', async () => {
+		// agent wait with NO pane on a backend with no agent-lifecycle capability: the backend refusal
+		// (exit 1) is UNCONDITIONAL — no pane on this backend can be waited on — so it outranks the
+		// missing pane (exit 2), and no candidate listing is attempted. The refusal is raised before
+		// resolveTarget can enumerate, so the deeper "why NO invocation can succeed here" answer wins.
+		for (const backend of ['tmux', 'wezterm', 'zellij']) {
+			logs.length = 0
+			catchExit()
+			const program = buildProgram({ env: { CYBER_MUX: backend }, exec: () => null })
+			await expect(run(program, ['agent', 'wait'])).rejects.toThrow('exit:1')
+			const out = logs.join('\n')
+			expect(out).toContain('backend-unsupported')
+			expect(out).not.toContain('missing-pane')
+		}
 	})
 })

@@ -160,20 +160,49 @@ Feature: cyber-mux lookup — the pane-addressing verbs and the shared error con
     And neither is a catch-all a third failure mode would also land under
 
   # A usage error is a missing or malformed ARGUMENT — the fix is a different invocation, not a retry.
-  # A required argument the parser never received is exactly that, and it is the same family as the
-  # unknown flag: both exit 2, having called no backend.
-  @id:lookup-missing-arg-usage-error
-  Scenario Outline: a missing required argument is a usage error, not a failed operation
-    Given a caller running <verb> without the pane argument it requires
-    When the command is parsed
-    Then it exits 2 rather than 1, having called no backend
-    And the error names the argument that is missing
+  # A missing <pane> stays exactly that (exit 2), but the error no longer stops at naming the argument:
+  # the agent's deterministic next move after "missing <pane>" is `cyber-mux list`, so the error folds
+  # that answer in — the backend IS queried and the live panes are listed as candidates, the same
+  # rendering and code family the ambiguous-pane report already uses. The two are one shape: both are
+  # exit-2 usage errors whose fix is a different pane argument, and both hand the caller the candidates
+  # to retry with rather than sending them on a second round trip. (CR 95, a ratified re-open: the old
+  # "having called no backend" guarantee is deliberately gone — enumeration is how the candidates are
+  # known. An unknown FLAG stays a pure parse error below, with no pane involved and no backend called.)
+  # `agent wait` is deliberately absent from the Examples: on a non-herdr backend its backend-unsupported
+  # refusal (exit 1) outranks the missing pane — pinned in ../agent/agent.feature — and pinning only its
+  # herdr case here would read as if the rule were backend-conditional when the OUTRANKING is the rule.
+  @id:lookup-missing-pane-lists-candidates
+  Scenario Outline: a missing pane argument is a usage error that lists the live panes as candidates
+    Given live panes the backend can enumerate
+    And a caller running <verb> without the pane argument it requires
+    When the command runs
+    Then it exits 2 rather than 1, a usage error
+    And the error lists the live panes as candidates on stdout — each with its id, its label, and its working directory — the same rendering and code family as ambiguous-pane
+    And each candidate's id is directly usable as the pane argument that completes the invocation
 
     Examples:
-      | verb                |
-      | cyber-mux read      |
-      | cyber-mux focus     |
-      | cyber-mux send text |
+      | verb                   |
+      | cyber-mux read         |
+      | cyber-mux focus        |
+      | cyber-mux close        |
+      | cyber-mux submit       |
+      | cyber-mux send text    |
+      | cyber-mux send keys    |
+      | cyber-mux exists       |
+      | cyber-mux agent status |
+
+  # The candidate listing needs a backend to enumerate, so a missing multiplexer outranks a missing
+  # pane: with no mux there is nothing to list, and telling the caller to pick a pane would send them
+  # down a dead end — pick one, rerun, and hit no-mux anyway. The same deeper-error-first ordering
+  # template save already pins for its geometry refusal (template-capture-backend-refusal-outranks-
+  # missing-pane, in ../template/capture/capture.feature): the truer answer is the one that names why
+  # NO invocation of this verb can succeed here.
+  @id:lookup-no-mux-outranks-missing-pane
+  Scenario: a missing multiplexer is reported before a missing pane argument, because there is nothing to enumerate
+    Given a caller inside no multiplexer at all
+    When a pane verb runs without the pane argument it requires
+    Then it exits 1 under the code no-mux, not 2 for the missing pane
+    And no candidate listing is attempted
 
   @id:lookup-unknown-flag-lists-valid
   Scenario: an unknown flag is a usage error, and says what the valid flags are
@@ -270,3 +299,15 @@ Feature: cyber-mux lookup — the pane-addressing verbs and the shared error con
     And neither value corrupts what is listed beside it
     # The resolution half — that a caller naming `my worker` resolves that pane — is the contract in
     # ../../mux/lookup: the whole spaced label is taken as one locator.
+
+  @id:lookup-list-agent-status-column-herdr-only
+  Scenario: list carries an agent-status column on herdr, and omits it on a backend with no feed
+    Given a herdr pane whose agent-state feed reports working, and a tmux session listing panes
+    When cyber-mux list runs on each backend
+    Then the herdr listing carries an agent-status column reporting working for that pane
+    And the tmux listing carries no agent-status column at all
+    # A field earns its slot by discriminating, not by being known (axi.md #2) — the same rule that
+    # drops the constant mux column from list. On tmux, wezterm, and zellij, LivePane.agentStatus is
+    # constant-absent (../../mux/lookup/lookup.feature), so the column would separate nothing; on
+    # herdr it is live per pane and earns the slot. The FIELD's presence/absence per backend is the
+    # library contract in ../../mux/lookup; this scenario owns only the column rendering.

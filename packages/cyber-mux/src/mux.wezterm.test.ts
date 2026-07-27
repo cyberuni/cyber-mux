@@ -370,5 +370,21 @@ describe('spec:cyber-mux/mux/lookup', () => {
 		it('listPanes returns nothing when the backend cannot be read', () => {
 			expect(weztermMuxAdapter.listPanes(fakeExec([]))).toEqual([])
 		})
+
+		it('lookup-listing-agent-status-absent-non-herdr', () => {
+			// wezterm carries no agent-state feed at all, so no pane ever reports agentStatus — absent,
+			// never a false 'unknown'. The wezterm row of the outline.
+			const exec = fakeExec([], { list: LIST_ONE })
+			const panes = weztermMuxAdapter.listPanes(exec)
+			for (const pane of panes) expect(pane.agentStatus).toBeUndefined()
+		})
+	})
+})
+
+describe('spec:cyber-mux/agent', () => {
+	it('agent-lifecycle-absent-non-herdr', () => {
+		// wezterm has no native per-pane agent-state wait, so the optional capability is genuinely absent
+		// — its absence IS the refusal deriveAgentWait turns into AgentLifecycleUnsupportedError.
+		expect(weztermMuxAdapter.agentLifecycle).toBeUndefined()
 	})
 })

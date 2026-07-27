@@ -1,10 +1,11 @@
 import { join } from 'node:path'
 import { Command, CommanderError, Option } from 'commander'
+import { AgentLifecycleUnsupportedError, deriveAgentWait } from './agent.ts'
 import { callerPane, resolveMuxAdapter } from './backend.ts'
-import { AmbiguousPaneError, CliError, reportError } from './cli-error.ts'
+import { AmbiguousPaneError, CliError, MissingPaneError, reportError } from './cli-error.ts'
 import { AT_OPTION, ENV_OPTION, FORMAT_OPTION, LABEL_OPTION } from './cli-options.ts'
 import { type Exec, nodeExec } from './exec.ts'
-import type { LivePane, MuxAdapter, MuxPlacement, MuxTarget } from './mux.ts'
+import type { AgentStatus, LivePane, MuxAdapter, MuxPlacement, MuxTarget } from './mux.ts'
 import { currentPane, probeMultiplexer } from './mux-probe.ts'
 import { nodeNewId } from './new-id.ts'
 import { type HelpEntry, isAutomatedOutput, output, printFields, printHelp, printTable, tildify } from './output.ts'
@@ -126,6 +127,29 @@ function paneNotFound(locator: string): CliError {
 	)
 }
 
+/**
+ * `send text`/`send keys` given a pane but no payload — a usage error (exit 2), the fix is to add the
+ * payload. The payload argument is optional at the parser (`[text]`/`[keys...]`) only so a bare
+ * `send text` resolves its MISSING pane through `resolveTarget` and lists candidates rather than
+ * tripping commander's own payload-missing error first; once a pane is resolved, an absent payload is
+ * caught here so the operation never runs on nothing.
+ */
+function missingSendPayload(verb: 'text' | 'keys'): CliError {
+	return verb === 'text'
+		? new CliError(
+				'missing-argument',
+				'send text needs the text to type',
+				'pass the text: cyber-mux send text <pane> <text>',
+				2,
+			)
+		: new CliError(
+				'missing-argument',
+				'send keys needs at least one key to press',
+				'pass one or more keys: cyber-mux send keys <pane> <keys...>',
+				2,
+			)
+}
+
 /** A malformed template name — a usage error (exit 2): the fix is a different name, nothing was
  * attempted. The same family a missing required argument is in. */
 function invalidTemplateName(name: string): CliError {
@@ -187,7 +211,21 @@ function reportWorktreeFailure(err: unknown): never {
  * and takes the verb's existing not-found path (exit 1). Failing here instead would make every verb's
  * "no such pane" message this function's to write.
  */
-function resolveTarget(deps: Deps, a: MuxAdapter, locator: string): MuxTarget {
+function resolveTarget(deps: Deps, a: MuxAdapter, locator: string | undefined): MuxTarget {
+	// No locator at all is a usage error (exit 2), and it is caught HERE — the single chokepoint every
+	// pane verb resolves through — so one throw covers them all. The old "no backend called" guarantee
+	// is deliberately gone (CR 95): the live panes ARE enumerated so they can be listed as candidates,
+	// the caller's deterministic next move after "missing pane" folded into the error. A listing that
+	// cannot be read costs the candidates, not the error — the missing pane is still reported.
+	if (!locator) {
+		let listed: LivePane[] = []
+		try {
+			listed = a.listPanes(deps.exec)
+		} catch {
+			// Cannot enumerate; the error carries no candidates and points at `cyber-mux list` instead.
+		}
+		throw new MissingPaneError(listed.map((p) => ({ id: p.id, label: p.label ?? null, cwd: p.cwd ?? null })))
+	}
 	let panes: LivePane[]
 	try {
 		panes = a.listPanes(deps.exec)
@@ -259,12 +297,14 @@ function guardedAsync<A extends unknown[]>(action: (...args: A) => Promise<void>
  * an ambiguity from `resolveTarget`) is a coded surface and passes through untouched; anything else is
  * the multiplexer's raw failure and becomes this CLI's own code and help instead.
  */
-function paneVerb(locator: string, body: () => void): void {
+function paneVerb(locator: string | undefined, body: () => void): void {
 	try {
 		body()
 	} catch (err) {
 		if (err instanceof CliError) throw err
-		throw paneNotFound(locator)
+		// A missing locator is pre-empted by `resolveTarget`'s `MissingPaneError` (a `CliError`, rethrown
+		// above), so reaching here means a locator WAS given and the backend rejected it as a pane.
+		throw paneNotFound(locator ?? '')
 	}
 }
 
@@ -1159,14 +1199,18 @@ function sendCommand(deps: Deps): Command {
 	send.addCommand(
 		new Command('text')
 			.description('Type literal text into a pane, pressing no Enter (a key-named word is typed, not pressed)')
-			.argument('<pane>', 'Target pane id')
-			.argument('<text>', 'Literal text to type')
+			.argument('[pane]', 'Target pane id')
+			.argument('[text]', 'Literal text to type')
 			.addOption(FORMAT_OPTION)
 			.action(
-				guarded((pane: string, text: string) => {
+				guarded((pane: string | undefined, text: string | undefined) => {
 					paneVerb(pane, () => {
 						const a = adapter(deps)
-						a.sendText(deps.exec, resolveTarget(deps, a, pane), text)
+						// A missing pane resolves to a candidate listing here (exit 2); an absent text with a pane
+						// given is its own usage error, caught after resolution so the pane check outranks it.
+						const target = resolveTarget(deps, a, pane)
+						if (text === undefined) throw missingSendPayload('text')
+						a.sendText(deps.exec, target, text)
 					})
 				}),
 			),
@@ -1174,17 +1218,19 @@ function sendCommand(deps: Deps): Command {
 	send.addCommand(
 		new Command('keys')
 			.description('Press named keys in a pane, typing nothing (Up, Enter, Escape, C-c, F1 …)')
-			.argument('<pane>', 'Target pane id')
+			.argument('[pane]', 'Target pane id')
 			.argument(
-				'<keys...>',
+				'[keys...]',
 				'Key names, in order — core vocabulary is portable, anything else is passed to the backend as-is',
 			)
 			.addOption(FORMAT_OPTION)
 			.action(
-				guarded((pane: string, keys: string[]) => {
+				guarded((pane: string | undefined, keys: string[]) => {
 					paneVerb(pane, () => {
 						const a = adapter(deps)
-						a.sendKeys(deps.exec, resolveTarget(deps, a, pane), keys)
+						const target = resolveTarget(deps, a, pane)
+						if (keys.length === 0) throw missingSendPayload('keys')
+						a.sendKeys(deps.exec, target, keys)
 					})
 				}),
 			),
@@ -1195,11 +1241,11 @@ function sendCommand(deps: Deps): Command {
 function submitCommand(deps: Deps): Command {
 	return new Command('submit')
 		.description("Take a pane's turn: type the text if given, then always press Enter (no text = bare-Enter flush)")
-		.argument('<pane>', 'Target pane id')
+		.argument('[pane]', 'Target pane id')
 		.argument('[text]', 'Text to type before Enter; omit to flush an already-staged buffer without retyping it')
 		.addOption(FORMAT_OPTION)
 		.action(
-			guarded((pane: string, text: string | undefined) => {
+			guarded((pane: string | undefined, text: string | undefined) => {
 				paneVerb(pane, () => {
 					const a = adapter(deps)
 					a.submit(deps.exec, resolveTarget(deps, a, pane), text)
@@ -1211,11 +1257,11 @@ function submitCommand(deps: Deps): Command {
 function readCommand(deps: Deps): Command {
 	return new Command('read')
 		.description("Capture a pane's output")
-		.argument('<pane>', 'Target pane id')
+		.argument('[pane]', 'Target pane id')
 		.option('--lines <n>', 'Trailing lines to capture', (v) => Number.parseInt(v, 10))
 		.addOption(FORMAT_OPTION)
 		.action(
-			guarded((pane: string, opts: { lines?: number | undefined }) => {
+			guarded((pane: string | undefined, opts: { lines?: number | undefined }) => {
 				paneVerb(pane, () => {
 					const a = adapter(deps)
 					const t = resolveTarget(deps, a, pane)
@@ -1231,10 +1277,10 @@ function readCommand(deps: Deps): Command {
 function focusCommand(deps: Deps): Command {
 	return new Command('focus')
 		.description('Beam the attached client to a pane')
-		.argument('<pane>', 'Target pane id')
+		.argument('[pane]', 'Target pane id')
 		.addOption(FORMAT_OPTION)
 		.action(
-			guarded((pane: string) => {
+			guarded((pane: string | undefined) => {
 				paneVerb(pane, () => {
 					const a = adapter(deps)
 					a.focus(deps.exec, resolveTarget(deps, a, pane))
@@ -1246,10 +1292,10 @@ function focusCommand(deps: Deps): Command {
 function closeCommand(deps: Deps): Command {
 	return new Command('close')
 		.description('Close a pane')
-		.argument('<pane>', 'Target pane id')
+		.argument('[pane]', 'Target pane id')
 		.addOption(FORMAT_OPTION)
 		.action(
-			guarded((pane: string) => {
+			guarded((pane: string | undefined) => {
 				paneVerb(pane, () => {
 					const a = adapter(deps)
 					a.teardown(deps.exec, resolveTarget(deps, a, pane))
@@ -1265,18 +1311,25 @@ function listCommand(deps: Deps): Command {
 		.action(
 			guarded(() => {
 				const panes = adapter(deps).listPanes(deps.exec)
-				output({ panes }, () =>
-					printTable(panes, [
-						{ label: 'pane', get: (p) => p.id },
-						// `label` takes the slot `mux` held. Every row of one listing reports the same mux — one
-						// adapter is selected per session, so the column is constant by construction and
-						// discriminates nothing. The label is what a caller now types INSTEAD of the id, so it is
-						// the fact this row exists to carry. `doctor` is where the backend is a live question.
-						{ label: 'label', get: (p) => p.label ?? '' },
-						{ label: 'harness', get: (p) => p.harness ?? '' },
-						{ label: 'cwd', get: (p) => p.cwd ?? '' },
-					]),
-				)
+				// The agent-status column earns its slot only when a pane actually carries the field — true on
+				// herdr (the one backend with a per-pane agent-state feed), constant-absent on tmux/wezterm/
+				// zellij. A constant-absent column discriminates nothing (axi.md #2, the same rule that drops
+				// the constant `mux` column), so it is suppressed on those backends rather than printed empty.
+				// The JSON payload keeps `agentStatus` per pane regardless — column suppression is a
+				// human-table concern, and a structured consumer reads the field straight off the pane.
+				const hasAgent = panes.some((p) => p.agentStatus !== undefined)
+				const cols: { label: string; get: (p: LivePane) => string }[] = [
+					{ label: 'pane', get: (p) => p.id },
+					// `label` takes the slot `mux` held. Every row of one listing reports the same mux — one
+					// adapter is selected per session, so the column is constant by construction and
+					// discriminates nothing. The label is what a caller now types INSTEAD of the id, so it is
+					// the fact this row exists to carry. `doctor` is where the backend is a live question.
+					{ label: 'label', get: (p) => p.label ?? '' },
+					{ label: 'harness', get: (p) => p.harness ?? '' },
+					{ label: 'cwd', get: (p) => p.cwd ?? '' },
+				]
+				if (hasAgent) cols.push({ label: 'agent', get: (p) => p.agentStatus ?? '' })
+				output({ panes }, () => printTable(panes, cols))
 			}),
 		)
 }
@@ -1284,10 +1337,10 @@ function listCommand(deps: Deps): Command {
 function existsCommand(deps: Deps): Command {
 	return new Command('exists')
 		.description('Probe whether a single pane is still live (exit 0 = live, 1 = gone)')
-		.argument('<pane>', 'Target pane id')
+		.argument('[pane]', 'Target pane id')
 		.addOption(FORMAT_OPTION)
 		.action(
-			guarded((pane: string) => {
+			guarded((pane: string | undefined) => {
 				const a = adapter(deps)
 				// Resolution runs BEFORE any output: an ambiguous locator throws out of here, so `live`/`gone`
 				// is never printed for a question that has no single pane to be about.
@@ -1297,6 +1350,126 @@ function existsCommand(deps: Deps): Command {
 				if (!live) process.exit(1)
 			}),
 		)
+}
+
+/**
+ * The CLI surface of the library's agent-wait refusal: exit 1 (a genuine operation failure, not a
+ * usage error), naming the backend, with a fix hint pointing at the herdr-only constraint. The
+ * DECISION to refuse is the orchestrator's (`AgentLifecycleUnsupportedError`); this composes only the
+ * presentation, so the sentence lives in one place — the exact mirror of how `backendUnsupported`
+ * surfaces `CaptureUnsupportedError` for `template save`.
+ */
+function agentUnsupported(err: AgentLifecycleUnsupportedError): CliError {
+	return new CliError(
+		'backend-unsupported',
+		`${err.backend} cannot wait on agent-lifecycle state — agent wait needs a backend with a native per-pane agent-state feed (herdr)`,
+		'run agent wait on herdr, the only backend with a native agent-state feed',
+		1,
+	)
+}
+
+/**
+ * `agent status <pane>` — a SNAPSHOT that degrades, never refuses. It resolves a pane through the
+ * shared ladder and prints its `agentStatus`, a fact independent of whether the backend can WAIT on it
+ * (that is `agent wait`'s herdr-only capability). A backend with no agent-state feed still answers
+ * truthfully — the pane, with no status — and exits 0: refusing here would turn a caller away from a
+ * fact the backend CAN answer (which pane this is) because of one it can't (what its agent is doing),
+ * and the two are independent.
+ */
+function agentStatusCommand(deps: Deps): Command {
+	return new Command('status')
+		.description("Print a pane's agent-lifecycle status (herdr); degrades to no status on a backend with no feed")
+		.argument('[pane]', 'Target pane id or label')
+		.addOption(FORMAT_OPTION)
+		.action(
+			guarded((pane: string | undefined) => {
+				const a = adapter(deps)
+				const target = resolveTarget(deps, a, pane)
+				// The status rides on the same live listing a name resolves from. A listing that cannot be
+				// read degrades to "no status" rather than failing the snapshot — the pane is still named.
+				let agentStatus: AgentStatus | undefined
+				try {
+					agentStatus = a.listPanes(deps.exec).find((p) => p.id === target.id)?.agentStatus
+				} catch {
+					agentStatus = undefined
+				}
+				output({ pane: target.id, agentStatus: agentStatus ?? null }, () =>
+					printFields({ pane: target.id, agentStatus }),
+				)
+			}),
+		)
+}
+
+/**
+ * `agent wait <pane>` — a blocking DRIVE of herdr's native `agent wait`, or a refusal naming the
+ * backend on one without the capability. Unlike `agent status`, waiting has no truthful degrade, so a
+ * backend with no agent-lifecycle primitive is refused (`backend-unsupported`, exit 1) rather than
+ * answered with a guess — the exact mirror of how `template save` refuses a geometry-incapable backend.
+ *
+ * The refusal is checked BEFORE the pane is resolved so a name that resolves nowhere never masks the
+ * herdr-only refusal; the orchestrator (`deriveAgentWait`) re-checks the same seam member, that check
+ * being its own library contract. `--until` is repeatable (omit to take herdr's default set) and
+ * `--timeout` is optional (omit for an indefinite wait).
+ */
+function agentWaitCommand(deps: Deps): Command {
+	return new Command('wait')
+		.description("Block until a pane's agent reaches a state (herdr); refused on a backend with no agent-state feed")
+		.argument('[pane]', 'Target pane id or label')
+		.option(
+			'--until <status...>',
+			'Agent states any of which ends the wait (idle, working, blocked, done, unknown); omit for herdr’s default',
+		)
+		.option('--timeout <ms>', 'Milliseconds before the wait gives up; omit to wait indefinitely', (v) =>
+			Number.parseInt(v, 10),
+		)
+		.addOption(FORMAT_OPTION)
+		.addHelpText(
+			'after',
+			'\nagent wait drives a native per-pane agent-state feed, which only herdr has — tmux, wezterm and\n' +
+				'zellij are refused with backend-unsupported. Use agent status for a snapshot that works everywhere.',
+		)
+		.action(
+			guarded((pane: string | undefined, opts: { until?: string[] | undefined; timeout?: number | undefined }) => {
+				const a = adapter(deps)
+				// Refuse a backend with no agent-lifecycle capability up front — the library's decision,
+				// surfaced here as backend-unsupported. Checked before the pane is resolved so it outranks any
+				// resolution outcome, and kept out of the try below so it is never re-dressed as a wait failure.
+				if (!a.agentLifecycle) throw agentUnsupported(new AgentLifecycleUnsupportedError(a.name))
+				const target = resolveTarget(deps, a, pane)
+				let reached: AgentStatus
+				try {
+					reached = deriveAgentWait(a, deps.exec, target, {
+						until: opts.until as AgentStatus[] | undefined,
+						timeoutMs: opts.timeout,
+					})
+				} catch (err) {
+					if (err instanceof CliError) throw err
+					// Belt-and-braces: the early guard already refused a capability-less backend, but the
+					// orchestrator re-checks as its own contract, so honor its typed refusal here too.
+					if (err instanceof AgentLifecycleUnsupportedError) throw agentUnsupported(err)
+					// A wait the backend accepted but could not complete (an unparseable envelope, a lost pane).
+					throw new CliError(
+						'agent-wait-failed',
+						err instanceof Error ? err.message : String(err),
+						'check the pane still exists with: cyber-mux exists <pane>',
+						1,
+					)
+				}
+				output({ pane: target.id, agentStatus: reached }, () => console.log(reached))
+			}),
+		)
+}
+
+/**
+ * The `agent` group reaches the herdr agent-lifecycle capability: `status` (a snapshot that degrades
+ * truthfully) and `wait` (a blocking drive of herdr's native wait, refused on every backend without
+ * it). The state feed itself is herdr's; this group is how the CLI reads and blocks on it.
+ */
+function agentCommand(deps: Deps): Command {
+	const cmd = new Command('agent').description("Inspect and wait on a pane's agent-lifecycle state (herdr)")
+	cmd.addCommand(agentStatusCommand(deps))
+	cmd.addCommand(agentWaitCommand(deps))
+	return cmd
 }
 
 function worktreeAddCommand(deps: Deps): Command {
@@ -1718,6 +1891,7 @@ export function buildProgram(cliDeps: CliDeps = DEFAULT_DEPS): Command {
 	program.addCommand(existsCommand(deps))
 	program.addCommand(worktreeCommand(deps))
 	program.addCommand(templateCommand(deps))
+	program.addCommand(agentCommand(deps))
 
 	return exitOverrideTree(program)
 }
