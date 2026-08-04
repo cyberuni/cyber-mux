@@ -49,6 +49,9 @@ function fakeAdapter(
 			readIndex++
 			return value
 		},
+		waitForOutput: () => {
+			throw new Error('nudge waits on the turn being TAKEN (staged text gone), not on output arriving')
+		},
 		focus: () => {},
 		teardown: () => {},
 		paneExists: () => opts.paneExists ?? true,

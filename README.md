@@ -17,7 +17,7 @@ npx cyber-mux mux mode
 
 - **Detects** the multiplexer you are running under — env fast-path (`CYBER_MUX` / `CYBER_MUX_PANE`),
   otherwise a process-ancestry walk falling back to `$TMUX` / `$HERDR_ENV`.
-- **Drives panes** through one `SessionAdapter` contract: `open`, `send`, `submit`, `read`, `focus`,
+- **Drives panes** through one `SessionAdapter` contract: `open`, `send`, `submit`, `read`, `wait`, `focus`,
   `close`, `list`, `exists`.
 - **Nudges** a peer pane and verifies the turn was actually taken (recovers a submit swallowed by a
   booting harness).
@@ -32,6 +32,7 @@ npx cyber-mux mux mode
 | `cyber-mux open` | Open a new pane/tab/workspace running a command |
 | `cyber-mux send` / `submit` | Type text into a pane / flush a staged buffer |
 | `cyber-mux read` | Capture a pane's output |
+| `cyber-mux wait` | Block until a pane's output matches (exit 0), or the timeout elapses (exit 1) |
 | `cyber-mux focus` | Beam the attached client to a pane |
 | `cyber-mux close` | Close a pane |
 | `cyber-mux list` / `exists` | Enumerate live panes / probe one |

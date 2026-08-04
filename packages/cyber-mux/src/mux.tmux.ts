@@ -2,6 +2,7 @@ import type { Exec } from './exec.ts'
 import { withReason } from './exec.ts'
 import type { LivePane, MuxAdapter, MuxReadOptions, OpenedPane, RegionPane, WorkspaceTab } from './mux.ts'
 import { assertRatioInRange } from './ratio.ts'
+import { pollForOutput } from './wait-output.ts'
 
 /**
  * The tmux window user option `MuxOpenOptions.workspaceGroup` is stored in. A user option (the
@@ -193,6 +194,13 @@ export const tmuxMuxAdapter: MuxAdapter = {
 		const args = ['capture-pane', '-p', '-t', target.id]
 		if (opts?.lines != null) args.push('-S', `-${opts.lines}`)
 		return exec('tmux', args) ?? ''
+	},
+
+	// tmux has no wait-for-output primitive — `wait-for` synchronizes on a channel some other tmux
+	// command signals, which says nothing about what a pane PRINTED. So the wait is the shared poll over
+	// this adapter's own `capture-pane` read; see `pollForOutput` for the cadence and liveness rules.
+	waitForOutput(exec, target, opts) {
+		return pollForOutput(tmuxMuxAdapter, exec, target, opts)
 	},
 
 	focus(exec, target) {

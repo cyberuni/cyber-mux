@@ -6,6 +6,7 @@ import type {
 	LivePane,
 	MuxAdapter,
 	MuxReadOptions,
+	MuxWaitResult,
 	OpenedPane,
 	RegionPane,
 	WorkspaceTab,
@@ -13,6 +14,7 @@ import type {
 	WorktreeWorkspaceCapability,
 } from './mux.ts'
 import { assertRatioInRange } from './ratio.ts'
+import { assertWaitPattern } from './wait-output.ts'
 import { normalizeWorktreePath } from './worktree.ts'
 
 /**
@@ -163,6 +165,53 @@ export const herdrMuxAdapter: MuxAdapter = {
 		const args = ['pane', 'read', target.id, '--source', 'visible']
 		if (opts?.lines != null) args.push('--lines', String(opts.lines))
 		return exec('herdr', args) ?? ''
+	},
+
+	/**
+	 * The one backend with a NATIVE wait: `pane wait-output` blocks in herdr itself (0.7.5), so no poll
+	 * loop is run here and no snapshot is pulled across the CLI boundary on every tick.
+	 *
+	 * `--source visible` is pinned rather than left to herdr's own default (`recent_unwrapped`, verified
+	 * against 0.7.5 — the help says `recent`). The seam's rule is that a wait searches exactly what
+	 * `read` returns, and `read` pins `visible` here; taking the default would make the same wait mean a
+	 * different snapshot on this backend than on every polling one.
+	 *
+	 * Telling a TIMEOUT (an answer) from a broken wait (a failure) is the whole difficulty, because herdr
+	 * spells both the same way: exit 1 with an error envelope on stderr, so `Exec` yields `null` for
+	 * either. Two tiers answer it, in order:
+	 *
+	 * 1. **The envelope's `code`**, when the runner captured stderr into `lastError` (verified against
+	 *    0.7.5: `{"error":{"code":"timeout",…}}` vs `{"error":{"code":"pane_not_found",…}}`). Exact.
+	 * 2. **A live pane that actually consumed the deadline**, when it did not. `Exec.lastError` is
+	 *    specified as a diagnostic and NEVER a control-flow signal — a runner that discards stderr must
+	 *    still work — so the code cannot be the only answer. Liveness alone is not enough either, and the
+	 *    reason is a whole released version of the backend: herdr 0.7.4 has no `pane wait-output` at all,
+	 *    so it answers with clap's usage text (not an envelope) INSTANTLY, and a liveness-only rule reads
+	 *    that as "timed out" — a silently wrong answer for a wait that never ran. Elapsed time is the fact
+	 *    that separates them and needs no stderr: a wait that returns in a fraction of its own timeout did
+	 *    not wait. Both must hold — the pane is live AND the deadline was spent — or this throws.
+	 *
+	 * A timeout costs ONE extra `read`, because herdr's timeout envelope carries no snapshot and the seam
+	 * promises the caller the evidence its verdict was reached on. It is taken at the deadline, so it is
+	 * the same "last look at the pane" a polling backend returns, one poll interval later.
+	 */
+	async waitForOutput(exec, target, opts) {
+		assertWaitPattern(opts)
+		const now = opts.now ?? (() => Date.now())
+		const pattern = opts.match != null ? ['--match', opts.match] : ['--regex', opts.regex as string]
+		const args = ['pane', 'wait-output', target.id, '--source', 'visible', '--timeout', String(opts.timeoutMs)]
+		args.push(...pattern)
+		if (opts.lines != null) args.push('--lines', String(opts.lines))
+		const started = now()
+		const out = exec('herdr', args)
+		if (out == null) {
+			if (!isHerdrWaitTimeout(exec, target, opts.timeoutMs, now() - started)) {
+				throw new Error(withReason(exec, `herdr pane wait-output failed for pane ${target.id}`))
+			}
+			const readOpts = opts.lines != null ? { lines: opts.lines } : undefined
+			return { matched: false, output: herdrMuxAdapter.read(exec, target, readOpts) }
+		}
+		return parseWaitOutput(out)
 	},
 
 	focus(exec, target) {
@@ -540,6 +589,67 @@ function parsePaneRecord(out: string | null): { workspaceId?: string | undefined
 
 function nonEmpty(value: unknown): string | undefined {
 	return typeof value === 'string' && value !== '' ? value : undefined
+}
+
+/**
+ * The `code` of a herdr error envelope, when the runner captured one — how a wait's TIMEOUT (an answer)
+ * is told from any other failure (a throw). Read from `Exec.lastError` because that is where herdr's
+ * envelope lands: it is written to stderr with exit 1, so stdout is `null` for every failure alike and
+ * the code is the only thing that separates them. Defensive throughout — no reason, unparseable JSON, or
+ * a missing/non-string code all answer `undefined`, which routes to the throw rather than to a silent
+ * "timed out" the backend never said.
+ */
+/**
+ * How much of its own timeout a wait must actually spend before a failure is believed to BE that
+ * timeout. A fraction rather than the whole, because process start-up and clock granularity make an
+ * exact-or-greater comparison flaky on a real runner; wide enough that the case it exists to catch — a
+ * herdr with no `wait-output` subcommand, which returns in milliseconds — is nowhere near it.
+ */
+const HERDR_WAIT_ELAPSED_RATIO = 0.9
+
+/**
+ * Whether a failed `pane wait-output` was the DEADLINE passing rather than the wait breaking — the
+ * two-tier rule `waitForOutput` documents, kept out of the method so the tiers read as one decision.
+ *
+ * The envelope's code answers when the runner captured one. Otherwise the answer needs two facts, and
+ * neither alone is enough: the pane must be LIVE (a gone pane is a failure, `pollForOutput`'s rule) and
+ * the call must have SPENT the deadline (a wait that returned instantly never ran — herdr 0.7.4, whose
+ * usage text for an unknown subcommand is not an envelope to read a code from).
+ */
+function isHerdrWaitTimeout(exec: Exec, target: { id: string }, timeoutMs: number, elapsedMs: number): boolean {
+	const code = herdrErrorCode(exec.lastError)
+	if (code != null) return code === 'timeout'
+	if (elapsedMs < timeoutMs * HERDR_WAIT_ELAPSED_RATIO) return false
+	return herdrMuxAdapter.paneExists(exec, target)
+}
+
+function herdrErrorCode(reason: string | undefined): string | undefined {
+	if (!reason) return undefined
+	try {
+		return nonEmpty(JSON.parse(reason)?.error?.code)
+	} catch {
+		return undefined
+	}
+}
+
+/**
+ * A successful `pane wait-output` envelope: the snapshot it matched in, and the line it matched on.
+ *
+ * `matched` is `true` by construction — herdr exits 0 only on a match, so reaching here IS the match;
+ * the parse only fills in the evidence. Defensive for the same reason `parsePaneRecord` is: a herdr
+ * build that reshapes the envelope degrades to a match with no snapshot, never to a failed wait.
+ */
+function parseWaitOutput(out: string): MuxWaitResult {
+	let text: string | undefined
+	let line: string | undefined
+	try {
+		const result = JSON.parse(out)?.result
+		text = nonEmpty(result?.read?.text)
+		line = nonEmpty(result?.matched_line)
+	} catch {
+		// Leave both absent — see above.
+	}
+	return { matched: true, output: text ?? '', ...(line != null ? { matchedLine: line } : {}) }
 }
 
 /**

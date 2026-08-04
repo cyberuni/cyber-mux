@@ -388,3 +388,28 @@ describe('spec:cyber-mux/agent', () => {
 		expect(weztermMuxAdapter.agentLifecycle).toBeUndefined()
 	})
 })
+
+/**
+ * `wezterm cli` reads text (`get-text`) and never blocks on it, so the wait is the shared poll over
+ * this adapter's own read — see `wait-output.test.ts` for the cadence/deadline/liveness rules the poll
+ * itself owns.
+ */
+describe('weztermMuxAdapter — wait-output by polling', () => {
+	it('polls get-text and matches what is already on screen', async () => {
+		const calls: string[][] = []
+		const exec = fakeExec(calls, { 'get-text': 'booting\nserver ready on :8080', list: LIST_ONE })
+		const result = await weztermMuxAdapter.waitForOutput(exec, { id: '9' }, { match: 'ready', timeoutMs: 1000 })
+		expect(result.matched).toBe(true)
+		expect(calls).toEqual([
+			['cli', 'list', '--format', 'json'],
+			['cli', 'get-text', '--pane-id', '9'],
+		])
+	})
+
+	it('refuses a pane that is gone instead of waiting out the timeout', async () => {
+		const exec = fakeExec([], { 'get-text': 'booting', list: LIST_ONE })
+		await expect(
+			weztermMuxAdapter.waitForOutput(exec, { id: '404' }, { match: 'ready', timeoutMs: 60_000 }),
+		).rejects.toThrow(/no longer exists/)
+	})
+})

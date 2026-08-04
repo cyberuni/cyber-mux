@@ -4375,3 +4375,111 @@ describe('spec:cyber-mux/cli/agent', () => {
 		}
 	})
 })
+
+/**
+ * The `wait` verb — agent-first in the two ways that matter: the verdict rides the EXIT CODE (0 matched,
+ * 1 timed out), and a timeout still prints the pane's own output so a caller that guessed the wrong
+ * pattern sees what the pane actually said instead of an error with the evidence discarded.
+ */
+describe('cyber-mux wait — portable wait-for-output', () => {
+	let logs: string[]
+
+	beforeEach(() => {
+		logs = []
+		vi.spyOn(console, 'log').mockImplementation((line: string) => {
+			logs.push(line)
+		})
+		vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+		vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+		vi.spyOn(process, 'exit').mockImplementation((code) => {
+			throw new Error(`exit:${code}`)
+		})
+	})
+
+	afterEach(() => {
+		vi.restoreAllMocks()
+	})
+
+	it('exits 0 and names the matching line when the pattern is already on screen', async () => {
+		const calls: string[][] = []
+		const exec = fakeTmuxExec(calls, { 'capture-pane': 'booting\nserver ready on :8080', 'has-session': '' })
+		const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec })
+		// No `exit:` throw — a match leaves the process's own success status alone.
+		await run(program, ['wait', '%3', '--match', 'ready'])
+		expect(logs.join('\n')).toContain('matched  true')
+		expect(logs.join('\n')).toContain('server ready on :8080')
+		expect(drives(calls)).toContainEqual(['capture-pane', '-p', '-t', '%3'])
+	})
+
+	it('exits 1 on a timeout, still printing the snapshot the verdict was reached on', async () => {
+		const calls: string[][] = []
+		const exec = fakeTmuxExec(calls, { 'capture-pane': 'still booting', 'has-session': '' })
+		const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec })
+		await withArgv(['wait', '%3', '--match', 'ready', '--format', 'json'], async () => {
+			// `--timeout 0` still takes its one look at the pane, so this asserts the timeout path without
+			// spending the wall-clock a real deadline would.
+			await expect(
+				run(program, ['wait', '%3', '--match', 'ready', '--timeout', '0', '--format', 'json']),
+			).rejects.toThrow('exit:1')
+		})
+		const payload = JSON.parse(logs.join('\n'))
+		expect(payload).toEqual({ pane: '%3', matched: false, output: 'still booting' })
+	})
+
+	it('forwards a regex and a line scope to the backend read it polls', async () => {
+		const calls: string[][] = []
+		const exec = fakeTmuxExec(calls, { 'capture-pane': 'listening on 8080', 'has-session': '' })
+		const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec })
+		await run(program, ['wait', '%3', '--regex', 'on \\d+', '--lines', '20'])
+		expect(drives(calls)).toContainEqual(['capture-pane', '-p', '-t', '%3', '-S', '-20'])
+	})
+
+	it('answers a missing pane with the candidate listing every pane verb uses', async () => {
+		// The convention CR 95 landed: `[pane]` is optional at the parser so the missing pane is this
+		// CLI's own coded error with the live panes as candidates, not commander's bare missing-argument.
+		const calls: string[][] = []
+		const exec = fakeTmuxExec(calls, { 'list-panes': '%3\tzsh\t/unit' })
+		const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec })
+		await expect(run(program, ['wait', '--match', 'ready'])).rejects.toThrow('exit:2')
+		expect(logs.join('\n')).toContain('missing-pane')
+	})
+
+	it('refuses a wait with no pattern — a usage error, nothing driven', async () => {
+		const calls: string[][] = []
+		const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: fakeTmuxExec(calls) })
+		await expect(run(program, ['wait', '%3'])).rejects.toThrow('exit:2')
+		expect(logs.join('\n')).toContain('usage-error')
+		expect(drives(calls)).toEqual([])
+	})
+
+	it('refuses both patterns at once rather than picking a winner', async () => {
+		const calls: string[][] = []
+		const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: fakeTmuxExec(calls) })
+		await expect(run(program, ['wait', '%3', '--match', 'a', '--regex', 'a'])).rejects.toThrow('exit:2')
+		expect(logs.join('\n')).toContain('mutually exclusive')
+		expect(drives(calls)).toEqual([])
+	})
+
+	it('refuses a malformed regex before waiting on anything', async () => {
+		const calls: string[][] = []
+		const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: fakeTmuxExec(calls) })
+		await expect(run(program, ['wait', '%3', '--regex', 'ready('])).rejects.toThrow('exit:2')
+		expect(drives(calls)).toEqual([])
+	})
+
+	it('refuses a non-numeric timeout as a usage error', async () => {
+		const calls: string[][] = []
+		const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: fakeTmuxExec(calls) })
+		await expect(run(program, ['wait', '%3', '--match', 'ready', '--timeout', 'soon'])).rejects.toThrow('exit:2')
+		expect(logs.join('\n')).toContain('milliseconds')
+		expect(drives(calls)).toEqual([])
+	})
+
+	it('reports a gone pane as this CLI’s own pane-not-found, never a timeout', async () => {
+		// Nothing answers, so the liveness probe finds no pane — exit 1 under the coded surface every
+		// other pane verb uses, rather than a silent full-timeout wait.
+		const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: () => null })
+		await expect(run(program, ['wait', '%404', '--match', 'ready', '--timeout', '60000'])).rejects.toThrow('exit:1')
+		expect(logs.join('\n')).toContain('pane-not-found')
+	})
+})

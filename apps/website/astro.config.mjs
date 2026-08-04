@@ -58,6 +58,7 @@ export default defineConfig({
             { label: "send", slug: "cli/send" },
             { label: "submit", slug: "cli/submit" },
             { label: "read", slug: "cli/read" },
+            { label: "wait", slug: "cli/wait" },
             { label: "focus", slug: "cli/focus" },
             { label: "close", slug: "cli/close" },
             { label: "list", slug: "cli/list" },

@@ -52,6 +52,21 @@ function hasCurrentPane(): boolean {
 	}
 }
 
+/**
+ * Whether this herdr binary has `pane wait-output` at all — a CAPABILITY probe, not a version compare.
+ * It arrived in 0.7.5 and CI still pins 0.7.4, so the wait cases below would otherwise fail against a
+ * backend that simply does not have the verb. Probed through `--help`, which exits 0 for a subcommand
+ * that exists and non-zero for one that does not, and touches no pane either way.
+ */
+function hasWaitOutput(): boolean {
+	try {
+		execFileSync('herdr', ['pane', 'wait-output', '--help'], { stdio: 'ignore' })
+		return true
+	} catch {
+		return false
+	}
+}
+
 const realExec: Exec = (cmd, args) => {
 	try {
 		return execFileSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
@@ -127,6 +142,30 @@ describe.skipIf(!hasHerdr())('spec:cyber-mux/mux', () => {
 			)
 			expect(output).toContain('cyber-mux-itest-marker')
 		})
+
+		it.skipIf(!hasWaitOutput())('waitForOutput() drives herdr’s own wait-output against a real pane', async () => {
+			// The claim the seam's herdr branch rests on: `pane wait-output` really does block on the pane's
+			// own text and report the matching line back. Run against the live binary because the envelope
+			// shape (and, below, the timeout error code) is the whole contract the adapter parses.
+			herdrMuxAdapter.submit(realExec, target, 'echo cyber-mux-wait-marker')
+			const matched = await herdrMuxAdapter.waitForOutput(realExec, target, {
+				match: 'cyber-mux-wait-marker',
+				timeoutMs: 5000,
+			})
+			expect(matched.matched).toBe(true)
+			expect(matched.output).toContain('cyber-mux-wait-marker')
+		})
+
+		it.skipIf(!hasWaitOutput())(
+			'waitForOutput() reports a real herdr timeout as an answer, not a failure',
+			async () => {
+				const timedOut = await herdrMuxAdapter.waitForOutput(realExec, target, {
+					match: 'a-string-this-pane-never-prints',
+					timeoutMs: 500,
+				})
+				expect(timedOut.matched).toBe(false)
+			},
+		)
 
 		it('teardown() actually closes the real pane', () => {
 			herdrMuxAdapter.teardown(realExec, target)
