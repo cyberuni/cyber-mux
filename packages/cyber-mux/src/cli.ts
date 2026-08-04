@@ -1272,22 +1272,36 @@ function submitCommand(deps: Deps): Command {
 /**
  * The `read` verb: capture a pane's output.
  *
- * **The capture is the whole of stdout in text format**, byte for byte, which is why `--truncation`
- * annotates rather than interleaves: a `truncated: …` line printed amid the capture would land in
- * whatever the caller piped the output into, and a snapshot with a line the pane never printed is
- * worse than no annotation at all. So in text format the answer goes to stderr — beside the capture,
- * not in it — and in `--format json` it rides the payload as a field, which is the form an agent
- * should reach for. The capture itself is unchanged in either.
+ * **The flag is `--omitted-rows`, not `--truncation`, and the rename is the whole point.** AXI #3
+ * already spends the word "truncation" on this CLI's OWN body truncation — a long capture cut down to
+ * a size hint (`… +240 lines — rerun with --full`), with `--full` as the universal escape hatch that
+ * suppresses it. That is a different fact from the one this reports: the BACKEND dropped scrollback
+ * above the window it captured, and no `--full` can bring rows back that the multiplexer never handed
+ * over. Two truncations on one verb, so each keeps its own word — `--full` restores what this CLI
+ * elided, `--omitted-rows` reports what the backend elided. The seam keeps `truncated` (herdr's own
+ * name for the field, and a library with no `--full` has nothing to collide with); the rename is this
+ * layer's alone, because the collision is this layer's alone.
+ *
+ * **The answer is on stdout in every format**, which is AXI #6 read literally: stdout carries the data,
+ * errors and suggestions "so the agent can read and act on them", while stderr is debug/progress that
+ * "agents don't read" — an agent-facing report on stderr is a report its own reader never sees. So a
+ * trailing `omitted-rows` field follows the capture in text and agent formats (AXI #3's own shape: the
+ * hint goes after the body), and rides the payload under `--format json`. `--format json` is a form
+ * that is easier to parse, never the only way to learn the fact.
+ *
+ * Both spellings state the answer even when it is `false` — the flag ASKED, and a caller that asked
+ * and got nothing back cannot tell "complete" from "unsupported". Nothing is printed when the flag was
+ * not passed, which is the seam's absent-not-false rule reaching the surface unchanged.
  */
 function readCommand(deps: Deps): Command {
 	return new Command('read')
 		.description("Capture a pane's output")
 		.argument('[pane]', 'Target pane id')
 		.option('--lines <n>', 'Trailing lines to capture', (v) => Number.parseInt(v, 10))
-		.option('--truncation', 'Also report whether older rows were omitted (costs one extra backend query)')
+		.option('--omitted-rows', 'Also report whether the backend dropped older rows (one extra backend query)')
 		.addOption(FORMAT_OPTION)
 		.action(
-			guarded((pane: string | undefined, opts: { lines?: number | undefined; truncation?: boolean | undefined }) => {
+			guarded((pane: string | undefined, opts: { lines?: number | undefined; omittedRows?: boolean | undefined }) => {
 				paneVerb(pane, () => {
 					const a = adapter(deps)
 					const t = resolveTarget(deps, a, pane)
@@ -1295,13 +1309,16 @@ function readCommand(deps: Deps): Command {
 					// throwing here means stdout is the structured error alone, with no partial pane output before it.
 					const result = a.read(deps.exec, t, {
 						...(opts.lines != null ? { lines: opts.lines } : {}),
-						...(opts.truncation ? { truncation: true } : {}),
+						...(opts.omittedRows ? { truncation: true } : {}),
 					})
-					output({ pane: t.id, ...result }, () => {
+					// `omittedRows` rather than the seam's `truncated`, for the reason the flag is named that
+					// way: at this layer "truncated" is already AXI #3's word.
+					const omittedRows = result.truncated
+					output({ pane: t.id, text: result.text, ...(omittedRows != null ? { omittedRows } : {}) }, () => {
 						process.stdout.write(result.text.endsWith('\n') ? result.text : `${result.text}\n`)
-						// Only when asked: an unasked read determined nothing, and printing `truncated: false`
+						// Only when asked: an unasked read determined nothing, and printing `omitted-rows: false`
 						// for it would be the "I did not check" the seam refuses to spell as an answer.
-						if (result.truncated != null) process.stderr.write(`truncated: ${result.truncated}\n`)
+						if (omittedRows != null) printFields({ 'omitted-rows': String(omittedRows) })
 					})
 				})
 			}),

@@ -3444,9 +3444,9 @@ describe('spec:cyber-mux/cli/lookup', () => {
 		expect(calls).toContainEqual(['capture-pane', '-p', '-t', '%1', '-S', '-5'])
 	})
 
-	// The truncation surface (#100): the capture stays the whole of stdout, the answer rides stderr in
-	// text format and the payload in JSON.
-	it('read --truncation keeps the capture on stdout and puts the answer on stderr', async () => {
+	// The omitted-rows surface (#100). Named for the BACKEND's elision, not "truncation" — AXI #3 spends
+	// that word on this CLI's own body truncation, the one `--full` is the escape hatch for.
+	it('read --omitted-rows answers on STDOUT, after the capture, in the default format', async () => {
 		const out: string[] = []
 		vi.spyOn(process.stdout, 'write').mockImplementation((line) => {
 			out.push(String(line))
@@ -3458,11 +3458,13 @@ describe('spec:cyber-mux/cli/lookup', () => {
 			env: TMUX,
 			exec: paneServer(calls, [{ id: '%1', cwd: '/repo' }], { 'capture-pane': 'HELLO' }),
 		})
-		await run(program, ['read', '%1', '--truncation'])
-		// The capture, byte for byte — a `truncated:` line printed amid it would land in whatever the
-		// caller piped this into.
+		await run(program, ['read', '%1', '--omitted-rows'])
+		// AXI #6: stdout is the stream the agent reads, stderr is the one it does not — so the answer is
+		// on stdout in every format, and JSON is only the easier parse.
+		expect(logs.join('\n')).toContain('omitted-rows  false')
+		expect(stderr.join('')).toBe('')
+		// The capture itself is unchanged, and the hint follows the body (AXI #3's own shape).
 		expect(out.join('')).toBe('HELLO\n')
-		expect(stderr.join('')).toBe('truncated: false\n')
 		// The bare read plus its one-row-deeper probe, and nothing else driven.
 		expect(calls.filter((c) => c[0] === 'capture-pane')).toEqual([
 			['capture-pane', '-p', '-t', '%1'],
@@ -3470,35 +3472,50 @@ describe('spec:cyber-mux/cli/lookup', () => {
 		])
 	})
 
-	it('read --truncation --format json carries truncated in the payload', async () => {
+	it('read --omitted-rows --format agent answers on stdout too, not only under json', async () => {
+		vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+		const stderr = captureStderr()
+		const exec: Exec = (cmd, args) => {
+			if (args[0] === 'capture-pane') return args.at(-1) === '-1' ? 'OLDER\nHELLO' : 'HELLO'
+			return paneServer([], [{ id: '%1', cwd: '/repo' }])(cmd, args)
+		}
+		const program = buildProgram({ env: TMUX, exec })
+		await withArgv(['read', '%1', '--omitted-rows', '--format', 'agent'], () =>
+			run(program, ['read', '%1', '--omitted-rows', '--format', 'agent']),
+		)
+		expect(logs.join('\n')).toContain('omitted-rows  true')
+		expect(stderr.join('')).toBe('')
+	})
+
+	it('read --omitted-rows --format json carries omittedRows in the payload', async () => {
 		vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
 		const exec: Exec = (cmd, args) => {
 			if (args[0] === 'capture-pane') return args.at(-1) === '-1' ? 'OLDER\nHELLO' : 'HELLO'
 			return paneServer([], [{ id: '%1', cwd: '/repo' }])(cmd, args)
 		}
 		const program = buildProgram({ env: TMUX, exec })
-		await withArgv(['read', '%1', '--truncation', '--format', 'json'], () =>
-			run(program, ['read', '%1', '--truncation', '--format', 'json']),
+		await withArgv(['read', '%1', '--omitted-rows', '--format', 'json'], () =>
+			run(program, ['read', '%1', '--omitted-rows', '--format', 'json']),
 		)
-		expect(JSON.parse(logs.join('\n'))).toEqual({ pane: '%1', text: 'HELLO', truncated: true })
+		// `omittedRows`, not the seam's `truncated`: at this layer that word is already taken.
+		expect(JSON.parse(logs.join('\n'))).toEqual({ pane: '%1', text: 'HELLO', omittedRows: true })
 	})
 
-	it('read without --truncation reports no truncation at all, and spends no probe on it', async () => {
+	it('read without --omitted-rows claims nothing, and spends no probe finding out', async () => {
 		const out: string[] = []
 		vi.spyOn(process.stdout, 'write').mockImplementation((line) => {
 			out.push(String(line))
 			return true
 		})
-		const stderr = captureStderr()
 		const calls: string[][] = []
 		const program = buildProgram({
 			env: TMUX,
 			exec: paneServer(calls, [{ id: '%1', cwd: '/repo' }], { 'capture-pane': 'HELLO' }),
 		})
 		await run(program, ['read', '%1'])
-		// Nothing was asked, so nothing is claimed — no `truncated: false` that would read as "you have
-		// everything" — and no second capture was spent finding out.
-		expect(stderr.join('')).toBe('')
+		// Nothing was asked, so nothing is claimed — no `omitted-rows: false` that would read as "you
+		// have everything" — and no second capture was spent finding out.
+		expect(logs.join('\n')).toBe('')
 		expect(out.join('')).toBe('HELLO\n')
 		expect(calls.filter((c) => c[0] === 'capture-pane')).toEqual([['capture-pane', '-p', '-t', '%1']])
 	})

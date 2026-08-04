@@ -134,7 +134,9 @@ const pane = mux.open({
   *undetermined* and a `false` that means "I did not check" is indistinguishable from "you have
   everything". Every backend answers it: each asks its own backend for one row more than the window
   and compares row counts, which costs one extra query (none on Zellij, whose `lines` read already
-  holds the whole scrollback). That is why it is opt-in — `read` is the hottest verb on this seam.
+  holds the whole scrollback). That is why it is opt-in — `read` is the hottest verb on this seam. The
+  CLI surfaces this as [`read --omitted-rows`](/cyber-mux/cli/read/), renamed there because the CLI
+  already spends the word "truncation" on its own body truncation (the one `--full` escapes).
 - **`mux.focus(target, deps?)`** — beam the attached client to the pane, across workspace and tab.
 - **`mux.nudge(target, message, opts?, deps?)`** — `submit` with a receipt; see
   [`nudge`](/cyber-mux/api/nudge/).

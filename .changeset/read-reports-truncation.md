@@ -21,8 +21,11 @@ Opt-in because it costs one extra backend query and `read` is the hottest verb o
 `pollForOutput` runs it once per poll tick. Omitted, the argv is byte-identical to the read that has
 always been issued.
 
-CLI: `cyber-mux read --truncation`. The capture remains the whole of stdout — the answer rides stderr
-in text format, and the payload (`{pane, text, truncated}`) under `--format json`.
+CLI: `cyber-mux read --omitted-rows` — named for the backend's elision rather than "truncation",
+which AXI #3 already spends on this CLI's own body truncation (the one `--full` escapes). The answer
+is on stdout in every format: a trailing `omitted-rows` field after the capture in the default and
+`agent` formats, and `{pane, text, omittedRows}` under `--format json`. The capture itself is
+byte-identical either way.
 
 Callers reading text from `read` now take `.text` (`nudge` and `waitForOutput` already do
 internally).
