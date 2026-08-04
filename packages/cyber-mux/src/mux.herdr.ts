@@ -16,7 +16,7 @@ import type {
 	WorktreeWorkspaceCapability,
 } from './mux.ts'
 import { assertRatioInRange } from './ratio.ts'
-import { capturedRows, isReadTruncated } from './read-truncation.ts'
+import { capturedRows, FULL_SCROLLBACK_LINES, isReadTruncated } from './read-window.ts'
 import { assertWaitPattern } from './wait-output.ts'
 import { normalizeWorktreePath } from './worktree.ts'
 
@@ -202,6 +202,12 @@ export const herdrMuxAdapter: MuxAdapter = {
 	 * it across all four backends. Noted here so the next reader does not re-derive the dead end.
 	 */
 	read(exec, target, opts?: MuxReadOptions | undefined) {
+		// An unbounded window reads `recent`, not `visible`: `visible` IS the viewport and cannot answer
+		// for anything above it, so asking it for the whole scrollback would quietly return one screen.
+		if (opts?.lines === 'all') {
+			const text = paneRead(exec, target, 'recent', FULL_SCROLLBACK_LINES)
+			return opts.truncation ? { text, truncated: false } : { text }
+		}
 		const text = paneRead(exec, target, 'visible', opts?.lines)
 		if (!opts?.truncation) return { text }
 		// herdr is the one backend that computes this fact ITSELF — `pane.read` answers `truncated` on

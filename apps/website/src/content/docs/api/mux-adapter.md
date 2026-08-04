@@ -128,15 +128,16 @@ const pane = mux.open({
 - **`mux.submit(target, text?, deps?)`** — take the pane's turn: type `text` if given, then **always**
   press Enter. With no text, sends a bare Enter only — flushing an already-staged buffer without
   re-typing it. See [`nudge`](/cyber-mux/api/nudge/) for the send-and-verify wrapper.
-- **`mux.read(target, opts?, deps?)`** → `{ text, truncated? }` — capture the pane's current output;
-  `opts.lines` bounds the tail. Pass `opts.truncation` to also learn whether older rows above the
-  captured window were dropped; **`truncated` is absent unless you ask**, because absent means
-  *undetermined* and a `false` that means "I did not check" is indistinguishable from "you have
-  everything". Every backend answers it: each asks its own backend for one row more than the window
-  and compares row counts, which costs one extra query (none on Zellij, whose `lines` read already
-  holds the whole scrollback). That is why it is opt-in — `read` is the hottest verb on this seam. The
-  CLI surfaces this as [`read --omitted-rows`](/cyber-mux/cli/read/), renamed there because the CLI
-  already spends the word "truncation" on its own body truncation (the one `--full` escapes).
+- **`mux.read(target, opts?, deps?)`** → `{ text, truncated? }` — capture the pane's current output.
+  `opts.lines` is the read WINDOW: a row count, `'all'` for the whole scrollback, or omitted for the
+  backend's own default (the viewport). Pass `opts.truncation` to also learn whether rows above that
+  window were dropped; **`truncated` is absent unless you ask**, because absent means *undetermined*
+  and a `false` that means "I did not check" is indistinguishable from "you have everything". Every
+  backend answers it: each asks for one row more than the window and compares row counts, which costs
+  one extra query — none on Zellij (whose `lines` read already holds the whole scrollback), and none
+  at `lines: 'all'`, where an unbounded window omitted nothing by construction. Opt-in because `read`
+  is the hottest verb on this seam; the CLI, one invocation per process, always asks
+  ([`read`](/cyber-mux/cli/read/)).
 - **`mux.focus(target, deps?)`** — beam the attached client to the pane, across workspace and tab.
 - **`mux.nudge(target, message, opts?, deps?)`** — `submit` with a receipt; see
   [`nudge`](/cyber-mux/api/nudge/).

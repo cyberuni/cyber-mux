@@ -2,7 +2,7 @@ import type { Exec } from './exec.ts'
 import { withReason } from './exec.ts'
 import type { LivePane, MuxAdapter, MuxReadOptions, MuxTarget, OpenedPane, RegionPane, WorkspaceTab } from './mux.ts'
 import { assertRatioInRange } from './ratio.ts'
-import { isReadTruncated } from './read-truncation.ts'
+import { isReadTruncated } from './read-window.ts'
 import { pollForOutput } from './wait-output.ts'
 
 /**
@@ -224,6 +224,9 @@ export const tmuxMuxAdapter: MuxAdapter = {
 	read(exec, target, opts?: MuxReadOptions | undefined) {
 		const text = capturePane(exec, target, opts?.lines)
 		if (!opts?.truncation) return { text }
+		// An unbounded window omitted nothing by construction — the answer costs no probe at the one end
+		// where it is already known.
+		if (opts.lines === 'all') return { text, truncated: false }
 		// One row deeper, in tmux's own units: `-S -N` starts the capture N rows INTO the history above
 		// the visible screen, so `-S -(N+1)` is exactly this window plus one older row — and a bare read
 		// (no `lines`) is the screen alone, whose one-deeper form is `-S -1`. tmux clamps a start line
@@ -513,9 +516,12 @@ const TMUX_KEY_RENAMES: Readonly<Record<string, string>> = { Backspace: 'BSpace'
  * probe — so the two differ in exactly the number they disagree about and nothing else. `lines`
  * omitted is tmux's own default window: the visible screen, with no `-S` at all.
  */
-function capturePane(exec: Exec, target: MuxTarget, lines: number | undefined): string {
+function capturePane(exec: Exec, target: MuxTarget, lines: number | 'all' | undefined): string {
 	const args = ['capture-pane', '-p', '-t', target.id]
-	if (lines != null) args.push('-S', `-${lines}`)
+	// `-S -` is tmux's own spelling for "the start of the history" — exact, no stand-in number needed.
+	// Verified against a real binary: a 24-row viewport read back 65 rows with it (`-S -`), 24 without.
+	if (lines === 'all') args.push('-S', '-')
+	else if (lines != null) args.push('-S', `-${lines}`)
 	return exec('tmux', args) ?? ''
 }
 

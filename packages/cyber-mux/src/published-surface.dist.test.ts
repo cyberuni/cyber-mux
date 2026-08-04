@@ -63,6 +63,7 @@ describe('spec:cyber-mux/library — published surface', () => {
 		it('. exports the mux core and NOTHING from the CLI-only internals', () => {
 			expect(Object.keys(lib).sort()).toEqual([
 				'DEFAULT_WAIT_POLL_MS',
+				'FULL_SCROLLBACK_LINES',
 				'FloatingPanesUnsupportedError',
 				'TMUX_TAB_NAME_OPTION',
 				'TMUX_WORKSPACE_GROUP_OPTION',

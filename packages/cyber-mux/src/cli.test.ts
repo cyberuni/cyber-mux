@@ -3444,80 +3444,104 @@ describe('spec:cyber-mux/cli/lookup', () => {
 		expect(calls).toContainEqual(['capture-pane', '-p', '-t', '%1', '-S', '-5'])
 	})
 
-	// The omitted-rows surface (#100). Named for the BACKEND's elision, not "truncation" — AXI #3 spends
-	// that word on this CLI's own body truncation, the one `--full` is the escape hatch for.
-	it('read --omitted-rows answers on STDOUT, after the capture, in the default format', async () => {
+	// The read window (#100): `--lines` bounds it, `--full` unbinds it, `truncated` reports whether it
+	// left rows behind, and the help entry names `--full` as the fix. One knob, one escape hatch, one
+	// report — never a second truncation vocabulary beside AXI #3's.
+	it('read reports truncated on STDOUT in the default format, with --full as the offered fix', async () => {
 		const out: string[] = []
 		vi.spyOn(process.stdout, 'write').mockImplementation((line) => {
 			out.push(String(line))
 			return true
 		})
 		const stderr = captureStderr()
-		const calls: string[][] = []
-		const program = buildProgram({
-			env: TMUX,
-			exec: paneServer(calls, [{ id: '%1', cwd: '/repo' }], { 'capture-pane': 'HELLO' }),
-		})
-		await run(program, ['read', '%1', '--omitted-rows'])
-		// AXI #6: stdout is the stream the agent reads, stderr is the one it does not — so the answer is
-		// on stdout in every format, and JSON is only the easier parse.
-		expect(logs.join('\n')).toContain('omitted-rows  false')
+		const exec: Exec = (cmd, args) => {
+			if (args[0] === 'capture-pane') return args.at(-1) === '-1' ? 'OLDER\nHELLO' : 'HELLO'
+			return paneServer([], [{ id: '%1', cwd: '/repo' }])(cmd, args)
+		}
+		await run(buildProgram({ env: TMUX, exec }), ['read', '%1'])
+		// AXI #6: stdout is the stream the agent reads, stderr the one it does not — so no format hides
+		// the answer, and none of it is on stderr.
+		expect(logs.join('\n')).toContain('truncated  true')
+		expect(logs.join('\n')).toContain('-> cyber-mux read %1 --full')
 		expect(stderr.join('')).toBe('')
-		// The capture itself is unchanged, and the hint follows the body (AXI #3's own shape).
+		// The capture itself is untouched, and the hint follows the body (AXI #3's own shape).
 		expect(out.join('')).toBe('HELLO\n')
-		// The bare read plus its one-row-deeper probe, and nothing else driven.
-		expect(calls.filter((c) => c[0] === 'capture-pane')).toEqual([
-			['capture-pane', '-p', '-t', '%1'],
-			['capture-pane', '-p', '-t', '%1', '-S', '-1'],
-		])
 	})
 
-	it('read --omitted-rows --format agent answers on stdout too, not only under json', async () => {
-		vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
-		const stderr = captureStderr()
-		const exec: Exec = (cmd, args) => {
-			if (args[0] === 'capture-pane') return args.at(-1) === '-1' ? 'OLDER\nHELLO' : 'HELLO'
-			return paneServer([], [{ id: '%1', cwd: '/repo' }])(cmd, args)
-		}
-		const program = buildProgram({ env: TMUX, exec })
-		await withArgv(['read', '%1', '--omitted-rows', '--format', 'agent'], () =>
-			run(program, ['read', '%1', '--omitted-rows', '--format', 'agent']),
-		)
-		expect(logs.join('\n')).toContain('omitted-rows  true')
-		expect(stderr.join('')).toBe('')
-	})
-
-	it('read --omitted-rows --format json carries omittedRows in the payload', async () => {
-		vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
-		const exec: Exec = (cmd, args) => {
-			if (args[0] === 'capture-pane') return args.at(-1) === '-1' ? 'OLDER\nHELLO' : 'HELLO'
-			return paneServer([], [{ id: '%1', cwd: '/repo' }])(cmd, args)
-		}
-		const program = buildProgram({ env: TMUX, exec })
-		await withArgv(['read', '%1', '--omitted-rows', '--format', 'json'], () =>
-			run(program, ['read', '%1', '--omitted-rows', '--format', 'json']),
-		)
-		// `omittedRows`, not the seam's `truncated`: at this layer that word is already taken.
-		expect(JSON.parse(logs.join('\n'))).toEqual({ pane: '%1', text: 'HELLO', omittedRows: true })
-	})
-
-	it('read without --omitted-rows claims nothing, and spends no probe finding out', async () => {
+	it('read leaves a complete capture as raw bytes alone — the hint is for a truncated one', async () => {
 		const out: string[] = []
 		vi.spyOn(process.stdout, 'write').mockImplementation((line) => {
 			out.push(String(line))
 			return true
 		})
-		const calls: string[][] = []
 		const program = buildProgram({
 			env: TMUX,
-			exec: paneServer(calls, [{ id: '%1', cwd: '/repo' }], { 'capture-pane': 'HELLO' }),
+			exec: paneServer([], [{ id: '%1', cwd: '/repo' }], { 'capture-pane': 'HELLO' }),
 		})
 		await run(program, ['read', '%1'])
-		// Nothing was asked, so nothing is claimed — no `omitted-rows: false` that would read as "you
-		// have everything" — and no second capture was spent finding out.
-		expect(logs.join('\n')).toBe('')
+		// AXI #3's own shape: the hint rides a TRUNCATED body and no other, so `read | grep` is unchanged
+		// for the ordinary case — `lookup-read-writes-raw-bytes` frozen, not bent. Silence is not an
+		// inference: the check is unconditional, so no hint means "asked, nothing omitted", and the json
+		// payload spells the boolean either way for a caller that wants it explicit.
 		expect(out.join('')).toBe('HELLO\n')
-		expect(calls.filter((c) => c[0] === 'capture-pane')).toEqual([['capture-pane', '-p', '-t', '%1']])
+		expect(logs.join('\n')).toBe('')
+	})
+
+	it('read --format json spells truncated even when the capture was complete', async () => {
+		vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+		const program = buildProgram({
+			env: TMUX,
+			exec: paneServer([], [{ id: '%1', cwd: '/repo' }], { 'capture-pane': 'HELLO' }),
+		})
+		await withArgv(['read', '%1', '--format', 'json'], () => run(program, ['read', '%1', '--format', 'json']))
+		expect(JSON.parse(logs.join('\n'))).toEqual({ pane: '%1', text: 'HELLO', truncated: false })
+	})
+
+	it('read --full takes the whole scrollback, and costs no truncation probe to do it', async () => {
+		vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+		const calls: string[][] = []
+		const program = buildProgram({
+			env: TMUX,
+			exec: paneServer(calls, [{ id: '%1', cwd: '/repo' }], { 'capture-pane': 'OLDER\nHELLO' }),
+		})
+		await withArgv(['read', '%1', '--full', '--format', 'json'], () =>
+			run(program, ['read', '%1', '--full', '--format', 'json']),
+		)
+		// `-S -` is tmux's own all-history spelling, and an unbounded window omitted nothing by
+		// construction — so `truncated` is false without a second capture spent proving it.
+		expect(calls.filter((c) => c[0] === 'capture-pane')).toEqual([['capture-pane', '-p', '-t', '%1', '-S', '-']])
+		expect(JSON.parse(logs.join('\n'))).toEqual({ pane: '%1', text: 'OLDER\nHELLO', truncated: false })
+	})
+
+	it('read --format json carries truncated and the help entry in the payload', async () => {
+		vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+		const exec: Exec = (cmd, args) => {
+			if (args[0] === 'capture-pane') return args.at(-1) === '-6' ? 'OLDER\nHELLO' : 'HELLO'
+			return paneServer([], [{ id: '%1', cwd: '/repo' }])(cmd, args)
+		}
+		const program = buildProgram({ env: TMUX, exec })
+		await withArgv(['read', '%1', '--lines', '5', '--format', 'json'], () =>
+			run(program, ['read', '%1', '--lines', '5', '--format', 'json']),
+		)
+		expect(JSON.parse(logs.join('\n'))).toEqual({
+			pane: '%1',
+			text: 'HELLO',
+			truncated: true,
+			help: [{ message: 'older rows sit above this capture', command: 'cyber-mux read %1 --full' }],
+		})
+	})
+
+	it('read --lines with --full is a usage error, not a precedence rule', async () => {
+		catchExit()
+		const program = buildProgram({
+			env: TMUX,
+			exec: paneServer([], [{ id: '%1', cwd: '/repo' }], { 'capture-pane': 'HELLO' }),
+		})
+		await expect(run(program, ['read', '%1', '--lines', '5', '--full'])).rejects.toThrow('exit:2')
+		expect(logs.join('\n')).toContain('usage-error')
+		// Refused BEFORE the backend is touched: nothing was captured, so there is no partial answer to
+		// read past the error.
+		expect(logs.join('\n')).toContain('mutually exclusive')
 	})
 
 	it('@id:lookup-focus-beams-view', async () => {

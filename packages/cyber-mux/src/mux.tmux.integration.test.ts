@@ -119,5 +119,25 @@ describe.skipIf(!hasTmux())('spec:cyber-mux/mux', () => {
 			// Unasked stays unanswered, on the real binary too.
 			expect(tmuxMuxAdapter.read(exec, target, { lines: 3 }).truncated).toBeUndefined()
 		})
+
+		// The unbounded window against the real binary — `-S -` is the escape hatch a truncated capture
+		// points at, so it has to actually reach past the viewport that dropped those rows.
+		it("read({ lines: 'all' }) captures the whole history a bounded window left behind", async () => {
+			const target = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
+			tmuxMuxAdapter.submit(exec, target, 'i=1; while [ $i -le 60 ]; do echo row-$i; i=$((i+1)); done')
+			await pollUntil(
+				() => tmuxMuxAdapter.read(exec, target).text,
+				(out) => out.includes('row-60'),
+			)
+			// The default window is the 24-row viewport: row-1 scrolled off it long ago.
+			const viewport = tmuxMuxAdapter.read(exec, target, { truncation: true })
+			expect(viewport.truncated).toBe(true)
+			expect(viewport.text).not.toContain('row-1\n')
+			// `-S -` reaches the start of the history and brings those rows back — and reports itself
+			// complete without spending a probe on it.
+			const whole = tmuxMuxAdapter.read(exec, target, { lines: 'all', truncation: true })
+			expect(whole.text).toContain('row-1\n')
+			expect(whole.truncated).toBe(false)
+		})
 	})
 })

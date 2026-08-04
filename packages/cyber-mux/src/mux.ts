@@ -265,8 +265,22 @@ export interface LivePane {
 }
 
 export interface MuxReadOptions {
-	/** How many trailing lines of output to capture; omit for the backend's default. */
-	lines?: number | undefined
+	/**
+	 * The read WINDOW: how many trailing lines of output to capture, `'all'` for the backend's whole
+	 * scrollback, or omitted for the backend's own default (the visible viewport, on all four).
+	 *
+	 * `'all'` is the same knob at its limit, deliberately, rather than a second `full?: boolean` option:
+	 * a window and an unbounded window are answers to one question, and two options would let a caller
+	 * spell a contradiction (`{ lines: 20, full: true }`) that this seam would then need a precedence
+	 * rule for. It is also what makes `truncated` free at the top end — an unbounded window omitted
+	 * nothing by construction, so an adapter answers `false` without spending its probe.
+	 *
+	 * tmux (`-S -`) and Zellij (`--full`) have an all-history spelling of their own; WezTerm and herdr
+	 * take a number, so `'all'` reaches them as `FULL_SCROLLBACK_LINES`, which both clamp (see
+	 * `read-window.ts`). "Everything the backend holds" is the ceiling of the honest answer either way:
+	 * rows a multiplexer dropped from its OWN history long ago are gone, and no read reports them.
+	 */
+	lines?: number | 'all' | undefined
 	/**
 	 * Also determine whether older rows above the captured window were omitted — `MuxReadResult.truncated`.
 	 *
@@ -281,6 +295,9 @@ export interface MuxReadOptions {
 	 * Omitting it leaves `truncated` ABSENT rather than `false`, which is the whole point of the
 	 * spelling: a `false` that means "I did not check" is indistinguishable from "you have everything",
 	 * and that exact conflation is the bug herdr shipped a fix for (herdrdev/herdr#1717).
+	 *
+	 * Free at one end: with `lines: 'all'` the window is unbounded, so the answer is `false` by
+	 * construction and no adapter spends a query on it.
 	 */
 	truncation?: boolean | undefined
 }
@@ -774,7 +791,7 @@ export interface MuxAdapter {
 	 * backend's feature: a read takes either the caller's `lines` window or the backend's own default
 	 * one (the viewport, on all four), and in both cases there may be scrollback above it that the
 	 * caller never sees. The rule every adapter realizes is the same — *ask the backend for one row more
-	 * than the window and compare the row counts* (`isReadTruncated`, `read-truncation.ts`): more rows
+	 * than the window and compare the row counts* (`isReadTruncated`, `read-window.ts`): more rows
 	 * came back means rows exist above the window, an identical count means the read reached the top of
 	 * what the backend holds. Each adapter spells that probe in its own units (tmux `-S -(N+1)`, WezTerm
 	 * `--start-line -(N+1)`, Zellij's full dump it already has, herdr `--source recent`), and none

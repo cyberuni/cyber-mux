@@ -883,6 +883,17 @@ describe('spec:cyber-mux/mux/driving', () => {
 		])
 	})
 
+	it("read({ lines: 'all' }) takes the whole history with tmux's own -S -, and probes nothing", () => {
+		const calls: string[][] = []
+		const exec = fakeExec(calls, { 'capture-pane': 'older\nline1\nline2' })
+		// An unbounded window omitted nothing by construction, so the answer is free — one capture, not two.
+		expect(tmuxMuxAdapter.read(exec, { id: '%3' }, { lines: 'all', truncation: true })).toEqual({
+			text: 'older\nline1\nline2',
+			truncated: false,
+		})
+		expect(calls).toEqual([['capture-pane', '-p', '-t', '%3', '-S', '-']])
+	})
+
 	// Extra: focus()'s beam-order mechanics are not themselves a dedicated scenario id in
 	// mux/lookup — that suite specs the focus PROBE (isPaneFocused) and the resolve-by-name outline.
 	it("focus() beams the attached client to the pane's own session and window, in order", () => {

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { Exec } from './exec.ts'
 import { herdrMuxAdapter } from './mux.herdr.ts'
 import type { MuxPlacement, MuxSpaceTier } from './mux.ts'
+import { FULL_SCROLLBACK_LINES } from './read-window.ts'
 
 function fakeExec(calls: string[][], responses: Record<string, string | null> = {}): Exec {
 	return (_cmd, args) => {
@@ -839,6 +840,18 @@ describe('spec:cyber-mux/mux/driving', () => {
 				['pane', 'read', 'p-1', '--source', 'visible'],
 				['pane', 'read', 'p-1', '--source', 'recent', '--lines', '3'],
 			])
+		})
+
+		it("read({ lines: 'all' }) reads --source recent, the one window that sees above the viewport", () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'pane read': 'older\nline1\nline2' })
+			// `visible` IS the viewport, so asking IT for the whole scrollback would quietly return one
+			// screen. Unbounded, so `truncated` costs no probe.
+			expect(herdrMuxAdapter.read(exec, { id: 'p-1' }, { lines: 'all', truncation: true })).toEqual({
+				text: 'older\nline1\nline2',
+				truncated: false,
+			})
+			expect(calls).toEqual([['pane', 'read', 'p-1', '--source', 'recent', '--lines', String(FULL_SCROLLBACK_LINES)]])
 		})
 
 		it('read({ lines, truncation }) reports a capture with nothing above it as not truncated', () => {

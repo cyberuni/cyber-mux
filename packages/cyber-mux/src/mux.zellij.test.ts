@@ -238,6 +238,18 @@ describe('spec:cyber-mux/mux/driving', () => {
 			expect(calls).toEqual([['action', 'dump-screen', '--pane-id', 'terminal_9', '--full']])
 		})
 
+		it("read({ lines: 'all' }) IS Zellij's --full dump, untrimmed and unprobed", () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'dump-screen': 'a\nb\nc\nd\ne' })
+			// `--full` is Zellij's own all-history spelling, so an unbounded window is the primitive rather
+			// than a trimmed one — and nothing was omitted from it.
+			expect(zellijMuxAdapter.read(exec, { id: 'terminal_9' }, { lines: 'all', truncation: true })).toEqual({
+				text: 'a\nb\nc\nd\ne',
+				truncated: false,
+			})
+			expect(calls).toEqual([['action', 'dump-screen', '--pane-id', 'terminal_9', '--full']])
+		})
+
 		it('read({ truncation }) compares a bare viewport dump against the full scrollback', () => {
 			const calls: string[][] = []
 			// Zellij has no "viewport plus one row" form, so the deeper read is the whole dump — more rows

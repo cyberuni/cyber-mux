@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { capturedRows, isReadTruncated } from './read-truncation.ts'
+import { capturedRows, isReadTruncated } from './read-window.ts'
 
 describe('spec:cyber-mux/mux/driving', () => {
 	// The pure half of the truncation answer — one rule the four adapters share, testable with no

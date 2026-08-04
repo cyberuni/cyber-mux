@@ -4,7 +4,7 @@ import { refuseFloatingPane } from './floating.ts'
 import type { LivePane, MuxAdapter, MuxReadOptions, MuxTarget, OpenedPane } from './mux.ts'
 import { type NewId, nodeNewId } from './new-id.ts'
 import { assertRatioInRange } from './ratio.ts'
-import { isReadTruncated } from './read-truncation.ts'
+import { FULL_SCROLLBACK_LINES, isReadTruncated } from './read-window.ts'
 import { pollForOutput } from './wait-output.ts'
 
 /**
@@ -170,6 +170,8 @@ export function createWeztermAdapter(deps: { newId: NewId }): MuxAdapter {
 		read(exec, target, opts?: MuxReadOptions | undefined) {
 			const text = getText(exec, target, opts?.lines)
 			if (!opts?.truncation) return { text }
+			// An unbounded window omitted nothing by construction — no probe to spend.
+			if (opts.lines === 'all') return { text, truncated: false }
 			// One row deeper in WezTerm's own units: `--start-line` counts backward from the top of the
 			// visible screen, so `-(N+1)` is this window plus one older row — and a bare read (no `lines`)
 			// is the screen alone, whose one-deeper form is `--start-line -1`. A start line past the top of
@@ -390,8 +392,11 @@ const WEZTERM_KEY_BYTES: Readonly<Record<string, string>> = {
  * does, though the two are not guaranteed to line up cell-for-cell. `lines` omitted is WezTerm's own
  * default window — the visible screen, with no `--start-line` at all.
  */
-function getText(exec: Exec, target: MuxTarget, lines: number | undefined): string {
+function getText(exec: Exec, target: MuxTarget, lines: number | 'all' | undefined): string {
 	const args = ['cli', 'get-text', '--pane-id', target.id]
-	if (lines != null) args.push('--start-line', String(-lines))
+	// No all-history token in `wezterm cli get-text` — `--start-line` takes a number — so `'all'` is a
+	// window deeper than any real scrollback, which WezTerm clamps to what it holds.
+	const start = lines === 'all' ? FULL_SCROLLBACK_LINES : lines
+	if (start != null) args.push('--start-line', String(-start))
 	return exec('wezterm', args) ?? ''
 }

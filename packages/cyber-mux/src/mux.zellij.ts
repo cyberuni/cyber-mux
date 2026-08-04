@@ -1,7 +1,7 @@
 import { envFallback } from './env-fallback.ts'
 import { type Exec, withReason } from './exec.ts'
 import type { LivePane, MuxAdapter, MuxReadOptions, OpenedPane } from './mux.ts'
-import { isReadTruncated } from './read-truncation.ts'
+import { isReadTruncated } from './read-window.ts'
 import { pollForOutput } from './wait-output.ts'
 
 /**
@@ -180,6 +180,12 @@ export function createZellijAdapter(deps: { session?: string | undefined }): Mux
 			// "last N lines" primitive, so a `lines` request dumps the full scrollback (`--full`) and keeps
 			// the trailing N — the closest Zellij offers to tmux's `-S -N`, not guaranteed to line up
 			// cell-for-cell.
+			// `--full` IS Zellij's all-history spelling, so an unbounded window is its own primitive rather
+			// than a trimmed one — and nothing was omitted from it by construction.
+			if (opts?.lines === 'all') {
+				const text = exec('zellij', ['action', 'dump-screen', '--pane-id', target.id, '--full']) ?? ''
+				return opts.truncation ? { text, truncated: false } : { text }
+			}
 			if (opts?.lines != null) {
 				const full = exec('zellij', ['action', 'dump-screen', '--pane-id', target.id, '--full']) ?? ''
 				const text = lastLines(full, opts.lines)
