@@ -26,12 +26,19 @@ import { normalizeWorktreePath } from './worktree.ts'
  *
  * The pane lifecycle (split/run/read/close) is verified against a live herdr binary; `pane split`
  * returns a JSON `pane_info` envelope whose id is extracted in `parsePaneId`.
+ *
+ * **Verified against 0.8.0** (protocol 19), re-probed against a live server. Everything this adapter
+ * drives held: the split/read/run/send-keys lifecycle, `pane wait-output`'s success and error
+ * envelopes, `pane list`/`get`/`layout`, `workspace create`/`tab create`, and the `env` and worktree
+ * parameter sets below. The per-claim markers that follow name the version each was LAST established
+ * against — a claim still reading 0.7.4/0.7.5 is one 0.8.0 gave no occasion to re-measure (no attached
+ * client, or no live agent in the pane), not one that failed.
  */
 export const herdrMuxAdapter: MuxAdapter = {
 	name: 'herdr',
 
 	// `pane split --ratio` sizes a split — and sizes the ORIGINAL pane, which is the seam's own
-	// convention, so it passes through unconverted (unlike tmux's `-l`). Verified against 0.7.4.
+	// convention, so it passes through unconverted (unlike tmux's `-l`). Re-verified against 0.8.0.
 	canSizeSplits: true,
 
 	open(exec, opts) {
@@ -40,8 +47,9 @@ export const herdrMuxAdapter: MuxAdapter = {
 		// named afterwards, via `pane rename`.
 		const label = opts.label ? ['--label', opts.label] : []
 		// Native at EVERY tier, not just the split: `WorkspaceCreateParams` and `TabCreateParams` both
-		// carry an `env` Record in herdr's socket schema (protocol 16), and the CLI takes the same
-		// repeatable `--env KEY=VALUE` there as `pane split` does — verified against 0.7.4. That
+		// carry an `env` Record in herdr's socket schema (still there in protocol 19), and the CLI takes
+		// the same repeatable `--env KEY=VALUE` there as `pane split` does — re-verified against 0.8.0,
+		// whose `workspace.create`/`tab.create`/`pane.split` params all still list `env`. That
 		// matters because a template's root pane is born by the region open rather than by a split, so
 		// scoping env to the split path would silently drop that pane's env.
 		const env = envFlags(opts.env)
@@ -65,8 +73,8 @@ export const herdrMuxAdapter: MuxAdapter = {
 			// `--workspace` whenever the caller names one, and the omission is NOT harmless: without it
 			// `tab create` resolves the workspace the same way `--current` resolves a pane — from the
 			// UI-focused space — so a caller filling a workspace it just opened would put its first tab
-			// in the new space and every later one beside the pane it was RUN from. Verified against
-			// 0.7.4, whose `tab create` takes `--workspace <workspace_id>` natively.
+			// in the new space and every later one beside the pane it was RUN from. Re-verified against
+			// 0.8.0, whose `tab create` still takes `--workspace <workspace_id>` natively.
 			const within = opts.within ? ['--workspace', opts.within] : []
 			const out = exec('herdr', ['tab', 'create', ...within, '--cwd', opts.cwd, ...label, ...env, '--no-focus'])
 			if (!out) throw new Error(withReason(exec, 'herdr tab create failed'))
@@ -83,8 +91,9 @@ export const herdrMuxAdapter: MuxAdapter = {
 			const from = opts.from ? [opts.from.id] : ['--current']
 			// `--ratio` takes the seam's number VERBATIM: it sizes the original pane, which is exactly
 			// what `ratio` means. tmux's `-l` sizes the new pane and therefore inverts — the one place
-			// the two backends convert in opposite directions. Measured against 0.7.4 (splitting a
-			// 201-column region at `--ratio 0.333` left the original 67 columns), not documented.
+			// the two backends convert in opposite directions. Measured, not documented — and re-measured
+			// against 0.8.0: splitting a 44-column region at `--ratio 0.333` left the original 15 columns
+			// (0.7.4: a 201-column region left 67).
 			const size = opts.ratio != null ? ['--ratio', toHerdrRatio(opts.ratio)] : []
 			const out = exec('herdr', [
 				'pane',
@@ -114,7 +123,7 @@ export const herdrMuxAdapter: MuxAdapter = {
 		// herdr spells both tiers the same way — `<tier> rename <id> <name>` — so the tier selects the
 		// noun and nothing else. Neither verb focuses what it names, and neither creates anything.
 		// `tab rename` is what makes a new workspace's root tab nameable at all: `workspace create`
-		// labels that tab `1` and takes no flag for it (verified against 0.7.4).
+		// labels that tab `1` and takes no flag for it (re-verified against 0.8.0).
 		exec('herdr', [tier, 'rename', target.id, name])
 	},
 
@@ -139,7 +148,8 @@ export const herdrMuxAdapter: MuxAdapter = {
 
 	sendKeys(exec, target, keys) {
 		// Verbatim: every core key is already herdr's own name for it, so there is nothing to rename.
-		// herdr refuses a key it does not know (`unsupported key <k>`) rather than typing it — so at
+		// herdr refuses a key it does not know (`{"error":{"code":"invalid_key","message":"unsupported
+		// key <k>"}}`, re-verified against 0.8.0) rather than typing it — so at
 		// THIS boundary the divergence is loud, unlike tmux, which types an unknown token instead.
 		// That loudness stops here, though: `Exec` discards stderr and reports a failed command as
 		// `null`, which this ignores, so the caller sees exit 0 either way. Surfacing it is the
@@ -149,8 +159,8 @@ export const herdrMuxAdapter: MuxAdapter = {
 
 	submit(exec, target, text) {
 		// A bare Enter keystroke is the only form that types nothing by construction, which is what the
-		// flush contract requires. (`pane run <id> ""` also presses Enter — verified against a live
-		// herdr — so it would work; `send-keys Enter` says what it means.)
+		// flush contract requires. (`pane run <id> ""` also presses Enter — re-verified against a live
+		// 0.8.0 — so it would work; `send-keys Enter` says what it means.)
 		if (!text) {
 			exec('herdr', ['pane', 'send-keys', target.id, 'Enter'])
 			return
@@ -158,9 +168,28 @@ export const herdrMuxAdapter: MuxAdapter = {
 		// `pane run` submits text plus Enter atomically — herdr's documented preference over
 		// send-text + send-keys Enter, and it types the text literally (a command named `Up` is typed,
 		// not interpreted), which is exactly submit's guarantee.
+		//
+		// Deliberately NOT `agent prompt`, and 0.8.0 is why that matters. Upstream made agent prompts
+		// "wait briefly before Enter" (herdr#1878), which sounds like it overlaps `nudge`'s settle
+		// heuristic — it does not, because the behavior is scoped to the `agent prompt` verb (whose
+		// 0.8.0 help documents the submission wait, an observed-state-change requirement and an
+		// `agent_prompt_stalled` code) and nothing here routes through it. `nudge` submits via this
+		// method, so it still lowers to `pane run`, whose Enter is immediate and unconditional. That
+		// keeps nudge's staged-text check the sole arbiter of whether the turn was taken, on herdr
+		// exactly as on every other backend — one heuristic, not two racing ones.
 		exec('herdr', ['pane', 'run', target.id, text])
 	},
 
+	/**
+	 * 0.8.0 added a `truncated` boolean to the read result, and it is REQUIRED in the socket schema's
+	 * `PaneReadResult` — but it is not reachable from here, and that is a fact about the CLI rather than
+	 * a choice: `herdr pane read` prints the pane's bare TEXT, no envelope, and its only 0.8.0 additions
+	 * are `--format`/`--ansi`/`--raw`, which select the text's escaping. There is no `--json`. So the
+	 * flag rides the socket API this adapter deliberately does not speak, and the one CLI surface that
+	 * does hand back the envelope is `pane wait-output` (`.result.read.truncated` — seen live on 0.8.0).
+	 * Surfacing truncation therefore costs a return-shape change, not a flag; see issue #100, which owns
+	 * it across all four backends. Noted here so the next reader does not re-derive the dead end.
+	 */
 	read(exec, target, opts?: MuxReadOptions | undefined) {
 		const args = ['pane', 'read', target.id, '--source', 'visible']
 		if (opts?.lines != null) args.push('--lines', String(opts.lines))
@@ -168,11 +197,12 @@ export const herdrMuxAdapter: MuxAdapter = {
 	},
 
 	/**
-	 * The one backend with a NATIVE wait: `pane wait-output` blocks in herdr itself (0.7.5), so no poll
-	 * loop is run here and no snapshot is pulled across the CLI boundary on every tick.
+	 * The one backend with a NATIVE wait: `pane wait-output` blocks in herdr itself (arrived in 0.7.5,
+	 * still native in 0.8.0), so no poll loop is run here and no snapshot is pulled across the CLI
+	 * boundary on every tick.
 	 *
 	 * `--source visible` is pinned rather than left to herdr's own default (`recent_unwrapped`, verified
-	 * against 0.7.5 — the help says `recent`). The seam's rule is that a wait searches exactly what
+	 * against 0.7.5 — the help still says `recent` in 0.8.0). The seam's rule is that a wait searches exactly what
 	 * `read` returns, and `read` pins `visible` here; taking the default would make the same wait mean a
 	 * different snapshot on this backend than on every polling one.
 	 *
@@ -180,8 +210,8 @@ export const herdrMuxAdapter: MuxAdapter = {
 	 * spells both the same way: exit 1 with an error envelope on stderr, so `Exec` yields `null` for
 	 * either. Two tiers answer it, in order:
 	 *
-	 * 1. **The envelope's `code`**, when the runner captured stderr into `lastError` (verified against
-	 *    0.7.5: `{"error":{"code":"timeout",…}}` vs `{"error":{"code":"pane_not_found",…}}`). Exact.
+	 * 1. **The envelope's `code`**, when the runner captured stderr into `lastError` (re-verified against
+	 *    0.8.0: `{"error":{"code":"timeout",…}}` vs `{"error":{"code":"pane_not_found",…}}`). Exact.
 	 * 2. **A live pane that actually consumed the deadline**, when it did not. `Exec.lastError` is
 	 *    specified as a diagnostic and NEVER a control-flow signal — a runner that discards stderr must
 	 *    still work — so the code cannot be the only answer. Liveness alone is not enough either, and the
@@ -330,9 +360,9 @@ export const herdrMuxAdapter: MuxAdapter = {
 		 * in a DIFFERENT workspace, so nothing has to be focused first and nothing moves while this runs.
 		 *
 		 * herdr's own native per-tab layout export would be the obvious road — it takes a `tab_id` — but
-		 * `layout` is NOT a CLI verb in 0.7.4; it is socket-API-only, and this adapter speaks the CLI by
-		 * design (so it composes with the synchronous `Exec` seam). The road is closed, hence the pane
-		 * indirection.
+		 * `layout` is still NOT a CLI verb in 0.8.0 (its top-level help lists no such subcommand); it is
+		 * socket-API-only, and this adapter speaks the CLI by design (so it composes with the synchronous
+		 * `Exec` seam). The road is closed, hence the pane indirection.
 		 */
 		describeWorkspace(exec, target) {
 			const { workspaceId } = parsePaneRecord(exec('herdr', ['pane', 'get', target.id]))
@@ -376,7 +406,10 @@ export const herdrMuxAdapter: MuxAdapter = {
 	agentLifecycle: {
 		waitForState(exec, target, opts) {
 			// `herdr agent wait <id> [--until <s>]… [--timeout <ms>]`, addressing the pane id directly
-			// (verified against 0.7.5: `w3A:p1` worked). `--until` is REPEATED once per requested state,
+			// (verified against 0.7.5: `w3A:p1` worked). 0.8.0's help restates the same shape and its schema
+			// still carries `agent_status` on `AgentInfo`, but the live re-probe could not rerun this one:
+			// a scratch pane runs no agent, so 0.8.0 answered `agent_not_found`. Unchanged as far as 0.8.0
+			// says, last established live on 0.7.5. `--until` is REPEATED once per requested state,
 			// and OMITTED entirely when the caller passed none — so herdr's own default set (idle|done|
 			// blocked) applies rather than cyber-mux restating it, and a future change to that default is
 			// not silently pinned here. `--timeout` is likewise omitted for an indefinite wait, herdr's own
@@ -399,7 +432,9 @@ export const herdrMuxAdapter: MuxAdapter = {
 }
 
 /**
- * The set of `agent_status` values herdr 0.7.5 reports — the runtime witness of the `AgentStatus`
+ * The set of `agent_status` values herdr reports — unchanged through 0.8.0, whose socket schema still
+ * declares `AgentStatus` as exactly this enum, and whose `agent wait --until` still lists exactly these
+ * five values. The runtime witness of the `AgentStatus`
  * type, so a string read off a herdr envelope can be NARROWED to it rather than cast. A value outside
  * this set is treated as absent (the feed said something this build does not model), never forced into
  * the type.
@@ -519,8 +554,10 @@ function herdrPaneDetails(exec: Exec, workspace?: string | undefined): Map<strin
  *
  * `worktree create`/`worktree open` are deliberately NOT in that list: their params are
  * `[base, branch, cwd, focus, label, path, workspace_id]` and
- * `[branch, cwd, focus, label, path, workspace_id]` — no `env` — and 0.7.4 rejects the flag with
+ * `[branch, cwd, focus, label, path, workspace_id]` — no `env` — and herdr rejects the flag with
  * `unknown option: --env`. A caller needing env on that route uses the command-prefix fallback.
+ * Re-verified against 0.8.0: both param sets are unchanged in protocol 19's schema, and a live
+ * `worktree create --env` there still answers `unknown option: --env`.
  */
 function envFlags(env: Record<string, string> | undefined): string[] {
 	return env ? Object.entries(env).flatMap(([k, v]) => ['--env', `${k}=${v}`]) : []
@@ -737,8 +774,8 @@ function parseRootPaneId(out: string, label: string): OpenedPane {
 /**
  * Every pane herdr emits carries its own `workspace_id` alongside its `pane_id`, on EVERY route —
  * `workspace create` (which reports the workspace it just made), `tab create` (the workspace the tab
- * was created in), and `pane split` (the workspace the split landed in, i.e. the caller's). Verified
- * against herdr 0.7.4. That is why the workspace costs no extra call: it rides in on the same output
+ * was created in), and `pane split` (the workspace the split landed in, i.e. the caller's). Re-verified
+ * against herdr 0.8.0. That is why the workspace costs no extra call: it rides in on the same output
  * the pane id is already read from, so probing for it separately would buy nothing and cost a round
  * trip per open.
  *

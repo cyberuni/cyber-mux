@@ -53,10 +53,12 @@ function hasCurrentPane(): boolean {
 }
 
 /**
- * Whether this herdr binary has `pane wait-output` at all — a CAPABILITY probe, not a version compare.
- * It arrived in 0.7.5 and CI still pins 0.7.4, so the wait cases below would otherwise fail against a
- * backend that simply does not have the verb. Probed through `--help`, which exits 0 for a subcommand
- * that exists and non-zero for one that does not, and touches no pane either way.
+ * Whether this herdr binary has `pane wait-output` at all — a CAPABILITY probe, not a version compare,
+ * and it stays one now that CI pins 0.8.0 (which has the verb). It arrived in 0.7.5, so the wait cases
+ * below would fail against any older binary a developer happens to have on PATH — the local machine is
+ * not pinned the way CI is, which is the case this guard now exists for. Probed through `--help`, which
+ * exits 0 for a subcommand that exists and non-zero for one that does not, and touches no pane either
+ * way.
  */
 function hasWaitOutput(): boolean {
 	try {
