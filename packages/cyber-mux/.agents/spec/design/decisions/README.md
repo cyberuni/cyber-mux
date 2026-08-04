@@ -506,3 +506,64 @@ Decisions (`18-seam-ratio-range` — should the seam validate `MuxOpenOptions.ra
   the owner's ratification point at review — rather than deferred. If the owner prefers the thin-seam
   boundary, the change is a small, cleanly revertable guard plus one additive scenario, and this entry
   is the full rationale to revert against.
+
+Decisions (`99-floating-panes` — the `pane:float` placement):
+
+- **a PLACEMENT (`pane:float`), not a `floating?: boolean` on the open contract** — DECIDED. The issue
+  offered both. A placement is the shape the options already have: `MuxPlacement`'s members are
+  mutually exclusive, and floating is too — a pane either takes a share of the region, opens its own
+  space, or sits above one. A boolean is orthogonal by construction, so it would owe an answer to
+  `{ at: 'workspace', floating: true }`, a combination no caller asked for and no backend realizes;
+  either the seam invents a meaning or every adapter grows a guard against a state the type permits.
+  The placement also reaches the CLI for free — `--at pane:float`, one more member of a choice list
+  that is already the flag's whole contract — where a boolean would need a second flag whose validity
+  depends on the first.
+
+- **real on tmux/zellij, REFUSED by name on wezterm/herdr — the #97 altitude split** — DECIDED, and it
+  is what distinguishes this from `waitForOutput`. A wait on raw terminal text is realizable on every
+  backend, because every backend can already `read`; a floating pane is a primitive two backends have
+  (tmux 3.7's `new-pane`, zellij's `new-pane --floating`) and two simply do not. There is nothing to
+  emulate it *with*: the nearest substitute is a tiled split, which resizes the region's other panes —
+  the one property `pane:float` exists to avoid — so a caller would be handed a pane whose id satisfies
+  them and whose behavior does not. Same emulate-or-refuse rule `agentLifecycle` follows.
+
+- **a `canFloatPanes` declaration BESIDE the refusal, not instead of it** — DECIDED. The declaration
+  mirrors `canSizeSplits` in shape and inverts it in meaning: a `no` there means *degrade* (the
+  backend's own even split, one warning), a `no` here means *refuse*. It exists so a caller — and the
+  CLI — can ask before opening, and `open` re-checks as its own contract, the same belt-and-braces
+  `agent wait` runs against `agentLifecycle`. Two mechanisms, because the pre-flight answer and the
+  enforcement are needed at different altitudes: the CLI must refuse before touching a backend so a
+  refused float opens nothing, and a direct library caller that skips the question must still be
+  refused.
+
+- **the refusal is `FloatingPanesUnsupportedError` on the `.` barrel, not a subpath** —
+  DECIDED. `CaptureUnsupportedError` and `AgentLifecycleUnsupportedError` ride the subpaths whose verbs
+  they refuse (`template`, `agent`); the verb refused here is `open`, which is on the surface everybody
+  gets, so a consumer must be able to catch it from there. It lives in its own `floating.ts` rather
+  than in `mux.ts` because `mux.ts` is the contract and carries no runtime value — putting a class
+  there would make every consumer of the types import a value too.
+
+- **`--at pane:float` stays in the CLI choice list on every backend** — DECIDED, over gating the list
+  on the detected backend. Gating would make `--help` say different things in different panes, and
+  would render a genuine capability limit as a *usage* error (exit 2) when it is an *operation* failure
+  (exit 1) — the invocation is well-formed and the value is legal. So the value always parses and the
+  backend refuses it, naming itself and naming the backends that can.
+
+- **`ratio` is dropped on a float, even on tmux, which can size a split** — DECIDED. A float takes no
+  share of the region, so there is no original pane whose fraction a ratio could be; `new-pane` sizes
+  in absolute columns and lines instead. Letting `ratio` mean "cells" on this one placement would give
+  one option two unit systems. A sized float, if it is ever wanted, is a separate option.
+
+- **tmux's floating-pane support is DECLARED, never version-probed** — DECIDED. `new-pane` is 3.7's,
+  and the adapter version-probes nothing else; a probe would cost an exec on every resolution to
+  pre-empt a failure tmux already reports precisely (`unknown command`, surfaced by the adapter naming
+  the command that failed). Silent-wrong-pane is the failure mode worth engineering against, and an
+  absent `new-pane` has nothing it could be mistaken for. Related: `new-pane -T` (a title at birth)
+  lands in 3.8, one release after the pane, so the label rides the post-birth `select-pane -T` rename
+  every other pane placement already takes — one spelling, and one that works on 3.7.
+
+- **the tmux and zellij argv are probed from the projects' own CHANGES/docs, not a live binary** —
+  RECORDED as a known limit, in the same disclaimer `mux.wezterm.ts` and `mux.zellij.ts` already carry:
+  tmux 3.7 is not installed in this sandbox (3.6b is) and zellij is not installed at all. The tests
+  assert the argv each adapter emits against a mocked `Exec`, which is exactly the part a live binary
+  would confirm. Worth one confirmation each on a live 3.7 and a live 0.44.1.

@@ -1,5 +1,6 @@
 import { envFallback } from './env-fallback.ts'
 import { type Exec, withReason } from './exec.ts'
+import { refuseFloatingPane } from './floating.ts'
 import type { LivePane, MuxAdapter, MuxReadOptions, OpenedPane } from './mux.ts'
 import { type NewId, nodeNewId } from './new-id.ts'
 import { assertRatioInRange } from './ratio.ts'
@@ -88,6 +89,13 @@ export function createWeztermAdapter(deps: { newId: NewId }): MuxAdapter {
 				runLaunch(adapter, exec, opened, opts.env, opts.launch)
 				return opened
 			}
+			// WezTerm has no floating-pane concept: `cli split-pane` always takes a share of the region and
+			// resizes its neighbors, and there is no non-modal above-the-layout pane anywhere in `wezterm
+			// cli`. So this REFUSES by name rather than substituting a split — the substitute would satisfy
+			// the caller's pane id and violate the one property they asked for. No `canFloatPanes` above is
+			// the declaration; this is the enforcement, and both are needed for the same reason `agent
+			// wait` checks twice.
+			if (at === 'pane:float') refuseFloatingPane(adapter.name)
 			// pane:right / pane:down
 			const direction = at === 'pane:down' ? ['--bottom'] : ['--right']
 			const from = opts.from ? ['--pane-id', opts.from.id] : []

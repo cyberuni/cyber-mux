@@ -75,6 +75,12 @@ export function createZellijAdapter(deps: { session?: string | undefined }): Mux
 		// `--floating`, so there is nothing to honor a `ratio` with. Its absence is what callers degrade
 		// against.
 
+		// `new-pane --floating` opens a pane above the tiled layout — Zellij's oldest and most native
+		// floating-pane surface, and the reason the `-x/-y/--width/--height` flags exist at all (they
+		// REQUIRE `--floating`, which is what leaves a tiled split unsizable here). Per-pane addressing
+		// of the result is 0.44's, the same release this whole adapter already requires.
+		canFloatPanes: true,
+
 		open(exec, opts) {
 			const at = opts.at ?? 'tab'
 			// `workspace` and `tab` both open a new TAB in the ambient session — the collapse forced by
@@ -94,17 +100,21 @@ export function createZellijAdapter(deps: { session?: string | undefined }): Mux
 				runLaunch(adapter, exec, opened, opts.env, opts.launch)
 				return opened
 			}
-			// pane:right / pane:down — a tiled split. `new-pane` has no split-target flag (only
-			// `--tab-id`), so `from` is honored by focusing that pane FIRST — the only way to choose which
-			// pane the split lands beside. Omitted `from` splits whatever is focused, the backend default
-			// the seam documents (never silently "the caller's pane").
+			// pane:right / pane:down / pane:float — all three are `new-pane`, which has no target flag
+			// beyond `--tab-id`, so `from` is honored by focusing that pane FIRST. For a split that is the
+			// only way to choose which pane it lands beside; for a float it is how the float lands over the
+			// caller's REGION rather than the one the user is looking at — the same anchor one tier up.
+			// Omitted `from` takes whatever is focused, the backend default the seam documents (never
+			// silently "the caller's pane").
 			if (opts.from) adapter.focus(exec, opts.from)
-			const direction = at === 'pane:down' ? 'down' : 'right'
-			const args = ['action', 'new-pane', '--direction', direction, '--cwd', opts.cwd]
+			// `--floating` and `--direction` are mutually exclusive by construction: a float sits above the
+			// layout, so there is no side of anything for it to be on. `ratio` is dropped on BOTH paths
+			// here — a tiled split cannot be sized at all (see `canSizeSplits`), and a float has no
+			// original pane whose fraction it could be (see `MuxOpenOptions.ratio`).
+			const placement = at === 'pane:float' ? ['--floating'] : ['--direction', at === 'pane:down' ? 'down' : 'right']
+			const args = ['action', 'new-pane', ...placement, '--cwd', opts.cwd]
 			// `--name` names the pane at birth — Zellij can title a pane, unlike wezterm.
 			if (opts.label) args.push('--name', opts.label)
-			// No size flag: `ratio` is dropped because a tiled split is always even (see `canSizeSplits`
-			// above). Callers that asked for a ratio degrade to the even default with one warning.
 			const out = exec('zellij', args)
 			if (!out) throw new Error(withReason(exec, 'zellij action new-pane failed'))
 			const paneId = out.trim()

@@ -6,8 +6,27 @@ import type { Worktree } from './worktree.ts'
 /** Where a new pane/window/session should be placed relative to the caller's current one.
  * `'workspace'` opens a genuinely separate workspace/session (herdr: `workspace create`; tmux: a
  * new detached session) — the caller's current workspace/session is left untouched, unlike every
- * other placement, which adds a pane/window inside it. */
-export type MuxPlacement = 'pane:right' | 'pane:down' | 'tab' | 'workspace'
+ * other placement, which adds a pane/window inside it.
+ *
+ * `'pane:float'` opens a FLOATING pane — one that sits above the tiled layout rather than taking a
+ * share of it, so it displaces nothing and no existing pane is resized. It is a PLACEMENT rather
+ * than a `floating?: boolean` modifier because placements are mutually exclusive and this one is
+ * too: a pane either takes a share of the region (`pane:right`/`pane:down`), opens its own space
+ * (`tab`/`workspace`), or floats above one. A boolean would additionally have to answer what
+ * `{ at: 'workspace', floating: true }` means, which is a question no caller asked.
+ *
+ * A floating pane is an ORDINARY pane in every other respect — `OpenedPane` with a real id, so
+ * `read`/`sendText`/`submit`/`waitForOutput`/`teardown` drive it unchanged. That is the whole reason
+ * it fits this seam at all; a popup, which is modal and has no pane id, would not.
+ *
+ * **Real on some backends, REFUSED on the rest** — the one placement that is not universal. tmux
+ * (≥ 3.7, `new-pane`) and zellij (`new-pane --floating`) realize it natively; wezterm and herdr have
+ * no floating-pane concept at all, and their adapters refuse by NAME
+ * (`FloatingPanesUnsupportedError`) rather than emulate. There is nothing to emulate it WITH: a
+ * tiled split is a different thing on screen (it resizes the region's other panes), so silently
+ * substituting one would hand back a pane that satisfies the caller's id and violates the only
+ * property they asked for. `MuxAdapter.canFloatPanes` is how a caller asks BEFORE opening. */
+export type MuxPlacement = 'pane:right' | 'pane:down' | 'pane:float' | 'tab' | 'workspace'
 
 /**
  * The tier a `rename` names — which SPACE is being named, not where one is opened, so this is its
@@ -30,7 +49,12 @@ export interface MuxOpenOptions {
 	/** Placement relative to the caller; defaults to 'tab'. */
 	at?: MuxPlacement | undefined
 	/**
-	 * The pane a `pane:*` placement splits. Ignored by `tab`/`workspace`, which split nothing.
+	 * The pane a `pane:right`/`pane:down` placement splits. Ignored by `tab`/`workspace`, which split
+	 * nothing.
+	 *
+	 * `pane:float` splits nothing either, but it still reads this — as the pane whose REGION the float
+	 * is opened over, which is the same trap one tier up: a float given no anchor lands over whatever
+	 * region the backend defaults to, and every backend defaults to the one the USER is looking at.
 	 *
 	 * Pass it. Omitting it does **not** mean "the calling pane" — it means "whatever this backend
 	 * defaults to", and the two backends default to opposite things: herdr resolves `--current` from
@@ -61,8 +85,14 @@ export interface MuxOpenOptions {
 	within?: string | undefined
 	/**
 	 * Fraction of the split region kept by `first` — the ORIGINAL pane, not the new one. Only
-	 * meaningful for a `pane:*` placement; `0 < ratio < 1`, and omitting it takes the backend's own
-	 * even (50/50) default.
+	 * meaningful for a `pane:right`/`pane:down` placement; `0 < ratio < 1`, and omitting it takes the
+	 * backend's own even (50/50) default.
+	 *
+	 * Meaningless for `pane:float` and DROPPED there on every backend, including the two that can size
+	 * a split: a float takes no share of the region, so there is no original pane whose fraction this
+	 * could be. A float's size is the backend's own default (tmux: half the window's width by a
+	 * quarter its height), and sizing one would need absolute cells rather than a fraction of a split
+	 * that never happened — a separate option, not this one wearing a second meaning.
 	 *
 	 * The range is a PRECONDITION the seam enforces, not a hint: a sizing backend rejects a ratio
 	 * outside `0 < ratio < 1` (it would render a negative or whole-region split) rather than pass it
@@ -630,6 +660,26 @@ export interface MuxAdapter {
 	 * validity must never depend on which multiplexer happens to be running.
 	 */
 	readonly canSizeSplits?: boolean | undefined
+	/**
+	 * Whether this backend can open a FLOATING pane — i.e. whether it honors the `'pane:float'`
+	 * placement. tmux (≥ 3.7's `new-pane`) and zellij (`new-pane --floating`) declare it; wezterm and
+	 * herdr, which have no floating-pane concept, omit it.
+	 *
+	 * **A declaration, like `canSizeSplits` — but the absence means REFUSE, not degrade**, and that
+	 * contrast is the whole reason both exist rather than one. A ratio has a truthful degrade (the
+	 * backend's own even split), so a caller that asks for one on a backend that cannot size gets a
+	 * pane that is merely the wrong SIZE, and one warning. A float has none: the nearest thing a
+	 * floating-incapable backend could open is a tiled split, which resizes the region's other panes —
+	 * exactly the property `pane:float` exists to avoid — so substituting one would hand back a pane
+	 * that satisfies the caller's id and violates their only requirement. So `open` throws
+	 * `FloatingPanesUnsupportedError` naming the backend (`floating.ts`) rather than opening something
+	 * else, the same emulate-or-refuse split `agentLifecycle`'s absence makes.
+	 *
+	 * This is a DECLARATION and never the refusal itself: it lets a caller ask before opening (and the
+	 * CLI refuse before touching a backend), while `open` re-checks as its own contract — the same
+	 * belt-and-braces `agent wait` runs. A caller that never asks for a float never reads this.
+	 */
+	readonly canFloatPanes?: boolean | undefined
 	/**
 	 * Present only on a backend that binds a git worktree to a workspace (herdr); `undefined` on one
 	 * with no such concept (tmux), where callers fall back to plain git plus `open()`.

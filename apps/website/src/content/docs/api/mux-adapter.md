@@ -79,18 +79,21 @@ placement decides which:
 | --- | --- |
 | `'tab'` (default) | A new tab in the current (or `within`) workspace. |
 | `'pane:right'` / `'pane:down'` | A split of the `from` pane. |
+| `'pane:float'` | A floating pane above the layout, resizing nothing. **tmux 3.7+ and zellij only** — wezterm and herdr throw `FloatingPanesUnsupportedError`; ask `adapter.canFloatPanes` first. |
 | `'workspace'` | A genuinely separate workspace/session, leaving the caller's untouched. |
 
 Key `MuxOpenOptions` fields:
 
 - **`cwd`** *(required)* — working directory the new pane starts in.
 - **`launch`** — command line to run inside it; omit for a blank shell.
-- **`from`** — the pane a `pane:*` placement splits. **Pass it** — omitting it does not mean "the
+- **`from`** — the pane a `pane:right`/`pane:down` placement splits (and, for `pane:float`, the pane
+  whose region the float opens over). **Pass it** — omitting it does not mean "the
   caller", it means "whatever this backend defaults to", and the two backends default to opposite
   panes. Use [`mux.callerPane()`](#muxcallerpane).
 - **`within`** — the workspace a `tab` placement opens inside (a `workspace` value from a prior open).
 - **`ratio`** — fraction of the split kept by the *original* pane (`0 < ratio < 1`); the adapter
-  handles each backend's opposite sign convention for you.
+  handles each backend's opposite sign convention for you. Dropped on `'pane:float'`, which takes no
+  share of the region and so has no original pane to size against.
 - **`env`** — variables set at the new space's birth, split or not.
 - **`label`** — a name for the space at birth, at whatever tier `at` opens.
 - **`workspaceGroup`** — an opaque group id for a backend with no workspace tier to group opened

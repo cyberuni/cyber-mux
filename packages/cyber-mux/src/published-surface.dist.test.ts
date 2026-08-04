@@ -28,6 +28,10 @@ describe('spec:cyber-mux/library — published surface', () => {
 			expect(lib.herdrMuxAdapter.name).toBe('herdr')
 			expect(lib.weztermMuxAdapter.name).toBe('wezterm')
 			expect(lib.zellijMuxAdapter.name).toBe('zellij')
+			// The floating-pane refusal rides the `.` barrel, not a subpath — the verb it refuses (`open`)
+			// is on the surface everybody gets, so a consumer must be able to catch it from there.
+			expect(typeof lib.canFloatPanes).toBe('function')
+			expect(new lib.FloatingPanesUnsupportedError('herdr').backend).toBe('herdr')
 		})
 
 		it('the ./worktree and ./template subpaths yield their seams', () => {
@@ -59,10 +63,12 @@ describe('spec:cyber-mux/library — published surface', () => {
 		it('. exports the mux core and NOTHING from the CLI-only internals', () => {
 			expect(Object.keys(lib).sort()).toEqual([
 				'DEFAULT_WAIT_POLL_MS',
+				'FloatingPanesUnsupportedError',
 				'TMUX_TAB_NAME_OPTION',
 				'TMUX_WORKSPACE_GROUP_OPTION',
 				'assertWaitPattern',
 				'callerPane',
+				'canFloatPanes',
 				'createWeztermAdapter',
 				'createZellijAdapter',
 				'currentPane',
@@ -74,6 +80,10 @@ describe('spec:cyber-mux/library — published surface', () => {
 				'nudge',
 				'pollForOutput',
 				'probeMultiplexer',
+				// The refusal helper rides out beside the error for the reason `pollForOutput` and `withReason`
+				// do: an out-of-tree adapter implementing `MuxAdapter` needs the one spelling of the refusal,
+				// not a second message of its own that could drift from this one.
+				'refuseFloatingPane',
 				'resolveMux',
 				'resolveMuxAdapter',
 				'tmuxMuxAdapter',

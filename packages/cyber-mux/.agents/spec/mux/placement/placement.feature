@@ -638,6 +638,93 @@ Feature: mux placement — where a new pane opens, and what open reports back
     # as cannot. What a caller does about a `no` is the caller's policy, not this seam's — see
     # template/, which warns once and takes the backend's own default.
 
+  # ── pane:float — the one placement that is real on some backends and refused on the rest ──
+  # A floating pane sits ABOVE the tiled layout rather than taking a share of it, so it displaces
+  # nothing and resizes no existing pane. tmux realizes it with 3.7's new-pane; zellij with
+  # new-pane --floating. wezterm and herdr have no such concept and refuse by NAME. The CLI surface of
+  # that refusal — its code, exit and fix hint — is ../../cli/placement/placement.feature's.
+
+  @id:placement-float-declared
+  Scenario Outline: a backend declares whether it can open a floating pane
+    Given a caller asking the <adapter> adapter whether it can open a floating pane
+    When it reads the declaration
+    Then the adapter answers <answer>
+
+    Examples:
+      | adapter | answer |
+      | tmux    | yes    |
+      | zellij  | yes    |
+      | wezterm | no     |
+      | herdr   | no     |
+
+    # The declaration is read BEFORE opening, and unlike the can-size-a-split declaration beside it, a
+    # `no` here means REFUSE rather than degrade. A ratio has a truthful degrade — the backend's own
+    # even split, one warning, a pane of the wrong size. A float has none: the nearest substitute is a
+    # tiled split, which resizes the region's other panes, and that is the one property the caller
+    # asked against. So this declaration gates a refusal, not a fallback.
+
+  @id:placement-float-tmux-new-pane
+  Scenario: tmux opens a floating pane with 3.7's new-pane command
+    Given a caller running open with at pane:float and $TMUX set
+    When open runs
+    Then the tmux adapter runs new-pane rather than split-window
+    And the pane and the window it landed in are reported from the same -F the split path already uses
+    And no existing pane in the region is resized
+    # new-pane is tmux 3.7's own command for this ("Add floating panes ... created with the new-pane
+    # command", CHANGES 3.6b → 3.7). It is driven unconditionally rather than gated on a version probe:
+    # on tmux ≤ 3.6 the command does not exist and tmux answers with its own `unknown command`, which
+    # the adapter surfaces naming the command that failed. An absent new-pane has nothing it could be
+    # mistaken for, so there is no silent-wrong-pane failure to engineer against.
+
+  @id:placement-float-tmux-anchored-and-named
+  Scenario: a tmux float is anchored on `from` and named after its birth
+    Given a caller running open with at pane:float, a from pane, and a label
+    When open runs
+    Then the float is anchored on the caller's own pane rather than the backend's default
+    And the label is set by the same post-birth pane rename every other pane placement takes
+    # The anchor is the same trap one tier up: without it tmux resolves the ACTIVE pane's window, which
+    # is the USER's and only coincidentally the caller's. The label rides the post-birth rename because
+    # new-pane's own title flag lands in tmux 3.8 while the floating pane itself lands in 3.7 — one
+    # spelling, and one that works on the release that introduced the feature.
+
+  @id:placement-float-zellij-floating-flag
+  Scenario: zellij opens a floating pane with new-pane --floating
+    Given a caller running open with at pane:float and $ZELLIJ set
+    When open runs
+    Then the zellij adapter passes --floating and no --direction
+    And the float is reported with its tab and the ambient session as its workspace
+    # --floating and --direction are mutually exclusive by construction: a float sits above the layout,
+    # so there is no side of anything for it to be on. A `from` is honored the same way the tiled split
+    # honors it — by focusing that pane first, the only anchor new-pane offers beyond --tab-id.
+
+  @id:placement-float-ratio-dropped
+  Scenario: a ratio is dropped on a float, even by a backend that can size a split
+    Given a caller running open with at pane:float and a ratio
+    When open runs on tmux
+    Then no sizing flag is emitted
+    # Not a restatement of the can-size declaration: tmux CAN size a split. The ratio is dropped because
+    # a float takes no share of the region, so there is no original pane whose fraction it could be. A
+    # float's size is the backend's own default, and sizing one would need absolute cells rather than a
+    # fraction of a split that never happened — a separate option, not this one wearing a second meaning.
+
+  @id:placement-float-refused-by-name
+  Scenario Outline: a backend with no floating pane refuses by name rather than emulating
+    Given a caller running open with at pane:float on <adapter>
+    When open runs
+    Then the open is refused naming <adapter>, before any backend command is issued
+    And no pane is opened and no split is substituted
+
+    Examples:
+      | adapter |
+      | wezterm |
+      | herdr   |
+
+    # The refusal is the whole point of the altitude split. A substituted split would satisfy the
+    # caller's pane id and violate the only property they asked for — the same emulate-or-refuse rule
+    # the agent-lifecycle wait follows, and the opposite of the portable output wait, which every
+    # backend can realize honestly. Refused before any exec, so a float asked of these backends costs
+    # nothing and leaves nothing behind.
+
   # ── launch is optional — a blank pane is a valid open() outcome ──
   # The library half of the open contract's launch behavior. Whether the CLI --launch flag was given
   # or omitted is ../../cli/placement/placement.feature's; what open() DOES with a launch command, or

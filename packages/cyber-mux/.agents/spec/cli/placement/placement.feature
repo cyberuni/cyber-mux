@@ -17,13 +17,42 @@ Feature: cyber-mux open — the CLI placement surface
     Then the pane opens at that placement
 
   @id:placement-at-restricted-values
-  Scenario: --at accepts only pane:right, pane:down, tab, and workspace
+  Scenario: --at accepts only pane:right, pane:down, pane:float, tab, and workspace
     Given a caller running cyber-mux open
-    When it passes an --at value outside pane:right|pane:down|tab|workspace
+    When it passes an --at value outside pane:right|pane:down|pane:float|tab|workspace
     Then the command is rejected before any pane opens
     # How a rejected flag is rendered and what it exits — the usage-error contract shared by every verb
-    # — is cli/lookup's; see ../lookup/. This scenario owns only that an --at value outside the four is
+    # — is cli/lookup's; see ../lookup/. This scenario owns only that an --at value outside the five is
     # refused before any pane opens, not the shape of the message it is refused with.
+
+  @id:placement-at-float-valid-everywhere
+  Scenario: --at pane:float is a valid value on every backend, whatever the backend can do with it
+    Given a caller running cyber-mux open --at pane:float
+    When the flag is parsed, on any backend
+    Then the value is accepted as input
+    # The choice list is fixed, never gated on the detected backend. Gating it would make --help say
+    # different things in different panes and would turn a truthful capability refusal (exit 1) into a
+    # usage error (exit 2). Which backend can REALIZE a float is a runtime answer; see the refusal below.
+
+  @id:placement-at-float-backend-refusal
+  Scenario Outline: --at pane:float on a backend with no floating pane is refused, naming both sides
+    Given a caller running cyber-mux open --at pane:float on <adapter>
+    When the verb runs
+    Then it exits 1 under backend-unsupported, naming <adapter>
+    And the fix hint names the backends that can open one
+    And no backend command is issued
+
+    Examples:
+      | adapter |
+      | wezterm |
+      | herdr   |
+
+    # Exit 1, not 2: the invocation is well-formed and the value is legal — the operation is what cannot
+    # be done here. The DECISION to refuse is the library's (the adapter's own open); this band owns only
+    # the code, the exit and the hint. The same shape template save's geometry refusal and agent wait's
+    # agent-state refusal already take. Checked before any backend is touched, so a refused float opens
+    # nothing — including through the worktree verbs, which surface it under this code rather than
+    # burying it in a generic worktree failure that would send the caller after the wrong thing.
 
   # ── --launch — optional, carrying a command to the pane the verb opens ──
   # --launch is optional at the CLI, and when given it carries a command line into the open contract.
