@@ -34,7 +34,7 @@ function fakeAdapter(opts: { reads: string[]; alive?: (readCount: number) => boo
 			readOpts.push(o)
 			const value = opts.reads[Math.min(readCount, opts.reads.length - 1)] ?? ''
 			readCount++
-			return value
+			return { text: value }
 		},
 		waitForOutput: unused,
 		focus: unused,

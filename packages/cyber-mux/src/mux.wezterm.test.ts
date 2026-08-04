@@ -312,8 +312,41 @@ describe('spec:cyber-mux/mux/driving', () => {
 		it('read passes --start-line as a negative offset for a trailing-lines capture', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'get-text': 'hello' })
-			expect(weztermMuxAdapter.read(exec, { id: '9' }, { lines: 20 })).toBe('hello')
+			expect(weztermMuxAdapter.read(exec, { id: '9' }, { lines: 20 })).toEqual({ text: 'hello' })
+			// Untouched argv, and no `truncated`: nothing was asked, so no second capture was spent and
+			// nothing is claimed — absent, never a `false` that means "I did not check".
 			expect(calls).toEqual([['cli', 'get-text', '--pane-id', '9', '--start-line', '-20']])
+		})
+
+		it('read({ truncation }) reports omitted rows from a capture taken one row deeper', () => {
+			const calls: string[][] = []
+			const exec: Exec = (_cmd, args) => {
+				calls.push(args)
+				return args.at(-1) === '-21' ? 'older\nhello' : 'hello'
+			}
+			expect(weztermMuxAdapter.read(exec, { id: '9' }, { lines: 20, truncation: true })).toEqual({
+				text: 'hello',
+				truncated: true,
+			})
+			expect(calls).toEqual([
+				['cli', 'get-text', '--pane-id', '9', '--start-line', '-20'],
+				['cli', 'get-text', '--pane-id', '9', '--start-line', '-21'],
+			])
+		})
+
+		it('read({ truncation }) reports a complete capture as not truncated, probing -1 for a bare read', () => {
+			const calls: string[][] = []
+			// A start line past the top of the scrollback is clamped, so the deeper read hands back the
+			// same rows when there is nothing above the window.
+			const exec = fakeExec(calls, { 'get-text': 'hello' })
+			expect(weztermMuxAdapter.read(exec, { id: '9' }, { truncation: true })).toEqual({
+				text: 'hello',
+				truncated: false,
+			})
+			expect(calls).toEqual([
+				['cli', 'get-text', '--pane-id', '9'],
+				['cli', 'get-text', '--pane-id', '9', '--start-line', '-1'],
+			])
 		})
 	})
 })

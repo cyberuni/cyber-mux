@@ -108,7 +108,7 @@ function fakeAdapter(opts: { canSizeSplits?: boolean; failOnOpen?: number; works
 		},
 		sendText: () => undefined,
 		sendKeys: () => undefined,
-		read: () => '',
+		read: () => ({ text: '' }),
 		waitForOutput: () => Promise.resolve({ matched: false, output: '' }),
 		focus: (_exec, target) => {
 			calls.focuses.push(target.id)

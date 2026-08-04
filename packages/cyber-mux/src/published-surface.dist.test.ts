@@ -69,10 +69,12 @@ describe('spec:cyber-mux/library — published surface', () => {
 				'assertWaitPattern',
 				'callerPane',
 				'canFloatPanes',
+				'capturedRows',
 				'createWeztermAdapter',
 				'createZellijAdapter',
 				'currentPane',
 				'herdrMuxAdapter',
+				'isReadTruncated',
 				'isStaged',
 				'matchWaitPattern',
 				'nodeExec',
@@ -191,7 +193,10 @@ describe('spec:cyber-mux/library — published surface', () => {
 			expect(opened.id).toBe('%7')
 			mux.submit(opened, 'echo hello')
 			const view = mux.read(opened)
-			expect(view).toBe('pane output')
+			expect(view.text).toBe('pane output')
+			// Unasked truncation is ABSENT through the published surface too, never a `false` that would
+			// read as "you have everything".
+			expect(view.truncated).toBeUndefined()
 			mux.teardown(opened)
 
 			// The recorded command stream: a window opened, keys submitted, the pane captured and killed —

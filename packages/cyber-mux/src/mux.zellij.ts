@@ -1,6 +1,7 @@
 import { envFallback } from './env-fallback.ts'
 import { type Exec, withReason } from './exec.ts'
 import type { LivePane, MuxAdapter, MuxReadOptions, OpenedPane } from './mux.ts'
+import { isReadTruncated } from './read-truncation.ts'
 import { pollForOutput } from './wait-output.ts'
 
 /**
@@ -181,9 +182,19 @@ export function createZellijAdapter(deps: { session?: string | undefined }): Mux
 			// cell-for-cell.
 			if (opts?.lines != null) {
 				const full = exec('zellij', ['action', 'dump-screen', '--pane-id', target.id, '--full']) ?? ''
-				return lastLines(full, opts.lines)
+				const text = lastLines(full, opts.lines)
+				// The one backend whose truncation answer costs NO extra query: a `lines` read already holds
+				// the whole scrollback, and the rows this dropped off the top are exactly the rows omitted.
+				// Same rule as everywhere else (`isReadTruncated`), just with the deeper read already in hand.
+				return opts.truncation ? { text, truncated: isReadTruncated(text, full) } : { text }
 			}
-			return exec('zellij', ['action', 'dump-screen', '--pane-id', target.id]) ?? ''
+			const text = exec('zellij', ['action', 'dump-screen', '--pane-id', target.id]) ?? ''
+			if (!opts?.truncation) return { text }
+			// A bare read is the viewport, so the deeper read is the full scrollback — Zellij has no
+			// "viewport plus one row" form, and taking the whole dump answers the same question: more rows
+			// than the viewport means rows sit above it.
+			const full = exec('zellij', ['action', 'dump-screen', '--pane-id', target.id, '--full']) ?? ''
+			return { text, truncated: isReadTruncated(text, full) }
 		},
 
 		// No wait-for-output primitive in `zellij action` — it dumps a screen and never blocks on what is

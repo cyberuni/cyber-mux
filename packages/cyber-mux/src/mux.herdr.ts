@@ -7,6 +7,7 @@ import type {
 	LivePane,
 	MuxAdapter,
 	MuxReadOptions,
+	MuxTarget,
 	MuxWaitResult,
 	OpenedPane,
 	RegionPane,
@@ -15,6 +16,7 @@ import type {
 	WorktreeWorkspaceCapability,
 } from './mux.ts'
 import { assertRatioInRange } from './ratio.ts'
+import { capturedRows, isReadTruncated } from './read-truncation.ts'
 import { assertWaitPattern } from './wait-output.ts'
 import { normalizeWorktreePath } from './worktree.ts'
 
@@ -200,9 +202,23 @@ export const herdrMuxAdapter: MuxAdapter = {
 	 * it across all four backends. Noted here so the next reader does not re-derive the dead end.
 	 */
 	read(exec, target, opts?: MuxReadOptions | undefined) {
-		const args = ['pane', 'read', target.id, '--source', 'visible']
-		if (opts?.lines != null) args.push('--lines', String(opts.lines))
-		return exec('herdr', args) ?? ''
+		const text = paneRead(exec, target, 'visible', opts?.lines)
+		if (!opts?.truncation) return { text }
+		// herdr is the one backend that computes this fact ITSELF — `pane.read` answers `truncated` on
+		// the socket API as of 0.8.0 (herdrdev/herdr#1717) — and it is still derived here, because the
+		// CLI throws the field away: `print_read_response` prints `result.read.text` and nothing else
+		// (read from herdr's 0.8.0 source), and this adapter talks to the CLI by construction, exactly as
+		// every other verb does. A transport gap, not a disagreement; the day the CLI surfaces it, this
+		// method reads it instead and the seam's contract does not move.
+		//
+		// The probe reads `recent` rather than `visible`, and that source change is the whole trick:
+		// `visible` IS the viewport, so asking it for more rows than the screen holds returns the screen
+		// and would report every capture as complete. `recent` is the window that can see above it. One
+		// row deeper than what came back — the capture's OWN row count, not `opts.lines`, since a short
+		// pane returns fewer rows than asked for and a probe pinned to the request would then find "more"
+		// rows that were only ever the ones already in hand.
+		const deeper = paneRead(exec, target, 'recent', capturedRows(text) + 1)
+		return { text, truncated: isReadTruncated(text, deeper) }
 	},
 
 	/**
@@ -248,7 +264,7 @@ export const herdrMuxAdapter: MuxAdapter = {
 				throw new Error(withReason(exec, `herdr pane wait-output failed for pane ${target.id}`))
 			}
 			const readOpts = opts.lines != null ? { lines: opts.lines } : undefined
-			return { matched: false, output: herdrMuxAdapter.read(exec, target, readOpts) }
+			return { matched: false, output: herdrMuxAdapter.read(exec, target, readOpts).text }
 		}
 		return parseWaitOutput(out)
 	},
@@ -890,4 +906,15 @@ function parseWorktreeBindings(out: string | null): Map<string, string> {
 		}
 	}
 	return bindings
+}
+
+/**
+ * One spelling of `pane read`, taken by `read` for the snapshot AND for its truncation probe — so the
+ * two differ only in the source and depth they are meant to differ in. `lines` omitted takes herdr's
+ * own default window for the source.
+ */
+function paneRead(exec: Exec, target: MuxTarget, source: 'visible' | 'recent', lines: number | undefined): string {
+	const args = ['pane', 'read', target.id, '--source', source]
+	if (lines != null) args.push('--lines', String(lines))
+	return exec('herdr', args) ?? ''
 }

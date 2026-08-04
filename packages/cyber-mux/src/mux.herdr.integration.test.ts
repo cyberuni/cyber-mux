@@ -139,7 +139,7 @@ describe.skipIf(!hasHerdr())('spec:cyber-mux/mux', () => {
 			// submit, not sendText: the marker has to RUN, which needs the Enter submit supplies.
 			herdrMuxAdapter.submit(realExec, target, 'echo cyber-mux-itest-marker')
 			const output = await pollUntil(
-				() => herdrMuxAdapter.read(realExec, target),
+				() => herdrMuxAdapter.read(realExec, target).text,
 				(out) => out.includes('cyber-mux-itest-marker'),
 			)
 			expect(output).toContain('cyber-mux-itest-marker')

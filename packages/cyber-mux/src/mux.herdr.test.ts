@@ -803,11 +803,55 @@ describe('spec:cyber-mux/mux/driving', () => {
 		it('read() captures visible pane output, optionally scoped to N lines', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'pane read': 'line1\nline2' })
-			expect(herdrMuxAdapter.read(exec, { id: 'p-1' })).toBe('line1\nline2')
+			expect(herdrMuxAdapter.read(exec, { id: 'p-1' }).text).toBe('line1\nline2')
 			expect(calls[0]).toEqual(['pane', 'read', 'p-1', '--source', 'visible'])
 
 			herdrMuxAdapter.read(exec, { id: 'p-1' }, { lines: 50 })
 			expect(calls[1]).toEqual(['pane', 'read', 'p-1', '--source', 'visible', '--lines', '50'])
+		})
+
+		// The truncation answer (#100). herdr computes this fact ITSELF on the socket API (0.8.0,
+		// herdrdev/herdr#1717) and its CLI prints `result.read.text` alone, so this adapter — CLI by
+		// construction — derives it with the same one-row-deeper probe every other backend uses.
+		it('read() leaves truncation unanswered, and the argv untouched, until it is asked for', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'pane read': 'line1\nline2' })
+			expect(herdrMuxAdapter.read(exec, { id: 'p-1' })).toEqual({ text: 'line1\nline2' })
+			expect(calls).toEqual([['pane', 'read', 'p-1', '--source', 'visible']])
+		})
+
+		it('read({ truncation }) probes one row deeper against --source recent, not visible', () => {
+			const calls: string[][] = []
+			// `visible` IS the viewport: asking it for more rows than the screen holds returns the screen,
+			// which would report every capture as complete. `recent` is the window that sees above it.
+			const exec: Exec = (_cmd, args) => {
+				calls.push(args)
+				return args.includes('recent') ? 'older\nline1\nline2' : 'line1\nline2'
+			}
+			expect(herdrMuxAdapter.read(exec, { id: 'p-1' }, { truncation: true })).toEqual({
+				text: 'line1\nline2',
+				truncated: true,
+			})
+			// The probe depth is the CAPTURE's own row count plus one (2 + 1), not the requested `lines` —
+			// a short pane returns fewer rows than asked for, and a probe pinned to the request would find
+			// "more" rows that were only ever the ones already in hand.
+			expect(calls).toEqual([
+				['pane', 'read', 'p-1', '--source', 'visible'],
+				['pane', 'read', 'p-1', '--source', 'recent', '--lines', '3'],
+			])
+		})
+
+		it('read({ lines, truncation }) reports a capture with nothing above it as not truncated', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'pane read': 'line1\nline2' })
+			expect(herdrMuxAdapter.read(exec, { id: 'p-1' }, { lines: 50, truncation: true })).toEqual({
+				text: 'line1\nline2',
+				truncated: false,
+			})
+			expect(calls).toEqual([
+				['pane', 'read', 'p-1', '--source', 'visible', '--lines', '50'],
+				['pane', 'read', 'p-1', '--source', 'recent', '--lines', '3'],
+			])
 		})
 	})
 })
