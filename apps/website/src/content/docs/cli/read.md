@@ -23,7 +23,10 @@ cyber-mux read %3
 cyber-mux read %3 --lines 20
 ```
 
+Waiting for something to appear is [`wait`](/cyber-mux/cli/wait/), not a `read` loop — it uses the
+backend's native wait where there is one, and it tells a pane that went away from a pane that stayed
+quiet:
+
 ```bash
-# Poll a labeled pane until a prompt appears
-until cyber-mux read logs --lines 5 | grep -q 'ready'; do sleep 1; done
+cyber-mux wait logs --match 'ready' --lines 5
 ```

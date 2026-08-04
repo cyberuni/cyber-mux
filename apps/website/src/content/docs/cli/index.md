@@ -32,6 +32,7 @@ conflicting flags) — the fix is a different invocation, not a retry.
 - [`send`](/cyber-mux/cli/send/) — type text or press keys, without taking the pane's turn.
 - [`submit`](/cyber-mux/cli/submit/) — take a pane's turn.
 - [`read`](/cyber-mux/cli/read/) — capture a pane's output.
+- [`wait`](/cyber-mux/cli/wait/) — block until a pane's output matches, or the timeout elapses.
 - [`focus`](/cyber-mux/cli/focus/) — beam the attached client to a pane.
 - [`close`](/cyber-mux/cli/close/) — close a pane.
 

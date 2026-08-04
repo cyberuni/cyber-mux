@@ -1274,6 +1274,136 @@ function readCommand(deps: Deps): Command {
 		)
 }
 
+/** The default deadline a bare `wait` takes. Named, not spelled inline, so the help text and the value
+ * cannot drift. Chosen to be long enough for a harness to boot and print, short enough that an agent
+ * that guessed the wrong pattern gets its answer back inside one turn. */
+const DEFAULT_WAIT_TIMEOUT_MS = 30_000
+
+/**
+ * The `wait` verb: block until a pane PRINTS something, or the deadline passes.
+ *
+ * Agent-first in the two ways that matter here. First, the verdict is in the EXIT CODE — 0 matched, 1
+ * timed out — so a shell caller branches without parsing anything, exactly as `exists` separates live
+ * from gone. Second, a timeout is a normal answer and prints the same `{matched, output}` payload a
+ * match does, so an agent that guessed wrong sees what the pane actually said instead of an error with
+ * the evidence thrown away.
+ *
+ * It is its own verb rather than `read --wait <pattern>` because the two answer different questions —
+ * `read` reports a snapshot and always succeeds; this one asserts a condition and can fail — and folding
+ * them would make `read`'s exit code depend on a flag.
+ *
+ * The PATTERN is validated before the pane is resolved, which is the one place this verb orders its two
+ * usage errors: a missing pattern is answered without a `listPanes` round trip, and candidate panes are
+ * no use to a caller that has not said what it is waiting for. A missing PANE then takes the same
+ * `MissingPaneError` (candidates listed) every other pane verb takes, from the one chokepoint that owns
+ * it — which is why `[pane]` is optional at the parser and required in fact.
+ */
+function waitCommand(deps: Deps): Command {
+	return new Command('wait')
+		.description("Block until a pane's output matches, or the timeout elapses (exit 0 = matched, 1 = timed out)")
+		.argument('[pane]', 'Target pane id')
+		.option('--match <text>', 'Literal substring to wait for')
+		.option('--regex <pattern>', 'Regular expression to wait for (backend dialect; prefer --match)')
+		.option(
+			'--timeout <ms>',
+			`Give up after this many ms (default ${DEFAULT_WAIT_TIMEOUT_MS})`,
+			(v) => Number.parseInt(v, 10),
+			DEFAULT_WAIT_TIMEOUT_MS,
+		)
+		.option('--lines <n>', 'Restrict the searched snapshot to this many trailing lines', (v) => Number.parseInt(v, 10))
+		.addOption(FORMAT_OPTION)
+		.action(
+			guardedAsync(
+				async (
+					pane: string | undefined,
+					opts: {
+						match?: string | undefined
+						regex?: string | undefined
+						timeout: number
+						lines?: number | undefined
+					},
+				) => {
+					const pattern = waitPattern(opts)
+					if (!Number.isFinite(opts.timeout) || opts.timeout < 0) throw invalidWaitTimeout(opts.timeout)
+					const a = adapter(deps)
+					// Resolution runs BEFORE the wait: an ambiguous locator must not consume the whole timeout
+					// before reporting that the question had no single pane to be about.
+					const t = resolveTarget(deps, a, pane)
+					const result = await a
+						.waitForOutput(deps.exec, t, {
+							...pattern,
+							timeoutMs: opts.timeout,
+							...(opts.lines != null ? { lines: opts.lines } : {}),
+						})
+						// A gone pane throws out of the seam; it is this CLI's `pane-not-found`, not a raw backend
+						// diagnostic — `paneVerb`'s translation, applied to an async body.
+						.catch((err) => {
+							if (err instanceof CliError) throw err
+							// A missing locator never reaches here — `resolveTarget` already threw its
+							// `MissingPaneError` above — so this is `paneVerb`'s translation applied to an async
+							// body: a backend throw becomes this CLI's own coded not-found.
+							throw paneNotFound(pane ?? '')
+						})
+					output({ pane: t.id, ...result }, () => {
+						printFields({
+							pane: t.id,
+							matched: String(result.matched),
+							line: result.matchedLine ?? null,
+						})
+					})
+					if (!result.matched) process.exit(1)
+				},
+			),
+		)
+}
+
+/** Exactly one of `--match`/`--regex`, as the seam requires — refused HERE so the caller gets this CLI's
+ * coded usage error (exit 2, the fix is a different invocation) rather than the seam's bare throw. */
+function waitPattern(opts: { match?: string | undefined; regex?: string | undefined }): {
+	match?: string
+	regex?: string
+} {
+	if (opts.match != null && opts.regex != null) {
+		throw new CliError(
+			'usage-error',
+			'--match and --regex are mutually exclusive',
+			'pass one pattern: cyber-mux wait <pane> --match <text>',
+			2,
+		)
+	}
+	if (opts.match != null) return { match: opts.match }
+	if (opts.regex != null) {
+		try {
+			new RegExp(opts.regex)
+		} catch {
+			throw new CliError(
+				'usage-error',
+				`--regex is not a valid expression: ${opts.regex}`,
+				'pass a valid pattern, or a literal with --match instead',
+				2,
+			)
+		}
+		return { regex: opts.regex }
+	}
+	throw new CliError(
+		'usage-error',
+		'wait needs a pattern — pass --match or --regex',
+		'wait for a literal: cyber-mux wait <pane> --match <text>',
+		2,
+	)
+}
+
+/** A `--timeout` that is not a non-negative number — a usage error: nothing was attempted, and the fix
+ * is a different invocation. */
+function invalidWaitTimeout(timeout: number): CliError {
+	return new CliError(
+		'usage-error',
+		`--timeout must be a non-negative number of milliseconds — got ${timeout}`,
+		'pass milliseconds: cyber-mux wait <pane> --match <text> --timeout 30000',
+		2,
+	)
+}
+
 function focusCommand(deps: Deps): Command {
 	return new Command('focus')
 		.description('Beam the attached client to a pane')
@@ -1885,6 +2015,7 @@ export function buildProgram(cliDeps: CliDeps = DEFAULT_DEPS): Command {
 	program.addCommand(sendCommand(deps))
 	program.addCommand(submitCommand(deps))
 	program.addCommand(readCommand(deps))
+	program.addCommand(waitCommand(deps))
 	program.addCommand(focusCommand(deps))
 	program.addCommand(closeCommand(deps))
 	program.addCommand(listCommand(deps))
