@@ -1269,21 +1269,40 @@ function submitCommand(deps: Deps): Command {
 		)
 }
 
+/**
+ * The `read` verb: capture a pane's output.
+ *
+ * **The capture is the whole of stdout in text format**, byte for byte, which is why `--truncation`
+ * annotates rather than interleaves: a `truncated: …` line printed amid the capture would land in
+ * whatever the caller piped the output into, and a snapshot with a line the pane never printed is
+ * worse than no annotation at all. So in text format the answer goes to stderr — beside the capture,
+ * not in it — and in `--format json` it rides the payload as a field, which is the form an agent
+ * should reach for. The capture itself is unchanged in either.
+ */
 function readCommand(deps: Deps): Command {
 	return new Command('read')
 		.description("Capture a pane's output")
 		.argument('[pane]', 'Target pane id')
 		.option('--lines <n>', 'Trailing lines to capture', (v) => Number.parseInt(v, 10))
+		.option('--truncation', 'Also report whether older rows were omitted (costs one extra backend query)')
 		.addOption(FORMAT_OPTION)
 		.action(
-			guarded((pane: string | undefined, opts: { lines?: number | undefined }) => {
+			guarded((pane: string | undefined, opts: { lines?: number | undefined; truncation?: boolean | undefined }) => {
 				paneVerb(pane, () => {
 					const a = adapter(deps)
 					const t = resolveTarget(deps, a, pane)
 					// A failed read captures nothing — there are no bytes for an error to land amid, so `paneVerb`
 					// throwing here means stdout is the structured error alone, with no partial pane output before it.
-					const out = a.read(deps.exec, t, opts.lines != null ? { lines: opts.lines } : undefined)
-					process.stdout.write(out.endsWith('\n') ? out : `${out}\n`)
+					const result = a.read(deps.exec, t, {
+						...(opts.lines != null ? { lines: opts.lines } : {}),
+						...(opts.truncation ? { truncation: true } : {}),
+					})
+					output({ pane: t.id, ...result }, () => {
+						process.stdout.write(result.text.endsWith('\n') ? result.text : `${result.text}\n`)
+						// Only when asked: an unasked read determined nothing, and printing `truncated: false`
+						// for it would be the "I did not check" the seam refuses to spell as an answer.
+						if (result.truncated != null) process.stderr.write(`truncated: ${result.truncated}\n`)
+					})
 				})
 			}),
 		)

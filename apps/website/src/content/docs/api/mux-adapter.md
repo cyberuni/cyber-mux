@@ -128,8 +128,13 @@ const pane = mux.open({
 - **`mux.submit(target, text?, deps?)`** — take the pane's turn: type `text` if given, then **always**
   press Enter. With no text, sends a bare Enter only — flushing an already-staged buffer without
   re-typing it. See [`nudge`](/cyber-mux/api/nudge/) for the send-and-verify wrapper.
-- **`mux.read(target, opts?, deps?)`** — capture the pane's current output; `opts.lines` bounds the
-  tail.
+- **`mux.read(target, opts?, deps?)`** → `{ text, truncated? }` — capture the pane's current output;
+  `opts.lines` bounds the tail. Pass `opts.truncation` to also learn whether older rows above the
+  captured window were dropped; **`truncated` is absent unless you ask**, because absent means
+  *undetermined* and a `false` that means "I did not check" is indistinguishable from "you have
+  everything". Every backend answers it: each asks its own backend for one row more than the window
+  and compares row counts, which costs one extra query (none on Zellij, whose `lines` read already
+  holds the whole scrollback). That is why it is opt-in — `read` is the hottest verb on this seam.
 - **`mux.focus(target, deps?)`** — beam the attached client to the pane, across workspace and tab.
 - **`mux.nudge(target, message, opts?, deps?)`** — `submit` with a receipt; see
   [`nudge`](/cyber-mux/api/nudge/).

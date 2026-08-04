@@ -3444,6 +3444,65 @@ describe('spec:cyber-mux/cli/lookup', () => {
 		expect(calls).toContainEqual(['capture-pane', '-p', '-t', '%1', '-S', '-5'])
 	})
 
+	// The truncation surface (#100): the capture stays the whole of stdout, the answer rides stderr in
+	// text format and the payload in JSON.
+	it('read --truncation keeps the capture on stdout and puts the answer on stderr', async () => {
+		const out: string[] = []
+		vi.spyOn(process.stdout, 'write').mockImplementation((line) => {
+			out.push(String(line))
+			return true
+		})
+		const stderr = captureStderr()
+		const calls: string[][] = []
+		const program = buildProgram({
+			env: TMUX,
+			exec: paneServer(calls, [{ id: '%1', cwd: '/repo' }], { 'capture-pane': 'HELLO' }),
+		})
+		await run(program, ['read', '%1', '--truncation'])
+		// The capture, byte for byte — a `truncated:` line printed amid it would land in whatever the
+		// caller piped this into.
+		expect(out.join('')).toBe('HELLO\n')
+		expect(stderr.join('')).toBe('truncated: false\n')
+		// The bare read plus its one-row-deeper probe, and nothing else driven.
+		expect(calls.filter((c) => c[0] === 'capture-pane')).toEqual([
+			['capture-pane', '-p', '-t', '%1'],
+			['capture-pane', '-p', '-t', '%1', '-S', '-1'],
+		])
+	})
+
+	it('read --truncation --format json carries truncated in the payload', async () => {
+		vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+		const exec: Exec = (cmd, args) => {
+			if (args[0] === 'capture-pane') return args.at(-1) === '-1' ? 'OLDER\nHELLO' : 'HELLO'
+			return paneServer([], [{ id: '%1', cwd: '/repo' }])(cmd, args)
+		}
+		const program = buildProgram({ env: TMUX, exec })
+		await withArgv(['read', '%1', '--truncation', '--format', 'json'], () =>
+			run(program, ['read', '%1', '--truncation', '--format', 'json']),
+		)
+		expect(JSON.parse(logs.join('\n'))).toEqual({ pane: '%1', text: 'HELLO', truncated: true })
+	})
+
+	it('read without --truncation reports no truncation at all, and spends no probe on it', async () => {
+		const out: string[] = []
+		vi.spyOn(process.stdout, 'write').mockImplementation((line) => {
+			out.push(String(line))
+			return true
+		})
+		const stderr = captureStderr()
+		const calls: string[][] = []
+		const program = buildProgram({
+			env: TMUX,
+			exec: paneServer(calls, [{ id: '%1', cwd: '/repo' }], { 'capture-pane': 'HELLO' }),
+		})
+		await run(program, ['read', '%1'])
+		// Nothing was asked, so nothing is claimed — no `truncated: false` that would read as "you have
+		// everything" — and no second capture was spent finding out.
+		expect(stderr.join('')).toBe('')
+		expect(out.join('')).toBe('HELLO\n')
+		expect(calls.filter((c) => c[0] === 'capture-pane')).toEqual([['capture-pane', '-p', '-t', '%1']])
+	})
+
 	it('@id:lookup-focus-beams-view', async () => {
 		const calls: string[][] = []
 		const out: string[] = []
