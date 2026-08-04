@@ -9,6 +9,7 @@ import type {
 	MuxAdapter,
 	MuxOpenOptions,
 	MuxReadOptions,
+	MuxReadResult,
 	MuxSpaceTier,
 	MuxTarget,
 	MuxWaitOptions,
@@ -126,7 +127,7 @@ export interface MuxSession {
 	sendText(target: MuxTarget, text: string, deps?: MuxDeps | undefined): void
 	sendKeys(target: MuxTarget, keys: string[], deps?: MuxDeps | undefined): void
 	submit(target: MuxTarget, text?: string | undefined, deps?: MuxDeps | undefined): void
-	read(target: MuxTarget, opts?: MuxReadOptions | undefined, deps?: MuxDeps | undefined): string
+	read(target: MuxTarget, opts?: MuxReadOptions | undefined, deps?: MuxDeps | undefined): MuxReadResult
 	waitForOutput(target: MuxTarget, opts: MuxWaitOptions, deps?: MuxDeps | undefined): Promise<MuxWaitResult>
 	focus(target: MuxTarget, deps?: MuxDeps | undefined): void
 	teardown(target: MuxTarget, deps?: MuxDeps | undefined): void

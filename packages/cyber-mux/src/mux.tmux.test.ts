@@ -832,11 +832,66 @@ describe('spec:cyber-mux/mux/driving', () => {
 	it('read() captures pane output, optionally scoped to N lines', () => {
 		const calls: string[][] = []
 		const exec = fakeExec(calls, { 'capture-pane': 'line1\nline2' })
-		expect(tmuxMuxAdapter.read(exec, { id: '%3' })).toBe('line1\nline2')
+		expect(tmuxMuxAdapter.read(exec, { id: '%3' }).text).toBe('line1\nline2')
 		expect(calls[0]).toEqual(['capture-pane', '-p', '-t', '%3'])
 
 		tmuxMuxAdapter.read(exec, { id: '%3' }, { lines: 50 })
 		expect(calls[1]).toEqual(['capture-pane', '-p', '-t', '%3', '-S', '-50'])
+	})
+
+	// Extra: the truncation answer (#100). No dedicated scenario id covers read() itself.
+	it('read() leaves truncation unanswered — and the argv untouched — until it is asked for', () => {
+		const calls: string[][] = []
+		const exec = fakeExec(calls, { 'capture-pane': 'line1\nline2' })
+		// ABSENT, not `false`: nothing was asked, so nothing was determined — and no second capture was
+		// spent finding out. The argv is byte-identical to the read that has always been issued.
+		expect(tmuxMuxAdapter.read(exec, { id: '%3' }, { lines: 50 })).toEqual({ text: 'line1\nline2' })
+		expect(calls).toEqual([['capture-pane', '-p', '-t', '%3', '-S', '-50']])
+	})
+
+	it('read({ truncation }) reports omitted rows from a capture taken one row deeper', () => {
+		const calls: string[][] = []
+		// `-S -51` reaches one row further into the history than the `-S -50` window — a longer capture is
+		// exactly the rows the window dropped.
+		const exec: Exec = (_cmd, args) => {
+			calls.push(args)
+			return args.at(-1) === '-51' ? 'older\nline1\nline2' : 'line1\nline2'
+		}
+		expect(tmuxMuxAdapter.read(exec, { id: '%3' }, { lines: 50, truncation: true })).toEqual({
+			text: 'line1\nline2',
+			truncated: true,
+		})
+		expect(calls).toEqual([
+			['capture-pane', '-p', '-t', '%3', '-S', '-50'],
+			['capture-pane', '-p', '-t', '%3', '-S', '-51'],
+		])
+	})
+
+	it('read({ truncation }) reports a complete capture as not truncated, and probes -S -1 for a bare read', () => {
+		const calls: string[][] = []
+		// tmux clamps a start line past the top of the history, so a pane with nothing above the window
+		// answers the deeper capture with the same rows — `false`, with no special case.
+		const exec = fakeExec(calls, { 'capture-pane': 'line1\nline2' })
+		expect(tmuxMuxAdapter.read(exec, { id: '%3' }, { truncation: true })).toEqual({
+			text: 'line1\nline2',
+			truncated: false,
+		})
+		// A bare read is the visible screen (no `-S`), so one row deeper than it is `-S -1`.
+		expect(calls).toEqual([
+			['capture-pane', '-p', '-t', '%3'],
+			['capture-pane', '-p', '-t', '%3', '-S', '-1'],
+		])
+	})
+
+	it("read({ lines: 'all' }) takes the whole history with tmux's own -S -, and probes nothing", () => {
+		const calls: string[][] = []
+		const exec = fakeExec(calls, { 'capture-pane': 'older\nline1\nline2' })
+		// An unbounded window omitted nothing by construction, so the answer is free — one capture, not two.
+		expect(tmuxMuxAdapter.read(exec, { id: '%3' }, { lines: 'all', truncation: true })).toEqual({
+			text: 'older\nline1\nline2',
+			truncated: false,
+		})
+		expect(calls).toEqual([['capture-pane', '-p', '-t', '%3', '-S', '-']])
 	})
 
 	// Extra: focus()'s beam-order mechanics are not themselves a dedicated scenario id in

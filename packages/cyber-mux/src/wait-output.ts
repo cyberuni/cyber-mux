@@ -95,7 +95,9 @@ export async function pollForOutput(
 	const deadline = now() + opts.timeoutMs
 	let output = ''
 	for (;;) {
-		output = adapter.read(exec, target, readOpts)
+		// The TEXT alone: a poll never asks for `truncation`, which costs an extra backend query per read
+		// and answers a question this loop does not ask — it searches the snapshot it was given.
+		output = adapter.read(exec, target, readOpts).text
 		const result = matchWaitPattern(output, opts)
 		if (result.matched) return result
 		// Checked AFTER a read, so a zero/elapsed timeout still gets its one look at the pane: the wait

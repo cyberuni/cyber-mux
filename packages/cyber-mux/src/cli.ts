@@ -1269,24 +1269,90 @@ function submitCommand(deps: Deps): Command {
 		)
 }
 
+/**
+ * The `read` verb: capture a pane's output.
+ *
+ * **One truncation, one knob, one escape hatch.** There were nearly two of each here: AXI #3's
+ * truncation (a long body cut down, `--full` restoring it) and the backend's truncation (scrollback
+ * dropped above the captured window). Carrying both would have meant two flags a caller has to tell
+ * apart, and a `truncated` in the payload that answers for whichever one the reader had in mind. They
+ * are the same question asked of different layers — *am I seeing everything, and how do I get the
+ * rest?* — so this verb carries one of each:
+ *
+ * - **`--lines <n>`** bounds the window. It IS the truncation knob; a `--truncate <n>` beside it would
+ *   be the same number under a second name.
+ * - **`--full`** unbinds it — the whole scrollback, AXI #3's universal escape hatch, reaching the seam
+ *   as `lines: 'all'`. Mutually exclusive with `--lines`, refused as a usage error rather than settled
+ *   by a precedence rule nobody asked for (`wait`'s `--match`/`--regex` is the precedent).
+ * - **`truncated`** reports whether that window left rows behind, and the `help:` entry names `--full`
+ *   as the fix — so the report and its remedy are one pair rather than two vocabularies.
+ *
+ * Reported ALWAYS, not behind a flag of its own. The seam makes it opt-in because `read` is its
+ * hottest verb (`pollForOutput` runs it once per poll tick); one extra query per *CLI invocation* is
+ * nothing, and an agent should not have to know to ask whether the snapshot it just took was whole.
+ * `--full` pays nothing for it either: an unbounded window omitted nothing by construction.
+ *
+ * **The answer is on stdout in every format**, which is AXI #6 read literally: stdout carries the data,
+ * errors and suggestions "so the agent can read and act on them", while stderr is debug/progress that
+ * "agents do not read" — an agent-facing report on stderr is a report its own reader never sees. It is
+ * never on stderr, and never json-only.
+ *
+ * **In the text and agent formats it is printed only when there IS something above the window**, after
+ * the capture — AXI #3's own shape (`… +240 lines — rerun with --full` appears on a truncated body and
+ * on no other). A complete capture stays exactly what `lookup-read-writes-raw-bytes` freezes: the
+ * pane's raw bytes and nothing else, so `read | grep` is unchanged for the ordinary case. Silence is
+ * not an inference here — the check is unconditional, so "no hint" means "asked, nothing omitted", and
+ * a caller that wants the boolean spelled out either way reads the `--format json` payload, which
+ * always carries it (a structured envelope owes an explicit field where a byte stream owes silence).
+ */
 function readCommand(deps: Deps): Command {
 	return new Command('read')
 		.description("Capture a pane's output")
 		.argument('[pane]', 'Target pane id')
 		.option('--lines <n>', 'Trailing lines to capture', (v) => Number.parseInt(v, 10))
+		.option('--full', "Capture the pane's whole scrollback, however long")
 		.addOption(FORMAT_OPTION)
 		.action(
-			guarded((pane: string | undefined, opts: { lines?: number | undefined }) => {
+			guarded((pane: string | undefined, opts: { lines?: number | undefined; full?: boolean | undefined }) => {
+				const lines = readWindow(opts)
 				paneVerb(pane, () => {
 					const a = adapter(deps)
 					const t = resolveTarget(deps, a, pane)
 					// A failed read captures nothing — there are no bytes for an error to land amid, so `paneVerb`
 					// throwing here means stdout is the structured error alone, with no partial pane output before it.
-					const out = a.read(deps.exec, t, opts.lines != null ? { lines: opts.lines } : undefined)
-					process.stdout.write(out.endsWith('\n') ? out : `${out}\n`)
+					const result = a.read(deps.exec, t, { ...(lines != null ? { lines } : {}), truncation: true })
+					// #9 contextual disclosure: suggested only when there IS something above the window to go
+					// back for, and spelled with the caller's OWN locator rather than a guessed id. A complete
+					// capture is self-contained and owes no suggestion.
+					const help: HelpEntry[] = result.truncated
+						? [{ message: 'older rows sit above this capture', command: `cyber-mux read ${pane ?? t.id} --full` }]
+						: []
+					const payload = { pane: t.id, text: result.text, truncated: result.truncated }
+					output({ ...payload, ...(help.length ? { help } : {}) }, () => {
+						process.stdout.write(result.text.endsWith('\n') ? result.text : `${result.text}\n`)
+						// Only on a truncated capture, so a complete one is the raw bytes alone. `printFields`
+						// keeps a stable key beside the prose hint, for a caller parsing the text stream.
+						if (result.truncated) printFields({ truncated: 'true' })
+						printHelp(help)
+					})
 				})
 			}),
 		)
+}
+
+/** `--lines <n>` or `--full`, never both — the read window as the seam spells it. Refused HERE so the
+ * caller gets this CLI's coded usage error (exit 2, the fix is a different invocation) rather than a
+ * silent precedence rule, exactly as `waitPattern` refuses `--match` plus `--regex`. */
+function readWindow(opts: { lines?: number | undefined; full?: boolean | undefined }): number | 'all' | undefined {
+	if (opts.full && opts.lines != null) {
+		throw new CliError(
+			'usage-error',
+			'--lines and --full are mutually exclusive',
+			'bound the window: cyber-mux read <pane> --lines <n> — or take all of it: cyber-mux read <pane> --full',
+			2,
+		)
+	}
+	return opts.full ? 'all' : opts.lines
 }
 
 /** The default deadline a bare `wait` takes. Named, not spelled inline, so the help text and the value

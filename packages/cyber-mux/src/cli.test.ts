@@ -3444,6 +3444,106 @@ describe('spec:cyber-mux/cli/lookup', () => {
 		expect(calls).toContainEqual(['capture-pane', '-p', '-t', '%1', '-S', '-5'])
 	})
 
+	// The read window (#100): `--lines` bounds it, `--full` unbinds it, `truncated` reports whether it
+	// left rows behind, and the help entry names `--full` as the fix. One knob, one escape hatch, one
+	// report — never a second truncation vocabulary beside AXI #3's.
+	it('read reports truncated on STDOUT in the default format, with --full as the offered fix', async () => {
+		const out: string[] = []
+		vi.spyOn(process.stdout, 'write').mockImplementation((line) => {
+			out.push(String(line))
+			return true
+		})
+		const stderr = captureStderr()
+		const exec: Exec = (cmd, args) => {
+			if (args[0] === 'capture-pane') return args.at(-1) === '-1' ? 'OLDER\nHELLO' : 'HELLO'
+			return paneServer([], [{ id: '%1', cwd: '/repo' }])(cmd, args)
+		}
+		await run(buildProgram({ env: TMUX, exec }), ['read', '%1'])
+		// AXI #6: stdout is the stream the agent reads, stderr the one it does not — so no format hides
+		// the answer, and none of it is on stderr.
+		expect(logs.join('\n')).toContain('truncated  true')
+		expect(logs.join('\n')).toContain('-> cyber-mux read %1 --full')
+		expect(stderr.join('')).toBe('')
+		// The capture itself is untouched, and the hint follows the body (AXI #3's own shape).
+		expect(out.join('')).toBe('HELLO\n')
+	})
+
+	it('read leaves a complete capture as raw bytes alone — the hint is for a truncated one', async () => {
+		const out: string[] = []
+		vi.spyOn(process.stdout, 'write').mockImplementation((line) => {
+			out.push(String(line))
+			return true
+		})
+		const program = buildProgram({
+			env: TMUX,
+			exec: paneServer([], [{ id: '%1', cwd: '/repo' }], { 'capture-pane': 'HELLO' }),
+		})
+		await run(program, ['read', '%1'])
+		// AXI #3's own shape: the hint rides a TRUNCATED body and no other, so `read | grep` is unchanged
+		// for the ordinary case — `lookup-read-writes-raw-bytes` frozen, not bent. Silence is not an
+		// inference: the check is unconditional, so no hint means "asked, nothing omitted", and the json
+		// payload spells the boolean either way for a caller that wants it explicit.
+		expect(out.join('')).toBe('HELLO\n')
+		expect(logs.join('\n')).toBe('')
+	})
+
+	it('read --format json spells truncated even when the capture was complete', async () => {
+		vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+		const program = buildProgram({
+			env: TMUX,
+			exec: paneServer([], [{ id: '%1', cwd: '/repo' }], { 'capture-pane': 'HELLO' }),
+		})
+		await withArgv(['read', '%1', '--format', 'json'], () => run(program, ['read', '%1', '--format', 'json']))
+		expect(JSON.parse(logs.join('\n'))).toEqual({ pane: '%1', text: 'HELLO', truncated: false })
+	})
+
+	it('read --full takes the whole scrollback, and costs no truncation probe to do it', async () => {
+		vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+		const calls: string[][] = []
+		const program = buildProgram({
+			env: TMUX,
+			exec: paneServer(calls, [{ id: '%1', cwd: '/repo' }], { 'capture-pane': 'OLDER\nHELLO' }),
+		})
+		await withArgv(['read', '%1', '--full', '--format', 'json'], () =>
+			run(program, ['read', '%1', '--full', '--format', 'json']),
+		)
+		// `-S -` is tmux's own all-history spelling, and an unbounded window omitted nothing by
+		// construction — so `truncated` is false without a second capture spent proving it.
+		expect(calls.filter((c) => c[0] === 'capture-pane')).toEqual([['capture-pane', '-p', '-t', '%1', '-S', '-']])
+		expect(JSON.parse(logs.join('\n'))).toEqual({ pane: '%1', text: 'OLDER\nHELLO', truncated: false })
+	})
+
+	it('read --format json carries truncated and the help entry in the payload', async () => {
+		vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+		const exec: Exec = (cmd, args) => {
+			if (args[0] === 'capture-pane') return args.at(-1) === '-6' ? 'OLDER\nHELLO' : 'HELLO'
+			return paneServer([], [{ id: '%1', cwd: '/repo' }])(cmd, args)
+		}
+		const program = buildProgram({ env: TMUX, exec })
+		await withArgv(['read', '%1', '--lines', '5', '--format', 'json'], () =>
+			run(program, ['read', '%1', '--lines', '5', '--format', 'json']),
+		)
+		expect(JSON.parse(logs.join('\n'))).toEqual({
+			pane: '%1',
+			text: 'HELLO',
+			truncated: true,
+			help: [{ message: 'older rows sit above this capture', command: 'cyber-mux read %1 --full' }],
+		})
+	})
+
+	it('read --lines with --full is a usage error, not a precedence rule', async () => {
+		catchExit()
+		const program = buildProgram({
+			env: TMUX,
+			exec: paneServer([], [{ id: '%1', cwd: '/repo' }], { 'capture-pane': 'HELLO' }),
+		})
+		await expect(run(program, ['read', '%1', '--lines', '5', '--full'])).rejects.toThrow('exit:2')
+		expect(logs.join('\n')).toContain('usage-error')
+		// Refused BEFORE the backend is touched: nothing was captured, so there is no partial answer to
+		// read past the error.
+		expect(logs.join('\n')).toContain('mutually exclusive')
+	})
+
 	it('@id:lookup-focus-beams-view', async () => {
 		const calls: string[][] = []
 		const out: string[] = []

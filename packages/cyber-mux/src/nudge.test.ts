@@ -47,7 +47,7 @@ function fakeAdapter(
 		read: () => {
 			const value = reads[Math.min(readIndex, reads.length - 1)] ?? ''
 			readIndex++
-			return value
+			return { text: value }
 		},
 		waitForOutput: () => {
 			throw new Error('nudge waits on the turn being TAKEN (staged text gone), not on output arriving')

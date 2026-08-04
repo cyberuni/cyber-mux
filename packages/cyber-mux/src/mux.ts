@@ -265,8 +265,71 @@ export interface LivePane {
 }
 
 export interface MuxReadOptions {
-	/** How many trailing lines of output to capture; omit for the backend's default. */
-	lines?: number | undefined
+	/**
+	 * The read WINDOW: how many trailing lines of output to capture, `'all'` for the backend's whole
+	 * scrollback, or omitted for the backend's own default (the visible viewport, on all four).
+	 *
+	 * `'all'` is the same knob at its limit, deliberately, rather than a second `full?: boolean` option:
+	 * a window and an unbounded window are answers to one question, and two options would let a caller
+	 * spell a contradiction (`{ lines: 20, full: true }`) that this seam would then need a precedence
+	 * rule for. It is also what makes `truncated` free at the top end — an unbounded window omitted
+	 * nothing by construction, so an adapter answers `false` without spending its probe.
+	 *
+	 * tmux (`-S -`) and Zellij (`--full`) have an all-history spelling of their own; WezTerm and herdr
+	 * take a number, so `'all'` reaches them as `FULL_SCROLLBACK_LINES`, which both clamp (see
+	 * `read-window.ts`). "Everything the backend holds" is the ceiling of the honest answer either way:
+	 * rows a multiplexer dropped from its OWN history long ago are gone, and no read reports them.
+	 */
+	lines?: number | 'all' | undefined
+	/**
+	 * Also determine whether older rows above the captured window were omitted — `MuxReadResult.truncated`.
+	 *
+	 * OPT-IN, because the answer is not free: every backend captures a bounded window and none of them
+	 * says, in the capture itself, whether anything sat above it, so an adapter has to look one row
+	 * deeper (one extra backend query on every backend but Zellij, whose `lines` read already holds the
+	 * whole scrollback). `read` is the seam's hottest verb — `pollForOutput` runs it once per poll tick
+	 * and `nudge` twice per attempt — so paying that query on every read would double the query load of
+	 * every caller for a fact most of them never look at. Omit it and the argv is byte-identical to the
+	 * read that has always been issued.
+	 *
+	 * Omitting it leaves `truncated` ABSENT rather than `false`, which is the whole point of the
+	 * spelling: a `false` that means "I did not check" is indistinguishable from "you have everything",
+	 * and that exact conflation is the bug herdr shipped a fix for (herdrdev/herdr#1717).
+	 *
+	 * Free at one end: with `lines: 'all'` the window is unbounded, so the answer is `false` by
+	 * construction and no adapter spends a query on it.
+	 */
+	truncation?: boolean | undefined
+}
+
+/**
+ * What `read` answers with: the captured text, plus — when the caller asked for it — whether the
+ * capture dropped older rows.
+ *
+ * A RECORD rather than a bare string, and the widening is deliberate. The alternative — an out-param
+ * or a second `wasTruncated(target)` verb — lets the fact travel separately from the text it is about,
+ * so a caller can hold a snapshot whose provenance it can no longer ask for, and a second call answers
+ * for a pane that has printed more since. Truncation is a property OF this capture, so it rides with
+ * it. It is also the shape this seam already uses for the sibling verb that reads terminal text
+ * (`MuxWaitResult`), which returns its snapshot inside a record for the same reason.
+ */
+export interface MuxReadResult {
+	/** The captured output — exactly the bytes `read` has always returned. */
+	text: string
+	/**
+	 * Whether rows ABOVE the captured window were omitted: `true` = there is older output the caller did
+	 * not receive, `false` = the window reached the top of what the backend holds.
+	 *
+	 * **ABSENT means undetermined**, never "you have everything" — the same absent-not-false convention
+	 * `isPaneFocused`'s `undefined` and `LivePane.agentStatus` follow. It is absent on exactly one
+	 * condition: the caller did not pass `MuxReadOptions.truncation`, so no backend was asked. A caller
+	 * that asked always gets a boolean, on every backend.
+	 *
+	 * **Rows, not bytes.** A row of the capture is a row of the terminal, so a wrapped long line counts
+	 * as whatever the backend wrapped it into; the answer is about scrollback the caller did not see,
+	 * not about a truncated line.
+	 */
+	truncated?: boolean | undefined
 }
 
 /**
@@ -720,8 +783,28 @@ export interface MuxAdapter {
 	 * because flushing never re-types, a repeated flush cannot duplicate the message.
 	 */
 	submit(exec: Exec, target: MuxTarget, text?: string | undefined): void
-	/** Capture the target session's current output. */
-	read(exec: Exec, target: MuxTarget, opts?: MuxReadOptions | undefined): string
+	/**
+	 * Capture the target session's current output, as `{ text }` — plus `truncated` when
+	 * `opts.truncation` asked for it (see `MuxReadResult`).
+	 *
+	 * **Every capture is bounded**, which is why the truncation answer is portable rather than one
+	 * backend's feature: a read takes either the caller's `lines` window or the backend's own default
+	 * one (the viewport, on all four), and in both cases there may be scrollback above it that the
+	 * caller never sees. The rule every adapter realizes is the same — *ask the backend for one row more
+	 * than the window and compare the row counts* (`isReadTruncated`, `read-window.ts`): more rows
+	 * came back means rows exist above the window, an identical count means the read reached the top of
+	 * what the backend holds. Each adapter spells that probe in its own units (tmux `-S -(N+1)`, WezTerm
+	 * `--start-line -(N+1)`, Zellij's full dump it already has, herdr `--source recent`), and none
+	 * guesses: a backend that cannot be asked would report `truncated` absent, and none of the four is
+	 * in that position.
+	 *
+	 * herdr is the one backend with a NATIVE answer — `pane.read` reports `truncated` on the socket API
+	 * as of 0.8.0 (herdrdev/herdr#1717) — and it is still derived here, because its CLI prints
+	 * `result.read.text` and nothing else (`print_read_response`, read from the 0.8.0 source) and this
+	 * adapter talks to the CLI by construction. That is a transport gap, not a disagreement: if the CLI
+	 * ever surfaces the field, the herdr adapter reads it instead and this contract does not move.
+	 */
+	read(exec: Exec, target: MuxTarget, opts?: MuxReadOptions | undefined): MuxReadResult
 	/**
 	 * Block until the target's output matches `match`/`regex`, or until `timeoutMs` elapses.
 	 *

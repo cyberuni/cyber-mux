@@ -203,15 +203,69 @@ describe('spec:cyber-mux/mux/driving', () => {
 		it('read dumps the viewport to stdout', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'dump-screen': 'hello' })
-			expect(zellijMuxAdapter.read(exec, { id: 'terminal_9' })).toBe('hello')
+			expect(zellijMuxAdapter.read(exec, { id: 'terminal_9' })).toEqual({ text: 'hello' })
 			expect(calls).toEqual([['action', 'dump-screen', '--pane-id', 'terminal_9']])
 		})
 
 		it('read with lines dumps the full scrollback and keeps the trailing N lines', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'dump-screen': 'a\nb\nc\nd\ne' })
-			expect(zellijMuxAdapter.read(exec, { id: 'terminal_9' }, { lines: 2 })).toBe('d\ne')
+			// No `truncated` unasked, even though this read is holding the whole scrollback it would be
+			// derived from: absent means undetermined, and nobody asked.
+			expect(zellijMuxAdapter.read(exec, { id: 'terminal_9' }, { lines: 2 })).toEqual({ text: 'd\ne' })
 			expect(calls).toEqual([['action', 'dump-screen', '--pane-id', 'terminal_9', '--full']])
+		})
+
+		it('read({ lines, truncation }) answers from the full dump it already took — no extra query', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'dump-screen': 'a\nb\nc\nd\ne' })
+			expect(zellijMuxAdapter.read(exec, { id: 'terminal_9' }, { lines: 2, truncation: true })).toEqual({
+				text: 'd\ne',
+				truncated: true,
+			})
+			// The one backend whose truncation costs nothing: a `lines` read is a full dump trimmed, so the
+			// deeper read was already in hand.
+			expect(calls).toEqual([['action', 'dump-screen', '--pane-id', 'terminal_9', '--full']])
+		})
+
+		it('read({ lines, truncation }) reports a window that holds the whole dump as not truncated', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'dump-screen': 'a\nb' })
+			expect(zellijMuxAdapter.read(exec, { id: 'terminal_9' }, { lines: 5, truncation: true })).toEqual({
+				text: 'a\nb',
+				truncated: false,
+			})
+			expect(calls).toEqual([['action', 'dump-screen', '--pane-id', 'terminal_9', '--full']])
+		})
+
+		it("read({ lines: 'all' }) IS Zellij's --full dump, untrimmed and unprobed", () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'dump-screen': 'a\nb\nc\nd\ne' })
+			// `--full` is Zellij's own all-history spelling, so an unbounded window is the primitive rather
+			// than a trimmed one — and nothing was omitted from it.
+			expect(zellijMuxAdapter.read(exec, { id: 'terminal_9' }, { lines: 'all', truncation: true })).toEqual({
+				text: 'a\nb\nc\nd\ne',
+				truncated: false,
+			})
+			expect(calls).toEqual([['action', 'dump-screen', '--pane-id', 'terminal_9', '--full']])
+		})
+
+		it('read({ truncation }) compares a bare viewport dump against the full scrollback', () => {
+			const calls: string[][] = []
+			// Zellij has no "viewport plus one row" form, so the deeper read is the whole dump — more rows
+			// than the viewport means rows sit above it.
+			const exec: Exec = (_cmd, args) => {
+				calls.push(args)
+				return args.includes('--full') ? 'older\nd\ne' : 'd\ne'
+			}
+			expect(zellijMuxAdapter.read(exec, { id: 'terminal_9' }, { truncation: true })).toEqual({
+				text: 'd\ne',
+				truncated: true,
+			})
+			expect(calls).toEqual([
+				['action', 'dump-screen', '--pane-id', 'terminal_9'],
+				['action', 'dump-screen', '--pane-id', 'terminal_9', '--full'],
+			])
 		})
 
 		it('teardown closes the pane', () => {

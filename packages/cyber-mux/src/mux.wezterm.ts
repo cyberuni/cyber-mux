@@ -1,9 +1,10 @@
 import { envFallback } from './env-fallback.ts'
 import { type Exec, withReason } from './exec.ts'
 import { refuseFloatingPane } from './floating.ts'
-import type { LivePane, MuxAdapter, MuxReadOptions, OpenedPane } from './mux.ts'
+import type { LivePane, MuxAdapter, MuxReadOptions, MuxTarget, OpenedPane } from './mux.ts'
 import { type NewId, nodeNewId } from './new-id.ts'
 import { assertRatioInRange } from './ratio.ts'
+import { FULL_SCROLLBACK_LINES, isReadTruncated } from './read-window.ts'
 import { pollForOutput } from './wait-output.ts'
 
 /**
@@ -167,12 +168,17 @@ export function createWeztermAdapter(deps: { newId: NewId }): MuxAdapter {
 		},
 
 		read(exec, target, opts?: MuxReadOptions | undefined) {
-			const args = ['cli', 'get-text', '--pane-id', target.id]
-			// `--start-line` counts backward into scrollback from 0 (the top of the visible screen); the
-			// end defaults to the bottom of the screen. Negative-N approximates "last N lines" the way
-			// tmux's `-S -N` does, though the two are not guaranteed to line up cell-for-cell.
-			if (opts?.lines != null) args.push('--start-line', String(-opts.lines))
-			return exec('wezterm', args) ?? ''
+			const text = getText(exec, target, opts?.lines)
+			if (!opts?.truncation) return { text }
+			// An unbounded window omitted nothing by construction — no probe to spend.
+			if (opts.lines === 'all') return { text, truncated: false }
+			// One row deeper in WezTerm's own units: `--start-line` counts backward from the top of the
+			// visible screen, so `-(N+1)` is this window plus one older row — and a bare read (no `lines`)
+			// is the screen alone, whose one-deeper form is `--start-line -1`. A start line past the top of
+			// the scrollback is clamped rather than refused, so a pane with nothing above the window hands
+			// back the same rows and the answer is `false` with no special case.
+			const deeper = getText(exec, target, (opts.lines ?? 0) + 1)
+			return { text, truncated: isReadTruncated(text, deeper) }
 		},
 
 		// No wait-for-output primitive in `wezterm cli` — the surface reads text (`get-text`) and never
@@ -375,4 +381,22 @@ const WEZTERM_KEY_BYTES: Readonly<Record<string, string>> = {
 	Insert: '\x1b[2~',
 	PageUp: '\x1b[5~',
 	PageDown: '\x1b[6~',
+}
+
+/**
+ * One spelling of the capture, taken by `read` for the snapshot AND for its one-row-deeper truncation
+ * probe, so the two differ only in the number they are meant to disagree about.
+ *
+ * `--start-line` counts backward into scrollback from 0 (the top of the visible screen); the end
+ * defaults to the bottom of the screen. Negative-N approximates "last N lines" the way tmux's `-S -N`
+ * does, though the two are not guaranteed to line up cell-for-cell. `lines` omitted is WezTerm's own
+ * default window — the visible screen, with no `--start-line` at all.
+ */
+function getText(exec: Exec, target: MuxTarget, lines: number | 'all' | undefined): string {
+	const args = ['cli', 'get-text', '--pane-id', target.id]
+	// No all-history token in `wezterm cli get-text` — `--start-line` takes a number — so `'all'` is a
+	// window deeper than any real scrollback, which WezTerm clamps to what it holds.
+	const start = lines === 'all' ? FULL_SCROLLBACK_LINES : lines
+	if (start != null) args.push('--start-line', String(-start))
+	return exec('wezterm', args) ?? ''
 }

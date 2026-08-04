@@ -80,12 +80,12 @@ export async function nudge(
 
 	adapter.submit(exec, target, message)
 	await sleep(settleMs)
-	if (!isStaged(adapter.read(exec, target), message)) return { taken: true, resubmits: 0 }
+	if (!isStaged(adapter.read(exec, target).text, message)) return { taken: true, resubmits: 0 }
 
 	for (let attempt = 1; attempt <= attempts; attempt++) {
 		adapter.submit(exec, target)
 		await sleep(settleMs)
-		if (!isStaged(adapter.read(exec, target), message)) return { taken: true, resubmits: attempt }
+		if (!isStaged(adapter.read(exec, target).text, message)) return { taken: true, resubmits: attempt }
 	}
 
 	throw new Error(

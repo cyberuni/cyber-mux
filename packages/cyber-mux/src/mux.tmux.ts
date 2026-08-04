@@ -1,7 +1,8 @@
 import type { Exec } from './exec.ts'
 import { withReason } from './exec.ts'
-import type { LivePane, MuxAdapter, MuxReadOptions, OpenedPane, RegionPane, WorkspaceTab } from './mux.ts'
+import type { LivePane, MuxAdapter, MuxReadOptions, MuxTarget, OpenedPane, RegionPane, WorkspaceTab } from './mux.ts'
 import { assertRatioInRange } from './ratio.ts'
+import { isReadTruncated } from './read-window.ts'
 import { pollForOutput } from './wait-output.ts'
 
 /**
@@ -221,9 +222,24 @@ export const tmuxMuxAdapter: MuxAdapter = {
 	},
 
 	read(exec, target, opts?: MuxReadOptions | undefined) {
-		const args = ['capture-pane', '-p', '-t', target.id]
-		if (opts?.lines != null) args.push('-S', `-${opts.lines}`)
-		return exec('tmux', args) ?? ''
+		const text = capturePane(exec, target, opts?.lines)
+		if (!opts?.truncation) return { text }
+		// An unbounded window omitted nothing by construction — the answer costs no probe at the one end
+		// where it is already known.
+		if (opts.lines === 'all') return { text, truncated: false }
+		// One row deeper, in tmux's own units: `-S -N` starts the capture N rows INTO the history above
+		// the visible screen, so `-S -(N+1)` is exactly this window plus one older row — and a bare read
+		// (no `lines`) is the screen alone, whose one-deeper form is `-S -1`. tmux clamps a start line
+		// past the top of the history rather than failing, so on a pane with nothing above the window the
+		// deeper capture comes back the same length and the answer is `false` without a special case.
+		//
+		// So the answer is about rows above what was RETURNED, not above `lines`: tmux's `-S -N` is a
+		// start OFFSET into the history and the capture still runs to the bottom of the screen, so a
+		// `lines: 3` read hands back the viewport plus 3 — and a pane whose output has not yet overflowed
+		// its viewport is honestly `false` at any window, because nothing was omitted. Verified against a
+		// real tmux binary (`mux.tmux.integration.test.ts`), which is the only place that claim can hold.
+		const deeper = capturePane(exec, target, (opts.lines ?? 0) + 1)
+		return { text, truncated: isReadTruncated(text, deeper) }
 	},
 
 	// tmux has no wait-for-output primitive — `wait-for` synchronizes on a channel some other tmux
@@ -494,6 +510,20 @@ function toTmuxSize(ratio: number): string {
  * key list here would make the passthrough a second vocabulary to maintain.
  */
 const TMUX_KEY_RENAMES: Readonly<Record<string, string>> = { Backspace: 'BSpace' }
+
+/**
+ * One spelling of the capture, taken by `read` for the snapshot AND for the one-row-deeper truncation
+ * probe — so the two differ in exactly the number they disagree about and nothing else. `lines`
+ * omitted is tmux's own default window: the visible screen, with no `-S` at all.
+ */
+function capturePane(exec: Exec, target: MuxTarget, lines: number | 'all' | undefined): string {
+	const args = ['capture-pane', '-p', '-t', target.id]
+	// `-S -` is tmux's own spelling for "the start of the history" — exact, no stand-in number needed.
+	// Verified against a real binary: a 24-row viewport read back 65 rows with it (`-S -`), 24 without.
+	if (lines === 'all') args.push('-S', '-')
+	else if (lines != null) args.push('-S', `-${lines}`)
+	return exec('tmux', args) ?? ''
+}
 
 function toTmuxKey(key: string): string {
 	return TMUX_KEY_RENAMES[key] ?? key
