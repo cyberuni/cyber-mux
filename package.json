@@ -10,7 +10,7 @@
 		"check:features": "node scripts/check-features.mjs",
 		"cs": "changeset",
 		"prepare": "node -e \"if(!(process.env.CI||process.env.GITHUB_ACTIONS))require('child_process').execSync('husky',{stdio:'inherit'})\"",
-		"release": "changeset publish",
+		"release": "node scripts/release.mjs",
 		"test": "turbo test",
 		"typecheck": "turbo typecheck",
 		"verify": "turbo verify",
