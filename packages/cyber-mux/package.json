@@ -1,6 +1,6 @@
 {
 	"name": "cyber-mux",
-	"version": "0.3.0",
+	"version": "0.4.0",
 	"description": "Cross-multiplexer pane control — one contract over tmux and herdr",
 	"keywords": [
 		"tmux",
