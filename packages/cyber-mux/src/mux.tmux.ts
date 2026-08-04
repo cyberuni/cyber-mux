@@ -40,6 +40,21 @@ export const tmuxMuxAdapter: MuxAdapter = {
 	// `split-window -l N%` sizes a split; see `toTmuxSize` for the inversion it needs.
 	canSizeSplits: true,
 
+	/**
+	 * `new-pane` opens a floating pane — tmux 3.7's own new command ("Add floating panes. These are
+	 * panes which sit above the layout ('tiled panes') like popups but unlike popups are not modal and
+	 * behave like panes", CHANGES 3.6b → 3.7), bound to `*` by default.
+	 *
+	 * Declared UNCONDITIONALLY rather than probed off `tmux -V`, and that is deliberate: this adapter
+	 * takes no version reading anywhere (its `-l`, `-e` and `@`-option paths are all declared the same
+	 * way), and a version probe would cost an exec on every resolution to pre-empt a failure tmux
+	 * already reports precisely. On tmux ≤ 3.6 the command does not exist and `new-pane` fails with
+	 * tmux's own `unknown command` — surfaced by the `withReason` throw in `open`, which names the
+	 * command that failed. A silent wrong-pane is the failure mode worth engineering against, and this
+	 * has none: there is nothing for an absent `new-pane` to be mistaken for.
+	 */
+	canFloatPanes: true,
+
 	open(exec, opts) {
 		// tmux has fewer tiers than herdr: no Workspace level, and "window" is its name for the Tab
 		// concept. So both 'workspace' (own visible space) and 'tab' collapse to a new WINDOW — the
@@ -78,7 +93,22 @@ export const tmuxMuxAdapter: MuxAdapter = {
 		// it, so the same mistake compiles and goes quiet. herdr scopes these identically; this is the
 		// one adapter that had not caught up.
 		let args: string[]
-		if (window) {
+		if (at === 'pane:float') {
+			// tmux 3.7's `new-pane` — a pane above the tiled layout, taking no share of the region and so
+			// resizing none of its panes. `-t` anchors it the same way it targets a split: without it tmux
+			// resolves the ACTIVE pane's window, which is the user's and only coincidentally the caller's.
+			// `-e`, `-c`, `-P` and `-F` are all on `new-pane` exactly as they are on `split-window`, so the
+			// env, the cwd and the id report need no second spelling here.
+			//
+			// No size flag. `new-pane` sizes with `-x`/`-y` in COLUMNS and LINES ("The default is half the
+			// window width and a quarter the window height"), not as a fraction of a split that never
+			// happened — so `ratio` is dropped here on the one backend that can size a split, per
+			// `MuxOpenOptions.ratio`. No `-T` either: it names a floating pane's title only from 3.8, while
+			// the pane itself lands in 3.7, so the label rides the same post-birth `select-pane -T` rename
+			// every other pane placement already takes below — one spelling, and one that works on 3.7.
+			const anchor = opts.from ? ['-t', opts.from.id] : []
+			args = ['new-pane', ...anchor, ...env, '-c', opts.cwd, '-P', '-F', format]
+		} else if (window) {
 			// `-d` keeps focus on the caller (opens the window in the background) — without it tmux
 			// switches the attached client to the new window, stealing the caller's focus. The returned
 			// pane id and subsequent `send-keys -t` still target the new pane.

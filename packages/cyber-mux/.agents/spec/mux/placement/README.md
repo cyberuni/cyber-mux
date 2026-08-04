@@ -41,7 +41,7 @@ after it exists is [`lookup/`](../lookup/README.md); binding a checkout to a wor
 
 ## Use Cases
 
-- **Each placement value maps onto the backend's own primitive** — `pane:right|pane:down|tab|workspace`.
+- **Each placement value maps onto the backend's own primitive** — `pane:right|pane:down|pane:float|tab|workspace`.
   `tab` maps to each backend's native Tab primitive — tmux `new-window`, herdr `tab create` — never a
   split pane. `workspace` maps to each backend's own **visible** space — herdr `workspace create`, tmux
   `new-window` (a window visible in the status bar). Every placement opens without stealing the caller's
@@ -51,6 +51,46 @@ after it exists is [`lookup/`](../lookup/README.md); binding a checkout to a wor
   `at ?? 'tab'` fallback, reachable exactly because the CLI flag is optional — `session.tmux.ts`,
   `session.herdr.ts`), and how an out-of-set value is refused are the **flag surface**'s, in
   [`cli/placement/`](../../cli/placement/README.md).
+- **`pane:float` is the one placement that is real on some backends and refused on the rest** — a
+  pane that sits **above** the tiled layout rather than taking a share of it, so it displaces nothing
+  and resizes no existing pane. tmux realizes it with **3.7's `new-pane`**; zellij with `new-pane
+  --floating`. wezterm and herdr have no floating-pane concept at all and **refuse by name**.
+
+  **A placement, not a `floating: true` modifier.** Placements are mutually exclusive and this one is
+  too: a pane either takes a share of the region, opens its own space, or floats above one. A boolean
+  would additionally owe an answer to what "a floating workspace" means, which is a question no caller
+  asked. And a floating pane is an **ordinary pane in every other respect** — a real id, so read,
+  send, submit, wait and teardown drive it unchanged. That is why it fits this seam at all; a popup,
+  which is modal and has no pane id, would not.
+
+  **Refuse, never emulate — and that is what makes it a different shape from `ratio`.** A backend
+  declares whether it can float, exactly as it declares whether it can size a split, but the two
+  absences mean opposite things. A ratio has a truthful degrade — the backend's own even split, one
+  warning, a pane of the wrong *size*. A float has none: the nearest substitute is a tiled split,
+  which resizes the region's other panes, and that is precisely the property the caller asked
+  against. So a caller handed a substituted split would get a pane whose id satisfies them and whose
+  behavior does not. The refusal names the backend, is raised **before any command is issued**, and is
+  the seam's own typed answer — how it *surfaces* (its code, exit and fix hint) is the flag surface's,
+  in [`cli/placement/`](../../cli/placement/README.md). Same emulate-or-refuse rule the
+  [`agent/`](../../agent/README.md) lifecycle wait follows, and the deliberate opposite of the portable
+  output wait, which every backend can realize honestly.
+
+  **A ratio is dropped on a float even by a backend that can size a split** — not a restatement of the
+  declaration above, because tmux *can* size. There is no original pane whose fraction a ratio could
+  be, so a float takes the backend's own default size; sizing one would need absolute cells rather
+  than a fraction of a split that never happened, which is a separate option and not this one wearing
+  a second meaning. `from` **is** read, though, as the pane whose **region** the float opens over —
+  the same anchor trap one tier up, since a float given none lands over whatever region the *user* is
+  looking at.
+
+  **Version handling is honest rather than probed.** tmux's floating pane is 3.7's, and the adapter
+  declares the capability unconditionally rather than reading `tmux -V` — this adapter version-probes
+  nothing else, and a probe would cost an exec on every resolution to pre-empt a failure tmux already
+  reports precisely (`unknown command`, surfaced naming the command that failed). An absent `new-pane`
+  has nothing it could be mistaken for, so there is no silent-wrong-pane failure to defend against.
+  tmux's own title flag on `new-pane` lands in 3.8, one release after the pane itself, so the label
+  rides the post-birth pane rename every other pane placement already takes.
+
 - **A split can be told which pane, how big, and what environment** — three options on the seam's
   own open contract shape a `pane:*` placement. `from` and `ratio` are reached only through the
   adapter, never a CLI flag; `env` also has a `--env` flag (below), whose *surface* is its own
@@ -242,6 +282,10 @@ after it exists is [`lookup/`](../lookup/README.md); binding a checkout to a wor
 graph TD
   O["open runs"] --> AT{"placement"}
   AT -->|"pane:right or pane:down"| SPLIT["split the target pane"]
+  AT -->|"pane:float"| CANF{"backend can float"}
+  CANF -->|"yes, tmux 3.7+ and zellij"| FLOAT["a pane above the layout, resizing nothing"]
+  CANF -->|"no, wezterm and herdr"| REFUSE["refused by name, before any command, never a substituted split"]
+  FLOAT --> LAUNCH
   AT -->|"tab"| TAB["the backend's native tab"]
   AT -->|"workspace"| WS{"backend's own visible space"}
   WS -->|"tmux"| WT["a visible window in the current session"]
@@ -340,6 +384,17 @@ Every scenario in [`placement.feature`](./placement.feature), one row each, grou
 | `at=tab` → the backend's native tab, never a split | each of the three adapters | `--at tab opens a new tab in the current window, never a split pane` |
 | tab opened → focus not stolen | any backend, `--at tab` | `the tab placement opens in the background without stealing focus` |
 | placement omitted → the adapter's own `at ?? 'tab'` default | open() with `at` undefined | `an omitted placement falls back to tab — the adapter's own default, not the CLI's` |
+
+### pane:float — real on some backends, refused on the rest
+
+| Edge | Path (Given) | Scenario |
+|---|---|---|
+| backend declares whether it can float | each of the four adapters | `a backend declares whether it can open a floating pane` |
+| `at=pane:float` → the backend's own floating primitive | tmux | `tmux opens a floating pane with 3.7's new-pane command` |
+| `from` on a float → anchored on the caller's region; label → post-birth rename | tmux, `from` and a label | `a tmux float is anchored on \`from\` and named after its birth` |
+| `at=pane:float` → the backend's own floating primitive | zellij | `zellij opens a floating pane with new-pane --floating` |
+| `ratio` on a float → dropped, even on a sizing backend | tmux, ratio given | `a ratio is dropped on a float, even by a backend that can size a split` |
+| no floating concept → refused by name, before any command | wezterm and herdr | `a backend with no floating pane refuses by name rather than emulating` |
 
 ### open reports the workspace the new pane landed in
 

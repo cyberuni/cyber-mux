@@ -28,10 +28,19 @@ export const ENV_OPTION: Option = new Option('--env <pair>', 'Environment variab
 	.argParser(collectEnv)
 	.conflicts('template')
 
-/** Placement for a newly opened pane, matching `MuxPlacement`. */
+/**
+ * Placement for a newly opened pane, matching `MuxPlacement`.
+ *
+ * `pane:float` is the one choice that is not universal: tmux (≥ 3.7) and zellij open a real floating
+ * pane, wezterm and herdr refuse it (`backend-unsupported`, exit 1). It is still a `choices()` member
+ * on every backend — the value is VALID input everywhere, and which backend can realize it is a
+ * runtime answer, not a parse-time one. Gating the choice list on the detected backend would make
+ * `--help` say different things in different panes and turn a truthful refusal into a usage error.
+ */
 export const AT_OPTION: Option = new Option('--at <placement>', 'Where to place the new pane').choices([
 	'pane:right',
 	'pane:down',
+	'pane:float',
 	'tab',
 	'workspace',
 ])

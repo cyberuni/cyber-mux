@@ -5,6 +5,7 @@ import { callerPane, resolveMuxAdapter } from './backend.ts'
 import { AmbiguousPaneError, CliError, MissingPaneError, reportError } from './cli-error.ts'
 import { AT_OPTION, ENV_OPTION, FORMAT_OPTION, LABEL_OPTION } from './cli-options.ts'
 import { type Exec, nodeExec } from './exec.ts'
+import { canFloatPanes, FloatingPanesUnsupportedError } from './floating.ts'
 import type { AgentStatus, LivePane, MuxAdapter, MuxPlacement, MuxTarget } from './mux.ts'
 import { currentPane, probeMultiplexer } from './mux-probe.ts'
 import { nodeNewId } from './new-id.ts'
@@ -174,6 +175,11 @@ function invalidTemplateName(name: string): CliError {
  */
 function reportWorktreeFailure(err: unknown): never {
 	if (err instanceof CliError) reportError(err)
+	// `--at pane:float` on a backend with no floating pane, asked through a worktree verb. The library's
+	// refusal, surfaced under its own code rather than swallowed by the generic `worktree-failed` below:
+	// nothing about the worktree failed, and telling a caller to "check the worktree path" would send
+	// them after the wrong thing entirely.
+	if (err instanceof FloatingPanesUnsupportedError) reportError(floatingUnsupported(err))
 	if (err instanceof WorktreeGitError) {
 		reportError(new CliError('worktree-failed', err.message, 'check the worktree path and its state, then re-run', 1))
 	}
@@ -1148,6 +1154,15 @@ function openCommand(deps: Deps): Command {
 					env?: Record<string, string> | undefined
 					label?: string | undefined
 				}) => {
+					// Refuse `--at pane:float` on a backend with no floating pane up front — the library's
+					// decision, read off the same declaration `open` re-checks, surfaced here as
+					// backend-unsupported. Checked BEFORE the template is resolved and before any backend is
+					// touched, so a float asked of wezterm/herdr opens nothing and writes nothing, and the
+					// refusal outranks a template name that would also have failed.
+					if (opts.at === 'pane:float') {
+						const backend = adapter(deps)
+						if (!canFloatPanes(backend)) throw floatingUnsupported(new FloatingPanesUnsupportedError(backend.name))
+					}
 					if (opts.template) {
 						// Resolve and validate BEFORE touching a backend, so an unresolvable name opens nothing.
 						const { template } = resolveTemplate(deps, { name: opts.template })
@@ -1489,6 +1504,23 @@ function existsCommand(deps: Deps): Command {
  * presentation, so the sentence lives in one place — the exact mirror of how `backendUnsupported`
  * surfaces `CaptureUnsupportedError` for `template save`.
  */
+/**
+ * The CLI surface of the library's floating-pane refusal: exit 1 (a genuine operation failure — the
+ * invocation was well-formed and `--at pane:float` is a legal value on every backend), naming the
+ * backend, with a fix hint pointing at the two backends that can. The DECISION to refuse is the
+ * library's (`FloatingPanesUnsupportedError`, thrown by the adapter's own `open`); this composes only
+ * the presentation, so the sentence lives in one place — the same shape `agentUnsupported` and
+ * `backendUnsupported` already take.
+ */
+function floatingUnsupported(err: FloatingPanesUnsupportedError): CliError {
+	return new CliError(
+		'backend-unsupported',
+		`${err.backend} cannot open a floating pane — --at pane:float needs a backend with a native floating pane (tmux 3.7+ or zellij)`,
+		'drop --at pane:float, or run it on tmux 3.7+ or zellij',
+		1,
+	)
+}
+
 function agentUnsupported(err: AgentLifecycleUnsupportedError): CliError {
 	return new CliError(
 		'backend-unsupported',

@@ -41,7 +41,17 @@ cannot live in a single capability-first node, so the CLI surface earns its own 
   primitive (that mapping is the library's); this surface owns that the flag is **read**, **defaulted**
   when omitted (the adapter's own `at ?? 'tab'` fallback is reachable and observable exactly because
   `--at` is optional at the CLI), and **refused before any pane opens** when given a value outside
-  `pane:right|pane:down|tab|workspace`.
+  `pane:right|pane:down|pane:float|tab|workspace`.
+
+  **The choice list is fixed, never gated on the detected backend** — and `pane:float` is where that
+  matters, because it is the one value not every backend can realize. Narrowing the list per backend
+  would make `--help` say different things in different panes and would turn a truthful *capability*
+  refusal into a *usage* error. So the value is always legal input, and a backend that cannot open a
+  floating pane refuses it at **exit 1 under `backend-unsupported`**, naming itself and naming the
+  backends that can. The decision to refuse is the library's; this surface owns only the code, the exit
+  and the fix hint — the same shape `template save`'s geometry refusal and `agent wait`'s agent-state
+  refusal already take, and the reason a refused float is checked **before any backend is touched**: it
+  opens nothing, on every verb that carries `--at`, worktree verbs included.
 
 - **`--launch <command>`** — optional at the CLI. Omitted, the verb still opens a pane rather than
   treating the absent flag as an error; given, it **hands its command line to the open contract** as the
@@ -69,7 +79,10 @@ cannot live in a single capability-first node, so the CLI surface earns its own 
 graph TD
   A["cyber-mux open --at"] --> AT{"--at value"}
   AT -->|"omitted"| DEF["the adapter's at ?? 'tab' fallback, same as --at tab"]
-  AT -->|"outside the four values"| REJ["rejected before any pane opens"]
+  AT -->|"outside the five values"| REJ["rejected before any pane opens, a usage error"]
+  AT -->|"pane:float"| CANF{"backend can open a floating pane"}
+  CANF -->|"no, wezterm and herdr"| UNSUP["backend-unsupported, exit 1, before any backend command"]
+  CANF -->|"yes, tmux 3.7+ and zellij"| PASS
   AT -->|"pane:right | pane:down | tab | workspace"| PASS["handed to the open contract as the placement"]
 ```
 
@@ -110,7 +123,9 @@ Every scenario in [`placement.feature`](./placement.feature), one row each, grou
 | Edge | Path (Given) | Scenario |
 |---|---|---|
 | `--at` given → open at that placement | `open --at pane:down` | `--at chooses where the new pane opens` |
-| `--at` outside the four values → rejected before any pane opens | `open` with an unlisted `--at` value | `--at accepts only pane:right, pane:down, tab, and workspace` |
+| `--at` outside the five values → rejected before any pane opens | `open` with an unlisted `--at` value | `--at accepts only pane:right, pane:down, pane:float, tab, and workspace` |
+| `--at pane:float` → valid input on every backend | `open --at pane:float`, any backend | `--at pane:float is a valid value on every backend, whatever the backend can do with it` |
+| `--at pane:float` on a backend with no float → `backend-unsupported`, exit 1 | wezterm and herdr | `--at pane:float on a backend with no floating pane is refused, naming both sides` |
 
 ### --launch — optional, carrying a command to the opened pane
 

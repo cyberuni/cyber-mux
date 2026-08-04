@@ -25,8 +25,9 @@ same four levels, but each calls them something different — notably, a tmux/sc
 | **Pane** | Pane | Region | Pane | Split Pane | Pane | Pane | Pane |
 
 `cyber-mux` drives three of these backends (tmux, herdr, wezterm) and exposes three of the levels —
-`pane:right`/`pane:down`, `tab`, `workspace`. There is no `window` value: "window" is tmux's local
-name for the **Tab** concept, already covered by `tab`. How each backend satisfies `--at`, and where
+`pane:right`/`pane:down`, `tab`, `workspace`, plus `pane:float` for a pane that sits **above** the
+layout rather than in it (tmux 3.7+ and zellij; refused by name elsewhere). There is no `window`
+value: "window" is tmux's local name for the **Tab** concept, already covered by `tab`. How each backend satisfies `--at`, and where
 the tiers collapse, is [`mux/`](./mux/README.md)'s behavior.
 
 ## The seam

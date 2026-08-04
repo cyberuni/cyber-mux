@@ -1,6 +1,7 @@
 import { resolve } from 'node:path'
 import { envFallback } from './env-fallback.ts'
 import { type Exec, withReason } from './exec.ts'
+import { refuseFloatingPane } from './floating.ts'
 import type {
 	AgentStatus,
 	LivePane,
@@ -71,6 +72,14 @@ export const herdrMuxAdapter: MuxAdapter = {
 			const out = exec('herdr', ['tab', 'create', ...within, '--cwd', opts.cwd, ...label, ...env, '--no-focus'])
 			if (!out) throw new Error(withReason(exec, 'herdr tab create failed'))
 			opened = parseRootPaneId(out, 'herdr tab create')
+		} else if (at === 'pane:float') {
+			// herdr has no floating-pane concept: `pane split` always takes a share of the region and
+			// resizes its neighbors, and 0.7.5's CLI has no above-the-layout pane verb at all. So this
+			// REFUSES by name rather than substituting a split — the substitute would satisfy the caller's
+			// pane id and violate the one property they asked for. Refused BEFORE any exec, so a float
+			// asked of herdr opens nothing. No `canFloatPanes` on this adapter is the declaration; this is
+			// the enforcement, and both are needed for the same reason `agent wait` checks twice.
+			refuseFloatingPane(herdrMuxAdapter.name)
 		} else {
 			const direction = at === 'pane:down' ? 'down' : 'right'
 			// Name the pane whenever the caller knows it. herdr's `--current` is not "the pane that
