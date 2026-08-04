@@ -3,6 +3,7 @@ import { type Exec, withReason } from './exec.ts'
 import type { LivePane, MuxAdapter, MuxReadOptions, OpenedPane } from './mux.ts'
 import { type NewId, nodeNewId } from './new-id.ts'
 import { assertRatioInRange } from './ratio.ts'
+import { pollForOutput } from './wait-output.ts'
 
 /**
  * WezTerm backend — detected via `$WEZTERM_PANE`. Drives WezTerm's built-in multiplexer through
@@ -164,6 +165,12 @@ export function createWeztermAdapter(deps: { newId: NewId }): MuxAdapter {
 			// tmux's `-S -N` does, though the two are not guaranteed to line up cell-for-cell.
 			if (opts?.lines != null) args.push('--start-line', String(-opts.lines))
 			return exec('wezterm', args) ?? ''
+		},
+
+		// No wait-for-output primitive in `wezterm cli` — the surface reads text (`get-text`) and never
+		// blocks on it. So the wait is the shared poll over this adapter's own read; see `pollForOutput`.
+		waitForOutput(exec, target, opts) {
+			return pollForOutput(adapter, exec, target, opts)
 		},
 
 		focus(exec, target) {

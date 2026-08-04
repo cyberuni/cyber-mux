@@ -289,3 +289,28 @@ describe('spec:cyber-mux/agent', () => {
 		expect(zellijMuxAdapter.agentLifecycle).toBeUndefined()
 	})
 })
+
+/**
+ * `zellij action` dumps a screen and never blocks on what is on it, so the wait is the shared poll over
+ * this adapter's own read — see `wait-output.test.ts` for the cadence/deadline/liveness rules the poll
+ * itself owns.
+ */
+describe('zellijMuxAdapter — wait-output by polling', () => {
+	it('polls dump-screen and matches what is already on screen', async () => {
+		const calls: string[][] = []
+		const exec = fakeExec(calls, { 'dump-screen': 'booting\nserver ready on :8080', 'list-panes': LIST_ONE })
+		const result = await zellijMuxAdapter.waitForOutput(exec, { id: 'terminal_9' }, { match: 'ready', timeoutMs: 1000 })
+		expect(result.matched).toBe(true)
+		expect(calls).toEqual([
+			['action', 'list-panes', '--json'],
+			['action', 'dump-screen', '--pane-id', 'terminal_9'],
+		])
+	})
+
+	it('refuses a pane that is gone instead of waiting out the timeout', async () => {
+		const exec = fakeExec([], { 'dump-screen': 'booting', 'list-panes': LIST_ONE })
+		await expect(
+			zellijMuxAdapter.waitForOutput(exec, { id: 'terminal_404' }, { match: 'ready', timeoutMs: 60_000 }),
+		).rejects.toThrow(/no longer exists/)
+	})
+})

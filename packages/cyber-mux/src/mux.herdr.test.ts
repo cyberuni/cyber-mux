@@ -1374,3 +1374,110 @@ describe('herdrMuxAdapter — capabilities without an owned node in this file', 
 		expect(() => describeWorkspace(exec, { id: 'w3V:p1' })).toThrow(/reported no tabs/)
 	})
 })
+
+/**
+ * The one backend with a NATIVE wait — so what is pinned here is the delegation itself (no poll loop,
+ * one command) and the envelope reading that makes a herdr timeout an ANSWER while every other herdr
+ * failure stays a failure. Verified against herdr 0.7.5, whose `pane wait-output` exits 1 with
+ * `{"error":{"code":...}}` on STDERR for both cases alike — the code is the only thing that tells them
+ * apart, which is exactly why it is read.
+ */
+describe('herdrMuxAdapter — native wait-output', () => {
+	const MATCHED = JSON.stringify({
+		result: {
+			matched_line: 'server ready on :8080',
+			read: { text: 'booting\nserver ready on :8080\n' },
+			type: 'output_matched',
+		},
+	})
+
+	/** A runner that fails with a herdr error envelope in `lastError`, exactly as `nodeExec` reports one:
+	 * the envelope goes to stderr and stdout is `null`. */
+	function failingExec(code: string, calls: string[][] = [], responses: Record<string, string> = {}): Exec {
+		const exec: Exec = (_cmd, args) => {
+			calls.push(args)
+			const hit = responses[args.slice(0, 2).join(' ')]
+			if (hit !== undefined) {
+				exec.lastError = undefined
+				return hit
+			}
+			exec.lastError = JSON.stringify({ error: { code, message: `herdr says ${code}` } })
+			return null
+		}
+		return exec
+	}
+
+	it('drives herdr’s own wait rather than polling — one command, no read loop', async () => {
+		const calls: string[][] = []
+		const exec = fakeExec(calls, { 'pane wait-output': MATCHED })
+		const result = await herdrMuxAdapter.waitForOutput(exec, { id: 'p-1' }, { match: 'ready', timeoutMs: 5000 })
+		expect(calls).toEqual([
+			// `--source visible` is PINNED, not left to herdr's own default (`recent_unwrapped`): the seam's
+			// rule is that a wait searches exactly what `read` returns, and `read` pins `visible` too.
+			['pane', 'wait-output', 'p-1', '--source', 'visible', '--timeout', '5000', '--match', 'ready'],
+		])
+		expect(result).toEqual({
+			matched: true,
+			output: 'booting\nserver ready on :8080\n',
+			matchedLine: 'server ready on :8080',
+		})
+	})
+
+	it('forwards a regex as a regex, and a line scope as a line scope', async () => {
+		const calls: string[][] = []
+		const exec = fakeExec(calls, { 'pane wait-output': MATCHED })
+		await herdrMuxAdapter.waitForOutput(exec, { id: 'p-1' }, { regex: 'ready on \\d+', timeoutMs: 800, lines: 20 })
+		expect(calls[0]).toEqual([
+			'pane',
+			'wait-output',
+			'p-1',
+			'--source',
+			'visible',
+			'--timeout',
+			'800',
+			'--regex',
+			'ready on \\d+',
+			'--lines',
+			'20',
+		])
+	})
+
+	it('reads a herdr timeout as an answer, and pays one read for the evidence herdr’s envelope omits', async () => {
+		const calls: string[][] = []
+		const exec = failingExec('timeout', calls, { 'pane read': 'still booting' })
+		const result = await herdrMuxAdapter.waitForOutput(exec, { id: 'p-1' }, { match: 'ready', timeoutMs: 400 })
+		expect(result).toEqual({ matched: false, output: 'still booting' })
+		expect(calls.map((c) => c.slice(0, 2).join(' '))).toEqual(['pane wait-output', 'pane read'])
+	})
+
+	it('throws on any other herdr failure — a gone pane is not a timeout', async () => {
+		const exec = failingExec('pane_not_found')
+		await expect(
+			herdrMuxAdapter.waitForOutput(exec, { id: 'gone' }, { match: 'ready', timeoutMs: 400 }),
+		).rejects.toThrow(/wait-output failed for pane gone/)
+	})
+
+	it('throws when herdr fails with no readable envelope at all, rather than inventing a timeout', async () => {
+		await expect(
+			herdrMuxAdapter.waitForOutput(() => null, { id: 'p-1' }, { match: 'ready', timeoutMs: 400 }),
+		).rejects.toThrow(/wait-output failed/)
+	})
+
+	it('falls back to the pane’s liveness when the runner captured no envelope at all', async () => {
+		// `Exec.lastError` is a DIAGNOSTIC, never a control-flow signal — a runner that discards stderr has
+		// to keep working. With no code to read, a live pane means the deadline passed; the `pane read`
+		// that answers liveness doubles as the snapshot the verdict is reported with.
+		const calls: string[][] = []
+		const exec = fakeExec(calls, { 'pane read': 'still booting' })
+		const result = await herdrMuxAdapter.waitForOutput(exec, { id: 'p-1' }, { match: 'ready', timeoutMs: 400 })
+		expect(result).toEqual({ matched: false, output: 'still booting' })
+	})
+
+	it('refuses an unusable pattern before reaching herdr', async () => {
+		const calls: string[][] = []
+		await expect(
+			herdrMuxAdapter.waitForOutput(fakeExec(calls), { id: 'p-1' }, { match: 'a', regex: 'a', timeoutMs: 400 }),
+		).rejects.toThrow(/got both/)
+		expect(calls).toEqual([])
+	})
+})

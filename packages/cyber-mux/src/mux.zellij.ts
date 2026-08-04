@@ -1,6 +1,7 @@
 import { envFallback } from './env-fallback.ts'
 import { type Exec, withReason } from './exec.ts'
 import type { LivePane, MuxAdapter, MuxReadOptions, OpenedPane } from './mux.ts'
+import { pollForOutput } from './wait-output.ts'
 
 /**
  * Zellij backend — detected via `$ZELLIJ`. Drives Zellij's built-in multiplexer through `zellij
@@ -173,6 +174,14 @@ export function createZellijAdapter(deps: { session?: string | undefined }): Mux
 				return lastLines(full, opts.lines)
 			}
 			return exec('zellij', ['action', 'dump-screen', '--pane-id', target.id]) ?? ''
+		},
+
+		// No wait-for-output primitive in `zellij action` — it dumps a screen and never blocks on what is
+		// on it. So the wait is the shared poll over this adapter's own read; see `pollForOutput`. The
+		// `lines` caveat `read` documents rides along unchanged: a `lines` wait searches the trailing N of
+		// a full-scrollback dump, which is Zellij's closest approximation, not a cell-exact viewport.
+		waitForOutput(exec, target, opts) {
+			return pollForOutput(adapter, exec, target, opts)
 		},
 
 		focus(exec, target) {

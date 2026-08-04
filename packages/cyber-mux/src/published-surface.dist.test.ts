@@ -21,6 +21,7 @@ describe('spec:cyber-mux/library — published surface', () => {
 			expect(typeof lib.resolveMux).toBe('function')
 			expect(typeof lib.probeMultiplexer).toBe('function')
 			expect(typeof lib.nudge).toBe('function')
+			expect(typeof lib.pollForOutput).toBe('function')
 			expect(typeof lib.nodeExec).toBe('function')
 			expect(typeof lib.nodeNewId).toBe('function')
 			expect(lib.tmuxMuxAdapter.name).toBe('tmux')
@@ -57,17 +58,21 @@ describe('spec:cyber-mux/library — published surface', () => {
 	describe('surface freeze: the exact exported names of each entry', () => {
 		it('. exports the mux core and NOTHING from the CLI-only internals', () => {
 			expect(Object.keys(lib).sort()).toEqual([
+				'DEFAULT_WAIT_POLL_MS',
 				'TMUX_TAB_NAME_OPTION',
 				'TMUX_WORKSPACE_GROUP_OPTION',
+				'assertWaitPattern',
 				'callerPane',
 				'createWeztermAdapter',
 				'createZellijAdapter',
 				'currentPane',
 				'herdrMuxAdapter',
 				'isStaged',
+				'matchWaitPattern',
 				'nodeExec',
 				'nodeNewId',
 				'nudge',
+				'pollForOutput',
 				'probeMultiplexer',
 				'resolveMux',
 				'resolveMuxAdapter',

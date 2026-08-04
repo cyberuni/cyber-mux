@@ -971,3 +971,38 @@ describe('spec:cyber-mux/agent', () => {
 		expect(tmuxMuxAdapter.agentLifecycle).toBeUndefined()
 	})
 })
+
+/**
+ * tmux has no wait-for-output primitive (`wait-for` synchronizes on a channel, not on printed text), so
+ * the wait is the shared poll over `capture-pane`. Pinned here: it goes through THIS adapter's own read
+ * and reaches for no tmux verb that would only look like a wait. The cadence, deadline and liveness
+ * rules are `pollForOutput`'s and are covered once, in `wait-output.test.ts`.
+ */
+describe('tmuxMuxAdapter — wait-output by polling', () => {
+	it('polls capture-pane and matches what is already on screen', async () => {
+		const calls: string[][] = []
+		const exec = fakeExec(calls, { 'capture-pane': 'booting\nserver ready on :8080', 'has-session': '' })
+		const result = await tmuxMuxAdapter.waitForOutput(exec, { id: '%9' }, { match: 'ready', timeoutMs: 1000 })
+		expect(result.matched).toBe(true)
+		expect(result.matchedLine).toBe('server ready on :8080')
+		expect(calls).toEqual([
+			['has-session', '-t', '%9'],
+			['capture-pane', '-p', '-t', '%9'],
+		])
+	})
+
+	it('scopes the searched snapshot through capture-pane’s own line flag', async () => {
+		const calls: string[][] = []
+		const exec = fakeExec(calls, { 'capture-pane': 'server ready', 'has-session': '' })
+		await tmuxMuxAdapter.waitForOutput(exec, { id: '%9' }, { match: 'ready', timeoutMs: 1000, lines: 40 })
+		expect(calls[1]).toEqual(['capture-pane', '-p', '-t', '%9', '-S', '-40'])
+	})
+
+	it('refuses a pane that is gone instead of waiting out the timeout', async () => {
+		// No `has-session` and no pane in `list-panes` — the liveness probe answers gone.
+		const exec = fakeExec([], { 'list-panes': '%1' })
+		await expect(
+			tmuxMuxAdapter.waitForOutput(exec, { id: '%9' }, { match: 'ready', timeoutMs: 60_000 }),
+		).rejects.toThrow(/no longer exists/)
+	})
+})

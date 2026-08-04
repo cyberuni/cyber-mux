@@ -128,6 +128,27 @@ describe.skipIf(!hasHerdr())('spec:cyber-mux/mux', () => {
 			expect(output).toContain('cyber-mux-itest-marker')
 		})
 
+		it('waitForOutput() drives herdr’s own wait-output against a real pane', async () => {
+			// The claim the seam's herdr branch rests on: `pane wait-output` really does block on the pane's
+			// own text and report the matching line back. Run against the live binary because the envelope
+			// shape (and, below, the timeout error code) is the whole contract the adapter parses.
+			herdrMuxAdapter.submit(realExec, target, 'echo cyber-mux-wait-marker')
+			const matched = await herdrMuxAdapter.waitForOutput(realExec, target, {
+				match: 'cyber-mux-wait-marker',
+				timeoutMs: 5000,
+			})
+			expect(matched.matched).toBe(true)
+			expect(matched.output).toContain('cyber-mux-wait-marker')
+		})
+
+		it('waitForOutput() reports a real herdr timeout as an answer, not a failure', async () => {
+			const timedOut = await herdrMuxAdapter.waitForOutput(realExec, target, {
+				match: 'a-string-this-pane-never-prints',
+				timeoutMs: 500,
+			})
+			expect(timedOut.matched).toBe(false)
+		})
+
 		it('teardown() actually closes the real pane', () => {
 			herdrMuxAdapter.teardown(realExec, target)
 			expect(herdrMuxAdapter.paneExists(realExec, target)).toBe(false)

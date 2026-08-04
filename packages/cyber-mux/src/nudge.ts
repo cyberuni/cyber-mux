@@ -53,6 +53,15 @@ export function isStaged(visible: string | null | undefined, message: string): b
  * A pane that no longer exists is rejected up front rather than retried: a gone pane and a booting
  * one both read back empty, so without the liveness probe the retry loop reports a dead peer as
  * "never took the turn" — a boot-race shape — and buries the real cause.
+ *
+ * **Not built on `waitForOutput`, deliberately.** The two look alike and wait on opposite conditions:
+ * `waitForOutput` returns when a pattern APPEARS anywhere in the snapshot, while nudge returns when the
+ * message DISAPPEARS from the input box at the bottom (`isStaged`) — a negative, position-sensitive
+ * condition the wait primitive cannot express, and one that must not be satisfied by the same text
+ * sitting up in the transcript, which is exactly where a submitted message ends up. Nor is the loop body
+ * the same: nudge does not merely observe between polls, it re-submits, so its "poll" is a corrective
+ * action with its own attempt budget rather than a read. What the two DO share is the liveness rule —
+ * a gone pane throws instead of being reported as a quiet one — and `pollForOutput` adopts it from here.
  */
 export async function nudge(
 	adapter: MuxAdapter,

@@ -240,6 +240,65 @@ export interface MuxReadOptions {
 }
 
 /**
+ * What `waitForOutput` waits FOR, and how long it is willing to wait.
+ *
+ * **Exactly one of `match`/`regex`.** Neither leaves nothing to wait for; both would need a rule for
+ * combining them that no caller asked for. The seam rejects both cases rather than picking a winner
+ * (`assertWaitPattern`, `wait-output.ts`), so the refusal reads the same on every backend — herdr's own
+ * CLI already refuses the same pair, and a polling backend has no CLI to refuse it for us.
+ */
+export interface MuxWaitOptions {
+	/** A LITERAL substring to wait for — the portable form: no dialect, so it means the same on every
+	 * backend. Mutually exclusive with `regex`. */
+	match?: string | undefined
+	/**
+	 * A regular expression SOURCE to wait for (no delimiters, no flags). Mutually exclusive with `match`.
+	 *
+	 * **The dialect is the backend's own**, and that is the one place this primitive is not fully
+	 * portable: herdr matches with Rust's `regex` crate (no backreferences, no lookaround), the polling
+	 * backends with ECMAScript's `RegExp`. The portable subset is what both accept — character classes,
+	 * quantifiers, alternation, anchors. The seam compiles the source as a `RegExp` up front on EVERY
+	 * backend, so a *malformed* pattern is refused identically everywhere instead of only where a real
+	 * poll happens to run it; a pattern that is merely *dialect-specific* compiles here and is then
+	 * herdr's to accept or refuse. Reach for `match` whenever a literal will do.
+	 */
+	regex?: string | undefined
+	/**
+	 * Give up after this many ms. REQUIRED, deliberately: herdr's native wait blocks FOREVER without
+	 * `--timeout` and a poll loop with no deadline spins forever, so an omitted bound is the one
+	 * spelling whose failure mode is an agent that never returns. Making the caller name it is the whole
+	 * difference between a wait and a hang.
+	 */
+	timeoutMs: number
+	/** Restrict the searched snapshot to this many trailing lines — `MuxReadOptions.lines`, applied to
+	 * the snapshot the match runs against. Omit to search the backend's default read. */
+	lines?: number | undefined
+	/** How long a POLLING backend sleeps between reads; ignored by a backend with a native wait, which
+	 * has its own cadence. Defaults to `DEFAULT_WAIT_POLL_MS`. */
+	pollMs?: number | undefined
+	/** Test seam: the sleep between polls. Injected exactly as `NudgeOptions.sleep` is, and for the same
+	 * reason — a real wall-clock wait in a test buys nothing but seconds. */
+	sleep?: ((ms: number) => Promise<void>) | undefined
+	/** Test seam: the clock the deadline is measured against; defaults to `Date.now`. Paired with
+	 * `sleep` so an injected sleep can advance an injected clock and a timeout is reached deterministically. */
+	now?: (() => number) | undefined
+}
+
+/** What `waitForOutput` answers with. */
+export interface MuxWaitResult {
+	/** `true` = the pattern was seen, `false` = the timeout elapsed without it. A pane that is GONE is
+	 * neither: it throws, because reporting a dead pane as a timeout would bury the real cause behind a
+	 * shape the caller reads as "still working" (the same rule `nudge` opens with). */
+	matched: boolean
+	/** The snapshot searched when the wait ended — the matching read on success, the last read before
+	 * the deadline on a timeout. Always the caller's evidence for the verdict, never a second read. */
+	output: string
+	/** The first line of `output` that matches, when the match sits on ONE line. Absent when the match
+	 * spans lines (nothing single-line to point at) or when a native backend reports none. */
+	matchedLine?: string | undefined
+}
+
+/**
  * A pane's rectangle, in whatever coordinate space the backend measures its region in. Only the
  * rects' relationship to EACH OTHER is meaningful — the origin is not comparable across backends
  * (tmux reports window-relative, so a region starts at 0,0; herdr reports screen-absolute, so the
@@ -613,6 +672,35 @@ export interface MuxAdapter {
 	submit(exec: Exec, target: MuxTarget, text?: string | undefined): void
 	/** Capture the target session's current output. */
 	read(exec: Exec, target: MuxTarget, opts?: MuxReadOptions | undefined): string
+	/**
+	 * Block until the target's output matches `match`/`regex`, or until `timeoutMs` elapses.
+	 *
+	 * REQUIRED on every backend, unlike `regions`/`worktree`, and that is the whole point of the member:
+	 * what it waits on is RAW TERMINAL TEXT, which every multiplexer can already read (`read` is
+	 * required too). A backend with a native wait drives it (herdr `pane wait-output`); one without
+	 * realizes it by polling its own `read` until the deadline (`pollForOutput`, `wait-output.ts`). Both
+	 * are real support, so no caller ever writes a branch for a backend that "cannot wait" — contrast a
+	 * wait on a DERIVED agent state (idle/working/blocked), which only a backend that computes that
+	 * state can answer at all and which therefore does not belong on this seam.
+	 *
+	 * **The searched snapshot is `read`'s snapshot**, on every backend, so a pattern that `read` would
+	 * show is a pattern this can wait for — one definition of "the pane's output" seam-wide. herdr's own
+	 * `--source` vocabulary (`visible`/`recent`/`recent-unwrapped`) is not exposed for that reason: it is
+	 * one backend's snapshot dialect, and the adapter pins it to the same `visible` its `read` uses
+	 * rather than letting the same wait mean different things per backend.
+	 *
+	 * **Existing output counts.** The snapshot is searched IMMEDIATELY, before any sleeping, so a pattern
+	 * already on screen returns at once — a wait that could only see text arriving after the call would
+	 * lose every race it exists to win.
+	 *
+	 * The only ASYNC member of this seam: waiting is the one verb whose whole job is the passage of time,
+	 * and `Exec` is synchronous by construction. Everything else stays sync.
+	 *
+	 * Returns `{ matched: false }` on the timeout rather than throwing — a deadline that passed is an
+	 * ANSWER, and the caller's own to act on. Throws when the pane is gone (see `MuxWaitResult.matched`)
+	 * or when the pattern is unusable (`assertWaitPattern`).
+	 */
+	waitForOutput(exec: Exec, target: MuxTarget, opts: MuxWaitOptions): Promise<MuxWaitResult>
 	/**
 	 * Beam the attached client's view all the way to the target pane — across workspace and tab, not
 	 * just within the current one. Resolves the pane's own workspace/tab from the backend and drives

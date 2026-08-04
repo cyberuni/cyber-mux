@@ -11,6 +11,8 @@ import type {
 	MuxReadOptions,
 	MuxSpaceTier,
 	MuxTarget,
+	MuxWaitOptions,
+	MuxWaitResult,
 	OpenedPane,
 	OpenWorktreeWorkspaceOptions,
 	RegionPane,
@@ -125,6 +127,7 @@ export interface MuxSession {
 	sendKeys(target: MuxTarget, keys: string[], deps?: MuxDeps | undefined): void
 	submit(target: MuxTarget, text?: string | undefined, deps?: MuxDeps | undefined): void
 	read(target: MuxTarget, opts?: MuxReadOptions | undefined, deps?: MuxDeps | undefined): string
+	waitForOutput(target: MuxTarget, opts: MuxWaitOptions, deps?: MuxDeps | undefined): Promise<MuxWaitResult>
 	focus(target: MuxTarget, deps?: MuxDeps | undefined): void
 	teardown(target: MuxTarget, deps?: MuxDeps | undefined): void
 	paneExists(target: MuxTarget, deps?: MuxDeps | undefined): boolean
@@ -166,6 +169,7 @@ export function resolveMux(env: NodeJS.ProcessEnv, deps?: MuxDeps | undefined): 
 		sendKeys: (target, keys, d) => raw.sendKeys(pick(d), target, keys),
 		submit: (target, text, d) => raw.submit(pick(d), target, text),
 		read: (target, opts, d) => raw.read(pick(d), target, opts),
+		waitForOutput: (target, opts, d) => raw.waitForOutput(pick(d), target, opts),
 		focus: (target, d) => raw.focus(pick(d), target),
 		teardown: (target, d) => raw.teardown(pick(d), target),
 		paneExists: (target, d) => raw.paneExists(pick(d), target),
