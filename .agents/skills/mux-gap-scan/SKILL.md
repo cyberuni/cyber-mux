@@ -19,7 +19,7 @@ Scan these four; each maps to one adapter and one upstream release source:
 | tmux | `packages/cyber-mux/src/mux.tmux.ts` | `gh release list --repo tmux/tmux` |
 | wezterm | `packages/cyber-mux/src/mux.wezterm.ts` | `gh release list --repo wezterm/wezterm` |
 | zellij | `packages/cyber-mux/src/mux.zellij.ts` | `gh release list --repo zellij-org/zellij` |
-| herdr | `packages/cyber-mux/src/mux.herdr.ts` | `gh release list --repo ogulcancelik/herdr`; else `herdr --version` |
+| herdr | `packages/cyber-mux/src/mux.herdr.ts` | `gh release list --repo herdrdev/herdr`; else `herdr --version` |
 
 Do **not** scan `screen` (recognized, not drivable — no stable per-pane identity) or `cmux` (a
 proposed backend, tracked in an open issue, not yet an adapter).
