@@ -22,7 +22,9 @@ that arrived a moment early.
 
 A timeout is a normal answer and still prints the pane's output, so a caller that guessed the wrong
 pattern sees what the pane actually said. A pane that is **gone** is not a timeout: it fails with
-`pane-not-found` rather than quietly waiting out the deadline.
+`pane-not-found` rather than quietly waiting out the deadline. Neither is a wait that never ran — on
+a herdr older than 0.7.5, which has no `pane wait-output`, the command fails loudly instead of
+reporting an instant false timeout.
 
 `<pane>` takes either a pane id or a label — see [Pane](/cyber-mux/concepts/pane/) for resolution
 rules.

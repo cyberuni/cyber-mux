@@ -1463,14 +1463,36 @@ describe('herdrMuxAdapter — native wait-output', () => {
 		).rejects.toThrow(/wait-output failed/)
 	})
 
-	it('falls back to the pane’s liveness when the runner captured no envelope at all', async () => {
+	/** A clock that jumps `elapsed` ms across the wait call — how "herdr really did block for its
+	 * timeout" is expressed without spending the wall-clock. */
+	function clockSpending(elapsed: number) {
+		let calls = 0
+		return () => (calls++ === 0 ? 0 : elapsed)
+	}
+
+	it('falls back to a live pane that SPENT the deadline when the runner captured no envelope', async () => {
 		// `Exec.lastError` is a DIAGNOSTIC, never a control-flow signal — a runner that discards stderr has
-		// to keep working. With no code to read, a live pane means the deadline passed; the `pane read`
-		// that answers liveness doubles as the snapshot the verdict is reported with.
+		// to keep working. With no code to read, a live pane plus a consumed deadline means it timed out;
+		// the `pane read` that answers liveness doubles as the snapshot the verdict is reported with.
 		const calls: string[][] = []
 		const exec = fakeExec(calls, { 'pane read': 'still booting' })
-		const result = await herdrMuxAdapter.waitForOutput(exec, { id: 'p-1' }, { match: 'ready', timeoutMs: 400 })
+		const result = await herdrMuxAdapter.waitForOutput(
+			exec,
+			{ id: 'p-1' },
+			{ match: 'ready', timeoutMs: 400, now: clockSpending(400) },
+		)
 		expect(result).toEqual({ matched: false, output: 'still booting' })
+	})
+
+	it('throws when the wait fails INSTANTLY with no envelope — a wait that never ran is not a timeout', async () => {
+		// The case a liveness-only rule got wrong, and it is a whole released backend: herdr 0.7.4 has no
+		// `pane wait-output`, so it answers with clap usage text (not an envelope) in milliseconds. The
+		// pane is alive and the pattern is fine, and reporting that as `matched: false` would be a
+		// confident lie about a wait that never happened.
+		const exec = fakeExec([], { 'pane read': 'still booting' })
+		await expect(
+			herdrMuxAdapter.waitForOutput(exec, { id: 'p-1' }, { match: 'ready', timeoutMs: 5000, now: clockSpending(3) }),
+		).rejects.toThrow(/wait-output failed for pane p-1/)
 	})
 
 	it('refuses an unusable pattern before reaching herdr', async () => {

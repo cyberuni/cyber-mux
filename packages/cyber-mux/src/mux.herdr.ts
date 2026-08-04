@@ -182,13 +182,14 @@ export const herdrMuxAdapter: MuxAdapter = {
 	 *
 	 * 1. **The envelope's `code`**, when the runner captured stderr into `lastError` (verified against
 	 *    0.7.5: `{"error":{"code":"timeout",…}}` vs `{"error":{"code":"pane_not_found",…}}`). Exact.
-	 * 2. **A liveness probe**, when it did not. `Exec.lastError` is specified as a diagnostic and NEVER a
-	 *    control-flow signal — a runner that discards stderr must still work — so the code cannot be the
-	 *    only answer. A live pane that refused to match is a timeout; a pane that is gone is a failure,
-	 *    which is the same rule `pollForOutput` enforces with its own probes. The gap this degrade leaves
-	 *    is narrow and named: a live pane whose PATTERN herdr itself refused (a Rust-dialect regex) reads
-	 *    as an instant timeout under a stderr-less runner. `assertWaitPattern` already catches the
-	 *    malformed case up front on every backend, so what remains is dialect alone.
+	 * 2. **A live pane that actually consumed the deadline**, when it did not. `Exec.lastError` is
+	 *    specified as a diagnostic and NEVER a control-flow signal — a runner that discards stderr must
+	 *    still work — so the code cannot be the only answer. Liveness alone is not enough either, and the
+	 *    reason is a whole released version of the backend: herdr 0.7.4 has no `pane wait-output` at all,
+	 *    so it answers with clap's usage text (not an envelope) INSTANTLY, and a liveness-only rule reads
+	 *    that as "timed out" — a silently wrong answer for a wait that never ran. Elapsed time is the fact
+	 *    that separates them and needs no stderr: a wait that returns in a fraction of its own timeout did
+	 *    not wait. Both must hold — the pane is live AND the deadline was spent — or this throws.
 	 *
 	 * A timeout costs ONE extra `read`, because herdr's timeout envelope carries no snapshot and the seam
 	 * promises the caller the evidence its verdict was reached on. It is taken at the deadline, so it is
@@ -196,13 +197,15 @@ export const herdrMuxAdapter: MuxAdapter = {
 	 */
 	async waitForOutput(exec, target, opts) {
 		assertWaitPattern(opts)
+		const now = opts.now ?? (() => Date.now())
 		const pattern = opts.match != null ? ['--match', opts.match] : ['--regex', opts.regex as string]
 		const args = ['pane', 'wait-output', target.id, '--source', 'visible', '--timeout', String(opts.timeoutMs)]
 		args.push(...pattern)
 		if (opts.lines != null) args.push('--lines', String(opts.lines))
+		const started = now()
 		const out = exec('herdr', args)
 		if (out == null) {
-			if (!isHerdrWaitTimeout(exec, target)) {
+			if (!isHerdrWaitTimeout(exec, target, opts.timeoutMs, now() - started)) {
 				throw new Error(withReason(exec, `herdr pane wait-output failed for pane ${target.id}`))
 			}
 			const readOpts = opts.lines != null ? { lines: opts.lines } : undefined
@@ -597,14 +600,26 @@ function nonEmpty(value: unknown): string | undefined {
  * "timed out" the backend never said.
  */
 /**
+ * How much of its own timeout a wait must actually spend before a failure is believed to BE that
+ * timeout. A fraction rather than the whole, because process start-up and clock granularity make an
+ * exact-or-greater comparison flaky on a real runner; wide enough that the case it exists to catch — a
+ * herdr with no `wait-output` subcommand, which returns in milliseconds — is nowhere near it.
+ */
+const HERDR_WAIT_ELAPSED_RATIO = 0.9
+
+/**
  * Whether a failed `pane wait-output` was the DEADLINE passing rather than the wait breaking — the
  * two-tier rule `waitForOutput` documents, kept out of the method so the tiers read as one decision.
- * The envelope's code answers when the runner captured one; otherwise the pane's own liveness does,
- * which is a fact every runner can reach.
+ *
+ * The envelope's code answers when the runner captured one. Otherwise the answer needs two facts, and
+ * neither alone is enough: the pane must be LIVE (a gone pane is a failure, `pollForOutput`'s rule) and
+ * the call must have SPENT the deadline (a wait that returned instantly never ran — herdr 0.7.4, whose
+ * usage text for an unknown subcommand is not an envelope to read a code from).
  */
-function isHerdrWaitTimeout(exec: Exec, target: { id: string }): boolean {
+function isHerdrWaitTimeout(exec: Exec, target: { id: string }, timeoutMs: number, elapsedMs: number): boolean {
 	const code = herdrErrorCode(exec.lastError)
 	if (code != null) return code === 'timeout'
+	if (elapsedMs < timeoutMs * HERDR_WAIT_ELAPSED_RATIO) return false
 	return herdrMuxAdapter.paneExists(exec, target)
 }
 
