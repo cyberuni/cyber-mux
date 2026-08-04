@@ -1,5 +1,88 @@
 # cyber-mux
 
+## 0.4.0
+
+### Minor Changes
+
+- 59865fd: Add the agent-lifecycle capability, normalized by truthful refusal rather than emulation.
+
+  - **`cyber-mux/agent` subpath** — the new `AgentLifecycle` capability seam, its `deriveAgentWait`
+    orchestrator, and the `AgentLifecycleUnsupportedError` refusal. The `AgentStatus` type
+    (`idle | working | blocked | done | unknown`) rides out on the core `.` barrel via `LivePane`.
+  - **`LivePane.agentStatus`** — herdr 0.7.5's per-pane `agent_status` feed, reported on the live pane
+    listing exactly like the herdr-only `harness` field: filled where the backend can answer, OMITTED
+    (never a false `unknown`) where it cannot.
+  - **`agent status <pane>`** — a snapshot that degrades truthfully: it prints the resolved pane's
+    `agentStatus` on herdr and, on a backend with no agent-state feed, still prints the pane with no
+    status and exits 0 rather than refusing.
+  - **`agent wait <pane> [--until <s...>] [--timeout <ms>]`** — a blocking drive of herdr's native
+    `agent wait`, reporting the reached state. On tmux, wezterm and zellij — which have no native
+    per-pane agent-state primitive — it is refused with `backend-unsupported` (exit 1) naming the
+    herdr-only constraint, the exact mirror of how `template save` refuses a geometry-incapable backend.
+  - **`agentApi(env, deps?)`** — the exec-bound `cyber-mux/agent` facade paralleling
+    `worktreeApi`/`templateApi`: it resolves the backend from `env` once and exposes
+    `supported()` / `status(target)` / `wait(target, opts?)` with the seams bound. It adds no logic of
+    its own — `supported` reads the same capability presence, `status` the same `LivePane.agentStatus`,
+    and `wait` routes through `deriveAgentWait`, so the refusal stays specified and enforced once.
+
+  The refuse-not-emulate normalization is deliberate: a lookalike wait built from output polling would
+  silently disagree with herdr's own state derivation, so a backend without the primitive is refused
+  rather than guessed.
+
+- fa91591: A missing `<pane>` on a pane verb now lists the live panes as candidates. It stays a usage error
+  (exit 2), but instead of merely naming the missing argument it queries the backend and reports each
+  live pane's id, label, and cwd under the new `missing-pane` code — the same rendering and code family
+  as `ambiguous-pane` — so the caller's next move (`cyber-mux list`) is folded into the error. This
+  covers `read`, `focus`, `close`, `submit`, `send text`, `send keys`, `exists`, and `agent status`.
+  With no multiplexer the deeper `no-mux` failure (exit 1) still surfaces first, and `agent wait` on a
+  backend without the agent-lifecycle capability is still refused with `backend-unsupported` (exit 1)
+  ahead of any missing-pane check.
+
+  `cyber-mux list` also gains a herdr-only agent-status column, shown only when the backend feeds a
+  per-pane agent state (omitted entirely on tmux, wezterm, and zellij).
+
+- 1914eb9: Add a portable `waitForOutput` to the seam, and a `wait` verb to the CLI: block until a pane's output
+  matches a literal (`--match`) or a regex (`--regex`), or until a timeout elapses. Real support on
+  every backend rather than a one-backend capability — herdr drives its native `pane wait-output`
+  (0.7.5), while tmux, WezTerm and Zellij poll their existing read through one shared loop, so every
+  backend searches exactly the snapshot its `read` returns and existing output counts as a match. The
+  CLI puts the verdict in the exit code (0 matched, 1 timed out) and prints the pane's own output on a
+  timeout, so a caller that guessed the wrong pattern keeps the evidence; a pane that is GONE fails with
+  `pane-not-found` instead of quietly waiting out the deadline, and so does a wait that never ran (a
+  herdr older than 0.7.5, which has no `pane wait-output`, fails loudly rather than reporting an instant
+  false timeout). Resolves #97.
+- 2b04288: Add the `cyber-mux worktree provision` CLI verb — the command-line surface over the
+  `provisionWorktree` seam. It reuses a free worktree (the set `worktree list` marks `(removable)` and
+  `prune` removes) or creates a fresh checkout at the sibling path, and reports whether it `reused` or
+  `created`, the worktree, and on reuse the recycled entry. Flags: `--branch` (required), `--base`,
+  `--path`, `--format`.
+
+  The verb uses the **default availability gate only** and offers no flag to inject a host predicate —
+  that is the deliberate surface divergence from the library seam, which takes an injectable one. A
+  host that must exclude, say, a live-session worktree calls `WorktreeApi.provision` directly.
+
+  The worktree spec is now split by public surface to make that divergence first-class: the
+  `cyber-mux worktree <verb>` surface (verbs, flag defaults, table rendering, and this new verb) is
+  specified under `cli/worktree/`, while the surface-independent library contract (the seam, git-owns-
+  facts, removal ordering, and the injectable predicate) stays in `mux/worktree/`.
+
+- 7df7b93: Add `worktree provision` — reuse a free worktree instead of always creating a fresh one. The twin of
+  `prune`: prune removes disposable worktrees, `provisionWorktree` / `WorktreeApi.provision` recycles one
+  through the same default gate (`isWorktreeRemovable`), else creates. Availability is an injected
+  predicate so a host can add its own "no live session bound" check without leaking that concept into
+  the worktree seam. A reused worktree is reset to a pristine tree on a fresh branch (`switch -c` →
+  `reset --hard` → `clean -fdx`). The result reports whether it reused or created, and carries the
+  recycled worktree in full.
+
+### Patch Changes
+
+- bad1d3f: Validate `MuxOpenOptions.ratio` at the seam: a sizing adapter (`tmux`, `herdr`, `wezterm`) now rejects
+  a ratio outside `0 < ratio < 1` with a named error instead of rendering it into a silently broken split
+  (above 1 produced a negative length; 0 or 1 gave a whole-region split). The check lives with the size
+  render (`assertRatioInRange`), so a backend that cannot size a split (`zellij`, which drops the ratio)
+  is unaffected, and `template`'s schema still refuses a degenerate ratio earlier per node. The range was
+  already documented as a contract precondition; it is now enforced. Resolves #18.
+
 ## 0.3.0
 
 ### Minor Changes
