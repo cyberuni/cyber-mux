@@ -145,6 +145,15 @@ describe('spec:cyber-mux/mux/detection', () => {
 			})
 		})
 
+		it('$CMUX_WORKSPACE_ID alone is a fast-positive hint the walk falls back to, attaching the separate $CMUX_SURFACE_ID', () => {
+			const noPs: Exec = () => null
+			expect(probeMultiplexer(noPs, { CMUX_WORKSPACE_ID: 'workspace:1', CMUX_SURFACE_ID: 'surface:7' })).toEqual({
+				mux: 'cmux',
+				pane: 'surface:7',
+				via: 'ancestry',
+			})
+		})
+
 		it('reports none when neither ancestry nor an env hint finds a multiplexer', () => {
 			const noPs: Exec = () => null
 			expect(probeMultiplexer(noPs, {})).toEqual({ mux: 'none', via: 'ancestry' })
@@ -190,6 +199,17 @@ describe('spec:cyber-mux/mux/detection', () => {
 			expect(currentPane({ CYBER_MUX: 'zellij', CYBER_MUX_PANE: 'terminal_3', TMUX_PANE: '%3' })).toEqual({
 				mux: 'zellij',
 				pane: 'terminal_3',
+			})
+		})
+
+		it('reads $CMUX_SURFACE_ID as a cmux pane', () => {
+			expect(currentPane({ CMUX_SURFACE_ID: 'surface:7' })).toEqual({ mux: 'cmux', pane: 'surface:7' })
+		})
+
+		it('tags the $CYBER_MUX_PANE fast-path cmux when $CYBER_MUX=cmux', () => {
+			expect(currentPane({ CYBER_MUX: 'cmux', CYBER_MUX_PANE: 'surface:7', TMUX_PANE: '%3' })).toEqual({
+				mux: 'cmux',
+				pane: 'surface:7',
 			})
 		})
 

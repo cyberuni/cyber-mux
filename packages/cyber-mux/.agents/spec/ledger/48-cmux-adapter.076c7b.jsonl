@@ -1,0 +1,3 @@
+{"kind":"leash","leash":"auto-spec","by":"derived","approach":["additive detection scenario","new adapter following zellij pattern","mocked Exec tests only"]}
+{"kind":"gate","gate":"spec","verdict":"approve","by":"agent","why":"Additive Examples row, widening no-backend scenario. Cold spec-judge PASS. Edit class structurally verified: 1 insertion to Examples table, widening Given/Then in no-backend scenario maintains same coverage."}
+{"kind":"gate","gate":"impl","verdict":"approve","by":"agent","why":"Cold impl-judge identified test gaps. Fixed: added cmux backend selection test, widened error message regex to include cmux, added callerPane cmux test, added CMUX_WORKSPACE_ID hint fallback test. 824 tests green. All frozen scenarios verified."}

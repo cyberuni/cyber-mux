@@ -1,9 +1,9 @@
 import type { Exec } from './exec.ts'
 
-type Mux = 'tmux' | 'herdr' | 'wezterm' | 'zellij' | 'screen' | 'none'
+type Mux = 'tmux' | 'herdr' | 'wezterm' | 'zellij' | 'cmux' | 'screen' | 'none'
 
 /** A multiplexer that carries a per-pane env var, so a session can key its own identity from it. */
-export type PaneMux = 'tmux' | 'herdr' | 'wezterm' | 'zellij'
+export type PaneMux = 'tmux' | 'herdr' | 'wezterm' | 'zellij' | 'cmux'
 
 export interface MuxProbe {
 	mux: Mux
@@ -26,7 +26,7 @@ export interface ProbeOptions {
 	envPrefix?: string | undefined
 }
 
-const KNOWN_MUX: readonly Mux[] = ['tmux', 'herdr', 'wezterm', 'zellij', 'screen', 'none']
+const KNOWN_MUX: readonly Mux[] = ['tmux', 'herdr', 'wezterm', 'zellij', 'cmux', 'screen', 'none']
 
 function isKnownMux(v: string | undefined): v is Mux {
 	return v != null && (KNOWN_MUX as readonly string[]).includes(v)
@@ -38,27 +38,30 @@ function isKnownMux(v: string | undefined): v is Mux {
  * every pane (its own bare-integer id) — per the issue that requested that backend (#47), the same
  * fast-path extension `$TMUX_PANE`/`$HERDR_PANE_ID` already get; Zellij exports `$ZELLIJ_PANE_ID` in
  * every terminal pane (its own `terminal_N`/bare-`N` id) — per the issue that requested this backend
- * (#46). screen carries no per-pane env var. Both the ancestry probe and the `currentPane`
- * self-identity helper read the pane through this table so the two never diverge on which env var a
- * given mux uses.
+ * (#46); cmux exports `$CMUX_SURFACE_ID` in every terminal (its surface ref, e.g. `surface:7`) — per
+ * the issue that requested this backend (#48). screen carries no per-pane env var. Both the ancestry
+ * probe and the `currentPane` self-identity helper read the pane through this table so the two never
+ * diverge on which env var a given mux uses.
  */
 const PANE_ENV: Record<PaneMux, (env: NodeJS.ProcessEnv) => string | undefined> = {
 	tmux: (env) => env['TMUX_PANE'],
 	herdr: (env) => env['HERDR_PANE_ID'],
 	wezterm: (env) => env['WEZTERM_PANE'],
 	zellij: (env) => env['ZELLIJ_PANE_ID'],
+	cmux: (env) => env['CMUX_SURFACE_ID'],
 }
 
 /**
  * Resolve THIS session's own pane from env alone (no `ps` walk): the `$CYBER_MUX_PANE` fast-path a
  * spawn propagates → `$TMUX_PANE` (tmux) → `$HERDR_PANE_ID` (herdr) → `$WEZTERM_PANE` (wezterm) →
- * `$ZELLIJ_PANE_ID` (zellij). Returns the pane tagged with its multiplexer, or undefined when the
- * session is in no pane-carrying multiplexer. This is the mux-agnostic self-identity key.
+ * `$ZELLIJ_PANE_ID` (zellij) → `$CMUX_SURFACE_ID` (cmux). Returns the pane tagged with its
+ * multiplexer, or undefined when the session is in no pane-carrying multiplexer. This is the
+ * mux-agnostic self-identity key.
  */
 export function currentPane(env: NodeJS.ProcessEnv): { mux: PaneMux; pane: string } | undefined {
 	if (env['CYBER_MUX_PANE']) {
-		// The fast-path pane carries its mux in $CYBER_MUX (herdr/wezterm/zellij spawns tag it; tmux is
-		// the default when none does).
+		// The fast-path pane carries its mux in $CYBER_MUX (herdr/wezterm/zellij/cmux spawns tag it;
+		// tmux is the default when none does).
 		const mux: PaneMux =
 			env['CYBER_MUX'] === 'herdr'
 				? 'herdr'
@@ -66,7 +69,9 @@ export function currentPane(env: NodeJS.ProcessEnv): { mux: PaneMux; pane: strin
 					? 'wezterm'
 					: env['CYBER_MUX'] === 'zellij'
 						? 'zellij'
-						: 'tmux'
+						: env['CYBER_MUX'] === 'cmux'
+							? 'cmux'
+							: 'tmux'
 		return { mux, pane: env['CYBER_MUX_PANE'] }
 	}
 	const tmux = PANE_ENV.tmux(env)
@@ -77,6 +82,8 @@ export function currentPane(env: NodeJS.ProcessEnv): { mux: PaneMux; pane: strin
 	if (wezterm) return { mux: 'wezterm', pane: wezterm }
 	const zellij = PANE_ENV.zellij(env)
 	if (zellij) return { mux: 'zellij', pane: zellij }
+	const cmux = PANE_ENV.cmux(env)
+	if (cmux) return { mux: 'cmux', pane: cmux }
 	return undefined
 }
 
@@ -127,7 +134,9 @@ const MUX_COMM: readonly { re: RegExp; mux: Mux }[] = [
 
 /** The per-pane env var for a mux, via the shared `PANE_ENV` table; undefined for screen/none. */
 function paneFor(mux: Mux, env: NodeJS.ProcessEnv): string | undefined {
-	return mux === 'tmux' || mux === 'herdr' || mux === 'wezterm' || mux === 'zellij' ? PANE_ENV[mux](env) : undefined
+	return mux === 'tmux' || mux === 'herdr' || mux === 'wezterm' || mux === 'zellij' || mux === 'cmux'
+		? PANE_ENV[mux](env)
+		: undefined
 }
 
 /**
@@ -172,10 +181,12 @@ function discoverByAncestry(exec: Exec, env: NodeJS.ProcessEnv): MuxProbe {
 	// "inside wezterm" flag the way $TMUX/$HERDR_ENV are — $WEZTERM_PANE IS the hint, doubling as
 	// both the fast-positive signal and the pane id. Zellij DOES have a dedicated flag: $ZELLIJ is
 	// set inside any Zellij pane (its pane id rides separately in $ZELLIJ_PANE_ID, attached by
-	// `ancestryProbe`), so it plays the same role as $TMUX/$HERDR_ENV.
+	// `ancestryProbe`), so it plays the same role as $TMUX/$HERDR_ENV. cmux has $CMUX_WORKSPACE_ID
+	// as its dedicated flag (its surface id rides separately in $CMUX_SURFACE_ID).
 	if (env['TMUX']) return ancestryProbe('tmux', env)
 	if (env['HERDR_ENV']) return ancestryProbe('herdr', env)
 	if (env['WEZTERM_PANE']) return ancestryProbe('wezterm', env)
 	if (env['ZELLIJ']) return ancestryProbe('zellij', env)
+	if (env['CMUX_WORKSPACE_ID']) return ancestryProbe('cmux', env)
 	return { mux: 'none', via: 'ancestry' }
 }
