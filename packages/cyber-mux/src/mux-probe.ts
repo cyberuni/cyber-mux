@@ -1,9 +1,9 @@
 import type { Exec } from './exec.ts'
 
-type Mux = 'tmux' | 'herdr' | 'wezterm' | 'zellij' | 'cmux' | 'screen' | 'none'
+type Mux = 'tmux' | 'herdr' | 'wezterm' | 'zellij' | 'cmux' | 'otty' | 'screen' | 'none'
 
 /** A multiplexer that carries a per-pane env var, so a session can key its own identity from it. */
-export type PaneMux = 'tmux' | 'herdr' | 'wezterm' | 'zellij' | 'cmux'
+export type PaneMux = 'tmux' | 'herdr' | 'wezterm' | 'zellij' | 'cmux' | 'otty'
 
 export interface MuxProbe {
 	mux: Mux
@@ -26,7 +26,7 @@ export interface ProbeOptions {
 	envPrefix?: string | undefined
 }
 
-const KNOWN_MUX: readonly Mux[] = ['tmux', 'herdr', 'wezterm', 'zellij', 'cmux', 'screen', 'none']
+const KNOWN_MUX: readonly Mux[] = ['tmux', 'herdr', 'wezterm', 'zellij', 'cmux', 'otty', 'screen', 'none']
 
 function isKnownMux(v: string | undefined): v is Mux {
 	return v != null && (KNOWN_MUX as readonly string[]).includes(v)
@@ -49,19 +49,20 @@ const PANE_ENV: Record<PaneMux, (env: NodeJS.ProcessEnv) => string | undefined> 
 	wezterm: (env) => env['WEZTERM_PANE'],
 	zellij: (env) => env['ZELLIJ_PANE_ID'],
 	cmux: (env) => env['CMUX_SURFACE_ID'],
+	otty: (env) => env['OTTY_PANE_ID'],
 }
 
 /**
  * Resolve THIS session's own pane from env alone (no `ps` walk): the `$CYBER_MUX_PANE` fast-path a
  * spawn propagates → `$TMUX_PANE` (tmux) → `$HERDR_PANE_ID` (herdr) → `$WEZTERM_PANE` (wezterm) →
- * `$ZELLIJ_PANE_ID` (zellij) → `$CMUX_SURFACE_ID` (cmux). Returns the pane tagged with its
- * multiplexer, or undefined when the session is in no pane-carrying multiplexer. This is the
- * mux-agnostic self-identity key.
+ * `$ZELLIJ_PANE_ID` (zellij) → `$CMUX_SURFACE_ID` (cmux) → `$OTTY_PANE_ID` (otty). Returns the pane
+ * tagged with its multiplexer, or undefined when the session is in no pane-carrying multiplexer.
+ * This is the mux-agnostic self-identity key.
  */
 export function currentPane(env: NodeJS.ProcessEnv): { mux: PaneMux; pane: string } | undefined {
 	if (env['CYBER_MUX_PANE']) {
-		// The fast-path pane carries its mux in $CYBER_MUX (herdr/wezterm/zellij/cmux spawns tag it;
-		// tmux is the default when none does).
+		// The fast-path pane carries its mux in $CYBER_MUX (herdr/wezterm/zellij/cmux/otty spawns tag
+		// it; tmux is the default when none does).
 		const mux: PaneMux =
 			env['CYBER_MUX'] === 'herdr'
 				? 'herdr'
@@ -71,7 +72,9 @@ export function currentPane(env: NodeJS.ProcessEnv): { mux: PaneMux; pane: strin
 						? 'zellij'
 						: env['CYBER_MUX'] === 'cmux'
 							? 'cmux'
-							: 'tmux'
+							: env['CYBER_MUX'] === 'otty'
+								? 'otty'
+								: 'tmux'
 		return { mux, pane: env['CYBER_MUX_PANE'] }
 	}
 	const tmux = PANE_ENV.tmux(env)
@@ -84,6 +87,8 @@ export function currentPane(env: NodeJS.ProcessEnv): { mux: PaneMux; pane: strin
 	if (zellij) return { mux: 'zellij', pane: zellij }
 	const cmux = PANE_ENV.cmux(env)
 	if (cmux) return { mux: 'cmux', pane: cmux }
+	const otty = PANE_ENV.otty(env)
+	if (otty) return { mux: 'otty', pane: otty }
 	return undefined
 }
 
@@ -182,11 +187,13 @@ function discoverByAncestry(exec: Exec, env: NodeJS.ProcessEnv): MuxProbe {
 	// both the fast-positive signal and the pane id. Zellij DOES have a dedicated flag: $ZELLIJ is
 	// set inside any Zellij pane (its pane id rides separately in $ZELLIJ_PANE_ID, attached by
 	// `ancestryProbe`), so it plays the same role as $TMUX/$HERDR_ENV. cmux has $CMUX_WORKSPACE_ID
-	// as its dedicated flag (its surface id rides separately in $CMUX_SURFACE_ID).
+	// as its dedicated flag (its surface id rides separately in $CMUX_SURFACE_ID). otty has no
+	// dedicated "inside otty" flag — $OTTY_PANE_ID IS the hint, same as WezTerm.
 	if (env['TMUX']) return ancestryProbe('tmux', env)
 	if (env['HERDR_ENV']) return ancestryProbe('herdr', env)
 	if (env['WEZTERM_PANE']) return ancestryProbe('wezterm', env)
 	if (env['ZELLIJ']) return ancestryProbe('zellij', env)
 	if (env['CMUX_WORKSPACE_ID']) return ancestryProbe('cmux', env)
+	if (env['OTTY_PANE_ID']) return ancestryProbe('otty', env)
 	return { mux: 'none', via: 'ancestry' }
 }

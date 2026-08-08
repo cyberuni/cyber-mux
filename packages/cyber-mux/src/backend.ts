@@ -1,6 +1,7 @@
 import { type Exec, nodeExec } from './exec.ts'
 import { createCmuxAdapter } from './mux.cmux.ts'
 import { herdrMuxAdapter } from './mux.herdr.ts'
+import { createOttyAdapter } from './mux.otty.ts'
 import { tmuxMuxAdapter } from './mux.tmux.ts'
 import type {
 	AgentStatus,
@@ -64,6 +65,7 @@ export function resolveMuxAdapter(env: NodeJS.ProcessEnv, exec: Exec = nodeExec)
 	if (probe.mux === 'wezterm') return weztermMuxAdapter
 	if (probe.mux === 'zellij') return createZellijAdapter({ session: env['ZELLIJ_SESSION_NAME'] })
 	if (probe.mux === 'cmux') return createCmuxAdapter({ workspace: env['CMUX_WORKSPACE_ID'] })
+	if (probe.mux === 'otty') return createOttyAdapter({ window: undefined })
 	if (probe.mux === 'screen') {
 		throw new Error(
 			'cyber-mux detected GNU Screen, which it cannot drive: Screen addresses its split regions ' +
@@ -75,7 +77,7 @@ export function resolveMuxAdapter(env: NodeJS.ProcessEnv, exec: Exec = nodeExec)
 	}
 	throw new Error(
 		'cyber-mux requires a session backend — run inside tmux ($TMUX), herdr ($HERDR_ENV=1), wezterm ' +
-			'($WEZTERM_PANE set), zellij ($ZELLIJ set), or cmux ($CMUX_WORKSPACE_ID set)',
+			'($WEZTERM_PANE set), zellij ($ZELLIJ set), cmux ($CMUX_WORKSPACE_ID set), or otty ($OTTY_PANE_ID set)',
 	)
 }
 
