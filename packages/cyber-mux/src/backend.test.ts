@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { callerPane, resolveMuxAdapter } from './backend.ts'
 import type { Exec } from './exec.ts'
+import { createCmuxAdapter } from './mux.cmux.ts'
 import { herdrMuxAdapter } from './mux.herdr.ts'
+import { createOttyAdapter } from './mux.otty.ts'
 import { tmuxMuxAdapter } from './mux.tmux.ts'
 import { weztermMuxAdapter } from './mux.wezterm.ts'
 import { createZellijAdapter } from './mux.zellij.ts'
@@ -36,8 +38,19 @@ describe('spec:cyber-mux/mux/detection', () => {
 			expect(resolveMuxAdapter({ ZELLIJ: '0', ZELLIJ_SESSION_NAME: 'my-session' }, noAncestry).name).toBe('zellij')
 		})
 
+		it('the session backend is selected by environment (cmux)', () => {
+			// cmux's adapter is built per-env (bound to the ambient workspace id), so it is a fresh
+			// object rather than a shared singleton — pinned by name.
+			expect(resolveMuxAdapter({ CMUX_WORKSPACE_ID: 'workspace:1' }, noAncestry).name).toBe('cmux')
+		})
+
+		it('the session backend is selected by environment (otty)', () => {
+			// otty's adapter is built per-env, so it is a fresh object rather than a shared singleton.
+			expect(resolveMuxAdapter({ OTTY_PANE_ID: 'pane:1' }, noAncestry).name).toBe('otty')
+		})
+
 		it('detection-no-backend-errors', () => {
-			expect(() => resolveMuxAdapter({}, noAncestry)).toThrow(/tmux.*herdr.*wezterm.*zellij/)
+			expect(() => resolveMuxAdapter({}, noAncestry)).toThrow(/tmux.*herdr.*wezterm.*zellij.*cmux.*otty/)
 		})
 
 		it('detection-screen-rejected-by-name', () => {
@@ -72,11 +85,13 @@ describe('spec:cyber-mux/mux/detection', () => {
 	})
 
 	describe('callerPane', () => {
-		it('reports this session’s own pane as a target the adapter can address', () => {
+		it("reports this session's own pane as a target the adapter can address", () => {
 			expect(callerPane(tmuxMuxAdapter, { TMUX_PANE: '%7' })).toEqual({ id: '%7' })
 			expect(callerPane(herdrMuxAdapter, { HERDR_ENV: '1', HERDR_PANE_ID: 'w3:p1' })).toEqual({ id: 'w3:p1' })
 			expect(callerPane(weztermMuxAdapter, { WEZTERM_PANE: '9' })).toEqual({ id: '9' })
 			expect(callerPane(createZellijAdapter({}), { ZELLIJ_PANE_ID: 'terminal_3' })).toEqual({ id: 'terminal_3' })
+			expect(callerPane(createCmuxAdapter({}), { CMUX_SURFACE_ID: 'surface:7' })).toEqual({ id: 'surface:7' })
+			expect(callerPane(createOttyAdapter({}), { OTTY_PANE_ID: 'pane:1' })).toEqual({ id: 'pane:1' })
 		})
 
 		it('honors the $CYBER_MUX_PANE fast-path a spawn propagates', () => {

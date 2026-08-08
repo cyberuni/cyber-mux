@@ -1,9 +1,9 @@
 ---
 title: Multiplexers
-description: The multiplexers cyber-mux drives — tmux, herdr, WezTerm, and Zellij — and how their differing feature sets map onto the one contract.
+description: The multiplexers cyber-mux drives — tmux, herdr, WezTerm, Zellij, cmux, and otty — and how their differing feature sets map onto the one contract.
 ---
 
-`cyber-mux` drives four terminal multiplexers through one contract, so callers never write
+`cyber-mux` drives six terminal multiplexers through one contract, so callers never write
 host-specific code. But the multiplexers are not the same shape: they disagree on how
 many nesting tiers they have, whether they track git worktrees, and whether they can name a pane or
 tell you which one is focused. This page is the map of those differences — what each multiplexer
@@ -11,13 +11,14 @@ supports and what cyber-mux does when it falls short.
 
 ## At a glance
 
-| Capability            | tmux                    | herdr                   | WezTerm (alpha)         | Zellij (alpha)          |
-| --------------------- | ----------------------- | ----------------------- | ----------------------- | ----------------------- |
-| Workspace tier        | ✗ (collapses to window) | ✓                       | ✓ (a real Window/Workspace split) | ✗ (placement collapses to tab, but occupancy is reported) |
-| Worktree binding      | ✗                       | ✓                       | ✗                       | ✗                       |
-| Name a pane           | —                       | ✓                       | ✗ (throws / warns)      | ✓                       |
-| Report focused pane   | best-effort             | best-effort             | ✗ (always `unknown`)    | ✓ (`list-panes --json`) |
-| Knows the running harness | ✗                   | ✓                       | ✗                       | ✗                       |
+| Capability            | tmux                    | herdr                   | WezTerm (alpha)         | Zellij (alpha)          | cmux (alpha)            | otty (alpha)            |
+| --------------------- | ----------------------- | ----------------------- | ----------------------- | ----------------------- | ----------------------- | ----------------------- |
+| Workspace tier        | ✗ (collapses to window) | ✓                       | ✓ (a real Window/Workspace split) | ✗ (placement collapses to tab, but occupancy is reported) | ✓ (Window/Workspace) | ✓ (Window) |
+| Worktree binding      | ✗                       | ✓                       | ✗                       | ✗                       | ✗                       | ✗                       |
+| Name a pane           | —                       | ✓                       | ✗ (throws / warns)      | ✓                       | ✓                       | ✓                       |
+| Report focused pane   | best-effort             | best-effort             | ✗ (always `unknown`)    | ✓ (`list-panes --json`) | ✓                       | ✓                       |
+| Knows the running harness | ✗                   | ✓                       | ✗                       | ✗                       | ✗                       | ✗                       |
+| Size splits           | ✓                       | ✓                       | ✓                       | ✗                       | ✓                       | ✗                       |
 
 ## tmux
 
@@ -124,6 +125,52 @@ Each multiplexer answers its **own** liveness and focus probes, so a herdr pane 
 with a tmux command or vice versa. Anything a multiplexer cannot determine — a missing pane, an
 unreadable focus state — is reported as *unknown*, never a false negative.
 
+## cmux (alpha)
+
+Driven via `cmux` CLI (`new-pane`, `new-surface`, `new-workspace`, `send`, `send-key`, `read-screen`,
+`focus-panel`, `close-surface`, `list-panes`, …) against [cmux](https://cmux.com), a Ghostty-based
+macOS terminal built for AI coding agents. Built from the cmux docs and CLI reference rather than
+empirically — no live cmux GUI was available to verify against — so, like WezTerm and Zellij, its
+gaps are real, spec'd limitations rather than forced parity:
+
+- **Has a real workspace tier.** cmux's hierarchy is Window → Workspace → Pane → Surface, where a
+  **Surface** is the terminal unit (a tab within a pane). `--at workspace` maps to a new workspace;
+  `--at tab` maps to a new surface in the current pane; `--at pane:*` maps to a new pane (a split).
+- **Never binds a git worktree.** Its CLI has no `worktree` subcommand or concept of one, so — like
+  WezTerm and Zellij — it falls back to plain git plus a placement-appropriate `open()`.
+- **No `--env` flag on any space-creating command.** Every cmux open takes the same
+  command-prefix-or-warn fallback as WezTerm and Zellij.
+- **Can name a pane/surface.** `rename-surface` and `rename-pane` rename an already-open space; no
+  birth flag, so naming is always post-birth.
+- **Reports focused surface.** `list-panes --json` carries an `is_focused` field per surface, so
+  `isPaneFocused` answers `true`/`false` rather than `unknown`.
+- **Can size a split.** `new-pane --size` sizes the new pane; `ratio` is inverted (same as tmux).
+- **No region introspection.** Pane geometry is not reported by the CLI, so `template save` refuses
+  on cmux by naming the backend.
+- **macOS only** (cmux is a native Swift/AppKit app).
+
+## otty (alpha)
+
+Driven via `otty` CLI (`pane split`, `pane send-keys`, `pane capture`, `pane focus`, `pane close`,
+`tab new`, `open`, `panes`, …) against [otty](https://otty.sh), a native terminal-centric workspace
+app built for AI coding agents. Built from the otty docs rather than empirically — no live otty GUI
+was available to verify against:
+
+- **Has a real workspace tier.** otty's hierarchy is Windows > Tabs > Splits > Panes. `--at workspace`
+  maps to a new window; `--at tab` maps to a new tab; `--at pane:*` maps to a split.
+- **Never binds a git worktree.** Its CLI has no `worktree` subcommand, so — like the other GUI-based
+  backends — it falls back to plain git plus `open()`.
+- **No `--env` flag on any space-creating command.** Every otty open takes the command-prefix-or-warn
+  fallback.
+- **Can name a pane.** `pane rename` and `tab rename` rename an already-open space.
+- **Reports focused pane.** `panes --json` carries an `is_focused` field, so `isPaneFocused` answers
+  `true`/`false` rather than `unknown`.
+- **Cannot size a split.** Split sizing is not available via the CLI; a requested `ratio` is dropped.
+- **Atomic send-keys.** `pane send-keys` can mix literal text and `key:` tokens in one call — cyber-mux
+  composes `sendText` and `sendKeys` from this.
+- **No region introspection.** Pane geometry is not reported, so `template save` refuses on otty.
+- **macOS/Windows desktop app.**
+
 ## GNU Screen — detected, not driven
 
 `cyber-mux` **detects** GNU Screen (a `CYBER_MUX=screen` override, or a `screen` ancestor) so it can
@@ -133,6 +180,6 @@ backend. The blocker is identity, which is load-bearing across the whole contrac
 positionally — there is no per-region id to send to or read from — and `$WINDOW` is left **unset** in
 windows opened via `screen -X`, exactly the panes a driver creates, so a pane cannot even identify
 *itself*. Every backend above ships a stable per-pane id (tmux `$TMUX_PANE`, herdr `$HERDR_PANE_ID`,
-WezTerm `$WEZTERM_PANE`); screen has no equivalent for driven panes. Rather than ship a half-faithful
-adapter whose pane identity is unstable, `cyber-mux` rejects the value with the reason — an honest "no"
-beats a backend that silently drives the wrong pane.
+WezTerm `$WEZTERM_PANE`, cmux `$CMUX_SURFACE_ID`, otty `$OTTY_PANE_ID`); screen has no equivalent for
+driven panes. Rather than ship a half-faithful adapter whose pane identity is unstable, `cyber-mux`
+rejects the value with the reason — an honest "no" beats a backend that silently drives the wrong pane.

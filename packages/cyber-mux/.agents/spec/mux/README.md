@@ -1,6 +1,6 @@
 # mux — the pane abstraction
 
-The `cyber-mux` CLI's entire subject: which session backend (tmux, herdr, or wezterm) is available,
+The `cyber-mux` CLI's entire subject: which session backend (tmux, herdr, wezterm, zellij, cmux, or otty) is available,
 where a new pane opens, how a caller detects the multiplexer it is really running inside, how a
 pane's turn is driven, how a pane is addressed, and the git-worktree surface above all of it. Ported
 from `cyberlegion`'s `spec/mux/` (`packages/cyberlegion/.agents/spec/mux/`, ADR-0024/ADR-0021) when

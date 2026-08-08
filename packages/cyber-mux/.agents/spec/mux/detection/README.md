@@ -28,15 +28,18 @@ environment and the process table and nothing else.
 
 - **The session backend is selected by environment** — tmux when `$TMUX` is set, herdr when
   `$HERDR_ENV` is set and `$TMUX` is not, wezterm when `$WEZTERM_PANE` is set, zellij when `$ZELLIJ`
-  is set; an environment naming none of them throws asking for one.
+  is set, cmux when `$CMUX_WORKSPACE_ID` is set, otty when `$OTTY_PANE_ID` is set; an environment
+  with none of them throws asking for one.
 
 - **Multiplexer detection is two-mode** — `probeMultiplexer` first trusts `$CYBER_MUX`
-  (`tmux`|`herdr`|`wezterm`|`screen`|`none`) outright — this doubles as an override (`=none` forces
-  no-mux even inside a real multiplexer). Failing that it walks the process ancestry from `$$`
-  looking for a `tmux`/`tmux: server`, `herdr`, `wezterm`, or `screen` ancestor; `$TMUX`/`$HERDR_ENV`
-  are used only as a fast-positive hint the walk falls back to when it is itself inconclusive, never
-  trusted alone. This resolved result (mux, via, pane) is what the `cyber-mux doctor` read-out prints
-  as a pin hint — the printing is [`cli/detection/`](../../cli/detection/README.md)'s.
+  (`tmux`|`herdr`|`wezterm`|`zellij`|`cmux`|`otty`|`screen`|`none`) outright — this doubles as an
+  override (`=none` forces no-mux even inside a real multiplexer). Failing that it walks the process
+  ancestry from `$$` looking for a `tmux`/`tmux: server`, `herdr`, `wezterm`, `zellij`, `otty`, or
+  `screen` ancestor (cmux and otty are detected by `$CMUX_WORKSPACE_ID` / `$OTTY_PANE_ID` hint only —
+  their GUI process names are not discoverable via ancestry);
+  `$TMUX`/`$HERDR_ENV`/`$CMUX_WORKSPACE_ID`/`$OTTY_PANE_ID` are used only as a fast-positive hint the
+  walk falls back to when it is itself inconclusive, never trusted alone. `doctor` runs discovery and
+  prints an `export CYBER_MUX=<m> CYBER_MUX_PANE=<p>` hint so a caller can pin the fast-path.
 
 - **`screen` is DETECTED but not DRIVABLE** — the probe recognizes `screen` (an override pinning it,
   or a real screen ancestor) so it is reported truthfully, but `selectSessionAdapter` rejects it with
@@ -80,8 +83,8 @@ Every scenario in [`detection.feature`](./detection.feature), one row each, grou
 
 | Edge | Path (Given) | Scenario |
 |---|---|---|
-| env names a backend → that adapter | `$TMUX`, `$HERDR_ENV` without `$TMUX`, or `$WEZTERM_PANE` set | `the session backend is selected by environment` |
-| none of the three → throw before opening | no `$TMUX`, `$HERDR_ENV`, or `$WEZTERM_PANE` | `no backend detected errors before opening anything` |
+| env names a backend → that adapter | `$TMUX`, `$HERDR_ENV` without `$TMUX`, `$WEZTERM_PANE`, `$ZELLIJ`, `$CMUX_WORKSPACE_ID`, or `$OTTY_PANE_ID` set | `the session backend is selected by environment` |
+| none of the six → throw before opening | no `$TMUX`, `$HERDR_ENV`, `$WEZTERM_PANE`, `$ZELLIJ`, `$CMUX_WORKSPACE_ID`, or `$OTTY_PANE_ID` | `no backend detected errors before opening anything` |
 | detected screen → rejected by name, with the reason | `$CYBER_MUX=screen`, or a screen ancestor | `a detected screen is rejected by name, not with the generic no-backend error` |
 
 ### Multiplexer detection is two-mode

@@ -17,12 +17,12 @@ same four levels, but each calls them something different — notably, a tmux/sc
 | **Tab** | the level every multiplexer has between a workspace and a pane. What a rename addresses at the tab tier, which a pane id cannot do portably. |
 | **Pane** | the unit a command actually runs in — the thing `cyber-mux` opens, addresses, and drives. |
 
-| Concept | tmux | screen | zellij | cmux | Orca | herdr | WezTerm |
-| ------------- | ------- | ------ | ------- | ----------------------------- | --------------------- | --------- | ------- |
-| **Session** | Session | Session| Session | App (state saved on restart) | ---- | Session | ---- |
-| **Workspace** | ---- | ---- | ---- | Window/Workspace | Worktree (git branch) | Workspace (bindable to a git worktree) | Window (spawned into a fresh or named Workspace) |
-| **Tab** | Window | Window | Tab | Vertical Tab (w/ git status) | Tab | Tab | Tab |
-| **Pane** | Pane | Region | Pane | Split Pane | Pane | Pane | Pane |
+| Concept | tmux | screen | zellij | cmux | otty | Orca | herdr | WezTerm |
+| ------------- | ------- | ------ | ------- | ----------------------------- | ------ | --------------------- | --------- | ------- |
+| **Session** | Session | Session| Session | App (state saved on restart) | ---- | ---- | Session | ---- |
+| **Workspace** | ---- | ---- | ---- | Window/Workspace | Window | Worktree (git branch) | Workspace (bindable to a git worktree) | Window (spawned into a fresh or named Workspace) |
+| **Tab** | Window | Window | Tab | Vertical Tab (w/ git status) | Tab | Tab | Tab | Tab |
+| **Pane** | Pane | Region | Pane | Split Pane | Pane | Pane | Pane | Pane |
 
 `cyber-mux` drives three of these backends (tmux, herdr, wezterm) and exposes three of the levels —
 `pane:right`/`pane:down`, `tab`, `workspace`, plus `pane:float` for a pane that sits **above** the

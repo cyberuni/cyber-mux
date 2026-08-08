@@ -18,12 +18,14 @@ Feature: mux detection — which multiplexer, and which backend adapter
       | $HERDR_ENV set and no $TMUX | herdr   |
       | $WEZTERM_PANE set           | wezterm |
       | $ZELLIJ set                 | zellij  |
+      | $CMUX_WORKSPACE_ID set      | cmux    |
+      | $OTTY_PANE_ID set           | otty    |
 
   @id:detection-no-backend-errors
   Scenario: no backend detected errors before opening anything
-    Given a caller with none of $TMUX, $HERDR_ENV, $WEZTERM_PANE, or $ZELLIJ set
+    Given a caller with none of $TMUX, $HERDR_ENV, $WEZTERM_PANE, $ZELLIJ, $CMUX_WORKSPACE_ID, or $OTTY_PANE_ID set
     When cyber-mux open runs
-    Then it throws naming tmux/herdr/wezterm/zellij as the required backend
+    Then it throws naming tmux/herdr/wezterm/zellij/cmux/otty as the required backend
     # A stale-mistake fix, not a narrowing: this scenario always meant "no multiplexer this process
     # can drive is detected", which a two-env Given happened to fully express before more backends
     # existed. Widening the Given/Then to name all four keeps the SAME coverage — a caller with none
