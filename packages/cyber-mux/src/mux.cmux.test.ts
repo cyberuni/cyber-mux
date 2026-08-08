@@ -159,7 +159,7 @@ describe('spec:cyber-mux/mux', () => {
 			const exec = fakeExec(calls, { 'read-screen': 'screen output' })
 			const result = cmuxMuxAdapter.read(exec, { id: 'surface:1' })
 			expect(calls[0]).toEqual(['read-screen', '--surface', 'surface:1'])
-			expect(result).toBe('screen output')
+			expect(result).toEqual({ text: 'screen output' })
 		})
 
 		it('read() with lines passes --lines', () => {

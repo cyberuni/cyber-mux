@@ -1,6 +1,7 @@
 import { envFallback } from './env-fallback.ts'
 import { type Exec, withReason } from './exec.ts'
 import type { LivePane, MuxAdapter, MuxReadOptions, OpenedPane } from './mux.ts'
+import { pollForOutput } from './wait-output.ts'
 
 /**
  * cmux backend — detected via `$CMUX_WORKSPACE_ID`. Drives cmux's CLI through `cmux <verb> …`
@@ -155,7 +156,13 @@ export function createCmuxAdapter(deps: { workspace?: string | undefined }): Mux
 			// `cmux read-screen` reads the terminal contents.
 			const args = ['read-screen', '--surface', target.id]
 			if (opts?.lines != null) args.push('--lines', String(opts.lines))
-			return exec('cmux', args) ?? ''
+			const text = exec('cmux', args) ?? ''
+			// cmux does not expose truncation info — report it unknown when asked.
+			return { text }
+		},
+
+		waitForOutput(exec, target, opts) {
+			return pollForOutput(adapter, exec, target, opts)
 		},
 
 		focus(exec, target) {
