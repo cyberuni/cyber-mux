@@ -124,7 +124,7 @@ describe('spec:cyber-mux/mux', () => {
 			const exec = fakeExec(calls, { 'pane capture': 'screen output' })
 			const result = ottyMuxAdapter.read(exec, { id: 'pane:1' })
 			expect(calls[0]).toEqual(['pane', 'capture', '--pane', 'pane:1'])
-			expect(result).toBe('screen output')
+			expect(result).toEqual({ text: 'screen output' })
 		})
 
 		it('read() with lines passes --lines', () => {

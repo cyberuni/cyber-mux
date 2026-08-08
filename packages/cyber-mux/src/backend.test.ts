@@ -85,7 +85,7 @@ describe('spec:cyber-mux/mux/detection', () => {
 	})
 
 	describe('callerPane', () => {
-		it('reports this session's own pane as a target the adapter can address', () => {
+		it("reports this session's own pane as a target the adapter can address", () => {
 			expect(callerPane(tmuxMuxAdapter, { TMUX_PANE: '%7' })).toEqual({ id: '%7' })
 			expect(callerPane(herdrMuxAdapter, { HERDR_ENV: '1', HERDR_PANE_ID: 'w3:p1' })).toEqual({ id: 'w3:p1' })
 			expect(callerPane(weztermMuxAdapter, { WEZTERM_PANE: '9' })).toEqual({ id: '9' })

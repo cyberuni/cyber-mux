@@ -1,6 +1,7 @@
 import { envFallback } from './env-fallback.ts'
 import { type Exec, withReason } from './exec.ts'
 import type { LivePane, MuxAdapter, MuxReadOptions, OpenedPane } from './mux.ts'
+import { pollForOutput } from './wait-output.ts'
 
 /**
  * otty backend — detected via `$OTTY_PANE_ID`. Drives otty's CLI through `otty pane <verb> …`
@@ -131,7 +132,13 @@ export function createOttyAdapter(deps: { window?: string | undefined }): MuxAda
 			// `otty pane capture` reads the terminal contents
 			const args = ['pane', 'capture', '--pane', target.id]
 			if (opts?.lines != null) args.push('--lines', String(opts.lines))
-			return exec('otty', args) ?? ''
+			const text = exec('otty', args) ?? ''
+			// otty does not expose truncation info — report it unknown when asked.
+			return { text }
+		},
+
+		waitForOutput(exec, target, opts) {
+			return pollForOutput(adapter, exec, target, opts)
 		},
 
 		focus(exec, target) {
