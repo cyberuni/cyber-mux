@@ -35,7 +35,7 @@ function fakeZellijExec(calls: string[][], responses: Record<string, string | nu
 }
 
 const ZELLIJ_LIST_ONE = JSON.stringify([
-	{ id: 'terminal_9', tab_id: 2, title: 'zsh', pane_command: 'zsh', pane_cwd: '/unit', is_focused: true },
+	{ id: 'terminal_9', tab_id: 2, title: 'zsh', terminal_command: 'zsh', is_focused: true },
 ])
 
 describe('spec:cyber-mux/mux/placement', () => {
