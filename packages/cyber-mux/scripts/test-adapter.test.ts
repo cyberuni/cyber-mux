@@ -267,6 +267,16 @@ describe('spec:cyber-mux/conformance', () => {
 		expect(runs).toEqual([])
 	})
 
+	it('conformance-usage-error-outranks-the-refusal', () => {
+		// A mistyped name is wrong however it was invoked. Answering "you are inside herdr" first
+		// would send the caller to another terminal to retype the same typo.
+		const { run, runs, out } = harness({ installed: ['tmux'], inside: 'herdr' })
+		expect(run('screan')).toBe(2)
+		expect(out()).toContain('not a known adapter: screan')
+		expect(out()).not.toContain('refusing to run')
+		expect(runs).toEqual([])
+	})
+
 	it('conformance-listing-is-exempt-from-the-refusal', () => {
 		// The listing runs no suite, so it carries none of the risk the refusal exists to prevent.
 		const { run, runs, out } = harness({ installed: ['tmux'], inside: 'herdr' })

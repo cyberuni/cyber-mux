@@ -227,7 +227,9 @@ graph TD
   ARGS["invocation"] --> M{"which form"}
   M -->|"L1: no adapter, no --all"| LIST["project every adapter, list the projections"]
   LIST --> L2["L2: exit 0 unconditionally — a projected gap does not fail the listing"]
-  M -->|"one adapter name, or --all"| G{"G1: is this shell inside any multiplexer"}
+  M -->|"one adapter name, or --all"| U1{"U1: is every named adapter known"}
+  U1 -->|"no"| UNKNOWN["U1: exit 2 — a mistyped name is wrong however it was invoked"]
+  U1 -->|"yes"| G{"G1: is this shell inside any multiplexer"}
   G -->|"yes"| REFUSE["G1: refuse — name the mux, run no suite, exit 1"]
   G -->|"no"| ONE["resolve run outcomes for the requested adapters"]
   ONE -->|"one adapter name"| SINGLE["exit on that adapter's outcome"]
@@ -271,6 +273,7 @@ the shared discovery sub-graph both other entry points enter; the rest are group
 |---|---|---|
 | G1 inside any mux → refuse a named-adapter run | a shell inside each of the six backends | `verifying an adapter from inside any multiplexer is refused` |
 | G1 the refusal covers `--all` too | a shell inside herdr | `--all from inside a multiplexer is refused too` |
+| U1 before G1 — a usage error outranks the refusal | a shell inside herdr, given a mistyped name | `an unknown adapter name from inside a multiplexer is still a usage error` |
 | G1 the listing is exempt — it runs no suite | a shell inside herdr | `the listing form still works from inside a multiplexer` |
 
 ### `test-adapter <adapter>` — verify one adapter
@@ -292,8 +295,21 @@ These three are verified **only against the real boundary**, in
 `pnpm test`). `--all`'s entire job is composition — detect the installed adapters and call each
 one's real suites — so a fan-out over faked dependencies would assert only that a fake fan-out fans
 out. That is the "green that verified nothing" this node exists to refuse, so the mock is not an
-acceptable substitute here even though it is elsewhere in this suite. The consequence is deliberate
-and stated: **CI never verifies `--all`**, and neither does a machine sitting inside a multiplexer.
+acceptable substitute here even though it is elsewhere in this suite.
+
+**The world that suite runs against is constructed, not observed.** Each test builds a throwaway
+`PATH` holding exactly the binaries its scenario names and strips the multiplexer env vars from the
+subprocess, so the runner sees the world the scenario describes rather than whatever the developer's
+machine happens to have. That makes the suite machine-independent — it would run identically on a
+CI box — and it is what lets the `no-coverage` and `fail` outcomes be *driven* (a tmux fixture that
+fails its `-V` gate, and one that answers `-V` then fails everything after) instead of waited for.
+Only tmux is ever really driven, against its own private `-L` socket; herdr is never made visible,
+because it has no throwaway server and driving it would mean driving the operator's live session.
+
+Two consequences stay true and stated: the suite is **opt-in, so CI does not run it** unless
+deliberately wired to; and its `no-coverage` and `fail` rows carry **no passing partner adapter**,
+so they prove their outcome reaches the exit code but not that a passing neighbor fails to mask it.
+Only the `gap` row proves that half, because tmux is the one adapter that can be made to pass safely.
 
 | Edge | Path (Given) | Scenario |
 |---|---|---|

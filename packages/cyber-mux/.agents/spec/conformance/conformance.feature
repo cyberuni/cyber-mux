@@ -140,6 +140,16 @@ Feature: conformance — verifying one adapter against its real multiplexer
     And no vitest invocation is made
     And it exits 1
 
+  @id:conformance-usage-error-outranks-the-refusal
+  Scenario: an unknown adapter name from inside a multiplexer is still a usage error
+    Given this shell is inside herdr
+    When the runner is invoked with the adapter name screan
+    Then it reports that screan is not a known adapter
+    And it exits 2
+    # a mistyped name is wrong however it was invoked, and saying so costs nothing and runs nothing.
+    # Answering "you are inside herdr" first would send the caller to another terminal to retype the
+    # same typo, so the usage error is reported first even though the refusal also applies.
+
   @id:conformance-listing-is-exempt-from-the-refusal
   Scenario: the listing form still works from inside a multiplexer
     Given this shell is inside herdr
