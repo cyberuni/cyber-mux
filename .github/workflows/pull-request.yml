@@ -25,6 +25,7 @@ jobs:
       # Pinned, not "latest": a herdr release should never silently change what this suite runs
       # against. Bump deliberately, the same way mise pins the toolchain.
       HERDR_VERSION: v0.8.0
+      WEZTERM_VERSION: 20240203-110809-5046fc22
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -61,6 +62,23 @@ jobs:
           echo "herdr server did not come up in 30s"
           cat /tmp/herdr-server.log
           exit 1
+
+      # wezterm's own CLI is a CLIENT: by default it talks to a running GUI, which a runner does not
+      # have. `wezterm-mux-server` is the headless server it can talk to instead (`wezterm cli
+      # --prefer-mux`), and it ships in the same release tarball. Pinned for the same reason herdr is.
+      #
+      # Ubuntu22.04, NOT Ubuntu20.04: the 20.04 build links libssl.so.1.1, which this runner image
+      # (24.04) no longer carries, and it fails at load with a message that looks nothing like a
+      # missing dependency.
+      - name: Install wezterm (CLI + headless mux server)
+        run: |
+          curl -fsSL -o "${RUNNER_TEMP}/wezterm.tar.xz" \
+            "https://github.com/wezterm/wezterm/releases/download/${WEZTERM_VERSION}/wezterm-${WEZTERM_VERSION}.Ubuntu22.04.tar.xz"
+          tar -xJf "${RUNNER_TEMP}/wezterm.tar.xz" -C "${RUNNER_TEMP}"
+          sudo install -m 0755 "${RUNNER_TEMP}/wezterm/usr/bin/wezterm" /usr/local/bin/
+          sudo install -m 0755 "${RUNNER_TEMP}/wezterm/usr/bin/wezterm-mux-server" /usr/local/bin/
+          wezterm --version
+          wezterm-mux-server --version
 
       - run: pnpm install --frozen-lockfile
 
