@@ -109,6 +109,46 @@ Feature: conformance — verifying one adapter against its real multiplexer
     # suite presence is reported for every adapter regardless of installation, so a gap stays visible
     # from a machine that cannot run it; only the EXIT STATUS is scoped to what this machine verified
 
+  # ── Refusing to run from inside a multiplexer ──
+  # The real-boundary suites drive live multiplexers, and several verbs resolve against the caller's
+  # own current pane — from inside herdr, `pane split --current` splits THIS pane. The rule is
+  # deliberately blunt rather than per-adapter: a manual verification tool is run from a plain shell,
+  # and "which cross-adapter combinations happen to be safe" is not a judgment worth encoding.
+
+  @id:conformance-refuses-inside-a-multiplexer
+  Scenario Outline: verifying an adapter from inside any multiplexer is refused
+    Given this shell is inside <mux>
+    When the runner verifies tmux
+    Then it reports that it refuses to run because the shell is inside <mux>
+    And no vitest invocation is made
+    And it exits 1
+
+    Examples:
+      | mux     |
+      | tmux    |
+      | herdr   |
+      | wezterm |
+      | zellij  |
+      | cmux    |
+      | otty    |
+
+  @id:conformance-refuses-inside-a-multiplexer-for-all
+  Scenario: --all from inside a multiplexer is refused too
+    Given this shell is inside herdr
+    When the runner is invoked with --all
+    Then it reports that it refuses to run because the shell is inside herdr
+    And no vitest invocation is made
+    And it exits 1
+
+  @id:conformance-listing-is-exempt-from-the-refusal
+  Scenario: the listing form still works from inside a multiplexer
+    Given this shell is inside herdr
+    When the runner is invoked with no adapter and no flags
+    Then every discovered adapter is listed with its projected outcome
+    And it exits 0
+    # the listing runs no suite, so it carries none of the risk the refusal exists to prevent — and
+    # it is how a caller discovers what this machine could verify from a plain shell
+
   # ── test-adapter <adapter> — verify one adapter ──
 
   @id:conformance-selects-only-that-adapters-suites

@@ -76,12 +76,19 @@ Both gates passed; nothing is left to resume.
   structurally unbindable.
 - **No changeset** — `scripts/` is absent from `package.json` `files`, so nothing published changed.
 
-Two design points worth remembering, both forced by a judge round:
+- **The inside-a-mux refusal.** A suite-running invocation is refused outright from inside any
+  multiplexer (exit 1); the listing form is exempt. Blunt by choice over a per-adapter guard.
+- **`--all` is verified only at the real boundary** (`scripts/test-adapter.integration.test.ts`,
+  opt-in). CI therefore never verifies `--all` — deliberate, and stated in the spec.
+
+Three design points worth remembering — the first two forced by a judge round, the third by review:
 
 - **Run outcomes vs projected outcomes.** The listing form runs nothing, so it reports only
   `skip`/`gap`/`runnable` — never `pass`/`fail`/`no-coverage`, which are findings *of* a run.
 - **`no-coverage` is the whole point.** A suite whose every test self-skips makes vitest exit 0
   reporting success; the runner reads the executed count instead and fails.
+- **Mocking composition is not verification.** `--all` only detects and delegates, so a fan-out over
+  faked deps would assert that a fake fan-out fans out. Real boundary or nothing.
 
 Follow-ups are recorded in this CR's ledger shard (wezterm/zellij have no real-boundary suite; the
 shared injected conformance suite; root `spec.md`'s tmux/herdr/wezterm prose drift vs shipped zellij;

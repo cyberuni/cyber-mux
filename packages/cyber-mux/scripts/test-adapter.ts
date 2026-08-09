@@ -17,6 +17,7 @@ import { accessSync, constants, mkdtempSync, readdirSync, readFileSync, rmSync }
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { currentPane, type PaneMux } from '../src/mux-probe.ts'
 
 /** The verdict of actually verifying one adapter. */
 export type Outcome = 'skip' | 'gap' | 'no-coverage' | 'pass' | 'fail'
@@ -49,6 +50,8 @@ export interface RunnerDeps {
 	isInstalled(name: string): boolean
 	/** Run this adapter's suites through the integration config and report the counts. */
 	runSuites(name: string, suites: readonly string[]): SuiteReport
+	/** The multiplexer this shell is itself inside, if any. */
+	insideMux(): PaneMux | undefined
 }
 
 export interface Reported {
@@ -183,6 +186,20 @@ export function main(argv: readonly string[], deps: RunnerDeps, out: (line: stri
 		return OK
 	}
 
+	// Running a suite from inside ANY multiplexer is refused outright. The real-boundary suites drive
+	// live multiplexers, and several verbs resolve against "the caller's own current pane" — from
+	// inside herdr, `pane split --current` splits THIS pane and `focus()` yanks THIS focus. The rule
+	// is deliberately blunt rather than per-adapter: a manual verification tool is run from a plain
+	// shell, and "which cross-adapter combinations happen to be safe" is not a judgment worth
+	// encoding. The listing above is exempt because it runs nothing.
+	const inside = deps.insideMux()
+	if (inside) {
+		out(`refusing to run: this shell is inside ${inside}`)
+		out('the real-boundary suites drive live multiplexers, and some verbs resolve against the')
+		out("caller's own pane — run this from a plain shell outside any multiplexer")
+		return ERR
+	}
+
 	const targets = all ? adapters : adapters.filter((a) => names.includes(a.name))
 	const results = targets.map((adapter) => verify(adapter, deps))
 
@@ -268,6 +285,9 @@ export const realDeps: RunnerDeps = {
 	listSrcFiles: () => readdirSync(SRC, { withFileTypes: true }).flatMap((e) => (e.isFile() ? [e.name] : [])),
 	isInstalled: onPath,
 	runSuites: runVitest,
+	// The same per-pane env contract detection itself uses (src/mux-probe.ts), not a second copy of
+	// it — a new backend teaches this guard about itself by landing its adapter.
+	insideMux: () => currentPane(process.env)?.mux,
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

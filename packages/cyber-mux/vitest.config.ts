@@ -9,6 +9,6 @@ export default defineConfig({
 		include: ['src/**/*.test.ts', 'scripts/**/*.test.ts'],
 		// `*.integration.test.ts` needs a real multiplexer; `*.dist.test.ts` needs a built package. Both
 		// are opt-in (`test:integration` / `test:dist`), never part of the fast, source-only suite.
-		exclude: ['src/**/*.integration.test.ts', 'src/**/*.dist.test.ts'],
+		exclude: ['**/*.integration.test.ts', 'src/**/*.dist.test.ts'],
 	},
 })
