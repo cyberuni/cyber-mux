@@ -10,9 +10,9 @@ todos:
   - content: "zellij: decide the MuxTarget session-qualifier seam before writing the suite"
     status: completed
   - content: "zellij: fix the two field-name bugs the probe found (pane_cwd absent, pane_command is terminal_command)"
-    status: pending
+    status: completed
   - content: "zellij: real-boundary suite + CI install"
-    status: pending
+    status: completed
   - content: "cmux: real-boundary suite — blocked, needs macOS with the app installed"
     status: pending
   - content: "otty: real-boundary suite — blocked, needs macOS with the app installed"
@@ -30,7 +30,7 @@ that the adapter builds the command string it intended; none checks that the mul
 | tmux | 70 | pre-existing |
 | herdr | 106 | pre-existing |
 | wezterm | 41 | **landed — PR #108** |
-| zellij | 39 | none |
+| zellij | 39 | **landed — 10 tests, this branch** |
 | cmux | 25 | none |
 | otty | 25 | none |
 
@@ -49,14 +49,17 @@ private `XDG_RUNTIME_DIR` — which is the working method's own rule (isolation 
 never from the adapter). So the suite needs no session qualifier on `MuxTarget` to be isolated, and
 lifting that seam stays a separate spec-gated CR that this suite neither blocks nor pressures.
 
-**The next action.** Two units, in this order — the bug fix first, because the suite would encode
-the broken behavior otherwise:
+**zellij is DONE on this branch** — field-name fix (with changeset), a 10-test
+`mux.zellij.integration.test.ts`, and the `live-backends` CI install, all committed. The suite was
+run three times locally against the real 0.44.3 binary (10 passed, ~7s, stable, no leftover sessions
+or temp dirs) and confirmed to *skip* cleanly with zellij off `PATH`. `pnpm verify` is green (1045).
 
-1. **Fix the two field-name bugs the probe found** (`pane_cwd` absent, `pane_command` misspelled) in
-   `mux.zellij.ts`, updating the mocked unit tests whose fixtures currently carry the wrong names.
-   This is a user-facing adapter fix, so it needs a changeset.
-2. **Write `src/mux.zellij.integration.test.ts`** in the wezterm suite's shape, then add zellij to
-   `pull-request.yml`'s `live-backends` job from the pinned 0.44.3 musl release.
+**The next action — the only one left that is not machine-blocked.** Push this branch and read the
+`live-backends` job log to confirm the zellij suite actually EXECUTED on the runner rather than
+self-skipping. A green check is not the evidence; the 10 test names in the log are. This is the check
+that bit twice during PR #107.
+
+After that, this mission is blocked on hardware, not on work — see cmux/otty below.
 
 **cmux and otty are blocked, not deferred by choice.** Both are macOS GUI applications; this
 workstation is WSL/Linux and CI is Linux, so neither can be driven or even installed here. Writing
@@ -125,7 +128,9 @@ were written from the same doc-probe as the code. Confirmed against 0.44.3's act
   Use the Ubuntu22.04 tarball; it carries `wezterm`, `wezterm-gui` and `wezterm-mux-server`.
 - **`pkill -f <server-name>` is unsafe as teardown.** It matches any command line merely mentioning
   the name — including the shell that launched the test run, which it killed mid-development. Kill
-  the PID the suite owns.
+  the PID the suite owns. (Re-learned the hard way during the zellij probe, from this very note —
+  a `pkill -f 'zellij.*cm-probe'` took the probe shell down with it. Delete a zellij session by name
+  with `zellij delete-session --force <name>` instead; both suites kill their own PID/process group.)
 - **Real-boundary cost is negligible**, which settles the "is this too slow for CI" question:
   installing wezterm took ~3s and its 7 tests ran in ~0.7s; the whole `live-backends` job is ~35s.
   Adding zellij should be the same order.
