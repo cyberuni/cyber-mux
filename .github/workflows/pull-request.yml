@@ -26,6 +26,10 @@ jobs:
       # against. Bump deliberately, the same way mise pins the toolchain.
       HERDR_VERSION: v0.8.0
       WEZTERM_VERSION: 20240203-110809-5046fc22
+      # 0.44.x or newer is a HARD floor, not a preference: the whole per-pane-addressable surface the
+      # adapter stands on (`--pane-id` across the verbs, `list-panes --json`, ids returned from
+      # `new-pane`/`new-tab`, `focus-pane-id`) landed in 0.44.0. Older binaries fail every command.
+      ZELLIJ_VERSION: v0.44.3
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -79,6 +83,22 @@ jobs:
           sudo install -m 0755 "${RUNNER_TEMP}/wezterm/usr/bin/wezterm-mux-server" /usr/local/bin/
           wezterm --version
           wezterm-mux-server --version
+
+      # The musl build is statically linked, so — like herdr — it needs no package manager and no
+      # toolchain. Zellij needs no server started here: the suite creates its own background session
+      # under a private XDG_RUNTIME_DIR, which is also what isolates it from anything else on the box.
+      #
+      # `script` (util-linux) is a real dependency of that suite, not an incidental one: it allocates
+      # the PTY for the one client `new-pane --direction` requires. It is on the runner image already;
+      # the suite skips rather than fails if it ever is not.
+      - name: Install zellij
+        run: |
+          curl -fsSL -o "${RUNNER_TEMP}/zellij.tar.gz" \
+            "https://github.com/zellij-org/zellij/releases/download/${ZELLIJ_VERSION}/zellij-x86_64-unknown-linux-musl.tar.gz"
+          tar -xzf "${RUNNER_TEMP}/zellij.tar.gz" -C "${RUNNER_TEMP}"
+          sudo install -m 0755 "${RUNNER_TEMP}/zellij" /usr/local/bin/zellij
+          zellij --version
+          script --version | head -1
 
       - run: pnpm install --frozen-lockfile
 
