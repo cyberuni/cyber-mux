@@ -20,8 +20,7 @@ const LIST_ONE = JSON.stringify([
 		tab_id: 2,
 		tab_name: 'main',
 		title: 'zsh',
-		pane_command: 'zsh',
-		pane_cwd: '/unit',
+		terminal_command: 'zsh',
 		is_focused: true,
 	},
 ])
@@ -299,21 +298,25 @@ describe('spec:cyber-mux/mux/lookup', () => {
 		})
 
 		it('isPaneFocused reports false for a pane the backend says is not focused', () => {
-			const list = JSON.stringify([{ id: 'terminal_9', tab_id: 2, pane_command: 'zsh', is_focused: false }])
+			const list = JSON.stringify([{ id: 'terminal_9', tab_id: 2, terminal_command: 'zsh', is_focused: false }])
 			const exec = fakeExec([], { 'list-panes': list })
 			expect(zellijMuxAdapter.isPaneFocused(exec, { id: 'terminal_9' })).toBe(false)
 		})
 
 		it('lookup-listing-enumerates-all-panes', () => {
+			// Field names are the LIVE 0.44.3 ones (`terminal_command`, and no cwd field exists at all) —
+			// the earlier fixtures spelled `pane_command`/`pane_cwd`, which the doc probe invented, so they
+			// agreed with the adapter's own mistake and proved nothing.
 			const list = JSON.stringify([
-				{ id: 'terminal_9', tab_id: 2, title: 'worker', pane_command: 'claude', pane_cwd: '/unit' },
+				{ id: 'terminal_9', tab_id: 2, title: 'worker', terminal_command: 'claude' },
 				// title equals the running command — ambient, not chosen — so it reports no label.
-				{ id: 'terminal_10', tab_id: 2, title: 'zsh', pane_command: 'zsh', pane_cwd: '/other' },
+				{ id: 'terminal_10', tab_id: 2, title: 'zsh', terminal_command: 'zsh' },
 			])
 			const exec = fakeExec([], { 'list-panes': list })
+			// No `cwd` on either: zellij reports none, so the adapter invents none.
 			expect(zellijMuxAdapter.listPanes(exec)).toEqual([
-				{ id: 'terminal_9', mux: 'zellij', cwd: '/unit', label: 'worker' },
-				{ id: 'terminal_10', mux: 'zellij', cwd: '/other' },
+				{ id: 'terminal_9', mux: 'zellij', label: 'worker' },
+				{ id: 'terminal_10', mux: 'zellij' },
 			])
 		})
 

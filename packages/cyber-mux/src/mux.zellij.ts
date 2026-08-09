@@ -16,13 +16,20 @@ import { pollForOutput } from './wait-output.ts'
  * binary these commands fail and the adapter surfaces the failure rather than silently mis-targeting
  * the focused pane.
  *
- * Probed from the Zellij docs + CHANGELOG only — Zellij is not installed in this sandbox, so nothing
- * here carries the "verified against a live binary" claim `session.tmux.ts`/`session.herdr.ts` make;
- * it makes the same honest disclaimer `mux.wezterm.ts` does. Two literals in particular are worth a
- * one-line confirmation on a live 0.44.1 binary — the exact form `new-pane` prints an id in (bare `3`
- * vs `terminal_3`) and the shell value of `$ZELLIJ_PANE_ID`. Both are handled either way: ids are
- * carried verbatim and compared through `samePane`, which treats a bare `N` and its `terminal_N` twin
- * as the same pane (per the docs' own `terminal_N | plugin_N | bare N` scheme).
+ * Originally probed from the Zellij docs + CHANGELOG alone; now **driven against a live 0.44.3
+ * binary** by `mux.zellij.integration.test.ts`, so the command shapes below carry the same
+ * verified-against-a-real-binary claim `session.tmux.ts`/`session.herdr.ts` make. What the live probe
+ * changed, and what a doc probe could not have known:
+ *
+ * - The id forms are confirmed and asymmetric: `new-pane` prints the PREFIXED `terminal_N`, while
+ *   `list-panes --json` reports `id` as a BARE integer. `samePane` is what makes those the same pane,
+ *   so it is load-bearing rather than defensive.
+ * - Two `list-panes --json` field names were simply wrong (`pane_cwd`, `pane_command`); see
+ *   `ZellijPane`. That is the failure mode of a doc probe, and the reason this file now has a suite.
+ * - `new-pane --direction` requires an attached client focused on a TERMINAL pane, and fails
+ *   SILENTLY without one — it prints a plausible new pane id and exits 0 having created nothing.
+ *   `open()` does not propagate that phantom: `openedForPane` cannot find the id in `list-panes` and
+ *   throws. Every other verb here works against a session with no client attached.
  *
  * Real capability shape that fell out of the probe:
  *
@@ -237,13 +244,16 @@ export function createZellijAdapter(deps: { session?: string | undefined }): Mux
 
 		listPanes(exec): LivePane[] {
 			return listZellijPanes(exec).map((p) => {
+				// No `cwd`: `list-panes --json` carries no cwd field at ALL on 0.44.3 — verified against the
+				// live binary's key set, which the doc probe that built this adapter got wrong. So a zellij
+				// `LivePane` is genuinely cwd-less rather than sometimes-missing, and callers that filter by
+				// cwd get nothing here rather than a wrong answer.
 				const pane: LivePane = { id: p.id, mux: 'zellij' as const }
-				if (p.pane_cwd) pane.cwd = p.pane_cwd
 				// A pane's title CAN be an authored name here (`new-pane --name` / `rename-pane`), unlike
 				// wezterm. But Zellij defaults an unnamed pane's title to its running command, so a title
-				// equal to `pane_command` is ambient rather than chosen — dropped the same way tmux drops a
-				// title equal to the hostname, so every shell pane does not resolve to one manufactured name.
-				const label = zellijLabel(p.title, p.pane_command)
+				// equal to `terminal_command` is ambient rather than chosen — dropped the same way tmux drops
+				// a title equal to the hostname, so every shell pane does not resolve to one manufactured name.
+				const label = zellijLabel(p.title, p.terminal_command)
 				if (label) pane.label = label
 				return pane
 			})
@@ -266,8 +276,13 @@ interface ZellijPane {
 	tab_id?: number | string | undefined
 	title?: string | undefined
 	is_focused?: boolean | undefined
-	pane_cwd?: string | undefined
-	pane_command?: string | undefined
+	/**
+	 * The command a terminal pane is running — `terminal_command`, NOT `pane_command`. Verified
+	 * against a live 0.44.3 `list-panes --json`; the original doc probe read the wrong name, which
+	 * silently disabled the ambient-title guard in `zellijLabel` (every unnamed pane exported its own
+	 * command as an authored label). `null` for a plugin pane and for a pane running a plain shell.
+	 */
+	terminal_command?: string | undefined
 }
 
 /**
@@ -368,7 +383,7 @@ function toZellijKey(key: string): string {
 
 /**
  * A Zellij pane's label — its title, unless that title is the running command Zellij handed an unnamed
- * pane. Zellij defaults an unnamed pane's title to its `pane_command`, so a title equal to it is
+ * pane. Zellij defaults an unnamed pane's title to its `terminal_command`, so a title equal to it is
  * ambient rather than chosen; exporting it would put the same manufactured name on every shell pane,
  * exactly the collision tmux's hostname guard exists to prevent. A title that differs from the command
  * is one someone set (`new-pane --name`/`rename-pane`), so it is the author's and survives.
