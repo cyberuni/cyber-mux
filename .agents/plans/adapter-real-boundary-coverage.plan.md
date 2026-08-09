@@ -6,8 +6,10 @@ todos:
   - content: "wezterm: real-boundary suite + CI install — PR #108"
     status: completed
   - content: "zellij: probe whether it can be driven headlessly at all"
-    status: in_progress
+    status: completed
   - content: "zellij: decide the MuxTarget session-qualifier seam before writing the suite"
+    status: completed
+  - content: "zellij: fix the two field-name bugs the probe found (pane_cwd absent, pane_command is terminal_command)"
     status: pending
   - content: "zellij: real-boundary suite + CI install"
     status: pending
@@ -34,34 +36,27 @@ that the adapter builds the command string it intended; none checks that the mul
 
 ## NEXT — resume here
 
-**The next action.** Probe whether zellij can be driven with no attached client, before writing
-anything:
+**The probe is done and both open questions are answered** (2026-08-09, zellij 0.44.3 musl on
+WSL/Linux). Do not re-run it; the findings are below under "zellij probe".
 
-```bash
-curl -fsSL https://github.com/zellij-org/zellij/releases/download/v0.44.3/zellij-x86_64-unknown-linux-musl.tar.gz | tar -xz -C /tmp
-/tmp/zellij --version                                  # verified working: 0.44.3
-/tmp/zellij attach --create-background cm-probe        # does a detached session start?
-/tmp/zellij --session cm-probe action dump-screen /tmp/out   # does an action reach it with no client?
-```
+**Answer: zellij IS drivable headlessly**, with exactly one exception — `new-pane --direction`
+(see the findings). A clientless harness covers every verb except tiled splits; covering those
+too costs one `script`-allocated PTY client, which is cheap enough to be worth it.
 
-That last line is the whole question. tmux answers it with `-L`, and wezterm answers it with
-`XDG_RUNTIME_DIR` + `--prefer-mux`; whether zellij answers it at all is **unprobed** — do not assume
-it does. If actions need an attached client, a suite is only possible under a PTY harness, and that
-changes the shape enough to re-decide the scope.
+**Decision, resolved: pin today's ambient-session behavior.** No `MuxTarget` change. The probe
+settled it: isolation is fully available through the **injected `Exec`** — `--session <name>` plus a
+private `XDG_RUNTIME_DIR` — which is the working method's own rule (isolation comes from the Exec,
+never from the adapter). So the suite needs no session qualifier on `MuxTarget` to be isolated, and
+lifting that seam stays a separate spec-gated CR that this suite neither blocks nor pressures.
 
-**Blocking decision — resolve, don't rediscover.** The zellij adapter has a known seam limitation
-recorded in `packages/cyber-mux/.agents/spec/design/decisions/`: `MuxTarget` carries only an opaque
-pane id and **no session qualifier**, so `open({at:'workspace'})` collapses to a tab in the ambient
-session and no adapter command ever names a session. Two options, and the suite's shape depends on
-which:
+**The next action.** Two units, in this order — the bug fix first, because the suite would encode
+the broken behavior otherwise:
 
-- **Pin today's behavior.** Write the suite against the ambient-session limitation as specified.
-  Cheap; the suite then documents a constraint rather than pressuring it.
-- **Lift the seam first.** Add a session qualifier to `MuxTarget` — a real contract change, so a
-  spec-gated CR of its own, and the suite follows it.
-
-Recommend probing first regardless: if zellij cannot be driven headlessly, the decision is moot for
-now.
+1. **Fix the two field-name bugs the probe found** (`pane_cwd` absent, `pane_command` misspelled) in
+   `mux.zellij.ts`, updating the mocked unit tests whose fixtures currently carry the wrong names.
+   This is a user-facing adapter fix, so it needs a changeset.
+2. **Write `src/mux.zellij.integration.test.ts`** in the wezterm suite's shape, then add zellij to
+   `pull-request.yml`'s `live-backends` job from the pinned 0.44.3 musl release.
 
 **cmux and otty are blocked, not deferred by choice.** Both are macOS GUI applications; this
 workstation is WSL/Linux and CI is Linux, so neither can be driven or even installed here. Writing
@@ -69,6 +64,52 @@ their suites blind would produce files that self-skip everywhere and report gree
 precisely the failure `per-adapter-conformance-runner` exists to make impossible. They want a macOS
 machine with the apps installed. Note the same constraint is why both adapters were doc-probed
 rather than driven when they landed (`48-cmux-adapter.plan.md`, `otty-adapter.plan.md`).
+
+## zellij probe — the answers, do not re-derive
+
+Setup that works: `zellij attach --create-background <name>` starts a session with no client, and
+`zellij --session <name> action …` reaches it. Isolation is `XDG_RUNTIME_DIR` (live sockets live at
+`$XDG_RUNTIME_DIR/zellij/contract_version_1/<name>`) — also set `XDG_CACHE_HOME`, because the
+*resurrection* list bleeds through the cache dir and a fresh runtime dir still lists dead sessions.
+
+- **Every action must name `--pane-id`.** With no client there is no focused pane, so the
+  focus-relative default silently targets nothing — `dump-screen` with no `-p` returns empty and
+  exit 0. The adapter already spells `--pane-id` on every verb, so this costs it nothing; it is the
+  suite's harness that must never rely on focus. Verified working headlessly: `new-pane` (plain,
+  `--name`, `--cwd`, `--floating`), `new-tab`, `write-chars -p`, `send-keys -p`, `dump-screen -p`,
+  `focus-pane-id`, `close-pane -p`, `list-panes --json`.
+- **`new-pane --direction` is the one verb that needs a client — and it fails SILENTLY.** It prints
+  a plausible new pane id and exits 0 while creating nothing. It works only with a client attached
+  *and focused on a terminal pane*; with a client focused on a plugin pane (the release-notes pane
+  zellij focuses on first attach) it still fails, and `focus-pane-id` with no client does not rescue
+  it. A PTY client is enough: `setsid script -qec "zellij attach <name>" /dev/null &`, then
+  `focus-pane-id` a terminal pane before splitting. `script` is util-linux — present on the Ubuntu
+  runners and WSL, no new dependency.
+  - Consequence for the adapter, which is **good news**: `open({at:'pane:right'})` does not hand
+    back a phantom. `openedForPane` looks the id up in `list-panes` and throws
+    `zellij did not report a tab for the new pane …`. It fails loudly at exactly the right place.
+- **Id forms confirmed, and `samePane` is load-bearing.** `new-pane` prints the prefixed
+  `terminal_N`; `list-panes --json` reports `id` as a **bare integer**. The adapter's normalization
+  is what makes those the same pane — the header flagged this as needing a live confirmation, and
+  this is it. `new-tab` prints a bare tab id (`1`), as the adapter assumes.
+
+### Two real adapter bugs the mocked tests cannot see
+
+Both are `list-panes --json` field names that no fixture ever disagreed with, because the fixtures
+were written from the same doc-probe as the code. Confirmed against 0.44.3's actual key set:
+
+- **`pane_cwd` does not exist — there is no cwd field at all.** So `listPanes()`'s
+  `if (p.pane_cwd) pane.cwd = …` is dead code and `LivePane.cwd` is *never* populated for zellij.
+  The real keys are `id, tab_id, tab_name, tab_position, title, terminal_command, plugin_url,
+  is_plugin, is_focused, is_floating, is_fullscreen, is_suppressed, is_selectable, is_held, exited,
+  exit_status, index_in_pane_group, pane_x/y, pane_rows/columns, pane_content_*,
+  cursor_coordinates_in_pane, default_bg, default_fg`.
+- **`pane_command` is really `terminal_command`.** So `zellijLabel(p.title, p.pane_command)` always
+  compares the title against `undefined` and the guard never fires — meaning an unnamed pane's
+  ambient, command-derived title leaks out as an authored `label`. Observed live: a pane opened as
+  `sh -c 'sleep 90'` reports `title === terminal_command === "sh -c sleep 90"` and today would be
+  labeled with it. That is precisely the manufactured-name collision the guard exists to prevent,
+  and it is the reason to fix this before the suite pins the behavior.
 
 ## Findings the commits will not show
 
