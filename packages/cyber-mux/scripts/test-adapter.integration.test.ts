@@ -55,6 +55,14 @@ function resolveOnPath(name: string): string | undefined {
 type Presence =
 	/** the real binary — its suite runs for real */
 	| 'real'
+	/**
+	 * merely on PATH, never invoked. Correct for an adapter with no real-boundary suite: `gap` is
+	 * decided from the suite count before anything runs, so the binary's behavior is unreachable.
+	 * Using a stub rather than the real binary keeps these worlds buildable on a host that does not
+	 * have it installed — CI installs only tmux and herdr, so requiring a real wezterm here would
+	 * fail there for a reason having nothing to do with the contract.
+	 */
+	| 'present'
 	/** on PATH but broken: `-V` fails, so the suite's own gate skips every test */
 	| 'broken'
 	/** on PATH and answering `-V`, but failing every real command, so its suite runs and fails */
@@ -93,7 +101,7 @@ function makeWorld(adapters: Record<string, Presence>): string {
 		// (`new-session`, then `display-message` for the `$TMUX` triple) and fails every command
 		// after that. The tests then genuinely execute and genuinely fail.
 		const script =
-			presence === 'broken'
+			presence === 'present' || presence === 'broken'
 				? '#!/bin/sh\nexit 1\n'
 				: [
 						'#!/bin/sh',
@@ -182,7 +190,7 @@ describe('spec:cyber-mux/conformance', () => {
 		it('conformance-all-reports-each-and-summarizes', () => {
 			// tmux really passes, wezterm is installed with no suite (gap), everything else is absent
 			// (skip) — the frozen scenario's exact shape, built rather than hoped for.
-			const bin = makeWorld({ tmux: 'real', wezterm: 'real' })
+			const bin = makeWorld({ tmux: 'real', wezterm: 'present' })
 			const { stdout } = runInWorld(bin, '--all')
 
 			expect(lineFor(stdout, 'tmux')).toContain('pass')
@@ -200,7 +208,7 @@ describe('spec:cyber-mux/conformance', () => {
 		it('conformance-all-exits-nonzero-on-any-bad-outcome', () => {
 			// Row 1 — gap, paired with a genuine pass, so this row also proves a passing adapter does
 			// not mask a failing neighbour.
-			const gap = runInWorld(makeWorld({ tmux: 'real', wezterm: 'real' }), '--all')
+			const gap = runInWorld(makeWorld({ tmux: 'real', wezterm: 'present' }), '--all')
 			expect(lineFor(gap.stdout, 'tmux')).toContain('pass')
 			expect(lineFor(gap.stdout, 'wezterm')).toContain('gap')
 			expect(gap.code).toBe(1)

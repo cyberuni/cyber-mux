@@ -306,10 +306,16 @@ fails its `-V` gate, and one that answers `-V` then fails everything after) inst
 Only tmux is ever really driven, against its own private `-L` socket; herdr is never made visible,
 because it has no throwaway server and driving it would mean driving the operator's live session.
 
-Two consequences stay true and stated: the suite is **opt-in, so CI does not run it** unless
-deliberately wired to; and its `no-coverage` and `fail` rows carry **no passing partner adapter**,
-so they prove their outcome reaches the exit code but not that a passing neighbor fails to mask it.
-Only the `gap` row proves that half, because tmux is the one adapter that can be made to pass safely.
+It is opt-in from `pnpm test` — but **not** unrun in CI: `pull-request.yml`'s `live-backends` job
+installs tmux and herdr and runs `pnpm cm test:integration`, so these three scenarios are exercised
+on every pull request. That job is `continue-on-error` for now (herdr with no attached client is
+still unproven there), so it reports without blocking; the constructed worlds above are what make
+this suite's own result independent of which multiplexers that runner happens to have.
+
+One consequence stays and is stated: the `no-coverage` and `fail` rows carry **no passing partner
+adapter**, so they prove their outcome reaches the exit code but not that a passing neighbor fails to
+mask it. Only the `gap` row proves that half, because tmux is the one adapter that can be made to
+pass safely.
 
 | Edge | Path (Given) | Scenario |
 |---|---|---|
