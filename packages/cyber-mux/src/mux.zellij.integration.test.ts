@@ -198,9 +198,16 @@ describe.skipIf(!hasZellij() || !hasScript())('spec:cyber-mux/mux', () => {
 		// the number 0 twice — once for its suppressed `zellij:link` PLUGIN pane and once for its first
 		// terminal pane. No fixture can prove that; only the binary can. What the adapter owes is a
 		// listing in which no two panes answer to the same id.
-		it('lookup-listing-id-names-one-pane', () => {
-			const panes = adapter.listPanes(exec)
-			const ids = panes.map((p) => p.id)
+		it('lookup-listing-id-names-one-pane', async () => {
+			// Polled for a NON-EMPTY listing first, and for the same reason the cwd row polls: an empty
+			// `list-panes` reply under load would otherwise read as "this session has no plugin pane",
+			// which is a different finding from the one under test.
+			const listed = await pollUntil(
+				() => JSON.stringify(adapter.listPanes(exec).map((p) => p.id)),
+				(out) => out !== '[]',
+			)
+			const ids = JSON.parse(listed) as string[]
+			expect(ids.length).toBeGreaterThan(0)
 			expect(new Set(ids).size).toBe(ids.length)
 			// And the collision is real rather than hypothetical here: both kinds are present, and at least
 			// one number is carried by a pane of each kind.
@@ -237,9 +244,19 @@ describe.skipIf(!hasZellij() || !hasScript())('spec:cyber-mux/mux', () => {
 		// its own fixture, and a fixture is exactly how the opposite claim ("no cwd field exists at all")
 		// survived: the probe behind it sampled a PLUGIN pane, whose record omits the key. Opening at a
 		// known directory and reading it back off the live listing is what tells those apart.
-		it('lookup-listing-reports-cwd', () => {
+		it('lookup-listing-reports-cwd', async () => {
 			const target = adapter.open(exec, { cwd, at: 'tab' })
-			expect(adapter.listPanes(exec).find((p) => p.id === target.id)?.cwd).toBe(cwd)
+			// Found at all BEFORE the field is read, and polled for rather than read once — the same rule
+			// the float row states. `find(...)?.cwd` alone answers `undefined` for a pane that is missing
+			// from the listing and for a pane that reports no directory, and those are opposite findings:
+			// one is this suite's known flake (a `list-panes` reply that comes back empty under load, #115),
+			// the other is the claim under test. Asserting the pane is there first keeps them apart.
+			const found = await pollUntil(
+				() => JSON.stringify(adapter.listPanes(exec).find((p) => p.id === target.id) ?? null),
+				(out) => out !== 'null',
+			)
+			expect(found, 'the pane just opened never appeared in the live listing').not.toBe('null')
+			expect((JSON.parse(found) as { cwd?: string } | null)?.cwd).toBe(cwd)
 		})
 
 		it('rename() at the pane tier actually renames a real pane, and the name survives as a label', () => {
