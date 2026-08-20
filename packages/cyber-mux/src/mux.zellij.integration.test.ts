@@ -161,6 +161,35 @@ describe.skipIf(!hasZellij() || !hasScript())('spec:cyber-mux/mux', () => {
 			expect(adapter.paneExists(exec, target)).toBe(true)
 		})
 
+		// The READ side, at the boundary that owns the answer: `is_floating` is a key this adapter reads
+		// out of a live `list-panes --json`, so a mocked exec only ever proves we can parse our own
+		// fixture. Opened both ways in one test on purpose — a suite that only ever saw a float could
+		// pass on an adapter that hardcoded `true`.
+		//
+		// ONE open, and no `new-pane --direction` anywhere in it. The tiled half of the contrast is the
+		// session's own panes, which are tiled by construction and always there — so this row never
+		// touches the verb that fails SILENTLY when the client is focused on a plugin pane (the trap
+		// the file header documents, and the one this suite flakes on). The float is anchored on a
+		// terminal pane with `from` for the same reason; the unanchored default is the row above's.
+		//
+		// The float is identified by LABEL, never by id, and that is not fussiness: `new-pane` prints
+		// the prefixed `terminal_N` while the listing reports the bare `N`, AND a zellij pane id is not
+		// unique across plugin and terminal panes — a live 0.44.3 session reports `0` for both its
+		// suppressed `zellij:link` plugin pane and its first terminal pane, which `listPanes` collapses
+		// onto one `LivePane.id`. A name given at birth is the one unambiguous handle this backend
+		// offers, and the `rename()` row already pins that a name survives into the listing.
+		it('listPanes() tells a real float from a real tiled pane', () => {
+			adapter.open(exec, { cwd, at: 'pane:float', from: { id: base }, label: 'cm-float' })
+			const panes = adapter.listPanes(exec)
+			// Found at all, and exactly once, before the flag is read — so a failed open is reported as a
+			// miss rather than as a wrong answer.
+			expect(panes.filter((p) => p.label === 'cm-float').length).toBe(1)
+			expect(panes.find((p) => p.label === 'cm-float')?.floating).toBe(true)
+			// And the contrast, which is what keeps an adapter hardcoding `true` from passing: the same
+			// listing still reports tiled panes as tiled.
+			expect(panes.some((p) => !p.floating)).toBe(true)
+		})
+
 		it('submit()/read() actually run a command in and capture from a real pane', async () => {
 			const target = adapter.open(exec, { cwd, at: 'tab' })
 			adapter.submit(exec, target, 'echo cyber-mux-zj-marker')

@@ -248,7 +248,10 @@ export function createZellijAdapter(deps: { session?: string | undefined }): Mux
 				// live binary's key set, which the doc probe that built this adapter got wrong. So a zellij
 				// `LivePane` is genuinely cwd-less rather than sometimes-missing, and callers that filter by
 				// cwd get nothing here rather than a wrong answer.
-				const pane: LivePane = { id: p.id, mux: 'zellij' as const }
+				// `is_floating` read strictly: only a literal `true` floats, so a record missing the key
+				// (an older zellij, or a shape this adapter did not verify) reports the tiled answer
+				// rather than a truthy accident.
+				const pane: LivePane = { id: p.id, mux: 'zellij' as const, floating: p.is_floating === true }
 				// A pane's title CAN be an authored name here (`new-pane --name` / `rename-pane`), unlike
 				// wezterm. But Zellij defaults an unnamed pane's title to its running command, so a title
 				// equal to `terminal_command` is ambient rather than chosen — dropped the same way tmux drops
@@ -276,6 +279,17 @@ interface ZellijPane {
 	tab_id?: number | string | undefined
 	title?: string | undefined
 	is_focused?: boolean | undefined
+	/**
+	 * Whether the pane floats above the tiled layout — `is_floating`. Free: it rides the `list-panes
+	 * --json` call this adapter already makes, so `LivePane.floating` costs zellij no second exec.
+	 *
+	 * Verified against a live 0.44.3, not just against the recorded key dump, and the distinction
+	 * mattered: a key existing in zellij's pane schema would not by itself prove that a FLOATING pane
+	 * appears in the collection `list-panes` returns. It does — a `new-pane --floating` shows up in
+	 * the same flat array as the tiled panes, carrying `is_floating: true`, which is what
+	 * `mux.zellij.integration.test.ts` pins at the real boundary.
+	 */
+	is_floating?: boolean | undefined
 	/**
 	 * The command a terminal pane is running — `terminal_command`, NOT `pane_command`. Verified
 	 * against a live 0.44.3 `list-panes --json`; the original doc probe read the wrong name, which

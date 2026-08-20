@@ -15,6 +15,37 @@ function hasTmux(): boolean {
 	}
 }
 
+/**
+ * Whether the tmux on PATH is new enough to HAVE a floating pane — `new-pane` landed in 3.7, and on
+ * anything older it is simply not a command.
+ *
+ * A second gate on top of `hasTmux()`, because the two questions are genuinely different and the
+ * harness only guarantees the first: CI installs tmux with `apt-get install -y tmux`, which is
+ * Ubuntu's packaged 3.4. A float test that assumed 3.7 there failed the job while proving nothing
+ * about the adapter — `canFloatPanes` is declared unconditionally BY DESIGN (see the `mux.tmux.ts`
+ * header) and an older tmux refusing `new-pane` with its own `unknown command` is that contract
+ * working, not breaking.
+ *
+ * So the float rows SKIP below 3.7 rather than fail. Making CI actually cover them means installing a
+ * 3.7+ tmux in the workflow, which is a harness change and belongs with issue #113's real-boundary
+ * pass over the float CREATE path — not here.
+ *
+ * Parsed off the leading `<major>.<minor>`, which covers every spelling tmux ships: `3.4`, `3.7c`
+ * (the letter is a patch suffix, never a version bump) and `next-3.8`.
+ */
+function tmuxHasFloatingPanes(): boolean {
+	try {
+		const version = execFileSync('tmux', ['-V'], { encoding: 'utf8' })
+		const parts = /(\d+)\.(\d+)/.exec(version)
+		if (!parts) return false
+		const major = Number(parts[1])
+		const minor = Number(parts[2])
+		return major > 3 || (major === 3 && minor >= 7)
+	} catch {
+		return false
+	}
+}
+
 async function pollUntil(read: () => string, done: (out: string) => boolean, timeoutMs = 2000): Promise<string> {
 	const start = Date.now()
 	let out = read()
@@ -76,6 +107,26 @@ describe.skipIf(!hasTmux())('spec:cyber-mux/mux', () => {
 			const target = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
 			const panes = tmuxMuxAdapter.listPanes(exec)
 			expect(panes.some((p) => p.id === target.id && p.cwd === cwd)).toBe(true)
+		})
+
+		// The READ side of `pane:float`, at the boundary that owns the answer: `#{pane_floating_flag}` is
+		// a tmux format variable, so a mocked exec only ever proves we can parse our own fixture. Live on
+		// 3.7c it reports `1` for a `new-pane` float and `0` for a tiled pane. Opened both ways in one
+		// test on purpose — a suite that only ever saw a float could pass on an adapter hardcoding
+		// `true`. (Pinning the float CREATE path itself is issue #113, not this.)
+		it.skipIf(!tmuxHasFloatingPanes())('listPanes() tells a real float from a real tiled pane', () => {
+			// A window of its own, so the pair is not competing for room with whatever earlier tests left
+			// behind, and the float is anchored on the tiled pane rather than on the ambient active one.
+			const tiled = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
+			const float = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'pane:float', from: tiled })
+			const panes = tmuxMuxAdapter.listPanes(exec)
+			expect(panes.find((p) => p.id === float.id)?.floating).toBe(true)
+			expect(panes.find((p) => p.id === tiled.id)?.floating).toBe(false)
+			// `list-panes -a` really does enumerate the float alongside the tiled panes — the field would
+			// be unreachable if it did not.
+			expect(panes.map((p) => p.id)).toEqual(expect.arrayContaining([float.id, tiled.id]))
+			tmuxMuxAdapter.teardown(exec, float)
+			tmuxMuxAdapter.teardown(exec, tiled)
 		})
 
 		it('teardown() actually kills the real pane', () => {

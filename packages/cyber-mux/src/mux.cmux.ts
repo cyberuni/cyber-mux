@@ -190,7 +190,11 @@ export function createCmuxAdapter(deps: { workspace?: string | undefined }): Mux
 
 		listPanes(exec): LivePane[] {
 			return listCmuxSurfaces(exec).map((s) => {
-				const pane: LivePane = { id: s.id, mux: 'cmux' as const }
+				// `floating` is `false` BY CONSTRUCTION, not a stub and not a refusal: cmux has no floating-pane
+				// concept at all, so every pane it can report really is tiled. The create side refuses a
+				// `'pane:float'` open here by NAME because there is no truthful pane to hand back; the read
+				// side has a truthful answer, and this is it.
+				const pane: LivePane = { id: s.id, mux: 'cmux' as const, floating: false }
 				if (s.cwd) pane.cwd = s.cwd
 				if (s.title) pane.label = s.title
 				return pane

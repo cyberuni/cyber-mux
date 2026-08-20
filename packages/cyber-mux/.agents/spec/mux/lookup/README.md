@@ -104,6 +104,18 @@ reads the live pane list, which answers ids and labels in one read.
   top of this feed (`herdr agent wait`) is a separate capability, specified in
   [`agent/`](../../agent/README.md); this bullet owns only the snapshot the listing carries.
 
+- **The live pane listing tells a float from a tiled pane, on every backend (CR 112)** —
+  [`placement/`](../placement/README.md)'s `pane:float` can *create* a floating pane; this is the
+  **read** side, so a caller can tell what it got back. `LivePane.floating` is **required and always
+  answered**, deliberately unlike `agentStatus`: **tmux** and **zellij** read a real per-pane flag
+  (`#{pane_floating_flag}`, `is_floating`), each free in the listing call the adapter already makes,
+  and a backend with **no floating-pane concept at all** — herdr, wezterm, cmux, otty — answers
+  `false` **by construction**, because every pane it can report really is tiled. There is no third
+  state to model, so an optional field would only manufacture one and leave a caller guessing whether
+  an absent value meant *not floating* or *cannot tell*. The **create** side splits the backends
+  two-and-two and has to refuse by name; the **read** side does not split, which is why this rides
+  `LivePane` directly rather than a capability object.
+
 ## Control Flow
 
 ### Reporting whether a pane is focused, and what the listing carries
@@ -126,6 +138,9 @@ graph TD
   LS --> AGT{"AGT: does the backend feed agentStatus"}
   AGT -->|"AGT1: herdr"| AGTY["filled from the pane's agent-state feed"]
   AGT -->|"AGT2: tmux, wezterm, or zellij"| AGTN["omitted, absent rather than unknown"]
+  LS --> FLT{"FLT: does the backend have a floating pane"}
+  FLT -->|"FLT1: tmux or zellij"| FLTY["read from the pane's own floating flag, free in the same call"]
+  FLT -->|"FLT2: herdr, wezterm, cmux, or otty"| FLTN["false by construction, never omitted"]
 ```
 
 ### Resolving a pane locator
@@ -192,3 +207,14 @@ primitive built on top of this feed is its own capability, in [`agent/`](../../a
 |---|---|---|
 | AGT1 herdr feeds `agentStatus` → filled from `agent_status` | a herdr pane whose feed reports `working` | `herdr's live pane listing reports each pane's agentStatus` |
 | AGT2 no feed → `agentStatus` omitted | a pane on each of tmux, wezterm, and zellij | `<backend>'s live pane listing omits agentStatus, because the backend has no agent-state feed` |
+
+### The live pane listing tells a float from a tiled pane (CR 112)
+
+The read side of `pane:float`. `LivePane.floating` is **required** — every backend can answer, so
+absence is not one of its states — and it costs no extra exec anywhere: tmux and zellij read a flag
+already in the listing they ask for, and the float-less backends answer `false` by construction.
+
+| Edge | Path (Given) | Scenario |
+|---|---|---|
+| FLT1 backend has a float → read from its own flag | a float and a tiled pane on each of tmux and zellij | `<backend>'s live pane listing tells a floating pane from a tiled one` |
+| FLT2 backend has no float → `false` by construction | a pane on each of herdr, wezterm, cmux, and otty | `<backend>'s live pane listing reports every pane not floating, by construction` |

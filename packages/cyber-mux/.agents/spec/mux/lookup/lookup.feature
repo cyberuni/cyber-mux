@@ -242,3 +242,40 @@ Feature: mux lookup — resolving a pane, the focus probe, and the listing conte
       | tmux    |
       | wezterm |
       | zellij  |
+
+  # ── The live pane listing tells a float from a tiled pane (CR 112) ──
+  # `MuxPlacement`'s pane:float can CREATE a floating pane on the backends that have one; this is the
+  # READ side, so a caller can tell what it got back. Unlike agentStatus, the field is REQUIRED and
+  # always answered: tmux and zellij read a real per-pane flag, free in the listing call the adapter
+  # already makes, and a backend with no floating-pane concept answers false BY CONSTRUCTION — every
+  # pane it can report really is tiled. So there is no third state and nothing to omit. The CREATE
+  # side splits the backends two-and-two and refuses by name (placement/placement.feature); the read
+  # side does not split, because false is an answer rather than a refusal.
+
+  @id:lookup-listing-reports-floating
+  Scenario Outline: <backend>'s live pane listing tells a floating pane from a tiled one
+    Given a <backend> pane opened as a float and another opened tiled
+    When the live panes are listed
+    Then the float's entry reports floating true and the tiled pane's reports floating false
+
+    Examples:
+      | backend |
+      | tmux    |
+      | zellij  |
+
+  @id:lookup-listing-floating-false-by-construction
+  Scenario Outline: <backend>'s live pane listing reports every pane not floating, by construction
+    Given a <backend> pane, any pane
+    When the live panes are listed
+    Then that pane's entry reports floating false
+    # Not a stub and not a refusal: this backend has no floating-pane concept at all, so a tiled
+    # answer is the true one for every pane it can report. The field is never omitted here — absence
+    # is not one of its states, and a caller reading one would have to guess whether it meant "not
+    # floating" or "cannot tell".
+
+    Examples:
+      | backend |
+      | herdr   |
+      | wezterm |
+      | cmux    |
+      | otty    |
