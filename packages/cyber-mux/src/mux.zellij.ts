@@ -280,9 +280,14 @@ interface ZellijPane {
 	title?: string | undefined
 	is_focused?: boolean | undefined
 	/**
-	 * Whether the pane floats above the tiled layout — `is_floating`, in 0.44.3's verified key set
-	 * (see the dump `terminal_command` was corrected from). Free: it rides the `list-panes --json`
-	 * call this adapter already makes, so `LivePane.floating` costs zellij no second exec either.
+	 * Whether the pane floats above the tiled layout — `is_floating`. Free: it rides the `list-panes
+	 * --json` call this adapter already makes, so `LivePane.floating` costs zellij no second exec.
+	 *
+	 * Verified against a live 0.44.3, not just against the recorded key dump, and the distinction
+	 * mattered: a key existing in zellij's pane schema would not by itself prove that a FLOATING pane
+	 * appears in the collection `list-panes` returns. It does — a `new-pane --floating` shows up in
+	 * the same flat array as the tiled panes, carrying `is_floating: true`, which is what
+	 * `mux.zellij.integration.test.ts` pins at the real boundary.
 	 */
 	is_floating?: boolean | undefined
 	/**

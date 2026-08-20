@@ -39,6 +39,18 @@ async function pollUntil(read: () => string, done: (out: string) => boolean, tim
 	return out
 }
 
+/**
+ * The suite's own copy of the adapter's `samePane` rule: `new-pane` prints the PREFIXED `terminal_N`
+ * while `list-panes --json` reports `id` as a BARE integer, so an id from an `open` and an id from a
+ * listing are the same pane spelled two ways. Copied rather than exported — the adapter's internal is
+ * not part of the published surface, and a test that re-states the rule fails loudly if the adapter
+ * ever changes it, which importing it would hide.
+ */
+function samePaneId(a: string, b: string): boolean {
+	const normalize = (id: string) => (/^\d+$/.test(id) ? `terminal_${id}` : id)
+	return normalize(a) === normalize(b)
+}
+
 const SESSION = `cm-itest-${process.pid}`
 
 // SHORT, deliberately — the same `sun_path` trap the wezterm suite documents. Zellij's socket lands at
@@ -165,12 +177,20 @@ describe.skipIf(!hasZellij() || !hasScript())('spec:cyber-mux/mux', () => {
 		// out of a live `list-panes --json`, so a mocked exec only ever proves we can parse our own
 		// fixture. Opened both ways in one test on purpose — a suite that only ever saw a float could
 		// pass on an adapter that hardcoded `true`.
+		//
+		// Matched with `samePaneId`, NEVER `===`: `new-pane` prints `terminal_N` while `list-panes`
+		// reports the bare `N`, the asymmetry the adapter's own `samePane` exists for and which the
+		// `mux.zellij.ts` header calls load-bearing. A raw comparison here misses every time and reads
+		// as "the float is absent from the listing" rather than as "the ids are spelled differently".
 		it('listPanes() tells a real float from a real tiled pane', () => {
 			const float = adapter.open(exec, { cwd, at: 'pane:float' })
 			const tiled = adapter.open(exec, { cwd, at: 'pane:right', from: { id: base } })
 			const panes = adapter.listPanes(exec)
-			expect(panes.find((p) => p.id === float.id)?.floating).toBe(true)
-			expect(panes.find((p) => p.id === tiled.id)?.floating).toBe(false)
+			// Found at all, first — so a miss is reported as a miss rather than as a wrong flag.
+			expect(panes.filter((p) => samePaneId(p.id, float.id)).length).toBe(1)
+			expect(panes.filter((p) => samePaneId(p.id, tiled.id)).length).toBe(1)
+			expect(panes.find((p) => samePaneId(p.id, float.id))?.floating).toBe(true)
+			expect(panes.find((p) => samePaneId(p.id, tiled.id))?.floating).toBe(false)
 		})
 
 		it('submit()/read() actually run a command in and capture from a real pane', async () => {
