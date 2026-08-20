@@ -932,9 +932,9 @@ describe('spec:cyber-mux/mux/lookup', () => {
 				},
 			})
 			expect(herdrMuxAdapter.listPanes(fakeExec([], { 'pane list': listOut }))).toEqual([
-				{ id: 'w3:p1', mux: 'herdr', harness: 'claude', cwd: '/repo/a' },
-				{ id: 'w3:p2', mux: 'herdr', harness: 'codex', cwd: '/repo/b' },
-				{ id: 'w3:p3', mux: 'herdr', harness: undefined, cwd: '/repo/c' },
+				{ id: 'w3:p1', mux: 'herdr', harness: 'claude', cwd: '/repo/a', floating: false },
+				{ id: 'w3:p2', mux: 'herdr', harness: 'codex', cwd: '/repo/b', floating: false },
+				{ id: 'w3:p3', mux: 'herdr', harness: undefined, cwd: '/repo/c', floating: false },
 			])
 		})
 
@@ -949,7 +949,7 @@ describe('spec:cyber-mux/mux/lookup', () => {
 				},
 			})
 			expect(herdrMuxAdapter.listPanes(fakeExec([], { 'pane list': listOut }))).toEqual([
-				{ id: 'w3:p9', mux: 'herdr', harness: undefined, cwd: undefined },
+				{ id: 'w3:p9', mux: 'herdr', harness: undefined, cwd: undefined, floating: false },
 			])
 		})
 
@@ -959,11 +959,17 @@ describe('spec:cyber-mux/mux/lookup', () => {
 		})
 
 		// The herdr row of the outline; the tmux row lives in session.tmux.test.ts.
+		// The herdr row of the outline: `cwd` is on the pane record `pane list` already returns.
+		it('lookup-listing-reports-cwd', () => {
+			const listOut = JSON.stringify({ result: { panes: [{ pane_id: 'w3:p1', cwd: '/repo/a' }] } })
+			expect(herdrMuxAdapter.listPanes(fakeExec([], { 'pane list': listOut }))[0]?.cwd).toBe('/repo/a')
+		})
+
 		it('lookup-listing-carries-label', () => {
 			// A person renamed this pane — herdr reports the name it was given, as its own field.
 			const listOut = JSON.stringify({ result: { panes: [{ pane_id: 'w3:p1', cwd: '/repo/a', label: 'worker' }] } })
 			expect(herdrMuxAdapter.listPanes(fakeExec([], { 'pane list': listOut }))).toEqual([
-				{ id: 'w3:p1', mux: 'herdr', harness: undefined, cwd: '/repo/a', label: 'worker' },
+				{ id: 'w3:p1', mux: 'herdr', harness: undefined, cwd: '/repo/a', label: 'worker', floating: false },
 			])
 		})
 
@@ -977,6 +983,21 @@ describe('spec:cyber-mux/mux/lookup', () => {
 			expect(panes[0]?.label).toBeUndefined()
 		})
 
+		it('lookup-listing-floating-false-by-construction', () => {
+			// herdr has no floating-pane concept at all, so every pane it reports really is tiled.
+			// `false` is the TRUE answer here, not a stub standing in for one — and unlike `harness` and
+			// `agentStatus`, which are conditionally spread, `floating` is unconditional: an absent value
+			// would leave a caller guessing between "not floating" and "cannot tell". The create side
+			// refuses a `pane:float` open here BY NAME because there is no truthful pane to hand back;
+			// the read side has a truthful answer, and this is it.
+			const listOut = JSON.stringify({
+				result: { panes: [{ pane_id: 'w3:p1', cwd: '/repo/a' }, { pane_id: 'w3:p2' }] },
+			})
+			const panes = herdrMuxAdapter.listPanes(fakeExec([], { 'pane list': listOut }))
+			expect(panes.length).toBe(2)
+			for (const pane of panes) expect(pane.floating).toBe(false)
+		})
+
 		it('lookup-listing-reports-agent-status-herdr', () => {
 			// herdr 0.7.5 carries `agent_status` at the top level of each pane record — listPanes reports
 			// it on LivePane.agentStatus, exactly the way the herdr-only `harness` field already works.
@@ -984,7 +1005,7 @@ describe('spec:cyber-mux/mux/lookup', () => {
 				result: { panes: [{ pane_id: 'w3:p1', agent: 'claude', agent_status: 'working', cwd: '/repo/a' }] },
 			})
 			expect(herdrMuxAdapter.listPanes(fakeExec([], { 'pane list': listOut }))).toEqual([
-				{ id: 'w3:p1', mux: 'herdr', harness: 'claude', agentStatus: 'working', cwd: '/repo/a' },
+				{ id: 'w3:p1', mux: 'herdr', harness: 'claude', agentStatus: 'working', cwd: '/repo/a', floating: false },
 			])
 		})
 

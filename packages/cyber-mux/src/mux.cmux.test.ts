@@ -212,9 +212,9 @@ describe('spec:cyber-mux/mux', () => {
 			const exec = fakeExec([], { 'list-panes': LIST_PANES_RESPONSE })
 			const panes = cmuxMuxAdapter.listPanes(exec)
 			expect(panes).toEqual([
-				{ id: 'surface:1', mux: 'cmux', cwd: '/home/user', label: 'main' },
-				{ id: 'surface:2', mux: 'cmux', cwd: '/home/user/tests', label: 'tests' },
-				{ id: 'surface:3', mux: 'cmux', cwd: '/tmp' },
+				{ id: 'surface:1', mux: 'cmux', cwd: '/home/user', label: 'main', floating: false },
+				{ id: 'surface:2', mux: 'cmux', cwd: '/home/user/tests', label: 'tests', floating: false },
+				{ id: 'surface:3', mux: 'cmux', cwd: '/tmp', floating: false },
 			])
 		})
 
@@ -227,6 +227,25 @@ describe('spec:cyber-mux/mux', () => {
 
 		it('name is cmux', () => {
 			expect(cmuxMuxAdapter.name).toBe('cmux')
+		})
+	})
+})
+
+describe('spec:cyber-mux/mux/lookup', () => {
+	describe('cmuxMuxAdapter', () => {
+		// The cmux row of the outline: `cwd` rides the same `list-panes` call the listing already makes.
+		it('lookup-listing-reports-cwd', () => {
+			const panes = cmuxMuxAdapter.listPanes(fakeExec([], { 'list-panes': LIST_PANES_RESPONSE }))
+			expect(panes.map((p) => p.cwd)).toEqual(['/home/user', '/home/user/tests', '/tmp'])
+		})
+
+		it('lookup-listing-floating-false-by-construction', () => {
+			// cmux has no floating-pane concept at all, so every surface it reports really is tiled.
+			// `false` is the TRUE answer here, not a stub standing in for one — and it is never omitted:
+			// an absent value would leave a caller guessing between "not floating" and "cannot tell".
+			const panes = cmuxMuxAdapter.listPanes(fakeExec([], { 'list-panes': LIST_PANES_RESPONSE }))
+			expect(panes.length).toBeGreaterThan(0)
+			for (const pane of panes) expect(pane.floating).toBe(false)
 		})
 	})
 })

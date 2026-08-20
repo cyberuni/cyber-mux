@@ -177,9 +177,9 @@ describe('spec:cyber-mux/mux', () => {
 			const exec = fakeExec([], { panes: LIST_PANES_RESPONSE })
 			const panes = ottyMuxAdapter.listPanes(exec)
 			expect(panes).toEqual([
-				{ id: 'pane:1', mux: 'otty', cwd: '/home/user', label: 'main' },
-				{ id: 'pane:2', mux: 'otty', cwd: '/home/user/tests', label: 'tests' },
-				{ id: 'pane:3', mux: 'otty', cwd: '/tmp' },
+				{ id: 'pane:1', mux: 'otty', cwd: '/home/user', label: 'main', floating: false },
+				{ id: 'pane:2', mux: 'otty', cwd: '/home/user/tests', label: 'tests', floating: false },
+				{ id: 'pane:3', mux: 'otty', cwd: '/tmp', floating: false },
 			])
 		})
 
@@ -206,6 +206,25 @@ describe('spec:cyber-mux/mux', () => {
 
 		it('name is otty', () => {
 			expect(ottyMuxAdapter.name).toBe('otty')
+		})
+	})
+})
+
+describe('spec:cyber-mux/mux/lookup', () => {
+	describe('ottyMuxAdapter', () => {
+		// The otty row of the outline: `cwd` rides the same `panes` call the listing already makes.
+		it('lookup-listing-reports-cwd', () => {
+			const panes = ottyMuxAdapter.listPanes(fakeExec([], { panes: LIST_PANES_RESPONSE }))
+			expect(panes.map((p) => p.cwd)).toEqual(['/home/user', '/home/user/tests', '/tmp'])
+		})
+
+		it('lookup-listing-floating-false-by-construction', () => {
+			// otty has no floating-pane concept at all, so every pane it reports really is tiled. `false`
+			// is the TRUE answer here, not a stub standing in for one — and it is never omitted: an absent
+			// value would leave a caller guessing between "not floating" and "cannot tell".
+			const panes = ottyMuxAdapter.listPanes(fakeExec([], { panes: LIST_PANES_RESPONSE }))
+			expect(panes.length).toBeGreaterThan(0)
+			for (const pane of panes) expect(pane.floating).toBe(false)
 		})
 	})
 })

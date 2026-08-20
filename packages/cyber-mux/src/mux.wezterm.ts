@@ -212,7 +212,11 @@ export function createWeztermAdapter(deps: { newId: NewId }): MuxAdapter {
 
 		listPanes(exec): LivePane[] {
 			return listWeztermPanes(exec).map((p) => {
-				const pane: LivePane = { id: String(p.pane_id), mux: 'wezterm' as const }
+				// `floating` is `false` BY CONSTRUCTION, not a stub and not a refusal: wezterm has no floating-pane
+				// concept at all, so every pane it can report really is tiled. The create side refuses a
+				// `'pane:float'` open here by NAME because there is no truthful pane to hand back; the read
+				// side has a truthful answer, and this is it.
+				const pane: LivePane = { id: String(p.pane_id), mux: 'wezterm' as const, floating: false }
 				const cwd = weztermCwd(p.cwd)
 				if (cwd) pane.cwd = cwd
 				// No `label`, ever — not a filtering rule like tmux's hostname guard, but the honest answer

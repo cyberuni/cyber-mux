@@ -1,5 +1,6 @@
 import { envFallback } from './env-fallback.ts'
 import { type Exec, withReason } from './exec.ts'
+import { refuseFloatingPane } from './floating.ts'
 import type { LivePane, MuxAdapter, MuxReadOptions, OpenedPane } from './mux.ts'
 import { pollForOutput } from './wait-output.ts'
 
@@ -75,6 +76,14 @@ export function createOttyAdapter(deps: { window?: string | undefined }): MuxAda
 				runLaunch(adapter, exec, opened, opts.env, opts.launch)
 				return opened
 			}
+
+			// otty has no floating-pane concept: `pane split` always takes a share of the region and resizes
+			// its neighbors, and nothing in the CLI opens a pane above the layout. So this REFUSES by name
+			// rather than substituting a split — the substitute would satisfy the caller's pane id and
+			// violate the one property they asked for. No `canFloatPanes` above is the declaration; this
+			// is the enforcement, and both are needed for the same reason `agent wait` checks twice: the
+			// CLI's pre-flight check is not on the path a library caller reaching `open()` directly takes.
+			if (at === 'pane:float') refuseFloatingPane(adapter.name)
 
 			// pane:right / pane:down — a split
 			if (opts.from) adapter.focus(exec, opts.from)
@@ -162,7 +171,11 @@ export function createOttyAdapter(deps: { window?: string | undefined }): MuxAda
 
 		listPanes(exec): LivePane[] {
 			return listOttyPanes(exec).map((p) => {
-				const pane: LivePane = { id: p.id, mux: 'otty' as const }
+				// `floating` is `false` BY CONSTRUCTION, not a stub and not a refusal: otty has no floating-pane
+				// concept at all, so every pane it can report really is tiled. The create side refuses a
+				// `'pane:float'` open by NAME (`refuseFloatingPane` in `open` above) because there is no
+				// truthful pane to hand back; the read side has a truthful answer, and this is it.
+				const pane: LivePane = { id: p.id, mux: 'otty' as const, floating: false }
 				if (p.cwd) pane.cwd = p.cwd
 				if (p.title) pane.label = p.title
 				return pane

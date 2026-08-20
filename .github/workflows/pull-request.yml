@@ -16,11 +16,13 @@ jobs:
   # re-derivation. Runs outside any multiplexer pane, which is what unlocks the placements the
   # suite gates away from a caller's own session.
   #
-  # Non-blocking for now: herdr with no attached client is unproven in CI. Once this is green
-  # across a run of PRs, drop `continue-on-error` and make it required.
+  # BLOCKING. It was `continue-on-error: true` while herdr-with-no-attached-client was unproven here,
+  # and that flag outlived its reason: because the job could not fail the run, a red real-boundary
+  # suite reported as a green run, and a false green landed on PR #114. The last thing keeping the
+  # flag on was the zellij suite's own flakiness, fixed in #115 — a lost or misdelivered `zellij
+  # action` reply read as an empty session — so a failure here is now a real one and says so.
   live-backends:
     runs-on: ubuntu-latest
-    continue-on-error: true
     env:
       # Pinned, not "latest": a herdr release should never silently change what this suite runs
       # against. Bump deliberately, the same way mise pins the toolchain.
@@ -30,6 +32,11 @@ jobs:
       # adapter stands on (`--pane-id` across the verbs, `list-panes --json`, ids returned from
       # `new-pane`/`new-tab`, `focus-pane-id`) landed in 0.44.0. Older binaries fail every command.
       ZELLIJ_VERSION: v0.44.3
+      # 3.7 or newer is a HARD floor for the floating-pane rows: `new-pane` is tmux 3.7's own command
+      # and simply does not exist below it. Ubuntu's packaged tmux is 3.4, so `apt-get install tmux`
+      # left every float row SKIPPING here — present in the report, covering nothing. Pinned to an
+      # exact release for the same reason herdr and zellij are.
+      TMUX_VERSION: 3.7c
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -38,8 +45,29 @@ jobs:
           node-version: '22'
           cache: pnpm
 
-      - name: Install tmux
-        run: sudo apt-get update && sudo apt-get install -y tmux
+      # Built from source, not installed from apt: Ubuntu 24.04 ships tmux 3.4, which has no
+      # `new-pane` and so cannot exercise the floating-pane placement at all. Upstream publishes only
+      # a source tarball — there is no official binary and no maintained 3.7 PPA — so the build is the
+      # cheapest route to a version this suite can actually cover floats on. tmux is a small C
+      # codebase and this costs well under a minute.
+      #
+      # `bison` is not optional despite tmux being plain C: `cmd-parse.y` is a yacc grammar, and
+      # configure fails at the `yacc` check without it.
+      - name: Install tmux ${{ env.TMUX_VERSION }} (from source — apt's is 3.4, too old for floats)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential bison libevent-dev libncurses-dev pkg-config
+          curl -fsSL -o "${RUNNER_TEMP}/tmux.tar.gz" \
+            "https://github.com/tmux/tmux/releases/download/${TMUX_VERSION}/tmux-${TMUX_VERSION}.tar.gz"
+          tar -xzf "${RUNNER_TEMP}/tmux.tar.gz" -C "${RUNNER_TEMP}"
+          cd "${RUNNER_TEMP}/tmux-${TMUX_VERSION}"
+          ./configure
+          make -j"$(nproc)"
+          sudo make install
+          # Fail the step here rather than letting the suite silently skip its float rows on a build
+          # that quietly produced the wrong version.
+          tmux -V
+          tmux -V | grep -q "${TMUX_VERSION}"
 
       # Upstream publishes statically linked release binaries, so this needs no package manager and
       # no toolchain. (herdr is also in homebrew-core, but Homebrew is NOT on the ubuntu-24.04

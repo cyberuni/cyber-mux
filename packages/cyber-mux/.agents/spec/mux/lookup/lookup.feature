@@ -242,3 +242,78 @@ Feature: mux lookup — resolving a pane, the focus probe, and the listing conte
       | tmux    |
       | wezterm |
       | zellij  |
+
+  # ── The live pane listing tells a float from a tiled pane (CR 112) ──
+  # `MuxPlacement`'s pane:float can CREATE a floating pane on the backends that have one; this is the
+  # READ side, so a caller can tell what it got back. Unlike agentStatus, the field is REQUIRED and
+  # always answered: tmux and zellij read a real per-pane flag, free in the listing call the adapter
+  # already makes, and a backend with no floating-pane concept answers false BY CONSTRUCTION — every
+  # pane it can report really is tiled. So there is no third state and nothing to omit. The CREATE
+  # side splits the backends two-and-two and refuses by name (placement/placement.feature); the read
+  # side does not split, because false is an answer rather than a refusal.
+
+  @id:lookup-listing-reports-floating
+  Scenario Outline: <backend>'s live pane listing tells a floating pane from a tiled one
+    Given a <backend> pane opened as a float and another opened tiled
+    When the live panes are listed
+    Then the float's entry reports floating true and the tiled pane's reports floating false
+
+    Examples:
+      | backend |
+      | tmux    |
+      | zellij  |
+
+  @id:lookup-listing-floating-false-by-construction
+  Scenario Outline: <backend>'s live pane listing reports every pane not floating, by construction
+    Given a <backend> pane, any pane
+    When the live panes are listed
+    Then that pane's entry reports floating false
+    # Not a stub and not a refusal: this backend has no floating-pane concept at all, so a tiled
+    # answer is the true one for every pane it can report. The field is never omitted here — absence
+    # is not one of its states, and a caller reading one would have to guess whether it meant "not
+    # floating" or "cannot tell".
+
+    Examples:
+      | backend |
+      | herdr   |
+      | wezterm |
+      | cmux    |
+      | otty    |
+
+  # ── The live pane listing reports each pane's working directory (CR 116) ──
+  # A pane's cwd is what a caller filters a listing by ("which pane is in this repo"), and it is the
+  # third field an ambiguous name yields to choose between candidates — so a backend that omits it
+  # answers those questions with nothing. Every backend cyber-mux drives reports the directory in the
+  # listing call the adapter already makes, so this costs no extra exec anywhere. Zellij was the one
+  # gap, from a probe that read a plugin pane's record — which omits the key — and concluded the field
+  # did not exist; it does, on every terminal pane.
+
+  @id:lookup-listing-reports-cwd
+  Scenario Outline: <backend>'s live pane listing reports each pane's working directory
+    Given a <backend> pane running in a known directory
+    When the live panes are listed
+    Then that pane's entry carries that directory as its cwd
+
+    Examples:
+      | backend |
+      | tmux    |
+      | herdr   |
+      | wezterm |
+      | zellij  |
+      | cmux    |
+      | otty    |
+
+  # ── A listed pane's id names exactly one pane (CR 116) ──
+  # Resolution addresses a pane by id, so an id two panes share is an identity hazard everywhere:
+  # paneExists, the focus query, and the guard that catches an open reporting a pane it never
+  # created all resolve the wrong record. zellij is where this is real — it numbers plugin panes and
+  # terminal panes in SEPARATE spaces, so a live session reports id 0 for both its suppressed
+  # zellij:link plugin pane and its first terminal pane. The kind is what disambiguates them, and
+  # the listing is where that has to be settled: a caller holds an opaque id and cannot.
+
+  @id:lookup-listing-id-names-one-pane
+  Scenario: a plugin pane and a terminal pane sharing a number are listed under different ids
+    Given a zellij session whose plugin pane and first terminal pane both report the number 0
+    When the live panes are listed
+    Then the two panes are reported under different ids, neither collapsed onto the other
+    And each of those ids still addresses its own pane on the backend

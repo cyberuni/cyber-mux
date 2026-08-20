@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildProgram } from './cli.ts'
 import type { Exec } from './exec.ts'
 import { canFloatPanes, FloatingPanesUnsupportedError } from './floating.ts'
+import { cmuxMuxAdapter } from './mux.cmux.ts'
 import { herdrMuxAdapter } from './mux.herdr.ts'
+import { ottyMuxAdapter } from './mux.otty.ts'
 import { tmuxMuxAdapter } from './mux.tmux.ts'
 import type { MuxAdapter } from './mux.ts'
 import { weztermMuxAdapter } from './mux.wezterm.ts'
@@ -27,12 +29,25 @@ function fakeTmuxExec(calls: string[][], responses: Record<string, string | null
 }
 
 /** zellij replies keyed by the verb (args[1]) — every call is `zellij action <verb> …`. */
-function fakeZellijExec(calls: string[][], responses: Record<string, string | null> = {}): Exec {
+function fakeZellijExec(calls: string[][], responses: Record<string, string | null | (string | null)[]> = {}): Exec {
+	const queued = new Map<string, (string | null)[]>()
 	return (_cmd, args) => {
 		calls.push(args)
-		return responses[args[1]!] ?? null
+		const verb = args[1]!
+		const canned = responses[verb]
+		// An ARRAY is a SEQUENCE of replies for repeated calls to the same verb, the last one standing
+		// for every call after it. `list-panes` needs it: a zellij open reads the listing BEFORE the
+		// command too, so it can refuse an id that names a pane which was already standing.
+		if (!Array.isArray(canned)) return canned ?? null
+		const rest = queued.get(verb) ?? [...canned]
+		const next = rest.length > 1 ? rest.shift()! : rest[0]
+		queued.set(verb, rest)
+		return next ?? null
 	}
 }
+
+/** The session BEFORE a zellij open — nothing standing, so anything the listing gains is the open's. */
+const ZELLIJ_LIST_NONE = '[]'
 
 const ZELLIJ_LIST_ONE = JSON.stringify([
 	{ id: 'terminal_9', tab_id: 2, title: 'zsh', terminal_command: 'zsh', is_focused: true },
@@ -41,12 +56,14 @@ const ZELLIJ_LIST_ONE = JSON.stringify([
 describe('spec:cyber-mux/mux/placement', () => {
 	describe('pane:float — the capability declaration', () => {
 		// The declaration is what a caller reads BEFORE opening, so the split it encodes is the whole
-		// contract: two backends with a native floating pane, two with no such concept at all.
+		// contract: two backends with a native floating pane, the rest with no such concept at all.
 		it.each<{ adapter: MuxAdapter; floats: boolean }>([
 			{ adapter: tmuxMuxAdapter, floats: true },
 			{ adapter: zellijMuxAdapter, floats: true },
 			{ adapter: weztermMuxAdapter, floats: false },
 			{ adapter: herdrMuxAdapter, floats: false },
+			{ adapter: cmuxMuxAdapter, floats: false },
+			{ adapter: ottyMuxAdapter, floats: false },
 		])('@id:placement-float-declared — $adapter.name declares whether it can open a floating pane', ({
 			adapter,
 			floats,
@@ -95,7 +112,14 @@ describe('spec:cyber-mux/mux/placement', () => {
 			// tmux is the backend that CAN size a split (`canSizeSplits`), which is what makes this a real
 			// claim rather than a restatement: the ratio is dropped because a float has no original pane,
 			// not because tmux cannot size.
+			//
+			// BOTH flags, and this is the whole point of the row. `new-pane` is not missing a sizing flag —
+			// `-l` and `-p` are both in its synopsis, identical to `split-window`, and it accepts them and
+			// silently ignores them (verified on 3.7c). So the argv is the only place the drop is visible:
+			// a float built with `-l 30%` measures exactly like this one, which is why the live row in
+			// `mux.tmux.integration.test.ts` cannot stand in for this check.
 			expect(calls[0]).not.toContain('-l')
+			expect(calls[0]).not.toContain('-p')
 		})
 
 		it('@id:placement-float-tmux-anchored-and-named — named by the post-birth rename', () => {
@@ -120,40 +144,56 @@ describe('spec:cyber-mux/mux/placement', () => {
 	describe('pane:float on zellij — new-pane --floating', () => {
 		it('@id:placement-float-zellij-floating-flag', () => {
 			const calls: string[][] = []
-			const exec = fakeZellijExec(calls, { 'new-pane': 'terminal_9', 'list-panes': ZELLIJ_LIST_ONE })
+			const exec = fakeZellijExec(calls, {
+				'new-pane': 'terminal_9',
+				'list-panes': [ZELLIJ_LIST_NONE, ZELLIJ_LIST_ONE],
+			})
 			const opened = zellijMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:float' })
 			expect(opened).toEqual({ id: 'terminal_9', tab: '2' })
-			expect(calls[0]).toEqual(['action', 'new-pane', '--floating', '--cwd', '/unit'])
-			expect(calls[0]).not.toContain('--direction')
+			// `calls[0]` is the listing read BEFORE the split — the snapshot that makes the id zellij
+			// reports checkable rather than trusted.
+			expect(calls[1]).toEqual(['action', 'new-pane', '--floating', '--cwd', '/unit'])
+			expect(calls[1]).not.toContain('--direction')
 		})
 
 		it('focuses `from` first, so the float lands over the caller’s tab', () => {
 			const calls: string[][] = []
-			const exec = fakeZellijExec(calls, { 'new-pane': 'terminal_9', 'list-panes': ZELLIJ_LIST_ONE })
+			const exec = fakeZellijExec(calls, {
+				'new-pane': 'terminal_9',
+				'list-panes': [ZELLIJ_LIST_NONE, ZELLIJ_LIST_ONE],
+			})
 			zellijMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:float', from: { id: 'terminal_3' } })
 			// `new-pane` has no target flag beyond `--tab-id`, so focusing is the only anchor available.
 			expect(calls[0]).toEqual(['action', 'focus-pane-id', 'terminal_3'])
-			expect(calls[1]).toEqual(['action', 'new-pane', '--floating', '--cwd', '/unit'])
+			expect(calls[2]).toEqual(['action', 'new-pane', '--floating', '--cwd', '/unit'])
 		})
 
 		it('names the float at birth with --name, and reports the ambient session as its workspace', () => {
 			const calls: string[][] = []
-			const exec = fakeZellijExec(calls, { 'new-pane': 'terminal_9', 'list-panes': ZELLIJ_LIST_ONE })
+			const exec = fakeZellijExec(calls, {
+				'new-pane': 'terminal_9',
+				'list-panes': [ZELLIJ_LIST_NONE, ZELLIJ_LIST_ONE],
+			})
 			const opened = createZellijAdapter({ session: 'my-session' }).open(exec, {
 				cwd: '/unit',
 				at: 'pane:float',
 				label: 'notes',
 			})
-			expect(calls[0]).toEqual(['action', 'new-pane', '--floating', '--cwd', '/unit', '--name', 'notes'])
+			expect(calls[1]).toEqual(['action', 'new-pane', '--floating', '--cwd', '/unit', '--name', 'notes'])
 			// A float lives in the ambient session as much as any other pane does.
 			expect(opened.workspace).toBe('my-session')
 		})
 	})
 
 	describe('pane:float on a backend with no floating pane — refused by name, never emulated', () => {
+		// Every non-floating backend belongs in these two tables, not just the ones the CLI happens to
+		// guard: `cli.ts` checks `canFloatPanes` before it ever reaches an adapter, so a LIBRARY caller
+		// holding an adapter directly (the surface issue #68 exported) is the one these rows defend.
 		it.each<{ adapter: MuxAdapter }>([
 			{ adapter: weztermMuxAdapter },
 			{ adapter: herdrMuxAdapter },
+			{ adapter: cmuxMuxAdapter },
+			{ adapter: ottyMuxAdapter },
 		])('@id:placement-float-refused-by-name — $adapter.name refuses before any exec', ({ adapter }) => {
 			const calls: string[][] = []
 			const exec: Exec = (_cmd, args) => {
@@ -168,6 +208,8 @@ describe('spec:cyber-mux/mux/placement', () => {
 		it.each<{ adapter: MuxAdapter }>([
 			{ adapter: weztermMuxAdapter },
 			{ adapter: herdrMuxAdapter },
+			{ adapter: cmuxMuxAdapter },
+			{ adapter: ottyMuxAdapter },
 		])('@id:placement-float-refused-by-name — $adapter.name names itself', ({ adapter }) => {
 			try {
 				adapter.open(() => null, { cwd: '/unit', at: 'pane:float' })

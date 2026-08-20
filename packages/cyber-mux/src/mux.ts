@@ -262,6 +262,27 @@ export interface LivePane {
 	 * blocking wait built on this feed is the separate, herdr-only `AgentLifecycle` capability.
 	 */
 	agentStatus?: AgentStatus | undefined
+	/**
+	 * Whether this pane FLOATS — sits above the tiled layout rather than taking a share of the region
+	 * (`MuxPlacement`'s `'pane:float'`). The read side of the capability `MuxAdapter.canFloatPanes`
+	 * declares: without it, nothing could tell a float apart from a tiled pane after the open that
+	 * made it.
+	 *
+	 * **REQUIRED, and the one `LivePane` field that is** — deliberately unlike `harness`, `cwd`,
+	 * `label` and `agentStatus`, whose absence means *the backend cannot report this*. Here every
+	 * backend can. tmux and zellij read a real per-pane flag (`#{pane_floating_flag}`,
+	 * `is_floating`), each free in the listing call the adapter already makes; the backends with no
+	 * floating-pane concept at all answer `false` BY CONSTRUCTION — truthfully, because a backend
+	 * that cannot open a float really does have only tiled panes. There is no third state to model,
+	 * so an optional field would only manufacture one, and a caller reading an absent value would
+	 * have to guess which of "not floating" and "cannot tell" it meant.
+	 *
+	 * That is also why this rides `LivePane` directly rather than a capability object. The CREATE
+	 * side splits the backends two-and-two and has to refuse by name
+	 * (`FloatingPanesUnsupportedError`); the READ side does not split, because `false` is a real
+	 * answer rather than a refusal.
+	 */
+	floating: boolean
 }
 
 export interface MuxReadOptions {

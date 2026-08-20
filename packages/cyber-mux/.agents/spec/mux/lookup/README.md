@@ -104,6 +104,39 @@ reads the live pane list, which answers ids and labels in one read.
   top of this feed (`herdr agent wait`) is a separate capability, specified in
   [`agent/`](../../agent/README.md); this bullet owns only the snapshot the listing carries.
 
+- **The live pane listing tells a float from a tiled pane, on every backend (CR 112)** —
+  [`placement/`](../placement/README.md)'s `pane:float` can *create* a floating pane; this is the
+  **read** side, so a caller can tell what it got back. `LivePane.floating` is **required and always
+  answered**, deliberately unlike `agentStatus`: **tmux** and **zellij** read a real per-pane flag
+  (`#{pane_floating_flag}`, `is_floating`), each free in the listing call the adapter already makes,
+  and a backend with **no floating-pane concept at all** — herdr, wezterm, cmux, otty — answers
+  `false` **by construction**, because every pane it can report really is tiled. There is no third
+  state to model, so an optional field would only manufacture one and leave a caller guessing whether
+  an absent value meant *not floating* or *cannot tell*. The **create** side splits the backends
+  two-and-two and has to refuse by name; the **read** side does not split, which is why this rides
+  `LivePane` directly rather than a capability object.
+
+- **The live pane listing reports each pane's working directory, on every backend (CR 116)** — a
+  caller filters a listing by cwd ("which pane is in this repo"), and cwd is one of the three fields
+  an ambiguous name yields to choose a candidate by, so a backend that omits it answers both
+  questions with nothing. Every backend reports it in the listing call the adapter already makes, so
+  it costs no extra exec: tmux's `#{pane_current_path}`, herdr's and cmux's and otty's own `cwd`,
+  wezterm's `file://` URI reduced to a bare path, and zellij's `pane_cwd`. `LivePane.cwd` stays
+  **optional** rather than required, unlike `floating` — a record can genuinely lack a directory to
+  report (a zellij plugin pane omits the key entirely, having none), and an absent value there is the
+  honest answer rather than a manufactured one.
+
+- **A listed pane's id names exactly one pane (CR 116)** — resolution addresses a pane by id, so an
+  id two panes share resolves the wrong record wherever ids are compared: the existence probe, the
+  focus query, and the guard that catches an open reporting a pane it never created. A backend that
+  numbers its panes in more than one space therefore owes the listing a QUALIFIED id, settled at the
+  adapter: zellij numbers plugin panes and terminal panes separately, so a live session reports the
+  number `0` for both its suppressed `zellij:link` plugin pane and its first terminal pane, and the
+  listing reports them as `plugin_0` and `terminal_0`. This is not the seam encoding a backend's id
+  syntax — the caller still holds an opaque string, and it still resolves by matching a live pane
+  rather than by shape. It is the backend saying which of its panes it means, which a caller holding
+  one opaque id cannot do for it.
+
 ## Control Flow
 
 ### Reporting whether a pane is focused, and what the listing carries
@@ -126,6 +159,12 @@ graph TD
   LS --> AGT{"AGT: does the backend feed agentStatus"}
   AGT -->|"AGT1: herdr"| AGTY["filled from the pane's agent-state feed"]
   AGT -->|"AGT2: tmux, wezterm, or zellij"| AGTN["omitted, absent rather than unknown"]
+  LS --> FLT{"FLT: does the backend have a floating pane"}
+  FLT -->|"FLT1: tmux or zellij"| FLTY["read from the pane's own floating flag, free in the same call"]
+  FLT -->|"FLT2: herdr, wezterm, cmux, or otty"| FLTN["false by construction, never omitted"]
+  LS --> CWD{"CWD: does the pane's record carry a working directory"}
+  CWD -->|"CWD1: yes, on every backend"| CWDY["reported as the pane's cwd, free in the same call"]
+  CWD -->|"CWD2: no directory to report"| CWDN["omitted, rather than an empty or invented one"]
 ```
 
 ### Resolving a pane locator
@@ -180,6 +219,7 @@ rendering of these outcomes — exit codes, the structured error, `--format` —
 | zero matches → not found, distinct from ambiguous | no pane labeled or ided worker | `a name matching no live pane is not found, rather than ambiguous` |
 | two or more label matches → fail acting on none, yield candidates to choose from | three panes all labeled worker | `a name matching two or more live panes fails rather than guessing which was meant` |
 | whole spaced label → taken as one locator | a tmux pane labeled `my worker` | `a label containing spaces resolves to its pane` |
+| an id names exactly one pane → each kind keeps its own | a zellij plugin pane and terminal pane both numbered 0 | `a plugin pane and a terminal pane sharing a number are listed under different ids` |
 
 ### The live pane listing reports `agentStatus`, herdr-only (CR 94)
 
@@ -192,3 +232,24 @@ primitive built on top of this feed is its own capability, in [`agent/`](../../a
 |---|---|---|
 | AGT1 herdr feeds `agentStatus` → filled from `agent_status` | a herdr pane whose feed reports `working` | `herdr's live pane listing reports each pane's agentStatus` |
 | AGT2 no feed → `agentStatus` omitted | a pane on each of tmux, wezterm, and zellij | `<backend>'s live pane listing omits agentStatus, because the backend has no agent-state feed` |
+
+### The live pane listing tells a float from a tiled pane (CR 112)
+
+The read side of `pane:float`. `LivePane.floating` is **required** — every backend can answer, so
+absence is not one of its states — and it costs no extra exec anywhere: tmux and zellij read a flag
+already in the listing they ask for, and the float-less backends answer `false` by construction.
+
+| Edge | Path (Given) | Scenario |
+|---|---|---|
+| FLT1 backend has a float → read from its own flag | a float and a tiled pane on each of tmux and zellij | `<backend>'s live pane listing tells a floating pane from a tiled one` |
+| FLT2 backend has no float → `false` by construction | a pane on each of herdr, wezterm, cmux, and otty | `<backend>'s live pane listing reports every pane not floating, by construction` |
+
+### The live pane listing reports each pane's working directory (CR 116)
+
+Filtering a listing by directory, and telling two same-named candidates apart, both read this field.
+Every backend answers it in the listing call the adapter already makes. It stays optional, because a
+record with no directory at all — a zellij plugin pane — must be able to say so.
+
+| Edge | Path (Given) | Scenario |
+|---|---|---|
+| CWD1 record carries a directory → reported as `cwd` | a pane in a known directory on each of tmux, herdr, wezterm, zellij, cmux, and otty | `<backend>'s live pane listing reports each pane's working directory` |

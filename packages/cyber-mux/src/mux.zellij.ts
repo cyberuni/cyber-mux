@@ -24,12 +24,32 @@ import { pollForOutput } from './wait-output.ts'
  * - The id forms are confirmed and asymmetric: `new-pane` prints the PREFIXED `terminal_N`, while
  *   `list-panes --json` reports `id` as a BARE integer. `samePane` is what makes those the same pane,
  *   so it is load-bearing rather than defensive.
- * - Two `list-panes --json` field names were simply wrong (`pane_cwd`, `pane_command`); see
- *   `ZellijPane`. That is the failure mode of a doc probe, and the reason this file now has a suite.
+ * - That bare integer is NOT unique: a live session reports `id: 0` for both its suppressed
+ *   `zellij:link` PLUGIN pane and its first terminal pane. The number is unique only within a kind,
+ *   and `is_plugin` is what says which kind — so `listZellijPanes` qualifies every bare id to
+ *   `terminal_N`/`plugin_N` before anything compares or reports it. Both prefixed forms are what
+ *   `--pane-id` itself accepts, and a bare `N` addresses the TERMINAL pane (verified: renaming
+ *   `--pane-id 3` renames terminal 3 and leaves plugin 3 alone), which is exactly the fold
+ *   `normalizePaneId` makes.
+ * - Which `list-panes --json` field names are real, and what each one carries. The label guard reads
+ *   `terminal_command`, not `pane_command` — a doc probe had that one backwards; see `ZellijPane`.
+ *   `pane_cwd` and `pane_command` are real too, and both are present ONLY on a terminal pane: a
+ *   plugin pane's record omits the keys entirely, which is how a probe that sampled one concluded
+ *   the fields did not exist at all. That is the failure mode of a doc probe, and the reason this
+ *   file now has a suite.
  * - `new-pane --direction` requires an attached client focused on a TERMINAL pane, and fails
  *   SILENTLY without one — it prints a plausible new pane id and exits 0 having created nothing.
- *   `open()` does not propagate that phantom: `openedForPane` cannot find the id in `list-panes` and
- *   throws. Every other verb here works against a session with no client attached.
+ *   Re-probed against 0.44.3 with the client parked on zellij's own release-notes PLUGIN pane, which
+ *   is where a fresh attach lands: the split printed `terminal_2`, exited 0, and the pane count did
+ *   not move. `open()` does not propagate that phantom — see `openedForPane`, which now believes a
+ *   reported id only where it names a pane that was NOT already standing.
+ * - **A `zellij action` reply can be delivered to the WRONG command**, and **a session no client has
+ *   ever attached to reports `list-panes --json` as an empty ARRAY** rather than as an error. Both
+ *   are the reason this file retries a listing instead of reading one empty answer as the truth; see
+ *   `LIST_PANES_ATTEMPTS` for the repro behind the first and `mux.zellij.integration.test.ts`'s
+ *   readiness gate for the second. So the older claim that every verb but `--direction` works against
+ *   a client-less session is wrong: the listing is silent there, and everything in this file that
+ *   resolves an id reads the listing.
  *
  * Real capability shape that fell out of the probe:
  *
@@ -98,13 +118,15 @@ export function createZellijAdapter(deps: { session?: string | undefined }): Mux
 				const args = ['action', 'new-tab', '--cwd', opts.cwd]
 				// `--name` names the tab at birth — native, unlike wezterm's post-birth `set-tab-title`.
 				if (opts.label) args.push('--name', opts.label)
+				// The pane ids standing BEFORE the command, which is what makes the id it reports checkable:
+				// zellij's reply can arrive empty or carry the PREVIOUS command's payload (see
+				// `openedForTab`), and only a pane that was not already there can be the one this open made.
+				const before = paneIdSet(exec)
 				const out = exec('zellij', args)
-				if (!out) throw new Error(withReason(exec, 'zellij action new-tab failed'))
-				const tabId = out.trim()
-				if (!tabId) throw new Error('zellij action new-tab did not report the new tab id')
-				// `new-tab` reports the TAB id, not a pane id; the tab's own initial pane is the single
-				// `list-panes` record carrying that `tab_id`.
-				const opened = openedForTab(exec, tabId, deps.session)
+				if (out === null) throw new Error(withReason(exec, 'zellij action new-tab failed'))
+				// `new-tab` reports the TAB id, not a pane id; the tab's own initial pane is the
+				// `list-panes` record carrying that `tab_id` and absent from `before`.
+				const opened = openedForTab(exec, out.trim(), before, deps.session)
 				runLaunch(adapter, exec, opened, opts.env, opts.launch)
 				return opened
 			}
@@ -123,11 +145,12 @@ export function createZellijAdapter(deps: { session?: string | undefined }): Mux
 			const args = ['action', 'new-pane', ...placement, '--cwd', opts.cwd]
 			// `--name` names the pane at birth — Zellij can title a pane, unlike wezterm.
 			if (opts.label) args.push('--name', opts.label)
+			// Snapshotted BEFORE the command, for the reason `openedForPane` documents: the id zellij prints
+			// is only believable once it names a pane that was not already standing.
+			const before = paneIdSet(exec)
 			const out = exec('zellij', args)
-			if (!out) throw new Error(withReason(exec, 'zellij action new-pane failed'))
-			const paneId = out.trim()
-			if (!paneId) throw new Error('zellij action new-pane did not report the new pane id')
-			const opened = openedForPane(exec, paneId, deps.session)
+			if (out === null) throw new Error(withReason(exec, 'zellij action new-pane failed'))
+			const opened = openedForPane(exec, out.trim(), before, deps.session)
 			runLaunch(adapter, exec, opened, opts.env, opts.launch)
 			return opened
 		},
@@ -244,11 +267,15 @@ export function createZellijAdapter(deps: { session?: string | undefined }): Mux
 
 		listPanes(exec): LivePane[] {
 			return listZellijPanes(exec).map((p) => {
-				// No `cwd`: `list-panes --json` carries no cwd field at ALL on 0.44.3 — verified against the
-				// live binary's key set, which the doc probe that built this adapter got wrong. So a zellij
-				// `LivePane` is genuinely cwd-less rather than sometimes-missing, and callers that filter by
-				// cwd get nothing here rather than a wrong answer.
-				const pane: LivePane = { id: p.id, mux: 'zellij' as const }
+				// `is_floating` read strictly: only a literal `true` floats, so a record missing the key
+				// (an older zellij, or a shape this adapter did not verify) reports the tiled answer
+				// rather than a truthy accident.
+				const pane: LivePane = { id: p.id, mux: 'zellij' as const, floating: p.is_floating === true }
+				// `pane_cwd` is the pane's own working directory, and it rides the listing call this adapter
+				// already makes — so cwd costs zellij no second exec. Absent on a plugin pane, which has no
+				// working directory to report; omitted then rather than reported as a wrong or empty one,
+				// the same absent-not-false convention the rest of `LivePane` follows.
+				if (p.pane_cwd) pane.cwd = p.pane_cwd
 				// A pane's title CAN be an authored name here (`new-pane --name` / `rename-pane`), unlike
 				// wezterm. But Zellij defaults an unnamed pane's title to its running command, so a title
 				// equal to `terminal_command` is ambient rather than chosen — dropped the same way tmux drops
@@ -277,55 +304,214 @@ interface ZellijPane {
 	title?: string | undefined
 	is_focused?: boolean | undefined
 	/**
+	 * Whether the pane floats above the tiled layout — `is_floating`. Free: it rides the `list-panes
+	 * --json` call this adapter already makes, so `LivePane.floating` costs zellij no second exec.
+	 *
+	 * Verified against a live 0.44.3, not just against the recorded key dump, and the distinction
+	 * mattered: a key existing in zellij's pane schema would not by itself prove that a FLOATING pane
+	 * appears in the collection `list-panes` returns. It does — a `new-pane --floating` shows up in
+	 * the same flat array as the tiled panes, carrying `is_floating: true`, which is what
+	 * `mux.zellij.integration.test.ts` pins at the real boundary.
+	 */
+	is_floating?: boolean | undefined
+	/**
+	 * Whether this record is a PLUGIN pane rather than a terminal one — `is_plugin`. Load-bearing for
+	 * identity, not decoration: zellij numbers plugin panes and terminal panes in separate spaces, so
+	 * `id` alone is ambiguous (a live session reports `0` for both its `zellij:link` plugin pane and
+	 * its first terminal pane). This is what `zellijPaneId` qualifies a bare id with.
+	 */
+	is_plugin?: boolean | undefined
+	/**
+	 * The pane's working directory — `pane_cwd`, the field `LivePane.cwd` is filled from. Present and
+	 * populated on a TERMINAL pane's record; a plugin pane's record omits the key entirely, which is
+	 * what an earlier probe — sampling a plugin pane — read as "there is no cwd field on 0.44.3".
+	 * There is; see `mux.zellij.integration.test.ts`, which reads it back off a pane it opened at a
+	 * known directory.
+	 */
+	pane_cwd?: string | undefined
+	/**
 	 * The command a terminal pane is running — `terminal_command`, NOT `pane_command`. Verified
 	 * against a live 0.44.3 `list-panes --json`; the original doc probe read the wrong name, which
 	 * silently disabled the ambient-title guard in `zellijLabel` (every unnamed pane exported its own
 	 * command as an authored label). `null` for a plugin pane and for a pane running a plain shell.
+	 *
+	 * `pane_command` is a SEPARATE, also-real key rather than the wrong spelling of this one — it
+	 * carries the shell (`/usr/bin/zsh`) where `terminal_command` is null. This guard wants the one
+	 * that is null for a shell: a shell pane's title is `Pane #N`, which is nobody's authored name
+	 * either way, while a `zellij action new-pane -- sleep 300` pane titles itself `sleep 300` and
+	 * both fields carry it. Nothing reads `pane_command` here, so it is named rather than parsed.
 	 */
 	terminal_command?: string | undefined
 }
 
 /**
- * One `zellij action list-panes --json` call, parsed defensively — never throws on bad output. The id
- * is coerced to a string so a bare-integer id (`3`) and a prefixed one (`terminal_3`) are compared as
- * strings by `samePane` rather than one being a number.
+ * How many times a listing is re-asked before it is reported as empty, and how many times an open
+ * re-looks for the pane it just made.
+ *
+ * Both exist for ONE verified defect in zellij 0.44.3's CLI, which no amount of adapter care can
+ * prevent and every verb here rides on: **a `zellij action` reply can be delivered to the wrong
+ * command.** Driven under CPU contention, a command exits 0 having printed NOTHING, and the reply it
+ * should have received arrives on the stdout of the command issued after it. Reproduced by
+ * alternating `new-tab` and `list-panes --json` 40 times on a loaded 2-core box — twice in 40, the
+ * `new-tab` printed an empty string and the `list-panes` that followed it printed `27`. Two hundred
+ * back-to-back `list-panes --json` calls with no mutating verb between them lost nothing, so it is
+ * the mutating verbs that open the window.
+ *
+ * The consequences land squarely here. An empty reply to `list-panes --json` is not an empty session
+ * — a live zellij session always has at least one pane — so reading it as one made every id
+ * resolution in this file fail at once. And an id printed by `new-pane`/`new-tab` may belong to the
+ * PREVIOUS command, so it can name a pane that has been standing all along.
+ *
+ * A retry is the honest remedy because the loss is per-call and independent: the same read reissued
+ * answers. These are ceilings on a wedged server, not a wait that decides a pass.
+ *
+ * What a retry CANNOT reach, stated so a caller knows the edge: a misdelivered reply may also be a
+ * valid pane array — an older one, which simply does not carry a pane opened since. Nothing in the
+ * shape of that answer marks it stale, so `listPanes` cannot reject it and a single negative read
+ * (`paneExists`, `isPaneFocused`) can be wrong. A caller that needs certainty on this backend re-asks;
+ * `mux.zellij.integration.test.ts` does exactly that.
  */
-function listZellijPanes(exec: Exec): ZellijPane[] {
+const LIST_PANES_ATTEMPTS = 3
+const OPEN_RESOLVE_ATTEMPTS = 10
+
+/**
+ * One `zellij action list-panes --json` read, parsed defensively — `undefined` for output that is not
+ * a pane array, so a caller can tell "zellij did not answer" from "zellij answered, with no panes".
+ * Every id is QUALIFIED on the way out (see `zellijPaneId`), so what this returns — and therefore
+ * what `LivePane.id` carries and what `samePane` compares — names exactly one live pane.
+ */
+function readZellijPanes(exec: Exec): ZellijPane[] | undefined {
 	const out = exec('zellij', ['action', 'list-panes', '--json'])
-	if (!out) return []
+	if (!out) return undefined
 	let parsed: unknown
 	try {
 		parsed = JSON.parse(out)
 	} catch {
-		return []
+		return undefined
 	}
-	if (!Array.isArray(parsed)) return []
+	if (!Array.isArray(parsed)) return undefined
 	return parsed
 		.filter((p): p is ZellijPane => p != null && (p as ZellijPane).id != null)
-		.map((p) => ({ ...p, id: String(p.id) }))
+		.map((p) => ({ ...p, id: zellijPaneId(p.id, p.is_plugin) }))
 }
 
 /**
- * The `OpenedPane` for a pane `new-pane` just reported — its tab resolved from the one `list-panes`
- * record carrying that pane id, and the workspace filled from the ambient session name. Throws rather
- * than guessing a tab: `OpenedPane.tab` is required (every multiplexer has the Tab level), and a wrong
- * tab is worse than a loud failure.
+ * The id a listing record is reported under — qualified by KIND, because zellij's bare number is not
+ * unique. Plugin panes and terminal panes are numbered in separate spaces, so a live session reports
+ * `id: 0` for both its suppressed `zellij:link` plugin pane and its first terminal pane; reporting
+ * both as `'0'` collapsed two genuinely different panes onto one `LivePane.id`, and every resolution
+ * by id — `paneExists`, `isPaneFocused`, and `openedForPane`'s guard against a phantom `new-pane`
+ * result — could then land on the wrong one.
+ *
+ * A bare integer therefore takes the `terminal_`/`plugin_` prefix its `is_plugin` names, which is the
+ * form `new-pane` already prints and the form `--pane-id` accepts for BOTH kinds (verified against a
+ * live 0.44.3). An id that already carries a prefix is left exactly as it is — this qualifies what
+ * zellij left ambiguous, it does not rewrite what zellij spelled out.
+ *
+ * A record with no `is_plugin` at all is read as a terminal pane: that is the same answer
+ * `normalizePaneId` gives a bare id, and the kind zellij's own bare-id addressing resolves to.
  */
-function openedForPane(exec: Exec, paneId: string, session: string | undefined): OpenedPane {
-	const found = listZellijPanes(exec).find((p) => samePane(p.id, paneId))
-	if (!found || found.tab_id == null) throw new Error(`zellij did not report a tab for the new pane ${paneId}`)
-	return openedPane(paneId, String(found.tab_id), session)
+function zellijPaneId(id: unknown, isPlugin: boolean | undefined): string {
+	const raw = String(id)
+	if (!/^\d+$/.test(raw)) return raw
+	return isPlugin === true ? `plugin_${raw}` : `terminal_${raw}`
 }
 
 /**
- * The `OpenedPane` for a tab `new-tab` just reported — its initial pane resolved as the single
- * `list-panes` record carrying that tab id. Throws rather than guessing: a new tab must have a pane,
- * and a caller handed a tab with no pane could neither drive nor name it.
+ * The session's panes — never throws on bad output, and never reports a LOST reply as an empty
+ * session. A read that did not come back as a pane array is simply re-asked (`LIST_PANES_ATTEMPTS`);
+ * only a session that refuses every time answers `[]`, which is then a real answer rather than a
+ * dropped one. See `LIST_PANES_ATTEMPTS` for the defect this stands in front of.
  */
-function openedForTab(exec: Exec, tabId: string, session: string | undefined): OpenedPane {
-	const pane = listZellijPanes(exec).find((p) => p.tab_id != null && String(p.tab_id) === tabId)
-	if (!pane) throw new Error(`zellij did not report a pane in the new tab ${tabId}`)
-	return openedPane(pane.id, tabId, session)
+function listZellijPanes(exec: Exec): ZellijPane[] {
+	for (let attempt = 1; attempt <= LIST_PANES_ATTEMPTS; attempt++) {
+		const panes = readZellijPanes(exec)
+		if (panes) return panes
+	}
+	return []
+}
+
+/**
+ * The panes standing right now, keyed the way `samePane` compares them — an open's BEFORE side. A
+ * pane already in this set cannot be the one the open just made, which is the whole check.
+ */
+function paneIdSet(exec: Exec): ReadonlySet<string> {
+	return new Set(listZellijPanes(exec).map((p) => normalizePaneId(p.id)))
+}
+
+/**
+ * The TERMINAL panes that appeared since `before` — the only candidates an open can have made.
+ *
+ * Plugin panes are excluded because zellij loads them on its own schedule, not the caller's: a tab
+ * opened by `new-tab` can be carrying a plugin pane in the same listing as its own initial pane, and
+ * that plugin record can sort FIRST. Resolving an open to it hands the caller a `plugin_N` — an id
+ * that exists, so nothing downstream refuses it, and that then answers nothing a pane is asked. Seen
+ * at the real boundary: an `open()` at `tab` returned `plugin_15`, and the `rename()` that followed
+ * renamed a pane the caller never opened. `new-tab` and `new-pane` both create a TERMINAL pane, so
+ * the kind is the discriminator, and `is_plugin` is the field that carries it.
+ */
+function appearedTerminals(exec: Exec, before: ReadonlySet<string>): ZellijPane[] {
+	return listZellijPanes(exec).filter((p) => p.is_plugin !== true && !before.has(normalizePaneId(p.id)))
+}
+
+/**
+ * The `OpenedPane` for a pane `new-pane` just made — resolved against the listing rather than taken
+ * on the word of the id zellij printed, because that word is not reliable (see
+ * `LIST_PANES_ATTEMPTS`): the reply may be empty, or may be the PREVIOUS command's, in which case
+ * `paneId` names a pane that has been standing all along.
+ *
+ * So the id is believed only where it names a pane ABSENT from `before` — the phantom guard this file
+ * has always meant to be, now closed. Where it cannot be believed, the session itself answers: a
+ * single pane that appeared over this open is unambiguous, and adopting it recovers a reply zellij
+ * lost instead of failing an open that genuinely happened. That fallback waits one round, so a
+ * printed id that is merely SLOW to appear still wins over a guess.
+ *
+ * Throws rather than guessing a tab: `OpenedPane.tab` is required (every multiplexer has the Tab
+ * level), and a wrong tab is worse than a loud failure.
+ */
+function openedForPane(
+	exec: Exec,
+	paneId: string,
+	before: ReadonlySet<string>,
+	session: string | undefined,
+): OpenedPane {
+	for (let attempt = 1; attempt <= OPEN_RESOLVE_ATTEMPTS; attempt++) {
+		const appeared = appearedTerminals(exec, before)
+		const claimed = paneId ? appeared.find((p) => samePane(p.id, paneId)) : undefined
+		if (claimed?.tab_id != null) return openedPane(paneId, String(claimed.tab_id), session)
+		const only = appeared.length === 1 ? appeared[0] : undefined
+		if ((attempt > 1 || !paneId) && only?.tab_id != null) return openedPane(only.id, String(only.tab_id), session)
+	}
+	throw new Error(
+		paneId
+			? `zellij did not report a tab for the new pane ${paneId}`
+			: 'zellij action new-pane did not report the new pane id, and no new pane appeared',
+	)
+}
+
+/**
+ * The `OpenedPane` for a tab `new-tab` just made — its initial pane resolved as the `list-panes`
+ * record that carries that tab id AND was not already standing. Same reply-delivery defect, same
+ * shape of answer as `openedForPane`: a `tabId` that names a tab whose panes all predate the open is
+ * a stale reply, not this tab, and a single pane that appeared over the open answers when the id
+ * cannot.
+ *
+ * Throws rather than guessing: a new tab must have a pane, and a caller handed a tab with no pane
+ * could neither drive nor name it.
+ */
+function openedForTab(exec: Exec, tabId: string, before: ReadonlySet<string>, session: string | undefined): OpenedPane {
+	for (let attempt = 1; attempt <= OPEN_RESOLVE_ATTEMPTS; attempt++) {
+		const appeared = appearedTerminals(exec, before)
+		const claimed = tabId ? appeared.find((p) => p.tab_id != null && String(p.tab_id) === tabId) : undefined
+		if (claimed) return openedPane(claimed.id, tabId, session)
+		const only = appeared.length === 1 ? appeared[0] : undefined
+		if ((attempt > 1 || !tabId) && only?.tab_id != null) return openedPane(only.id, String(only.tab_id), session)
+	}
+	throw new Error(
+		tabId
+			? `zellij did not report a pane in the new tab ${tabId}`
+			: 'zellij action new-tab did not report the new tab id, and no new pane appeared',
+	)
 }
 
 /**
