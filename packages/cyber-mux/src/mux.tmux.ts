@@ -305,15 +305,20 @@ export const tmuxMuxAdapter: MuxAdapter = {
 			'list-panes',
 			'-a',
 			'-F',
-			'#{pane_id}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_title}\t#{host}',
+			// `#{pane_floating_flag}` rides the format this call ALREADY sends, so reporting a float
+			// costs no second exec — tmux 3.7's flag, `1` for a `new-pane` float and `0` for a tiled
+			// pane (verified live on 3.7c). On tmux <= 3.6 the variable does not exist and tmux expands
+			// it to the empty string, which reads as `false` — the only answer available on a tmux that
+			// cannot open a float in the first place, and the true one.
+			'#{pane_id}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_title}\t#{host}\t#{pane_floating_flag}',
 		])
 		if (!out) return []
 		return out
 			.split('\n')
 			.filter(Boolean)
 			.map((line) => {
-				const [id, , cwd, title, host] = line.split('\t')
-				const pane: LivePane = { id: id ?? '', mux: 'tmux' as const }
+				const [id, , cwd, title, host, floating] = line.split('\t')
+				const pane: LivePane = { id: id ?? '', mux: 'tmux' as const, floating: floating === '1' }
 				if (cwd) pane.cwd = cwd
 				const label = paneLabel(title, host)
 				if (label) pane.label = label

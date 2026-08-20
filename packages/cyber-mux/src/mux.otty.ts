@@ -162,7 +162,11 @@ export function createOttyAdapter(deps: { window?: string | undefined }): MuxAda
 
 		listPanes(exec): LivePane[] {
 			return listOttyPanes(exec).map((p) => {
-				const pane: LivePane = { id: p.id, mux: 'otty' as const }
+				// `floating` is `false` BY CONSTRUCTION, not a stub and not a refusal: otty has no floating-pane
+				// concept at all, so every pane it can report really is tiled. The create side refuses a
+				// `'pane:float'` open here by NAME because there is no truthful pane to hand back; the read
+				// side has a truthful answer, and this is it.
+				const pane: LivePane = { id: p.id, mux: 'otty' as const, floating: false }
 				if (p.cwd) pane.cwd = p.cwd
 				if (p.title) pane.label = p.title
 				return pane

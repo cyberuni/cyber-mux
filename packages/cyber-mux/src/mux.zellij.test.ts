@@ -308,15 +308,15 @@ describe('spec:cyber-mux/mux/lookup', () => {
 			// the earlier fixtures spelled `pane_command`/`pane_cwd`, which the doc probe invented, so they
 			// agreed with the adapter's own mistake and proved nothing.
 			const list = JSON.stringify([
-				{ id: 'terminal_9', tab_id: 2, title: 'worker', terminal_command: 'claude' },
+				{ id: 'terminal_9', tab_id: 2, title: 'worker', terminal_command: 'claude', is_floating: false },
 				// title equals the running command — ambient, not chosen — so it reports no label.
-				{ id: 'terminal_10', tab_id: 2, title: 'zsh', terminal_command: 'zsh' },
+				{ id: 'terminal_10', tab_id: 2, title: 'zsh', terminal_command: 'zsh', is_floating: false },
 			])
 			const exec = fakeExec([], { 'list-panes': list })
 			// No `cwd` on either: zellij reports none, so the adapter invents none.
 			expect(zellijMuxAdapter.listPanes(exec)).toEqual([
-				{ id: 'terminal_9', mux: 'zellij', label: 'worker' },
-				{ id: 'terminal_10', mux: 'zellij' },
+				{ id: 'terminal_9', mux: 'zellij', label: 'worker', floating: false },
+				{ id: 'terminal_10', mux: 'zellij', floating: false },
 			])
 		})
 
@@ -335,6 +335,31 @@ describe('spec:cyber-mux/mux/lookup', () => {
 			const exec = fakeExec([], { 'list-panes': LIST_ONE })
 			const panes = zellijMuxAdapter.listPanes(exec)
 			for (const pane of panes) expect(pane.agentStatus).toBeUndefined()
+		})
+
+		// The zellij row of the outline; the tmux row lives in mux.tmux.test.ts. `is_floating` is in
+		// 0.44.3's verified key set — the same live dump `terminal_command` was corrected from — and it
+		// rides the `list-panes --json` call this adapter already makes, so it costs no second exec.
+		it('lookup-listing-reports-floating', () => {
+			const calls: string[][] = []
+			const list = JSON.stringify([
+				{ id: 'terminal_9', tab_id: 2, title: 'zsh', terminal_command: 'zsh', is_floating: true },
+				{ id: 'terminal_10', tab_id: 2, title: 'zsh', terminal_command: 'zsh', is_floating: false },
+			])
+			const exec = fakeExec(calls, { 'list-panes': list })
+			expect(zellijMuxAdapter.listPanes(exec)).toEqual([
+				{ id: 'terminal_9', mux: 'zellij', floating: true },
+				{ id: 'terminal_10', mux: 'zellij', floating: false },
+			])
+			// Still ONE call: no probe was added to answer this.
+			expect(calls).toEqual([['action', 'list-panes', '--json']])
+		})
+
+		// Strictly `=== true`, so a record missing the key — an older zellij, or a shape this adapter
+		// did not verify — reports the tiled answer rather than a truthy accident.
+		it('listPanes() reads a zellij record with no is_floating key as not floating', () => {
+			const list = JSON.stringify([{ id: 'terminal_9', tab_id: 2, title: 'zsh', terminal_command: 'zsh' }])
+			expect(zellijMuxAdapter.listPanes(fakeExec([], { 'list-panes': list }))[0]?.floating).toBe(false)
 		})
 	})
 })

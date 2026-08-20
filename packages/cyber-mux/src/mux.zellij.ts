@@ -248,7 +248,10 @@ export function createZellijAdapter(deps: { session?: string | undefined }): Mux
 				// live binary's key set, which the doc probe that built this adapter got wrong. So a zellij
 				// `LivePane` is genuinely cwd-less rather than sometimes-missing, and callers that filter by
 				// cwd get nothing here rather than a wrong answer.
-				const pane: LivePane = { id: p.id, mux: 'zellij' as const }
+				// `is_floating` read strictly: only a literal `true` floats, so a record missing the key
+				// (an older zellij, or a shape this adapter did not verify) reports the tiled answer
+				// rather than a truthy accident.
+				const pane: LivePane = { id: p.id, mux: 'zellij' as const, floating: p.is_floating === true }
 				// A pane's title CAN be an authored name here (`new-pane --name` / `rename-pane`), unlike
 				// wezterm. But Zellij defaults an unnamed pane's title to its running command, so a title
 				// equal to `terminal_command` is ambient rather than chosen — dropped the same way tmux drops
@@ -276,6 +279,12 @@ interface ZellijPane {
 	tab_id?: number | string | undefined
 	title?: string | undefined
 	is_focused?: boolean | undefined
+	/**
+	 * Whether the pane floats above the tiled layout — `is_floating`, in 0.44.3's verified key set
+	 * (see the dump `terminal_command` was corrected from). Free: it rides the `list-panes --json`
+	 * call this adapter already makes, so `LivePane.floating` costs zellij no second exec either.
+	 */
+	is_floating?: boolean | undefined
 	/**
 	 * The command a terminal pane is running — `terminal_command`, NOT `pane_command`. Verified
 	 * against a live 0.44.3 `list-panes --json`; the original doc probe read the wrong name, which

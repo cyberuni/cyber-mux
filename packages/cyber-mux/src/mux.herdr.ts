@@ -354,6 +354,13 @@ export const herdrMuxAdapter: MuxAdapter = {
 				return {
 					id: p.pane_id,
 					mux: 'herdr' as const,
+					// `false` BY CONSTRUCTION, not a stub and not a refusal: herdr has no floating-pane
+					// concept at all, so every pane it can report really is tiled. The create side refuses a
+					// `'pane:float'` open here by NAME because there is no truthful pane to hand back; the
+					// read side has a truthful answer, and this is it. Unconditional rather than
+					// conditionally-spread like the four fields below it, because `LivePane.floating` is
+					// required: absence is not one of its states.
+					floating: false,
 					...(harness !== undefined ? { harness } : {}),
 					...(agentStatus !== undefined ? { agentStatus } : {}),
 					...(p.cwd !== undefined ? { cwd: p.cwd } : {}),

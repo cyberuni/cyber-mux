@@ -956,17 +956,17 @@ describe('spec:cyber-mux/mux/lookup', () => {
 		// Tab-separated, and `pane_title`/`host` ride along so a label can be told from the hostname
 		// tmux defaults an unnamed pane's title to. Both panes here are named, so both carry a label.
 		const exec = fakeExec(calls, {
-			'list-panes': '%1\tclaude\t/repo/a\tworker\tzeta\n%3\tzsh\t/repo/b\tsidebar\tzeta',
+			'list-panes': '%1\tclaude\t/repo/a\tworker\tzeta\t0\n%3\tzsh\t/repo/b\tsidebar\tzeta\t0',
 		})
 		expect(tmuxMuxAdapter.listPanes(exec)).toEqual([
-			{ id: '%1', mux: 'tmux', cwd: '/repo/a', label: 'worker' },
-			{ id: '%3', mux: 'tmux', cwd: '/repo/b', label: 'sidebar' },
+			{ id: '%1', mux: 'tmux', cwd: '/repo/a', label: 'worker', floating: false },
+			{ id: '%3', mux: 'tmux', cwd: '/repo/b', label: 'sidebar', floating: false },
 		])
 		expect(calls[0]).toEqual([
 			'list-panes',
 			'-a',
 			'-F',
-			'#{pane_id}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_title}\t#{host}',
+			'#{pane_id}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_title}\t#{host}\t#{pane_floating_flag}',
 		])
 	})
 
@@ -979,8 +979,10 @@ describe('spec:cyber-mux/mux/lookup', () => {
 	it('lookup-listing-carries-label', () => {
 		// A person named this pane `worker` — its title differs from the host, which is what makes it
 		// a name someone chose rather than the one tmux handed it.
-		const exec = fakeExec([], { 'list-panes': '%1\tclaude\t/repo/a\tworker\tzeta' })
-		expect(tmuxMuxAdapter.listPanes(exec)).toEqual([{ id: '%1', mux: 'tmux', cwd: '/repo/a', label: 'worker' }])
+		const exec = fakeExec([], { 'list-panes': '%1\tclaude\t/repo/a\tworker\tzeta\t0' })
+		expect(tmuxMuxAdapter.listPanes(exec)).toEqual([
+			{ id: '%1', mux: 'tmux', cwd: '/repo/a', label: 'worker', floating: false },
+		])
 	})
 
 	// tmux has no unset title — it defaults `pane_title` to the hostname. Exporting that would label
@@ -988,7 +990,7 @@ describe('spec:cyber-mux/mux/lookup', () => {
 	it('lookup-tmux-unnamed-no-label', () => {
 		// Three panes nobody ever named: tmux reports the host as each one's title.
 		const exec = fakeExec([], {
-			'list-panes': '%1\tzsh\t/repo/a\tzeta\tzeta\n%2\tzsh\t/repo/b\tzeta\tzeta\n%3\tzsh\t/repo/c\tzeta\tzeta',
+			'list-panes': '%1\tzsh\t/repo/a\tzeta\tzeta\t0\n%2\tzsh\t/repo/b\tzeta\tzeta\t0\n%3\tzsh\t/repo/c\tzeta\tzeta\t0',
 		})
 		const panes = tmuxMuxAdapter.listPanes(exec)
 		// That pane reports NO label — absent, not the hostname.
@@ -1000,11 +1002,11 @@ describe('spec:cyber-mux/mux/lookup', () => {
 	it('lookup-label-with-spaces-resolves', () => {
 		// A label with a space, and a cwd with one too — the pair the old space-separated format could
 		// not tell apart, and the reason this read is tab-separated.
-		const exec = fakeExec([], { 'list-panes': '%1\tzsh\t/repo/my dir\tmy worker\tzeta' })
+		const exec = fakeExec([], { 'list-panes': '%1\tzsh\t/repo/my dir\tmy worker\tzeta\t0' })
 		const panes = tmuxMuxAdapter.listPanes(exec)
 		// The label and the working directory are each read WHOLE — neither truncated at its space,
 		// and neither bleeding into the other.
-		expect(panes).toEqual([{ id: '%1', mux: 'tmux', cwd: '/repo/my dir', label: 'my worker' }])
+		expect(panes).toEqual([{ id: '%1', mux: 'tmux', cwd: '/repo/my dir', label: 'my worker', floating: false }])
 		// And a caller naming `my worker` resolves that pane: the label matches in full, which is what
 		// the CLI's resolver compares against.
 		expect(panes.filter((p) => p.label === 'my worker').map((p) => p.id)).toEqual(['%1'])
@@ -1013,9 +1015,43 @@ describe('spec:cyber-mux/mux/lookup', () => {
 	it('lookup-listing-agent-status-absent-non-herdr', () => {
 		// tmux carries no agent-state feed at all, so no pane ever reports agentStatus — absent, never a
 		// false 'unknown'. The tmux row of the outline; the wezterm/zellij rows live in their own files.
-		const exec = fakeExec([], { 'list-panes': '%1\tclaude\t/repo/a\tworker\tzeta\n%3\tzsh\t/repo/b\tsidebar\tzeta' })
+		const exec = fakeExec([], {
+			'list-panes': '%1\tclaude\t/repo/a\tworker\tzeta\t0\n%3\tzsh\t/repo/b\tsidebar\tzeta\t0',
+		})
 		const panes = tmuxMuxAdapter.listPanes(exec)
 		for (const pane of panes) expect(pane.agentStatus).toBeUndefined()
+	})
+
+	// The tmux row of the outline; the zellij row lives in mux.zellij.test.ts. The real-boundary proof
+	// that `#{pane_floating_flag}` is the flag tmux actually reports — and that a `new-pane` float
+	// lands as `1` — is in mux.tmux.integration.test.ts, against the live 3.7c binary.
+	it('lookup-listing-reports-floating', () => {
+		const calls: string[][] = []
+		// %1 was opened with `new-pane` (tmux reports the flag as 1); %3 is an ordinary tiled pane (0).
+		const exec = fakeExec(calls, {
+			'list-panes': '%1\tclaude\t/repo/a\tworker\tzeta\t1\n%3\tzsh\t/repo/b\tsidebar\tzeta\t0',
+		})
+		expect(tmuxMuxAdapter.listPanes(exec)).toEqual([
+			{ id: '%1', mux: 'tmux', cwd: '/repo/a', label: 'worker', floating: true },
+			{ id: '%3', mux: 'tmux', cwd: '/repo/b', label: 'sidebar', floating: false },
+		])
+		// Still ONE call, and the same one: the flag rides the format `listPanes` already sent.
+		expect(calls).toEqual([
+			[
+				'list-panes',
+				'-a',
+				'-F',
+				'#{pane_id}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_title}\t#{host}\t#{pane_floating_flag}',
+			],
+		])
+	})
+
+	// tmux <= 3.6 has no `pane_floating_flag` at all and expands the unknown variable to an empty
+	// string. That reads as NOT floating — the only answer available on a tmux that cannot open a
+	// float in the first place, and the true one. Strictly `=== '1'`, so nothing else is truthy here.
+	it('listPanes() reads a tmux with no floating-pane flag as not floating', () => {
+		const exec = fakeExec([], { 'list-panes': '%1\tzsh\t/repo/a\tworker\tzeta\t' })
+		expect(tmuxMuxAdapter.listPanes(exec)[0]?.floating).toBe(false)
 	})
 })
 

@@ -161,6 +161,18 @@ describe.skipIf(!hasZellij() || !hasScript())('spec:cyber-mux/mux', () => {
 			expect(adapter.paneExists(exec, target)).toBe(true)
 		})
 
+		// The READ side, at the boundary that owns the answer: `is_floating` is a key this adapter reads
+		// out of a live `list-panes --json`, so a mocked exec only ever proves we can parse our own
+		// fixture. Opened both ways in one test on purpose — a suite that only ever saw a float could
+		// pass on an adapter that hardcoded `true`.
+		it('listPanes() tells a real float from a real tiled pane', () => {
+			const float = adapter.open(exec, { cwd, at: 'pane:float' })
+			const tiled = adapter.open(exec, { cwd, at: 'pane:right', from: { id: base } })
+			const panes = adapter.listPanes(exec)
+			expect(panes.find((p) => p.id === float.id)?.floating).toBe(true)
+			expect(panes.find((p) => p.id === tiled.id)?.floating).toBe(false)
+		})
+
 		it('submit()/read() actually run a command in and capture from a real pane', async () => {
 			const target = adapter.open(exec, { cwd, at: 'tab' })
 			adapter.submit(exec, target, 'echo cyber-mux-zj-marker')

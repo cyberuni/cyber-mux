@@ -395,7 +395,7 @@ describe('spec:cyber-mux/mux/lookup', () => {
 
 		it('lookup-wezterm-never-labeled', () => {
 			const exec = fakeExec([], { list: LIST_ONE })
-			expect(weztermMuxAdapter.listPanes(exec)).toEqual([{ id: '9', mux: 'wezterm', cwd: '/unit' }])
+			expect(weztermMuxAdapter.listPanes(exec)).toEqual([{ id: '9', mux: 'wezterm', cwd: '/unit', floating: false }])
 		})
 
 		it('lookup-wezterm-name-never-resolves', () => {
@@ -423,6 +423,18 @@ describe('spec:cyber-mux/mux/lookup', () => {
 			const exec = fakeExec([], { list: LIST_ONE })
 			const panes = weztermMuxAdapter.listPanes(exec)
 			for (const pane of panes) expect(pane.agentStatus).toBeUndefined()
+		})
+
+		it('lookup-listing-floating-false-by-construction', () => {
+			// wezterm has no floating-pane concept at all, so every pane it reports really is tiled.
+			// `false` is the TRUE answer here, not a stub standing in for one — and unlike `agentStatus`
+			// above it is never omitted: an absent value would leave a caller guessing between "not
+			// floating" and "cannot tell". The create side refuses a `pane:float` open here BY NAME
+			// (mux.wezterm.test.ts's placement rows) precisely because there is no truthful pane to hand
+			// back; the read side has a truthful answer, and this is it.
+			const panes = weztermMuxAdapter.listPanes(fakeExec([], { list: LIST_ONE }))
+			expect(panes.length).toBeGreaterThan(0)
+			for (const pane of panes) expect(pane.floating).toBe(false)
 		})
 	})
 })

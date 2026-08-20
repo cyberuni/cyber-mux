@@ -78,6 +78,26 @@ describe.skipIf(!hasTmux())('spec:cyber-mux/mux', () => {
 			expect(panes.some((p) => p.id === target.id && p.cwd === cwd)).toBe(true)
 		})
 
+		// The READ side of `pane:float`, at the boundary that owns the answer: `#{pane_floating_flag}` is
+		// a tmux format variable, so a mocked exec only ever proves we can parse our own fixture. Live on
+		// 3.7c it reports `1` for a `new-pane` float and `0` for a tiled pane. Opened both ways in one
+		// test on purpose — a suite that only ever saw a float could pass on an adapter hardcoding
+		// `true`. (Pinning the float CREATE path itself is issue #113, not this.)
+		it('listPanes() tells a real float from a real tiled pane', () => {
+			// A window of its own, so the pair is not competing for room with whatever earlier tests left
+			// behind, and the float is anchored on the tiled pane rather than on the ambient active one.
+			const tiled = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
+			const float = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'pane:float', from: tiled })
+			const panes = tmuxMuxAdapter.listPanes(exec)
+			expect(panes.find((p) => p.id === float.id)?.floating).toBe(true)
+			expect(panes.find((p) => p.id === tiled.id)?.floating).toBe(false)
+			// `list-panes -a` really does enumerate the float alongside the tiled panes — the field would
+			// be unreachable if it did not.
+			expect(panes.map((p) => p.id)).toEqual(expect.arrayContaining([float.id, tiled.id]))
+			tmuxMuxAdapter.teardown(exec, float)
+			tmuxMuxAdapter.teardown(exec, tiled)
+		})
+
 		it('teardown() actually kills the real pane', () => {
 			const target = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
 			expect(tmuxMuxAdapter.paneExists(exec, target)).toBe(true)
