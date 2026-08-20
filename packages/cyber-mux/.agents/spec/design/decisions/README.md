@@ -612,3 +612,41 @@ Decisions (`117-float-refusal-vs-degrade` — should a float-less backend refuse
   issue #113 pinned the tmux float CREATE path against a live 3.7c and made CI build 3.7c from source
   so the float rows execute rather than skip, and the zellij adapter now runs against a live 0.44.3 in
   the same job. The argv that was probed from CHANGES/docs has been confirmed against real binaries.
+
+Decisions (`backend-survey-2026-08` — feasibility verdicts for multiplexers not yet driven):
+
+- **`monotykamary/openmux` — VERDICT: blocked-upstream.** 88 stars, pushed 2026-06-16, Bun/TypeScript,
+  MIT. Probed 2026-08-20 against `docs/guides/cli.md`, not the README. Note the star count: this is
+  BELOW the 500-star discovery filter the breadth sweep uses, and it was surfaced by a name search
+  rather than by the sweep. Gated anyway — the filter decides what to *look* at, so a candidate
+  arriving by another route is still gated on its merits.
+  Gate 1 (per-pane identity) **CLEARED**, and it is the one that matters: `--pane <selector>` accepts
+  `focused` (default), `main`, `stack:<n>`, `pane:<id>`, `pty:<id>`, and a raw `pane-123` treated as
+  `pane:<id>`. Real ids, not only relative selectors — so this is NOT screen's problem.
+  Gate 2 (id at birth) **FAILED**: `pane split --direction vertical/horizontal` documents no output,
+  so an `open()` has nothing to return as `OpenedPane.id`.
+  Gate 3 (enumeration) **FAILED**: there is no pane list command. `session list` enumerates sessions
+  only. So `listPanes` cannot be implemented, and the snapshot-before/diff-after recovery that would
+  otherwise rescue gate 2 has nothing to snapshot.
+  It has the rest: `pane send --pane <sel> --text` (with C-style escapes), `pane capture --pane <sel>
+  --lines N --format ansi`, `session create/attach`, over a control socket to a running UI.
+  **RECHECK TRIGGER:** `pane split` printing the created pane's id, OR any pane-enumeration command.
+  Either one alone probably suffices — an enumeration makes the diff-after recovery available. Both
+  are additive CLI surface on identity that already exists, not a redesign.
+
+- **`milind-soni/OpenMausBot` — VERDICT: not-a-multiplexer.** 1,315 stars, pushed 2026-08-20,
+  TypeScript/Electron. Recorded because the name recurs in searches near `openmux` and will be asked
+  about again. It is a desktop chat app presenting AI agents (Claude, Codex, Grok) as contacts, with a
+  local harness server on `127.0.0.1:8799`; agents are processes, not panes, and there is no CLI for
+  creating or addressing a terminal pane. Nothing for `MuxAdapter` to drive. Durable — this would need
+  the project to become a different kind of program.
+
+- **Candidates identified but NOT yet gated**, recorded so the next sweep starts here rather than
+  re-querying: `Helvesec/rmux` (2.6k, Rust — self-describes as built to be driven from code, with a
+  typed SDK, and native on Windows, which no current backend is; the most interesting of these by
+  some distance), `Gaurav-Gosain/tuios` (3.5k, Go), `directvt/vtm` (3.4k, C++), `aaronjanse/3mux`
+  (1.9k, Go), `prompt-toolkit/pymux` (1.5k, Python), `deadpixi/mtm` (1.2k, C), `Yazelix/nova` (1.1k,
+  Rust), `cosmos72/twin` (1.1k, C), `martanne/abduco` (978, C), `iAmCorey/kooky` (615, Swift — an
+  agent-workflow terminal, the same niche cmux and otty occupy). Star counts queried 2026-08-20.
+  These carry NO verdict: they were surveyed for existence, never gated on the three drivability
+  criteria. Do not cite this list as evidence any of them can or cannot be driven.
