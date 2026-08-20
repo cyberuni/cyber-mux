@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildProgram } from './cli.ts'
 import type { Exec } from './exec.ts'
 import { canFloatPanes, FloatingPanesUnsupportedError } from './floating.ts'
+import { cmuxMuxAdapter } from './mux.cmux.ts'
 import { herdrMuxAdapter } from './mux.herdr.ts'
+import { ottyMuxAdapter } from './mux.otty.ts'
 import { tmuxMuxAdapter } from './mux.tmux.ts'
 import type { MuxAdapter } from './mux.ts'
 import { weztermMuxAdapter } from './mux.wezterm.ts'
@@ -41,12 +43,14 @@ const ZELLIJ_LIST_ONE = JSON.stringify([
 describe('spec:cyber-mux/mux/placement', () => {
 	describe('pane:float — the capability declaration', () => {
 		// The declaration is what a caller reads BEFORE opening, so the split it encodes is the whole
-		// contract: two backends with a native floating pane, two with no such concept at all.
+		// contract: two backends with a native floating pane, the rest with no such concept at all.
 		it.each<{ adapter: MuxAdapter; floats: boolean }>([
 			{ adapter: tmuxMuxAdapter, floats: true },
 			{ adapter: zellijMuxAdapter, floats: true },
 			{ adapter: weztermMuxAdapter, floats: false },
 			{ adapter: herdrMuxAdapter, floats: false },
+			{ adapter: cmuxMuxAdapter, floats: false },
+			{ adapter: ottyMuxAdapter, floats: false },
 		])('@id:placement-float-declared — $adapter.name declares whether it can open a floating pane', ({
 			adapter,
 			floats,
@@ -151,9 +155,14 @@ describe('spec:cyber-mux/mux/placement', () => {
 	})
 
 	describe('pane:float on a backend with no floating pane — refused by name, never emulated', () => {
+		// Every non-floating backend belongs in these two tables, not just the ones the CLI happens to
+		// guard: `cli.ts` checks `canFloatPanes` before it ever reaches an adapter, so a LIBRARY caller
+		// holding an adapter directly (the surface issue #68 exported) is the one these rows defend.
 		it.each<{ adapter: MuxAdapter }>([
 			{ adapter: weztermMuxAdapter },
 			{ adapter: herdrMuxAdapter },
+			{ adapter: cmuxMuxAdapter },
+			{ adapter: ottyMuxAdapter },
 		])('@id:placement-float-refused-by-name — $adapter.name refuses before any exec', ({ adapter }) => {
 			const calls: string[][] = []
 			const exec: Exec = (_cmd, args) => {
@@ -168,6 +177,8 @@ describe('spec:cyber-mux/mux/placement', () => {
 		it.each<{ adapter: MuxAdapter }>([
 			{ adapter: weztermMuxAdapter },
 			{ adapter: herdrMuxAdapter },
+			{ adapter: cmuxMuxAdapter },
+			{ adapter: ottyMuxAdapter },
 		])('@id:placement-float-refused-by-name — $adapter.name names itself', ({ adapter }) => {
 			try {
 				adapter.open(() => null, { cwd: '/unit', at: 'pane:float' })
