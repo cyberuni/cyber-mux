@@ -6,7 +6,9 @@ import { defineConfig } from 'vitest/config'
 // `pnpm test:integration`.
 export default defineConfig({
 	test: {
-		include: ['src/**/*.integration.test.ts'],
+		// `scripts/` carries the conformance runner's own real-boundary suite (`--all`, driven as a
+		// real subprocess against this machine's actual multiplexers).
+		include: ['src/**/*.integration.test.ts', 'scripts/**/*.integration.test.ts'],
 
 		// Vitest's defaults (5s test, 10s hook) are budgets for tests that do not wait on a separate
 		// process coming up, and every wait in this suite is bounded ALREADY — by its own poll loop, so

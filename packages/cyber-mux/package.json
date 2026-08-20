@@ -51,9 +51,10 @@
 		"build": "tsdown",
 		"dev": "tsx bin/cyber-mux.mjs",
 		"prepack": "pnpm build",
-		"test": "vitest run src",
+		"test": "vitest run",
+		"test:adapter": "tsx scripts/test-adapter.ts",
 		"test:dist": "tsc --noEmit -p tsconfig.dist.json && vitest run --config vitest.dist.config.ts",
-		"test:integration": "vitest run src --config vitest.integration.config.ts",
+		"test:integration": "vitest run --config vitest.integration.config.ts",
 		"test:watch": "vitest",
 		"typecheck": "tsc --noEmit"
 	},

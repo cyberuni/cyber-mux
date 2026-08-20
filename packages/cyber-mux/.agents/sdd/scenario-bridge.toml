@@ -1,4 +1,8 @@
 [[source]]
 adapter    = "junit"
-command    = "pnpm --filter=cyber-mux exec vitest run src --reporter=junit --outputFile=.agents/.scenario-report.xml"
+# No path filter: the vitest config's own `include` already scopes the run (src/ plus the unshipped
+# scripts/ maintainer tooling), and excludes the integration/dist suites. A `src` positional here
+# would silently un-bind every scenario living outside src/ — which is how the conformance/ node's
+# suite went unbindable when its runner landed in scripts/.
+command    = "pnpm --filter=cyber-mux exec vitest run --reporter=junit --outputFile=.agents/.scenario-report.xml"
 reportPath = "packages/cyber-mux/.agents/.scenario-report.xml"

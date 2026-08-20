@@ -5,22 +5,22 @@ name: cyber-mux
 approval:
   spec:
     verdict: approve
-    by: unional
+    by: agent
     cause: dimension
     why:
-      floor: "none — behavior-neutral binding pass (CR 83-adopt-scenario-bridge-binding). Added an @id:<slug> tag above every Scenario/Scenario Outline across all 14 frozen suites (281 tags) so tests bind mechanically. Tag additions are additive and narrow nothing, so every frozen suite SELF-CLEARS (structural diff: 281 modified, 0 removed; every changed line a +@id: insertion) — no re-open, no Clearance. The behavioral contract is unchanged from the CLI-surface CR that implemented it (its full verdict lives in that CR's ledger shard + git history)."
-      blast: "large but metadata-only — 281 @id: tags across 14 .feature suites + a design/ doctrine note (README + decisions ADR). No spec.md behavioral text changed; no product code."
-      novelty: "low — adopts the external SDD scenario-bridge @id: convention (pointer, not restatement); the HOIST rule (a node wrapper must be the first spec: segment) is recorded in the decisions ADR."
-      confidence: "high — check-suite clean over all 14 suites with tags present; slugs node-unique; 281/281 tagged, purely additive (parse OK, gherkin diff 0 removed). Self-asserted within the auto-spec leash (ledger seq 2)."
+      floor: "none — CR per-adapter-conformance-runner adds a NEW node (conformance/) with a newly frozen suite. No existing frozen scenario was narrowed, rewritten, or deleted, so no Clearance arises. The root spec.md edit is placement-map BODY only (Capability map row, routing row, tie-break) — spec.md is never frozen — and no other node's lifecycle field was touched."
+      blast: "medium — one new top-level spec node + its 23-scenario suite, plus the root placement-map registration. No product code, no shipped surface change; the artifact it specifies is an unshipped maintainer script."
+      novelty: "medium — introduces a new node KIND to this corpus: a maintainer-only, unshipped, but behavioral tool that deliberately takes no cli/ mirror. Given a declared home (routing-table row + tie-break) rather than left as an undeclared exception."
+      confidence: "high — check-suite clean (1:1 scenario-map binding over 23 scenarios); check:features parses all 17 suites; a cold spec-judge on a fresh context returned ALIGNED with oracle/builder/architect all PASS after two grading rounds. The load-bearing no-coverage assumption is spike-measured (a fully-skipped suite reports success:true and exits 0), not assumed. Self-asserted within the auto-spec leash."
   impl:
     verdict: approve
-    by: unional
+    by: agent
     cause: dimension
     why:
-      floor: "none — no product code and no test assertion changed. Rebound the tests to their scenarios by top-level describe('spec:cyber-mux/<node>') wrappers + @id: leaf titles (+ removal of dead duplicate fixtures left by block relocation). Behavior-neutral: expect() counts and sorted assertion multisets identical HEAD↔now across all 13 touched test files (the two file-level diffs are pure biome reflows)."
-      blast: "large but binding-only — 13 test files rebound; 261/281 scenarios BOUND + PASS, 0 FAIL. The 20 unbound are genuine coverage gaps (no test at that node's surface) recorded as backlog follow-ups, not fabricated bindings."
-      novelty: "low — mechanical binding, bridge-verified per node."
-      confidence: "high — full pnpm verify green (811 + 8 dist tests, biome + typecheck clean); integration bridge 261/281 bound, 0 fail; a cold independent impl-judge APPROVED all four checks (semantic soundness on 45+ sampled bindings, gap legitimacy on all 20, behavior-neutrality, altitude). Ratified by unional."
+      floor: "none — no frozen scenario narrowed, rewritten, or deleted; the .feature was untouched by the implementation (confirmed by the cold impl-judge via git status). No shipped surface changed: scripts/ is absent from package.json files, so the runner does not enter the published package."
+      blast: "medium — one unshipped maintainer script plus its 23-scenario verification, three config includes widened (vitest, tsconfig, scenario-bridge), one package script added, and the test script's redundant `src` positional dropped."
+      novelty: "medium — the corpus's first maintainer-only node; the run-vs-projected outcome split (the listing reports skip/gap/runnable and never claims a run outcome it would have to run to know) is the design's one non-obvious idea."
+      confidence: "high — a cold impl-judge re-derived all 23 frozen scenarios' oracles independently and approved 23/23 with no blocker; pnpm verify green 8/8 (1014 src + 10 dist tests, biome ci + typecheck clean). The load-bearing no-coverage behavior is verified end-to-end against a real, deliberately-broken multiplexer — tmux on PATH but non-functional reports no-coverage and exits 1 where vitest alone exits 0 reporting success."
 produced-by:
   spec-producer: sdd:start-mission
   impl-producer: sdd:start-mission
@@ -66,6 +66,7 @@ rendered marker, an error payload) — a surface-independent guarantee stays in 
 | [`template/`](./template/README.md) | named, reusable workspace templates, as two units — [`apply/`](./template/apply/README.md) (resolve a template and walk it into a live pool against a target cwd) and [`capture/`](./template/capture/README.md) (the inverse: read a live workspace and write a template back out) |
 | [`agent/`](./agent/README.md) | the herdr agent-lifecycle capability — the `AgentLifecycle` wait binding on the `cyber-mux/agent` subpath, and its refusal on every backend without the primitive |
 | [`cli/`](./cli/README.md) | **the CLI surface** (not a capability) — one mirror node per library node per the CLI-surface axis above, holding that capability's `cyber-mux <verb>` presentation & invocation: [`cli/detection/`](./cli/detection/README.md) (doctor, mode), [`cli/placement/`](./cli/placement/README.md) (open + the `--env`/`--at` flag surface), [`cli/driving/`](./cli/driving/README.md) (send, submit), [`cli/lookup/`](./cli/lookup/README.md) (read, focus, close, list, exists + the shared AXI error contract), [`cli/worktree/`](./cli/worktree/README.md) (the worktree verbs incl. `provision`), [`cli/template/`](./cli/template/README.md) (apply-side & capture-side verbs), [`cli/agent/`](./cli/agent/README.md) (agent status + wait) — each the counterpart to its library node under [`mux/`](./mux/README.md), [`template/`](./template/README.md), or [`agent/`](./agent/README.md) |
+| [`conformance/`](./conformance/README.md) | **a maintainer tool, not a capability of the shipped CLI** — the per-adapter real-boundary verification runner (`scripts/test-adapter.ts`), run by hand on a machine that has a given multiplexer — it selects one adapter, which `pnpm test:integration` cannot, and reads the executed count rather than the exit code, so a fully-skipped suite reports as covering nothing instead of as green. Behavioral but unshipped, so it takes no `cli/` mirror node |
 | [`axi.md`](./axi.md) | the Agent Experience Interface output contract every CLI command follows |
 | [`glossary.md`](./glossary.md) | the ubiquitous language — every load-bearing term defined once |
 | [`design/`](./design/README.md) | the rules & model, and the decisions log (append-only, descriptive, ungated) |
@@ -85,6 +86,7 @@ does not settle.
 | a shipped artifact with no testable surface of its own, spanning every command | a root file beside this spec, `spec-type: reference` |
 | a sub-grouping inside a capability | a `concept:` tag, never a third folder level |
 | a capability's CLI presentation (a verb, flag, exit code, rendered marker, or error payload) | its mirror node under [`cli/`](./cli/README.md), paired to the capability node; the surface-independent contract stays in the capability node |
+| a **maintainer-only tool** with a testable surface, run by hand and excluded from the published package | its own top-level folder, `spec-type: behavioral`, suite colocated — and **no `cli/` mirror**, since it has no `cyber-mux <verb>` counterpart to present |
 
 **Tie-breaks.**
 
@@ -92,6 +94,14 @@ does not settle.
   describing a convention every command follows, so it owns no capability and gets no folder. It
   keeps `spec-type: reference` and stays verified through the consuming capability's suite, since a
   reference node carries no suite of its own.
+- **A maintainer tool gets a top-level folder, but is not a capability of the CLI.** Capability-first
+  names top-level folders for what the CLI *does*, and a hand-run verification tool
+  ([`conformance/`](./conformance/README.md)) does nothing the CLI does — it is not in the published
+  package and a consumer never invokes it. It still earns a top-level folder rather than a home
+  inside a capability, because it is *about* every adapter at once and belongs to no single one;
+  filing it under [`mux/`](./mux/README.md) would smear a testing concern into the pane abstraction.
+  The marker that it is not a shipped capability is that it takes **no `cli/` mirror node** — the one
+  structural difference from every capability folder above.
 - **Backend adapters are not capabilities.** A per-multiplexer adapter (tmux, herdr, wezterm, and
   any future one) is an implementation of the pane abstraction, not a thing the CLI does. It routes
   to [`mux/`](./mux/README.md), never to a folder of its own — one adapter per folder would smear
