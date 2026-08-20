@@ -20,15 +20,16 @@ function hasTmux(): boolean {
  * anything older it is simply not a command.
  *
  * A second gate on top of `hasTmux()`, because the two questions are genuinely different and the
- * harness only guarantees the first: CI installs tmux with `apt-get install -y tmux`, which is
- * Ubuntu's packaged 3.4. A float test that assumed 3.7 there failed the job while proving nothing
- * about the adapter — `canFloatPanes` is declared unconditionally BY DESIGN (see the `mux.tmux.ts`
- * header) and an older tmux refusing `new-pane` with its own `unknown command` is that contract
- * working, not breaking.
+ * harness only guarantees the first. A float test that assumed 3.7 on an older binary would fail the
+ * job while proving nothing about the adapter — `canFloatPanes` is declared unconditionally BY DESIGN
+ * (see the `mux.tmux.ts` header) and an older tmux refusing `new-pane` with its own `unknown command`
+ * is that contract working, not breaking. So the float rows SKIP below 3.7 rather than fail.
  *
- * So the float rows SKIP below 3.7 rather than fail. Making CI actually cover them means installing a
- * 3.7+ tmux in the workflow, which is a harness change and belongs with issue #113's real-boundary
- * pass over the float CREATE path — not here.
+ * The gate is kept even though CI is no longer one of the places it fires: `pull-request.yml` used to
+ * install tmux with `apt-get install -y tmux` (Ubuntu's 3.4), which skipped every float row and so
+ * covered nothing; it now builds a pinned 3.7c from source, and the step verifies `tmux -V` rather
+ * than trusting the build. What the gate still protects is the contributor whose distro tmux is
+ * older — for them a skip is the honest report, not a failure.
  *
  * Parsed off the leading `<major>.<minor>`, which covers every spelling tmux ships: `3.4`, `3.7c`
  * (the letter is a patch suffix, never a version bump) and `next-3.8`.
@@ -113,7 +114,7 @@ describe.skipIf(!hasTmux())('spec:cyber-mux/mux', () => {
 		// a tmux format variable, so a mocked exec only ever proves we can parse our own fixture. Live on
 		// 3.7c it reports `1` for a `new-pane` float and `0` for a tiled pane. Opened both ways in one
 		// test on purpose — a suite that only ever saw a float could pass on an adapter hardcoding
-		// `true`. (Pinning the float CREATE path itself is issue #113, not this.)
+		// `true`. The CREATE path is pinned by the rows below.
 		it.skipIf(!tmuxHasFloatingPanes())('listPanes() tells a real float from a real tiled pane', () => {
 			// A window of its own, so the pair is not competing for room with whatever earlier tests left
 			// behind, and the float is anchored on the tiled pane rather than on the ambient active one.
@@ -128,6 +129,91 @@ describe.skipIf(!hasTmux())('spec:cyber-mux/mux', () => {
 			tmuxMuxAdapter.teardown(exec, float)
 			tmuxMuxAdapter.teardown(exec, tiled)
 		})
+
+		// The CREATE side of `pane:float`. Everything below it was written from tmux's CHANGES file
+		// against a 3.6b binary that has no `new-pane` at all, so until 3.7 was installable the whole
+		// branch rested on a document. These rows are what pays for it.
+
+		it.skipIf(!tmuxHasFloatingPanes())('open({ at: pane:float }) creates a real float the binary reports back', () => {
+			const float = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'pane:float' })
+			expect(float.id).toMatch(/^%\d+$/)
+			// The pane and the window it landed in come back from ONE `new-pane -P -F` — the same format
+			// the split path sends, so the float owes no second lookup for its tab.
+			expect(float.tab).toMatch(/^@\d+$/)
+			expect(tmuxMuxAdapter.paneExists(exec, float)).toBe(true)
+			// `teardown` needs no float-specific spelling: `kill-pane` kills a float exactly as it kills a
+			// tiled pane.
+			tmuxMuxAdapter.teardown(exec, float)
+			expect(tmuxMuxAdapter.paneExists(exec, float)).toBe(false)
+		})
+
+		// The anchor claim, at the boundary that can actually falsify it: with a mocked Exec `-t %3` only
+		// proves we spelled a flag. Live, it decides WHICH WINDOW the float lands in — and the harness is
+		// arranged so the two candidate answers differ. Every `at: 'tab'` open above uses `new-window -d`,
+		// so the attached client is still looking at the session's first window; the float is anchored on
+		// a pane in a different one. Without `-t` tmux resolves the ACTIVE pane's window, which is the
+		// user's and only coincidentally the caller's.
+		it.skipIf(!tmuxHasFloatingPanes())('a float is anchored into the TARGET pane’s window, not the active one', () => {
+			const tiled = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
+			const activeWindow = exec('tmux', ['display-message', '-p', '#{window_id}'])
+			// The premise the assertion rests on: the anchor is somewhere the client is NOT looking.
+			expect(tiled.tab).not.toBe(activeWindow)
+			const float = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'pane:float', from: tiled })
+			expect(float.tab).toBe(tiled.tab)
+			expect(float.tab).not.toBe(activeWindow)
+			tmuxMuxAdapter.teardown(exec, float)
+			tmuxMuxAdapter.teardown(exec, tiled)
+		})
+
+		// `ratio` is dropped on a float — the observable half of the claim, and it is deliberately paired
+		// with the argv-level row in `floating.test.ts` rather than replacing it. What this row can see is
+		// that a float asked for a ratio comes out the SIZE of one that asked for nothing, and that the
+		// size is `new-pane`'s documented default: half the window's width by a quarter its height.
+		//
+		// What it CANNOT see is a regression that starts passing `-l`, because `new-pane` accepts `-l`
+		// and `-p` and ignores them (see the `mux.tmux.ts` float branch) — a float built with `-l 30%`
+		// measures the same as this one. That is exactly why the "no sizing flag is emitted" claim is
+		// pinned on the argv and this row is pinned on the geometry: neither check subsumes the other.
+		it.skipIf(!tmuxHasFloatingPanes())('a float takes tmux’s own default size, whatever ratio was asked for', () => {
+			const tiled = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
+			const size = (pane: { id: string }) =>
+				exec('tmux', ['display-message', '-p', '-t', pane.id, '#{pane_width}x#{pane_height}'])
+			const plain = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'pane:float', from: tiled })
+			const asked = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'pane:float', from: tiled, ratio: 0.3 })
+			expect(size(asked)).toBe(size(plain))
+			const [width, height] = (
+				exec('tmux', ['display-message', '-p', '-t', tiled.id, '#{window_width}\t#{window_height}']) ?? ''
+			)
+				.split('\t')
+				.map(Number)
+			expect(size(plain)).toBe(`${Math.floor(width! / 2)}x${Math.floor(height! / 4)}`)
+			tmuxMuxAdapter.teardown(exec, asked)
+			tmuxMuxAdapter.teardown(exec, plain)
+			tmuxMuxAdapter.teardown(exec, tiled)
+		})
+
+		// Recorded rather than defended against, because the failure is the behavior we want. `new-pane`
+		// makes the float the ACTIVE pane of the window it landed in, and tmux refuses to split a float
+		// ("size or position can't split a floating pane"). So a target-less split issued while the
+		// client is looking at that window does not silently split the wrong pane — it fails loudly,
+		// through the `withReason` throw `open` already carries. No adapter change; this row is here so
+		// the property cannot quietly stop holding.
+		//
+		// The float is opened with no `from` ON PURPOSE: that is what puts it in the window the client is
+		// attached to, which is the only arrangement where a target-less split resolves to it at all. A
+		// float anchored elsewhere leaves the active pane untouched, and the split lands where it always
+		// did.
+		it.skipIf(!tmuxHasFloatingPanes())(
+			'a target-less split right after a float fails loudly instead of splitting the wrong pane',
+			() => {
+				const float = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'pane:float' })
+				expect(exec('tmux', ['display-message', '-p', '#{pane_id}'])).toBe(float.id)
+				expect(() => tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'pane:right' })).toThrow(
+					'tmux split-window failed',
+				)
+				tmuxMuxAdapter.teardown(exec, float)
+			},
+		)
 
 		it('teardown() actually kills the real pane', () => {
 			const target = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })

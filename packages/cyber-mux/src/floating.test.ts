@@ -99,7 +99,14 @@ describe('spec:cyber-mux/mux/placement', () => {
 			// tmux is the backend that CAN size a split (`canSizeSplits`), which is what makes this a real
 			// claim rather than a restatement: the ratio is dropped because a float has no original pane,
 			// not because tmux cannot size.
+			//
+			// BOTH flags, and this is the whole point of the row. `new-pane` is not missing a sizing flag —
+			// `-l` and `-p` are both in its synopsis, identical to `split-window`, and it accepts them and
+			// silently ignores them (verified on 3.7c). So the argv is the only place the drop is visible:
+			// a float built with `-l 30%` measures exactly like this one, which is why the live row in
+			// `mux.tmux.integration.test.ts` cannot stand in for this check.
 			expect(calls[0]).not.toContain('-l')
+			expect(calls[0]).not.toContain('-p')
 		})
 
 		it('@id:placement-float-tmux-anchored-and-named — named by the post-birth rename', () => {

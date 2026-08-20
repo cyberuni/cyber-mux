@@ -109,7 +109,7 @@ describe('spec:cyber-mux/mux/placement', () => {
 	})
 
 	// `from` is what makes `pane:*` mean the CALLING pane. Without `-t`, tmux splits the session's
-	// ACTIVE pane and ignores $TMUX_PANE outright — verified against tmux 3.6b, where a
+	// ACTIVE pane and ignores $TMUX_PANE outright — verified against tmux 3.7c, where a
 	// `split-window` run inside %1 (with $TMUX_PANE=%1) split the active %0 instead. These assert
 	// the flag because that is the entire fix: the wrong-pane split is silent, so only the emitted
 	// argv distinguishes a correct call from a broken one.
@@ -802,7 +802,7 @@ describe('spec:cyber-mux/mux/driving', () => {
 
 	it('driving-submit-text-literal-not-key', () => {
 		// The regression this CR exists for: `send-keys -t %3 Up Enter` presses Up (recalling the
-		// previous command) and then Enter, RE-RUNNING it. Verified live against tmux 3.6b.
+		// previous command) and then Enter, RE-RUNNING it. Verified live against tmux 3.7c.
 		const calls: string[][] = []
 		const exec = fakeExec(calls)
 		tmuxMuxAdapter.submit(exec, { id: '%3' }, 'Up')
