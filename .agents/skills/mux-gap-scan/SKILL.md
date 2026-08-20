@@ -1,6 +1,6 @@
 ---
 name: mux-gap-scan
-description: Use this skill when checking supported multiplexers for new releases, finding seam gaps, and filing gap issues.
+description: Use this skill when checking supported multiplexers for new releases, finding seam gaps, surveying multiplexers cyber-mux does not yet drive, and filing gap issues.
 metadata:
   internal: true
 ---
@@ -8,11 +8,18 @@ metadata:
 # Multiplexer Gap Scan
 
 Apply when asked to check the latest versions of the supported multiplexers, find what the seam is
-missing, and file issues — for cyber-mux only.
+missing, survey multiplexers cyber-mux does not yet drive, and file issues — for cyber-mux only.
+
+This skill has **two axes**. Run both unless the request names one:
+
+- **Depth** — new capabilities in the backends already driven (steps 1–8).
+- **Breadth** — multiplexers not driven at all that now deserve an adapter (step 9).
 
 ## Drivable backends
 
-Scan these four; each maps to one adapter and one upstream release source:
+Derive this list from the filesystem — `ls packages/cyber-mux/src/mux.*.ts` — rather than trusting
+the table below, which is a convenience and will rot as backends land. Each adapter maps to one
+upstream release source:
 
 | Backend | Adapter source | Upstream releases |
 | --- | --- | --- |
@@ -20,9 +27,12 @@ Scan these four; each maps to one adapter and one upstream release source:
 | wezterm | `packages/cyber-mux/src/mux.wezterm.ts` | `gh release list --repo wezterm/wezterm` |
 | zellij | `packages/cyber-mux/src/mux.zellij.ts` | `gh release list --repo zellij-org/zellij` |
 | herdr | `packages/cyber-mux/src/mux.herdr.ts` | `gh release list --repo herdrdev/herdr`; else `herdr --version` |
+| cmux | `packages/cyber-mux/src/mux.cmux.ts` | `gh release list --repo manaflow-ai/cmux`; docs at cmux.com/docs/api |
+| otty | `packages/cyber-mux/src/mux.otty.ts` | docs at docs.otty.sh/reference/cli |
 
-Do **not** scan `screen` (recognized, not drivable — no stable per-pane identity) or `cmux` (a
-proposed backend, tracked in an open issue, not yet an adapter).
+Do **not** scan `screen` — recognized and honored as an override so the value is reported truthfully,
+then rejected by name, because it has no stable per-pane identity for driver-created panes (the
+`45-screen-adapter` ADR).
 
 ## Workflow
 
@@ -64,15 +74,101 @@ proposed backend, tracked in an open issue, not yet an adapter).
 8. **Report a summary table**: backend, baseline → latest, gaps found, issues filed (with URLs),
    gaps skipped (already tracked or declined).
 
+## Breadth: multiplexers not yet driven
+
+A backend can also be missing entirely. Depth alone never finds one, because a project with no
+adapter has no baseline to beat.
+
+9. **Read the verdicts already recorded, before probing anything.** Past sweeps left their findings
+   in the ADR log — `packages/cyber-mux/.agents/spec/design/decisions/README.md`, searched for
+   `backend-survey`. This is the breadth twin of step 5's dedup search, and it is what stops a sweep
+   re-deriving a `no` someone already paid for. A recorded verdict is re-probed only when its own
+   recheck trigger has fired:
+
+   - **`undrivable`** — durable. Do not re-probe absent a rewrite of the project's control surface.
+   - **`blocked-upstream`** — re-probe when the named missing feature may have landed; the verdict
+     records what to look for, so check that, not the whole CLI.
+   - **`viable`** — already has an issue. Confirm the issue, do not re-file.
+
+10. **Sweep for candidate multiplexers above 500 stars.** The threshold is a *discovery filter*, not a
+   verdict — it is the level at which a project is likely to still exist next year and to have
+   documented its CLI. Query GitHub directly rather than recalling star counts, which go stale:
+
+   ```bash
+   gh api "search/repositories?q=terminal+multiplexer+stars:%3E500&sort=stars&per_page=15" \
+     -q '.items[]|"\(.stargazers_count)\t\(.full_name)\t\(.language)\t\(.description)"'
+   ```
+
+   Run it for more than one phrasing — `terminal multiplexer`, `tmux alternative`, `terminal
+   workspace panes` — since projects self-describe inconsistently and single-query results are
+   incomplete. Drop anything that is not a pane host: editor plugins, themes, remote-control
+   front-ends, and terminal emulators with no multiplexing.
+
+11. **Gate each candidate on per-pane CLI drivability, in this order.** Stars decide what to look at;
+    these decide what is possible. Read the project's own CLI reference — not its README — and stop
+    at the first gate it fails:
+
+    - **Stable per-pane identity, addressable from outside.** A relative selector alone
+      (`focused`, `main`, `next`) is not identity. This is the gate `screen` fails architecturally,
+      and the one zellij only passed at 0.44.
+    - **The birth command emits the new pane's id** — `open()` must return an `OpenedPane` with a
+      real id. Every current adapter gets it from the create command itself.
+    - **Pane enumeration** — `listPanes` is required, and a listing is also the recovery path when a
+      create is silent (the snapshot-before/diff-after shape in `mux.zellij.ts`).
+
+    A candidate failing only the last two is **blocked on additive upstream CLI features**; one
+    failing the first is **architecturally undrivable**, like `screen`. Say which — they are very
+    different asks, and the second is not worth an issue against this repo.
+
+12. **File a prospective-backend issue per viable candidate**, same confirmation rule as step 6.
+    State the star count and date, quote the CLI reference verbatim for each gate it clears or
+    fails, and name whether it is blocked upstream or ready to adapt. Label `enhancement`, and add
+    `help wanted` where a live binary is needed that this machine cannot run. Footer:
+    `*Filed by mux-gap-scan (breadth sweep).*`
+
+13. **Record a verdict for EVERY candidate gated — including the ones you file nothing for.** This
+    is the step that makes the sweep cumulative instead of repeated. A candidate that fails gate 1
+    gets no issue, so without this its assessment is lost the moment the run ends and the next sweep
+    pays for it again.
+
+    Append one section to the ADR log
+    (`packages/cyber-mux/.agents/spec/design/decisions/README.md`), which is append-only — add a
+    section, never edit an existing one. Match the log's house shape:
+
+    ```markdown
+    Decisions (`backend-survey-YYYY-MM` — feasibility verdicts for multiplexers not yet driven):
+
+    - **<project> — VERDICT: viable | blocked-upstream | undrivable | not-a-multiplexer.**
+      <stars> stars, probed <date> against <the CLI reference URL, not the README>. Gate 1
+      (per-pane identity): <cleared, quoting the selector syntax | failed, quoting what it offers
+      instead>. Gate 2 (id at birth): … Gate 3 (enumeration): … <For blocked-upstream: the RECHECK
+      TRIGGER — the exact feature whose arrival would change this.> <For viable: the issue URL.>
+    ```
+
+    Record the **date and the version or commit probed**, not just the verdict. A verdict without
+    them cannot be trusted later, because the thing it describes moves. This is the same
+    deliver-tense discipline the adapter headers use for `verified against <version>`.
+
+    Verdicts are descriptive, not gates: recording `undrivable` closes nothing and forbids nothing
+    if the project changes. It records what was true, when, and what would have to change.
+
 ## Anti-patterns
 
 - Filing an issue for a capability the seam already exposes, or one already tracked — always run the dedup search in step 5.
-- Scanning `screen` or `cmux`.
+- Scanning `screen`, or trusting the backend table over `ls packages/cyber-mux/src/mux.*.ts`.
 - Treating a wezterm nightly/dated pre-release as the baseline-beating "latest".
 - Filing without user confirmation.
+- Treating a star count as a feasibility verdict, or recalling one instead of querying it.
+- Judging a candidate's drivability from its README rather than its CLI reference.
+- Gating a candidate and recording nothing because it failed — a `no` is the verdict most worth
+  keeping, since it is the one no issue will preserve.
+- Re-probing a candidate whose recorded verdict has no fired recheck trigger.
+- Editing an existing ADR section instead of appending a new one.
 
 ## References
 
 - create-issue skill — duplicate search and issue authoring.
 - Seam contract: `packages/cyber-mux/src/mux.ts`.
 - Reference gap issue shape: https://github.com/cyberuni/cyber-mux/issues/97
+- Why per-pane identity is the gate: the `45-screen-adapter` ADR in
+  `packages/cyber-mux/.agents/spec/design/decisions/README.md`.
