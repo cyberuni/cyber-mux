@@ -201,9 +201,6 @@ describe.skipIf(!hasZellij() || !hasScript())('spec:cyber-mux/mux', () => {
 		})
 
 		it('open() honors cwd — proven by asking the real shell where it is', async () => {
-			// `list-panes --json` carries no cwd field on this backend, so the ONLY honest way to show the
-			// `--cwd` flag landed is to ask the pane's own shell. That absence is itself the finding this
-			// suite exists to make: a doc probe had the adapter reading a `pane_cwd` that does not exist.
 			const target = adapter.open(exec, { cwd, at: 'tab' })
 			adapter.submit(exec, target, 'pwd')
 			const output = await pollUntil(
@@ -211,7 +208,16 @@ describe.skipIf(!hasZellij() || !hasScript())('spec:cyber-mux/mux', () => {
 				(out) => out.includes(cwd),
 			)
 			expect(output).toContain(cwd)
-			expect(adapter.listPanes(exec).find((p) => p.id === target.id)?.cwd).toBeUndefined()
+		})
+
+		// The READ side of the same directory, at the boundary that owns the answer. `pane_cwd` is a real
+		// key on a live 0.44.3 TERMINAL pane record — a mocked exec would only prove the adapter can read
+		// its own fixture, and a fixture is exactly how the opposite claim ("no cwd field exists at all")
+		// survived: the probe behind it sampled a PLUGIN pane, whose record omits the key. Opening at a
+		// known directory and reading it back off the live listing is what tells those apart.
+		it('lookup-listing-reports-cwd', () => {
+			const target = adapter.open(exec, { cwd, at: 'tab' })
+			expect(adapter.listPanes(exec).find((p) => p.id === target.id)?.cwd).toBe(cwd)
 		})
 
 		it('rename() at the pane tier actually renames a real pane, and the name survives as a label', () => {

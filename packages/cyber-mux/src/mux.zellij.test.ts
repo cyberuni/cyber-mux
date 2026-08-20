@@ -304,20 +304,53 @@ describe('spec:cyber-mux/mux/lookup', () => {
 		})
 
 		it('lookup-listing-enumerates-all-panes', () => {
-			// Field names are the LIVE 0.44.3 ones (`terminal_command`, and no cwd field exists at all) —
-			// the earlier fixtures spelled `pane_command`/`pane_cwd`, which the doc probe invented, so they
-			// agreed with the adapter's own mistake and proved nothing.
+			// Field names are the LIVE 0.44.3 ones: `terminal_command` for the label guard (the doc probe
+			// spelled it `pane_command`), and `pane_cwd` for the directory — a real key on a terminal
+			// pane's record, whatever an earlier probe of a PLUGIN pane's key set concluded.
 			const list = JSON.stringify([
-				{ id: 'terminal_9', tab_id: 2, title: 'worker', terminal_command: 'claude', is_floating: false },
+				{
+					id: 'terminal_9',
+					tab_id: 2,
+					title: 'worker',
+					terminal_command: 'claude',
+					is_floating: false,
+					pane_cwd: '/repo/a',
+				},
 				// title equals the running command — ambient, not chosen — so it reports no label.
-				{ id: 'terminal_10', tab_id: 2, title: 'zsh', terminal_command: 'zsh', is_floating: false },
+				{
+					id: 'terminal_10',
+					tab_id: 2,
+					title: 'zsh',
+					terminal_command: 'zsh',
+					is_floating: false,
+					pane_cwd: '/repo/b',
+				},
 			])
 			const exec = fakeExec([], { 'list-panes': list })
-			// No `cwd` on either: zellij reports none, so the adapter invents none.
 			expect(zellijMuxAdapter.listPanes(exec)).toEqual([
-				{ id: 'terminal_9', mux: 'zellij', label: 'worker', floating: false },
-				{ id: 'terminal_10', mux: 'zellij', floating: false },
+				{ id: 'terminal_9', mux: 'zellij', cwd: '/repo/a', label: 'worker', floating: false },
+				{ id: 'terminal_10', mux: 'zellij', cwd: '/repo/b', floating: false },
 			])
+		})
+
+		// The zellij row of the outline, and the one that was missing entirely: `pane_cwd` IS on a live
+		// 0.44.3 terminal-pane record, so a caller filtering the listing by directory gets an answer here
+		// rather than nothing. It rides the `list-panes --json` call the listing already makes.
+		it('lookup-listing-reports-cwd', () => {
+			const calls: string[][] = []
+			const list = JSON.stringify([
+				{ id: 'terminal_9', tab_id: 2, title: 'zsh', terminal_command: 'zsh', pane_cwd: '/repo/a' },
+			])
+			expect(zellijMuxAdapter.listPanes(fakeExec(calls, { 'list-panes': list }))[0]?.cwd).toBe('/repo/a')
+			// Still ONE call: no probe was added to answer this.
+			expect(calls).toEqual([['action', 'list-panes', '--json']])
+		})
+
+		// A plugin pane's record OMITS `pane_cwd` — it has no working directory — so the entry carries no
+		// cwd rather than an empty or invented one. Absent-not-false, the same as `label`.
+		it('listPanes() omits cwd for a record that carries no pane_cwd', () => {
+			const list = JSON.stringify([{ id: 'plugin_3', tab_id: 2, title: 'Release Notes', is_plugin: true }])
+			expect(zellijMuxAdapter.listPanes(fakeExec([], { 'list-panes': list }))[0]?.cwd).toBeUndefined()
 		})
 
 		it('listPanes returns nothing when the backend cannot be read', () => {

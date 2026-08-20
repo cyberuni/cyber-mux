@@ -959,6 +959,12 @@ describe('spec:cyber-mux/mux/lookup', () => {
 		})
 
 		// The herdr row of the outline; the tmux row lives in session.tmux.test.ts.
+		// The herdr row of the outline: `cwd` is on the pane record `pane list` already returns.
+		it('lookup-listing-reports-cwd', () => {
+			const listOut = JSON.stringify({ result: { panes: [{ pane_id: 'w3:p1', cwd: '/repo/a' }] } })
+			expect(herdrMuxAdapter.listPanes(fakeExec([], { 'pane list': listOut }))[0]?.cwd).toBe('/repo/a')
+		})
+
 		it('lookup-listing-carries-label', () => {
 			// A person renamed this pane — herdr reports the name it was given, as its own field.
 			const listOut = JSON.stringify({ result: { panes: [{ pane_id: 'w3:p1', cwd: '/repo/a', label: 'worker' }] } })

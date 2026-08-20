@@ -233,6 +233,12 @@ describe('spec:cyber-mux/mux', () => {
 
 describe('spec:cyber-mux/mux/lookup', () => {
 	describe('cmuxMuxAdapter', () => {
+		// The cmux row of the outline: `cwd` rides the same `list-panes` call the listing already makes.
+		it('lookup-listing-reports-cwd', () => {
+			const panes = cmuxMuxAdapter.listPanes(fakeExec([], { 'list-panes': LIST_PANES_RESPONSE }))
+			expect(panes.map((p) => p.cwd)).toEqual(['/home/user', '/home/user/tests', '/tmp'])
+		})
+
 		it('lookup-listing-floating-false-by-construction', () => {
 			// cmux has no floating-pane concept at all, so every surface it reports really is tiled.
 			// `false` is the TRUE answer here, not a stub standing in for one — and it is never omitted:

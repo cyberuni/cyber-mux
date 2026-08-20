@@ -279,3 +279,26 @@ Feature: mux lookup — resolving a pane, the focus probe, and the listing conte
       | wezterm |
       | cmux    |
       | otty    |
+
+  # ── The live pane listing reports each pane's working directory (CR 116) ──
+  # A pane's cwd is what a caller filters a listing by ("which pane is in this repo"), and it is the
+  # third field an ambiguous name yields to choose between candidates — so a backend that omits it
+  # answers those questions with nothing. Every backend cyber-mux drives reports the directory in the
+  # listing call the adapter already makes, so this costs no extra exec anywhere. Zellij was the one
+  # gap, from a probe that read a plugin pane's record — which omits the key — and concluded the field
+  # did not exist; it does, on every terminal pane.
+
+  @id:lookup-listing-reports-cwd
+  Scenario Outline: <backend>'s live pane listing reports each pane's working directory
+    Given a <backend> pane running in a known directory
+    When the live panes are listed
+    Then that pane's entry carries that directory as its cwd
+
+    Examples:
+      | backend |
+      | tmux    |
+      | herdr   |
+      | wezterm |
+      | zellij  |
+      | cmux    |
+      | otty    |
