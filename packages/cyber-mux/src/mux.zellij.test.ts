@@ -7,12 +7,25 @@ import { createZellijAdapter, zellijMuxAdapter } from './mux.zellij.ts'
  * always `'action'` and cannot distinguish `new-pane` from `new-tab` the way tmux/herdr's fakes key
  * off their own first argument. (Same shape as the wezterm fake, whose `args[0]` is always `'cli'`.)
  */
-function fakeExec(calls: string[][], responses: Record<string, string | null> = {}): Exec {
+function fakeExec(calls: string[][], responses: Record<string, string | null | (string | null)[]> = {}): Exec {
+	const queued = new Map<string, (string | null)[]>()
 	return (_cmd, args) => {
 		calls.push(args)
-		return responses[args[1]!] ?? null
+		const verb = args[1]!
+		const canned = responses[verb]
+		// An ARRAY is a SEQUENCE of replies for repeated calls to the same verb, with the last one
+		// standing for every call after it. `list-panes` needs it: an open now reads the listing BEFORE
+		// the command as well as after, and the whole point of that read is that the two differ.
+		if (!Array.isArray(canned)) return canned ?? null
+		const rest = queued.get(verb) ?? [...canned]
+		const next = rest.length > 1 ? rest.shift()! : rest[0]
+		queued.set(verb, rest)
+		return next ?? null
 	}
 }
+
+/** The session BEFORE an open — nothing standing, so anything the listing gains is the open's. */
+const LIST_NONE = '[]'
 
 const LIST_ONE = JSON.stringify([
 	{
@@ -32,23 +45,26 @@ describe('spec:cyber-mux/mux/placement', () => {
 	describe('zellijMuxAdapter', () => {
 		it('open() at pane:right splits with --direction right and resolves tab from list-panes', () => {
 			const calls: string[][] = []
-			const exec = fakeExec(calls, { 'new-pane': 'terminal_9', 'list-panes': LIST_ONE })
+			const exec = fakeExec(calls, { 'new-pane': 'terminal_9', 'list-panes': [LIST_NONE, LIST_ONE] })
 			const target = zellijMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right' })
 			expect(target).toEqual({ id: 'terminal_9', tab: '2' })
-			expect(calls[0]).toEqual(['action', 'new-pane', '--direction', 'right', '--cwd', '/unit'])
-			// the tab costs a SEPARATE list-panes call — new-pane reports only the bare pane id.
-			expect(calls[1]).toEqual(['action', 'list-panes', '--json'])
+			// The listing is read TWICE around the split: once before, to know which panes were already
+			// standing, and once after, because new-pane reports only a bare pane id and the tab costs a
+			// separate call. The before read is what makes the reported id checkable rather than trusted.
+			expect(calls[0]).toEqual(['action', 'list-panes', '--json'])
+			expect(calls[1]).toEqual(['action', 'new-pane', '--direction', 'right', '--cwd', '/unit'])
+			expect(calls[2]).toEqual(['action', 'list-panes', '--json'])
 		})
 
 		it('open() at pane:down splits with --direction down', () => {
 			const calls: string[][] = []
-			const exec = fakeExec(calls, { 'new-pane': 'terminal_9', 'list-panes': LIST_ONE })
+			const exec = fakeExec(calls, { 'new-pane': 'terminal_9', 'list-panes': [LIST_NONE, LIST_ONE] })
 			zellijMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:down' })
-			expect(calls[0]).toEqual(['action', 'new-pane', '--direction', 'down', '--cwd', '/unit'])
+			expect(calls[1]).toEqual(['action', 'new-pane', '--direction', 'down', '--cwd', '/unit'])
 		})
 
 		it('open() reports the ambient session as the workspace when the adapter is bound to one', () => {
-			const exec = fakeExec([], { 'new-pane': 'terminal_9', 'list-panes': LIST_ONE })
+			const exec = fakeExec([], { 'new-pane': 'terminal_9', 'list-panes': [LIST_NONE, LIST_ONE] })
 			const target = sessionAdapter.open(exec, { cwd: '/unit', at: 'pane:right' })
 			expect(target).toEqual({ id: 'terminal_9', tab: '2', workspace: 'my-session' })
 		})
@@ -56,57 +72,57 @@ describe('spec:cyber-mux/mux/placement', () => {
 		it('placement-at-tab-new-tab', () => {
 			const calls: string[][] = []
 			// new-tab reports the TAB id; the tab's initial pane is the list-panes record carrying it.
-			const exec = fakeExec(calls, { 'new-tab': '2', 'list-panes': LIST_ONE })
+			const exec = fakeExec(calls, { 'new-tab': '2', 'list-panes': [LIST_NONE, LIST_ONE] })
 			const target = zellijMuxAdapter.open(exec, { cwd: '/unit', at: 'tab' })
-			expect(calls[0]).toEqual(['action', 'new-tab', '--cwd', '/unit'])
+			expect(calls[1]).toEqual(['action', 'new-tab', '--cwd', '/unit'])
 			expect(target).toEqual({ id: 'terminal_9', tab: '2' })
 		})
 
 		it('placement-at-workspace-visible-space', () => {
 			const calls: string[][] = []
-			const exec = fakeExec(calls, { 'new-tab': '2', 'list-panes': LIST_ONE })
+			const exec = fakeExec(calls, { 'new-tab': '2', 'list-panes': [LIST_NONE, LIST_ONE] })
 			const target = sessionAdapter.open(exec, { cwd: '/unit', at: 'workspace' })
 			// identical to a `tab` open — the collapse forced by session-scoped ids + a session-less target.
-			expect(calls[0]).toEqual(['action', 'new-tab', '--cwd', '/unit'])
+			expect(calls[1]).toEqual(['action', 'new-tab', '--cwd', '/unit'])
 			expect(target).toEqual({ id: 'terminal_9', tab: '2', workspace: 'my-session' })
 		})
 
 		it('open() names the tab at birth with --name', () => {
 			const calls: string[][] = []
-			const exec = fakeExec(calls, { 'new-tab': '2', 'list-panes': LIST_ONE })
+			const exec = fakeExec(calls, { 'new-tab': '2', 'list-panes': [LIST_NONE, LIST_ONE] })
 			zellijMuxAdapter.open(exec, { cwd: '/unit', at: 'tab', label: 'ledger' })
-			expect(calls[0]).toEqual(['action', 'new-tab', '--cwd', '/unit', '--name', 'ledger'])
+			expect(calls[1]).toEqual(['action', 'new-tab', '--cwd', '/unit', '--name', 'ledger'])
 		})
 
 		it('open() names the pane at birth with --name — Zellij can title a pane, unlike wezterm', () => {
 			const calls: string[][] = []
-			const exec = fakeExec(calls, { 'new-pane': 'terminal_9', 'list-panes': LIST_ONE })
+			const exec = fakeExec(calls, { 'new-pane': 'terminal_9', 'list-panes': [LIST_NONE, LIST_ONE] })
 			zellijMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right', label: 'worker' })
-			expect(calls[0]).toEqual(['action', 'new-pane', '--direction', 'right', '--cwd', '/unit', '--name', 'worker'])
+			expect(calls[1]).toEqual(['action', 'new-pane', '--direction', 'right', '--cwd', '/unit', '--name', 'worker'])
 		})
 
 		it('open() with a `from` focuses that pane first — the only way to choose the split target', () => {
 			const calls: string[][] = []
-			const exec = fakeExec(calls, { 'new-pane': 'terminal_9', 'list-panes': LIST_ONE })
+			const exec = fakeExec(calls, { 'new-pane': 'terminal_9', 'list-panes': [LIST_NONE, LIST_ONE] })
 			zellijMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right', from: { id: 'terminal_3' } })
 			expect(calls[0]).toEqual(['action', 'focus-pane-id', 'terminal_3'])
-			expect(calls[1]).toEqual(['action', 'new-pane', '--direction', 'right', '--cwd', '/unit'])
+			expect(calls[2]).toEqual(['action', 'new-pane', '--direction', 'right', '--cwd', '/unit'])
 		})
 
 		it('open() drops a ratio — a tiled split is always even', () => {
 			const calls: string[][] = []
-			const exec = fakeExec(calls, { 'new-pane': 'terminal_9', 'list-panes': LIST_ONE })
+			const exec = fakeExec(calls, { 'new-pane': 'terminal_9', 'list-panes': [LIST_NONE, LIST_ONE] })
 			zellijMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right', ratio: 0.333 })
-			expect(calls[0]).toEqual(['action', 'new-pane', '--direction', 'right', '--cwd', '/unit'])
-			expect(calls[0]).not.toContain('--width')
-			expect(calls[0]).not.toContain('33')
+			expect(calls[1]).toEqual(['action', 'new-pane', '--direction', 'right', '--cwd', '/unit'])
+			expect(calls[1]).not.toContain('--width')
+			expect(calls[1]).not.toContain('33')
 		})
 
 		// zellij has no --env on new-pane/new-tab, so env rides in as a prefix on the launch command,
 		// exactly the fallback wezterm and herdr's worktree route use.
 		it('placement-env-rides-command-prefix', () => {
 			const calls: string[][] = []
-			const exec = fakeExec(calls, { 'new-pane': 'terminal_9', 'list-panes': LIST_ONE })
+			const exec = fakeExec(calls, { 'new-pane': 'terminal_9', 'list-panes': [LIST_NONE, LIST_ONE] })
 			zellijMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right', env: { ROLE: 'worker' }, launch: 'claude' })
 			const newPane = calls.find((c) => c[1] === 'new-pane')!
 			expect(newPane).not.toContain('--env')
@@ -118,7 +134,7 @@ describe('spec:cyber-mux/mux/placement', () => {
 
 		it('placement-env-no-command-warns', () => {
 			const calls: string[][] = []
-			const exec = fakeExec(calls, { 'new-pane': 'terminal_9', 'list-panes': LIST_ONE })
+			const exec = fakeExec(calls, { 'new-pane': 'terminal_9', 'list-panes': [LIST_NONE, LIST_ONE] })
 			const writes: string[] = []
 			const original = process.stderr.write
 			process.stderr.write = ((s: string) => {
@@ -134,9 +150,50 @@ describe('spec:cyber-mux/mux/placement', () => {
 			expect(calls.some((c) => c[1] === 'write-chars')).toBe(false)
 		})
 
-		it('open() throws when new-pane reports nothing', () => {
+		it('open() throws when new-pane fails', () => {
 			const exec = fakeExec([], { 'new-pane': null })
 			expect(() => zellijMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right' })).toThrow(/new-pane/)
+		})
+
+		// zellij 0.44.3 can deliver a CLI reply to the wrong command: one exits 0 printing nothing and the
+		// next receives its payload (see `LIST_PANES_ATTEMPTS` in the adapter for the repro). These four
+		// rows are what keeps that from reaching a caller as a wrong pane or a phantom success. They are
+		// unit rows on purpose — the defect is load-triggered, so the real-boundary suite can only ever
+		// observe it by luck, while a fake can state it.
+		it('open() refuses an id that names a pane which was already standing — the phantom guard', () => {
+			// The listing is IDENTICAL before and after: nothing appeared, so `terminal_9` is a stale reply
+			// that happens to name a live pane. Reporting it would hand the caller someone else's pane.
+			const exec = fakeExec([], { 'new-pane': 'terminal_9', 'list-panes': LIST_ONE })
+			expect(() => zellijMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right' })).toThrow(/terminal_9/)
+		})
+
+		it('open() recovers the pane when new-pane exits 0 having printed no id at all', () => {
+			// The reply was lost, not the pane: exactly one pane appeared over the open, which is an
+			// unambiguous answer. Failing here would fail an open that genuinely happened.
+			const exec = fakeExec([], { 'new-pane': '', 'list-panes': [LIST_NONE, LIST_ONE] })
+			expect(zellijMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right' })).toEqual({ id: 'terminal_9', tab: '2' })
+		})
+
+		it('open() at tab recovers the pane when new-tab exits 0 having printed no tab id', () => {
+			const exec = fakeExec([], { 'new-tab': '', 'list-panes': [LIST_NONE, LIST_ONE] })
+			expect(zellijMuxAdapter.open(exec, { cwd: '/unit', at: 'tab' })).toEqual({ id: 'terminal_9', tab: '2' })
+		})
+
+		it('open() never resolves to a PLUGIN pane that appeared alongside the one it made', () => {
+			// A tab zellij opens can be carrying a plugin pane in the same listing as its own initial pane,
+			// and that record can sort first. Caught at the real boundary: an `open()` at `tab` returned
+			// `plugin_15`, and the `rename()` after it renamed a pane the caller never opened.
+			const withPlugin = JSON.stringify([
+				{ id: 15, is_plugin: true, tab_id: 2, title: 'zellij:link' },
+				{ id: 9, is_plugin: false, tab_id: 2, title: 'zsh', terminal_command: 'zsh' },
+			])
+			const exec = fakeExec([], { 'new-tab': '2', 'list-panes': [LIST_NONE, withPlugin] })
+			expect(zellijMuxAdapter.open(exec, { cwd: '/unit', at: 'tab' })).toEqual({ id: 'terminal_9', tab: '2' })
+		})
+
+		it('open() at tab refuses a tab id whose panes all predate it', () => {
+			const exec = fakeExec([], { 'new-tab': '2', 'list-panes': LIST_ONE })
+			expect(() => zellijMuxAdapter.open(exec, { cwd: '/unit', at: 'tab' })).toThrow(/tab 2/)
 		})
 
 		it('rename() on a tab uses rename-tab-by-id', () => {
@@ -385,6 +442,25 @@ describe('spec:cyber-mux/mux/lookup', () => {
 		it('listPanes returns nothing on non-JSON output rather than throwing', () => {
 			const exec = fakeExec([], { 'list-panes': 'not json' })
 			expect(zellijMuxAdapter.listPanes(exec)).toEqual([])
+		})
+
+		// A LOST reply is not an empty session — a live zellij session always has at least one pane — and
+		// reading it as one is what took the real-boundary suite down ten rows at a time (see
+		// `LIST_PANES_ATTEMPTS`). The read is re-asked instead.
+		it('listPanes re-asks a reply that did not come back as a pane array', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'list-panes': ['', LIST_ONE] })
+			expect(zellijMuxAdapter.listPanes(exec)).toHaveLength(1)
+			expect(calls).toHaveLength(2)
+		})
+
+		it('listPanes gives up at the retry ceiling rather than asking forever', () => {
+			const calls: string[][] = []
+			// Never answers, so `[]` here is a real answer rather than a dropped one — bounded by
+			// LIST_PANES_ATTEMPTS, which is what keeps a wedged server from spinning.
+			const exec = fakeExec(calls, { 'list-panes': '' })
+			expect(zellijMuxAdapter.listPanes(exec)).toEqual([])
+			expect(calls).toHaveLength(3)
 		})
 
 		it('lookup-listing-agent-status-absent-non-herdr', () => {
