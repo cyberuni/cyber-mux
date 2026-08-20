@@ -39,18 +39,6 @@ async function pollUntil(read: () => string, done: (out: string) => boolean, tim
 	return out
 }
 
-/**
- * The suite's own copy of the adapter's `samePane` rule: `new-pane` prints the PREFIXED `terminal_N`
- * while `list-panes --json` reports `id` as a BARE integer, so an id from an `open` and an id from a
- * listing are the same pane spelled two ways. Copied rather than exported — the adapter's internal is
- * not part of the published surface, and a test that re-states the rule fails loudly if the adapter
- * ever changes it, which importing it would hide.
- */
-function samePaneId(a: string, b: string): boolean {
-	const normalize = (id: string) => (/^\d+$/.test(id) ? `terminal_${id}` : id)
-	return normalize(a) === normalize(b)
-}
-
 const SESSION = `cm-itest-${process.pid}`
 
 // SHORT, deliberately — the same `sun_path` trap the wezterm suite documents. Zellij's socket lands at
@@ -178,19 +166,28 @@ describe.skipIf(!hasZellij() || !hasScript())('spec:cyber-mux/mux', () => {
 		// fixture. Opened both ways in one test on purpose — a suite that only ever saw a float could
 		// pass on an adapter that hardcoded `true`.
 		//
-		// Matched with `samePaneId`, NEVER `===`: `new-pane` prints `terminal_N` while `list-panes`
-		// reports the bare `N`, the asymmetry the adapter's own `samePane` exists for and which the
-		// `mux.zellij.ts` header calls load-bearing. A raw comparison here misses every time and reads
-		// as "the float is absent from the listing" rather than as "the ids are spelled differently".
+		// BOTH opens are anchored with `from`, including the float. `new-pane` fails SILENTLY when the
+		// client is focused on a plugin pane — printing a plausible id and creating nothing, the trap
+		// the file header documents — and `from` focuses a terminal pane first, which is the remedy.
+		// The float row above deliberately takes the unanchored default; this one must not, because a
+		// phantom pane here would read as a wrong flag rather than as a failed open.
+		//
+		// Identified by LABEL, never by id, and that is not fussiness: `new-pane` prints the prefixed
+		// `terminal_N` while the listing reports the bare `N`, AND a zellij pane id is not unique
+		// across plugin and terminal panes — a live 0.44.3 session reports `0` for both its suppressed
+		// `zellij:link` plugin pane and its first terminal pane, which `listPanes` collapses onto one
+		// `LivePane.id`. A name given at birth is the one unambiguous handle this backend offers, and
+		// the `rename()` row already pins that a name survives into the listing.
 		it('listPanes() tells a real float from a real tiled pane', () => {
-			const float = adapter.open(exec, { cwd, at: 'pane:float' })
-			const tiled = adapter.open(exec, { cwd, at: 'pane:right', from: { id: base } })
+			adapter.open(exec, { cwd, at: 'pane:float', from: { id: base }, label: 'cm-float' })
+			adapter.open(exec, { cwd, at: 'pane:right', from: { id: base }, label: 'cm-tiled' })
 			const panes = adapter.listPanes(exec)
-			// Found at all, first — so a miss is reported as a miss rather than as a wrong flag.
-			expect(panes.filter((p) => samePaneId(p.id, float.id)).length).toBe(1)
-			expect(panes.filter((p) => samePaneId(p.id, tiled.id)).length).toBe(1)
-			expect(panes.find((p) => samePaneId(p.id, float.id))?.floating).toBe(true)
-			expect(panes.find((p) => samePaneId(p.id, tiled.id))?.floating).toBe(false)
+			// Found at all, and exactly once, before the flag is read — so a miss is reported as a miss
+			// rather than as a wrong answer.
+			expect(panes.filter((p) => p.label === 'cm-float').length).toBe(1)
+			expect(panes.filter((p) => p.label === 'cm-tiled').length).toBe(1)
+			expect(panes.find((p) => p.label === 'cm-float')?.floating).toBe(true)
+			expect(panes.find((p) => p.label === 'cm-tiled')?.floating).toBe(false)
 		})
 
 		it('submit()/read() actually run a command in and capture from a real pane', async () => {
