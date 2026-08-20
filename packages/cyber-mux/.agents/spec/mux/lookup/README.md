@@ -126,6 +126,17 @@ reads the live pane list, which answers ids and labels in one read.
   report (a zellij plugin pane omits the key entirely, having none), and an absent value there is the
   honest answer rather than a manufactured one.
 
+- **A listed pane's id names exactly one pane (CR 116)** — resolution addresses a pane by id, so an
+  id two panes share resolves the wrong record wherever ids are compared: the existence probe, the
+  focus query, and the guard that catches an open reporting a pane it never created. A backend that
+  numbers its panes in more than one space therefore owes the listing a QUALIFIED id, settled at the
+  adapter: zellij numbers plugin panes and terminal panes separately, so a live session reports the
+  number `0` for both its suppressed `zellij:link` plugin pane and its first terminal pane, and the
+  listing reports them as `plugin_0` and `terminal_0`. This is not the seam encoding a backend's id
+  syntax — the caller still holds an opaque string, and it still resolves by matching a live pane
+  rather than by shape. It is the backend saying which of its panes it means, which a caller holding
+  one opaque id cannot do for it.
+
 ## Control Flow
 
 ### Reporting whether a pane is focused, and what the listing carries
@@ -208,6 +219,7 @@ rendering of these outcomes — exit codes, the structured error, `--format` —
 | zero matches → not found, distinct from ambiguous | no pane labeled or ided worker | `a name matching no live pane is not found, rather than ambiguous` |
 | two or more label matches → fail acting on none, yield candidates to choose from | three panes all labeled worker | `a name matching two or more live panes fails rather than guessing which was meant` |
 | whole spaced label → taken as one locator | a tmux pane labeled `my worker` | `a label containing spaces resolves to its pane` |
+| an id names exactly one pane → each kind keeps its own | a zellij plugin pane and terminal pane both numbered 0 | `a plugin pane and a terminal pane sharing a number are listed under different ids` |
 
 ### The live pane listing reports `agentStatus`, herdr-only (CR 94)
 

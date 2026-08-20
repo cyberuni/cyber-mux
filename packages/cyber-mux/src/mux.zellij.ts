@@ -24,6 +24,13 @@ import { pollForOutput } from './wait-output.ts'
  * - The id forms are confirmed and asymmetric: `new-pane` prints the PREFIXED `terminal_N`, while
  *   `list-panes --json` reports `id` as a BARE integer. `samePane` is what makes those the same pane,
  *   so it is load-bearing rather than defensive.
+ * - That bare integer is NOT unique: a live session reports `id: 0` for both its suppressed
+ *   `zellij:link` PLUGIN pane and its first terminal pane. The number is unique only within a kind,
+ *   and `is_plugin` is what says which kind — so `listZellijPanes` qualifies every bare id to
+ *   `terminal_N`/`plugin_N` before anything compares or reports it. Both prefixed forms are what
+ *   `--pane-id` itself accepts, and a bare `N` addresses the TERMINAL pane (verified: renaming
+ *   `--pane-id 3` renames terminal 3 and leaves plugin 3 alone), which is exactly the fold
+ *   `normalizePaneId` makes.
  * - Which `list-panes --json` field names are real, and what each one carries. The label guard reads
  *   `terminal_command`, not `pane_command` — a doc probe had that one backwards; see `ZellijPane`.
  *   `pane_cwd` and `pane_command` are real too, and both are present ONLY on a terminal pane: a
@@ -296,6 +303,13 @@ interface ZellijPane {
 	 */
 	is_floating?: boolean | undefined
 	/**
+	 * Whether this record is a PLUGIN pane rather than a terminal one — `is_plugin`. Load-bearing for
+	 * identity, not decoration: zellij numbers plugin panes and terminal panes in separate spaces, so
+	 * `id` alone is ambiguous (a live session reports `0` for both its `zellij:link` plugin pane and
+	 * its first terminal pane). This is what `zellijPaneId` qualifies a bare id with.
+	 */
+	is_plugin?: boolean | undefined
+	/**
 	 * The pane's working directory — `pane_cwd`, the field `LivePane.cwd` is filled from. Present and
 	 * populated on a TERMINAL pane's record; a plugin pane's record omits the key entirely, which is
 	 * what an earlier probe — sampling a plugin pane — read as "there is no cwd field on 0.44.3".
@@ -319,9 +333,9 @@ interface ZellijPane {
 }
 
 /**
- * One `zellij action list-panes --json` call, parsed defensively — never throws on bad output. The id
- * is coerced to a string so a bare-integer id (`3`) and a prefixed one (`terminal_3`) are compared as
- * strings by `samePane` rather than one being a number.
+ * One `zellij action list-panes --json` call, parsed defensively — never throws on bad output. Every
+ * id is QUALIFIED on the way out (see `zellijPaneId`), so what this returns — and therefore what
+ * `LivePane.id` carries and what `samePane` compares — names exactly one live pane.
  */
 function listZellijPanes(exec: Exec): ZellijPane[] {
 	const out = exec('zellij', ['action', 'list-panes', '--json'])
@@ -335,7 +349,29 @@ function listZellijPanes(exec: Exec): ZellijPane[] {
 	if (!Array.isArray(parsed)) return []
 	return parsed
 		.filter((p): p is ZellijPane => p != null && (p as ZellijPane).id != null)
-		.map((p) => ({ ...p, id: String(p.id) }))
+		.map((p) => ({ ...p, id: zellijPaneId(p.id, p.is_plugin) }))
+}
+
+/**
+ * The id a listing record is reported under — qualified by KIND, because zellij's bare number is not
+ * unique. Plugin panes and terminal panes are numbered in separate spaces, so a live session reports
+ * `id: 0` for both its suppressed `zellij:link` plugin pane and its first terminal pane; reporting
+ * both as `'0'` collapsed two genuinely different panes onto one `LivePane.id`, and every resolution
+ * by id — `paneExists`, `isPaneFocused`, and `openedForPane`'s guard against a phantom `new-pane`
+ * result — could then land on the wrong one.
+ *
+ * A bare integer therefore takes the `terminal_`/`plugin_` prefix its `is_plugin` names, which is the
+ * form `new-pane` already prints and the form `--pane-id` accepts for BOTH kinds (verified against a
+ * live 0.44.3). An id that already carries a prefix is left exactly as it is — this qualifies what
+ * zellij left ambiguous, it does not rewrite what zellij spelled out.
+ *
+ * A record with no `is_plugin` at all is read as a terminal pane: that is the same answer
+ * `normalizePaneId` gives a bare id, and the kind zellij's own bare-id addressing resolves to.
+ */
+function zellijPaneId(id: unknown, isPlugin: boolean | undefined): string {
+	const raw = String(id)
+	if (!/^\d+$/.test(raw)) return raw
+	return isPlugin === true ? `plugin_${raw}` : `terminal_${raw}`
 }
 
 /**

@@ -302,3 +302,18 @@ Feature: mux lookup — resolving a pane, the focus probe, and the listing conte
       | zellij  |
       | cmux    |
       | otty    |
+
+  # ── A listed pane's id names exactly one pane (CR 116) ──
+  # Resolution addresses a pane by id, so an id two panes share is an identity hazard everywhere:
+  # paneExists, the focus query, and the guard that catches an open reporting a pane it never
+  # created all resolve the wrong record. zellij is where this is real — it numbers plugin panes and
+  # terminal panes in SEPARATE spaces, so a live session reports id 0 for both its suppressed
+  # zellij:link plugin pane and its first terminal pane. The kind is what disambiguates them, and
+  # the listing is where that has to be settled: a caller holds an opaque id and cannot.
+
+  @id:lookup-listing-id-names-one-pane
+  Scenario: a plugin pane and a terminal pane sharing a number are listed under different ids
+    Given a zellij session whose plugin pane and first terminal pane both report the number 0
+    When the live panes are listed
+    Then the two panes are reported under different ids, neither collapsed onto the other
+    And each of those ids still addresses its own pane on the backend

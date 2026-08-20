@@ -353,6 +353,31 @@ describe('spec:cyber-mux/mux/lookup', () => {
 			expect(zellijMuxAdapter.listPanes(fakeExec([], { 'list-panes': list }))[0]?.cwd).toBeUndefined()
 		})
 
+		// The live 0.44.3 shape this exists for: a session's suppressed `zellij:link` plugin pane and its
+		// first terminal pane BOTH report the number 0. Reporting both as `'0'` collapsed two genuinely
+		// different panes onto one `LivePane.id`, and everything that resolves by id could then land on
+		// the wrong one.
+		it('lookup-listing-id-names-one-pane', () => {
+			const list = JSON.stringify([
+				{ id: 0, is_plugin: true, is_suppressed: true, title: '(.) - zellij:link', tab_id: 0 },
+				{ id: 0, is_plugin: false, title: 'Pane #1', tab_id: 0, pane_cwd: '/repo/a' },
+			])
+			const panes = zellijMuxAdapter.listPanes(fakeExec([], { 'list-panes': list }))
+			expect(panes.map((p) => p.id)).toEqual(['plugin_0', 'terminal_0'])
+			// And each id still addresses its own pane: a bare `0` from a caller is the TERMINAL one, the
+			// same pane zellij's own bare-id addressing resolves to.
+			expect(zellijMuxAdapter.paneExists(fakeExec([], { 'list-panes': list }), { id: '0' })).toBe(true)
+			expect(zellijMuxAdapter.paneExists(fakeExec([], { 'list-panes': list }), { id: 'plugin_0' })).toBe(true)
+			expect(zellijMuxAdapter.paneExists(fakeExec([], { 'list-panes': list }), { id: 'plugin_9' })).toBe(false)
+		})
+
+		// An id zellij already spelled out is passed through untouched — this qualifies what the backend
+		// left ambiguous rather than rewriting what it was explicit about.
+		it('listPanes() leaves an already-prefixed zellij id exactly as reported', () => {
+			const list = JSON.stringify([{ id: 'terminal_9', tab_id: 2, title: 'zsh', terminal_command: 'zsh' }])
+			expect(zellijMuxAdapter.listPanes(fakeExec([], { 'list-panes': list }))[0]?.id).toBe('terminal_9')
+		})
+
 		it('listPanes returns nothing when the backend cannot be read', () => {
 			expect(zellijMuxAdapter.listPanes(fakeExec([]))).toEqual([])
 		})
