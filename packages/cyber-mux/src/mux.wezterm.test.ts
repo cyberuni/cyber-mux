@@ -393,6 +393,12 @@ describe('spec:cyber-mux/mux/lookup', () => {
 			expect(weztermMuxAdapter.isPaneFocused(fakeExec([]), { id: '9' })).toBeUndefined()
 		})
 
+		// The wezterm row of the outline: `cwd` is reported as a `file://` URI and reduced to the bare
+		// path, so a caller filtering by directory compares like with like.
+		it('lookup-listing-reports-cwd', () => {
+			expect(weztermMuxAdapter.listPanes(fakeExec([], { list: LIST_ONE }))[0]?.cwd).toBe('/unit')
+		})
+
 		it('lookup-wezterm-never-labeled', () => {
 			const exec = fakeExec([], { list: LIST_ONE })
 			expect(weztermMuxAdapter.listPanes(exec)).toEqual([{ id: '9', mux: 'wezterm', cwd: '/unit', floating: false }])

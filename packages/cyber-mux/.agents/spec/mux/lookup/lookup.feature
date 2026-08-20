@@ -279,3 +279,41 @@ Feature: mux lookup — resolving a pane, the focus probe, and the listing conte
       | wezterm |
       | cmux    |
       | otty    |
+
+  # ── The live pane listing reports each pane's working directory (CR 116) ──
+  # A pane's cwd is what a caller filters a listing by ("which pane is in this repo"), and it is the
+  # third field an ambiguous name yields to choose between candidates — so a backend that omits it
+  # answers those questions with nothing. Every backend cyber-mux drives reports the directory in the
+  # listing call the adapter already makes, so this costs no extra exec anywhere. Zellij was the one
+  # gap, from a probe that read a plugin pane's record — which omits the key — and concluded the field
+  # did not exist; it does, on every terminal pane.
+
+  @id:lookup-listing-reports-cwd
+  Scenario Outline: <backend>'s live pane listing reports each pane's working directory
+    Given a <backend> pane running in a known directory
+    When the live panes are listed
+    Then that pane's entry carries that directory as its cwd
+
+    Examples:
+      | backend |
+      | tmux    |
+      | herdr   |
+      | wezterm |
+      | zellij  |
+      | cmux    |
+      | otty    |
+
+  # ── A listed pane's id names exactly one pane (CR 116) ──
+  # Resolution addresses a pane by id, so an id two panes share is an identity hazard everywhere:
+  # paneExists, the focus query, and the guard that catches an open reporting a pane it never
+  # created all resolve the wrong record. zellij is where this is real — it numbers plugin panes and
+  # terminal panes in SEPARATE spaces, so a live session reports id 0 for both its suppressed
+  # zellij:link plugin pane and its first terminal pane. The kind is what disambiguates them, and
+  # the listing is where that has to be settled: a caller holds an opaque id and cannot.
+
+  @id:lookup-listing-id-names-one-pane
+  Scenario: a plugin pane and a terminal pane sharing a number are listed under different ids
+    Given a zellij session whose plugin pane and first terminal pane both report the number 0
+    When the live panes are listed
+    Then the two panes are reported under different ids, neither collapsed onto the other
+    And each of those ids still addresses its own pane on the backend

@@ -975,6 +975,13 @@ describe('spec:cyber-mux/mux/lookup', () => {
 		expect(tmuxMuxAdapter.listPanes(() => null)).toEqual([])
 	})
 
+	// The tmux row of the outline: `#{pane_current_path}` already rides the one listing format string,
+	// so a pane's directory costs no second query.
+	it('lookup-listing-reports-cwd', () => {
+		const exec = fakeExec([], { 'list-panes': '%1\tclaude\t/repo/a\tworker\tzeta\t0' })
+		expect(tmuxMuxAdapter.listPanes(exec)[0]?.cwd).toBe('/repo/a')
+	})
+
 	// The tmux half of the outline; the herdr row lives in session.herdr.test.ts.
 	it('lookup-listing-carries-label', () => {
 		// A person named this pane `worker` — its title differs from the host, which is what makes it

@@ -212,6 +212,12 @@ describe('spec:cyber-mux/mux', () => {
 
 describe('spec:cyber-mux/mux/lookup', () => {
 	describe('ottyMuxAdapter', () => {
+		// The otty row of the outline: `cwd` rides the same `panes` call the listing already makes.
+		it('lookup-listing-reports-cwd', () => {
+			const panes = ottyMuxAdapter.listPanes(fakeExec([], { panes: LIST_PANES_RESPONSE }))
+			expect(panes.map((p) => p.cwd)).toEqual(['/home/user', '/home/user/tests', '/tmp'])
+		})
+
 		it('lookup-listing-floating-false-by-construction', () => {
 			// otty has no floating-pane concept at all, so every pane it reports really is tiled. `false`
 			// is the TRUE answer here, not a stub standing in for one — and it is never omitted: an absent

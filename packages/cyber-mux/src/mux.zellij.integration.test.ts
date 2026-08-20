@@ -110,7 +110,11 @@ describe.skipIf(!hasZellij() || !hasScript())('spec:cyber-mux/mux', () => {
 			// The session's own initial pane, and the anchor every split here is taken `from`. A fresh client
 			// focuses zellij's release-notes PLUGIN pane, and a split relative to a plugin pane fails the same
 			// silent way — so the tests must always name a terminal pane rather than trusting focus.
-			base = String(adapter.listPanes(exec).find((p) => !p.label?.startsWith('Release Notes'))?.id ?? '0')
+			//
+			// Chosen by the id's KIND, which is the only reliable way to say "a terminal pane": a live
+			// session carries a SECOND plugin pane besides the release notes — the suppressed `zellij:link`
+			// one — so filtering by label alone can hand back a plugin pane and anchor every split on it.
+			base = String(adapter.listPanes(exec).find((p) => p.id.startsWith('terminal_'))?.id ?? 'terminal_0')
 		})
 
 		afterAll(() => {
@@ -190,6 +194,31 @@ describe.skipIf(!hasZellij() || !hasScript())('spec:cyber-mux/mux', () => {
 			expect(panes.some((p) => !p.floating)).toBe(true)
 		})
 
+		// The identity hazard, at the boundary that produces it: a live 0.44.3 session really does report
+		// the number 0 twice — once for its suppressed `zellij:link` PLUGIN pane and once for its first
+		// terminal pane. No fixture can prove that; only the binary can. What the adapter owes is a
+		// listing in which no two panes answer to the same id.
+		it('lookup-listing-id-names-one-pane', async () => {
+			// Polled for a NON-EMPTY listing first, and for the same reason the cwd row polls: an empty
+			// `list-panes` reply under load would otherwise read as "this session has no plugin pane",
+			// which is a different finding from the one under test.
+			const listed = await pollUntil(
+				() => JSON.stringify(adapter.listPanes(exec).map((p) => p.id)),
+				(out) => out !== '[]',
+			)
+			const ids = JSON.parse(listed) as string[]
+			expect(ids.length).toBeGreaterThan(0)
+			expect(new Set(ids).size).toBe(ids.length)
+			// And the collision is real rather than hypothetical here: both kinds are present, and at least
+			// one number is carried by a pane of each kind.
+			const numberOf = (id: string) => id.replace(/^(terminal|plugin)_/, '')
+			const plugins = ids.filter((id) => id.startsWith('plugin_')).map(numberOf)
+			const terminals = ids.filter((id) => id.startsWith('terminal_')).map(numberOf)
+			expect(plugins.length).toBeGreaterThan(0)
+			expect(terminals.length).toBeGreaterThan(0)
+			expect(plugins.some((n) => terminals.includes(n))).toBe(true)
+		})
+
 		it('submit()/read() actually run a command in and capture from a real pane', async () => {
 			const target = adapter.open(exec, { cwd, at: 'tab' })
 			adapter.submit(exec, target, 'echo cyber-mux-zj-marker')
@@ -201,9 +230,6 @@ describe.skipIf(!hasZellij() || !hasScript())('spec:cyber-mux/mux', () => {
 		})
 
 		it('open() honors cwd — proven by asking the real shell where it is', async () => {
-			// `list-panes --json` carries no cwd field on this backend, so the ONLY honest way to show the
-			// `--cwd` flag landed is to ask the pane's own shell. That absence is itself the finding this
-			// suite exists to make: a doc probe had the adapter reading a `pane_cwd` that does not exist.
 			const target = adapter.open(exec, { cwd, at: 'tab' })
 			adapter.submit(exec, target, 'pwd')
 			const output = await pollUntil(
@@ -211,7 +237,26 @@ describe.skipIf(!hasZellij() || !hasScript())('spec:cyber-mux/mux', () => {
 				(out) => out.includes(cwd),
 			)
 			expect(output).toContain(cwd)
-			expect(adapter.listPanes(exec).find((p) => p.id === target.id)?.cwd).toBeUndefined()
+		})
+
+		// The READ side of the same directory, at the boundary that owns the answer. `pane_cwd` is a real
+		// key on a live 0.44.3 TERMINAL pane record — a mocked exec would only prove the adapter can read
+		// its own fixture, and a fixture is exactly how the opposite claim ("no cwd field exists at all")
+		// survived: the probe behind it sampled a PLUGIN pane, whose record omits the key. Opening at a
+		// known directory and reading it back off the live listing is what tells those apart.
+		it('lookup-listing-reports-cwd', async () => {
+			const target = adapter.open(exec, { cwd, at: 'tab' })
+			// Found at all BEFORE the field is read, and polled for rather than read once — the same rule
+			// the float row states. `find(...)?.cwd` alone answers `undefined` for a pane that is missing
+			// from the listing and for a pane that reports no directory, and those are opposite findings:
+			// one is this suite's known flake (a `list-panes` reply that comes back empty under load, #115),
+			// the other is the claim under test. Asserting the pane is there first keeps them apart.
+			const found = await pollUntil(
+				() => JSON.stringify(adapter.listPanes(exec).find((p) => p.id === target.id) ?? null),
+				(out) => out !== 'null',
+			)
+			expect(found, 'the pane just opened never appeared in the live listing').not.toBe('null')
+			expect((JSON.parse(found) as { cwd?: string } | null)?.cwd).toBe(cwd)
 		})
 
 		it('rename() at the pane tier actually renames a real pane, and the name survives as a label', () => {
