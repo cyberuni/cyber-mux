@@ -19,6 +19,7 @@ supports and what cyber-mux does when it falls short.
 | Report focused pane   | best-effort             | best-effort             | ✗ (always `unknown`)    | ✓ (`list-panes --json`) | ✓                       | ✓                       |
 | Knows the running harness | ✗                   | ✓                       | ✗                       | ✗                       | ✗                       | ✗                       |
 | Size splits           | ✓                       | ✓                       | ✓                       | ✗                       | ✓                       | ✗                       |
+| Floating pane         | ✓ (tmux 3.7+, `new-pane`) | ✗ (refused by name)   | ✗ (refused by name)     | ✓ (`new-pane --floating`) | ✗ (refused by name)   | ✗ (refused by name)     |
 
 ## tmux
 
@@ -36,6 +37,12 @@ Drives [tmux](https://github.com/tmux/tmux) via its CLI (`split-window`, `new-wi
 - `focus` resolves the pane's session and window from `list-panes -a` first, then beams in order:
   `switch-client` → `select-window` → `select-pane`. An unresolvable pane throws rather than issuing
   a false-success beam.
+- **Floating panes need tmux 3.7 or newer.** `--at pane:float` drives `new-pane`, the command tmux
+  added in 3.7 for a pane that sits above the tiled layout and so resizes none of the region's other
+  panes. cyber-mux does not probe the version: on an older tmux the command does not exist and tmux
+  answers with its own `unknown command`, which surfaces as a failed open naming the command. A
+  float takes tmux's default size — half the window's width by a quarter its height — and `--ratio`
+  is dropped, because a float takes no share of a split whose fraction it could be.
 
 ## herdr
 
