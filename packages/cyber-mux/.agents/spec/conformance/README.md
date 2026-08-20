@@ -13,20 +13,25 @@ concept: [cyber-mux, conformance]
 
 ## What
 
-Continuous integration cannot install every multiplexer, so the real-boundary suites
-(`src/*.integration.test.ts` — the ones that drive an actual tmux or herdr rather than a stubbed
-command runner) are verified **by hand, per platform**. Today that means `pnpm test:integration`,
-which has two defects this node exists to fix:
+CI's `live-backends` job installs tmux, herdr, wezterm, and zellij and runs `pnpm cm
+test:integration` on every pull request — and that job is now blocking, not advisory. That does not
+retire this node; it sharpens what it is for. `pnpm test:integration` has two defects this node
+exists to fix, and a blocking CI job makes the second one more consequential, not less:
 
-- **It runs every suite at once.** There is no way to verify one adapter. On a tmux-only machine the
-  herdr suites are dead weight, and on a herdr machine the reverse.
+- **It runs every suite at once.** There is no way to verify one adapter on its own. On a tmux-only
+  machine the herdr suites are dead weight, and on a herdr machine the reverse — a maintainer working
+  from whatever subset of multiplexers their own machine has still needs to select.
 - **A skip and a pass look identical.** Every suite quietly excuses itself when its multiplexer is
   missing (`describe.skipIf(!hasTmux())`), so a green run is equally consistent with "everything
-  passed" and "nothing ran". The one thing a manual verification pass must tell you is exactly what
-  it could not check.
+  passed" and "nothing ran". That ambiguity used to be only a hand-verification problem; now it is
+  also a CI-trust problem — issue #125 was filed on exactly this: an adversarial run, on a machine
+  with zellij installed, came back "13 skipped" and green, in a job people are now supposed to trust
+  as a gate. The one thing a verification pass must tell you is exactly what it could not check.
 
 `scripts/test-adapter.ts` answers, per adapter: **is this multiplexer here, is there a real-boundary
-suite for it, and did that suite actually exercise anything?**
+suite for it, and did that suite actually exercise anything?** `cmux` and `otty` remain uninstallable
+in CI — both are GUI applications whose CLIs are clients to an app that must already be running — so
+the `gap` outcome below still has two adapters whose absence only this node's scan makes visible.
 
 Exit codes follow the set [`axi.md`](../axi.md) states for every command in this package — `0`
 success, `1` error, `2` usage error — which is what lets a bad invocation stay distinguishable from
@@ -93,16 +98,16 @@ So the listing reports a **projected outcome** drawn from three values:
 `runnable` is the honest name for "this machine can verify this adapter, and only running it will
 say how". A projection is never a verdict.
 
-**`gap` and `no-coverage` are the point of the tool.** Four of the six adapters — `wezterm`,
-`zellij`, `cmux`, and `otty` — ship with mocked unit tests only and no real-boundary suite at all, so
-a runner that reported them green would assert coverage that does not exist. `no-coverage` catches the subtler case, and it is not hypothetical: with the tmux binary made
+**`gap` and `no-coverage` are the point of the tool.** Two of the six adapters — `cmux` and `otty` —
+ship with mocked unit tests only and no real-boundary suite at all, so a runner that reported them
+green would assert coverage that does not exist. `no-coverage` catches the subtler case, and it is not hypothetical: with the tmux binary made
 unavailable, the tmux suite reports six tests, **zero executed, six skipped — and vitest still exits
 0 reporting success**. That is precisely the laundering this outcome refuses.
 
 **`skip` does not fail**, and the asymmetry is deliberate: an adapter you cannot test on this machine
 is not a defect of this machine's run. The gap is not thereby hidden — the **listing reports suite
-presence for every adapter regardless of installation**, so a missing wezterm suite is visible from a
-tmux-only box; only the *exit status* is scoped to what this machine could actually verify.
+presence for every adapter regardless of installation**, so a missing cmux or otty suite is visible
+from a tmux-only box; only the *exit status* is scoped to what this machine could actually verify.
 
 ### Non-goals
 
@@ -110,8 +115,8 @@ tmux-only box; only the *exit status* is scoped to what this machine could actua
   so a new adapter inherits coverage, and a new feature adds one scenario every adapter must satisfy
   — is the natural successor to this runner and is deliberately a **separate change request**. This
   node specifies the runner that would drive it and presumes nothing about its shape.
-- **Filling the wezterm, zellij, cmux, and otty gaps.** This node **reports** a missing suite.
-  Writing one is the work that report exists to prompt.
+- **Filling the cmux and otty gaps.** This node **reports** a missing suite. Writing one is the work
+  that report exists to prompt.
 - **Replacing `pnpm test:integration`.** The run-everything entry point stays. This is selection and
   honest reporting layered over the same suites and the same
   [`vitest.integration.config.ts`](../../../vitest.integration.config.ts).
@@ -170,9 +175,12 @@ Two consequences worth stating:
 
 - **The listing form is exempt**, because it runs no suite and so carries none of the risk. It stays
   available from anywhere, which is how a caller discovers what a plain shell would be able to verify.
-- **For wezterm, cmux, and otty this is the only way anyway.** Those three are GUI applications whose
-  CLIs are *clients* — `wezterm cli`, `cmux`, `otty` all talk to an app that must already be running.
-  There is no "inside" from which to drive them; you run from a separate terminal while the app is up.
+- **For cmux and otty this is the only way anyway.** Both are GUI applications whose CLIs are
+  *clients* — `cmux` and `otty` each talk to an app that must already be running. There is no
+  "inside" from which to drive them; you run from a separate terminal while the app is up. `wezterm`
+  no longer belongs in this group: CI now drives it headless via `wezterm-mux-server`, the server
+  binary shipped in the same release tarball, so cmux and otty are the ones left with no "inside" at
+  all, not wezterm too.
 
 Which mux this shell is inside is read from `currentPane` in
 [`mux-probe.ts`](../../../src/mux-probe.ts) — the same per-pane env contract detection itself uses,
@@ -306,11 +314,19 @@ fails its `-V` gate, and one that answers `-V` then fails everything after) inst
 Only tmux is ever really driven, against its own private `-L` socket; herdr is never made visible,
 because it has no throwaway server and driving it would mean driving the operator's live session.
 
+The one thing that suite cannot construct is **which** adapters are suiteless, because the `gap` row
+needs an adapter this repo genuinely has no suite for. Naming one is the hand-maintained table the
+runner refuses everywhere else, and it went stale exactly as predicted: the fixture named `wezterm`,
+`wezterm` grew a real-boundary suite, and the row turned red for a reason having nothing to do with
+the contract. It now reads the suiteless adapter out of the runner's own listing, so a landing suite
+moves the fixture instead of breaking it.
+
 It is opt-in from `pnpm test` — but **not** unrun in CI: `pull-request.yml`'s `live-backends` job
-installs tmux and herdr and runs `pnpm cm test:integration`, so these three scenarios are exercised
-on every pull request. That job is `continue-on-error` for now (herdr with no attached client is
-still unproven there), so it reports without blocking; the constructed worlds above are what make
-this suite's own result independent of which multiplexers that runner happens to have.
+installs tmux, herdr, wezterm, and zellij and runs `pnpm cm test:integration`, so these three
+scenarios are exercised on every pull request. That job is no longer `continue-on-error` — it blocks
+the run like any other required job, so a false green here is no longer merely reported, it is
+trusted; the constructed worlds above are what make this suite's own result independent of which
+multiplexers that runner happens to have.
 
 One consequence stays and is stated: the `no-coverage` and `fail` rows carry **no passing partner
 adapter**, so they prove their outcome reaches the exit code but not that a passing neighbor fails to
@@ -319,7 +335,7 @@ pass safely.
 
 | Edge | Path (Given) | Scenario |
 |---|---|---|
-| A1 each adapter reported on its own line, counts summarized | tmux passing, herdr absent, wezterm suiteless | `--all reports every adapter on its own line and summarizes the counts` |
+| A1 each adapter reported on its own line, counts summarized | tmux passing, herdr absent, a suiteless adapter present | `--all reports every adapter on its own line and summarizes the counts` |
 | A2 any bad outcome decides the exit | one passing adapter alongside one bad outcome | `--all exits 1 when any single adapter is a gap, no coverage, or a failure` |
 | A3 the positive companion — nothing bad, exit 0 | one passing adapter alongside one skipped one | `--all exits 0 when every adapter either passed or was skipped` |
 | U2 an unrecognized flag is a usage error | the flag `--everything` | `an unrecognized flag exits 2, naming the flag and listing the valid ones` |

@@ -59,8 +59,7 @@ type Presence =
 	 * merely on PATH, never invoked. Correct for an adapter with no real-boundary suite: `gap` is
 	 * decided from the suite count before anything runs, so the binary's behavior is unreachable.
 	 * Using a stub rather than the real binary keeps these worlds buildable on a host that does not
-	 * have it installed — CI installs only tmux and herdr, so requiring a real wezterm here would
-	 * fail there for a reason having nothing to do with the contract.
+	 * have that multiplexer installed — the suiteless adapters are exactly the ones nothing installs.
 	 */
 	| 'present'
 	/** on PATH but broken: `-V` fails, so the suite's own gate skips every test */
@@ -185,32 +184,64 @@ function assertAbsent(stdout: string, names: readonly string[]): void {
 	}
 }
 
+/**
+ * What the runner's own listing says about this repo: every adapter, and which of them carry no
+ * real-boundary suite.
+ *
+ * Read rather than written down, for the reason the runner itself refuses a registry. A `gap` world
+ * needs an adapter that has no suite, and which adapters those are changes as suites land — wezterm
+ * was suiteless when this file was written and carries a suite today, which turned a hardcoded
+ * fixture red for a reason having nothing to do with the contract under test.
+ */
+function survey(): { names: string[]; suiteless: string[] } {
+	const { stdout } = runInWorld(makeWorld({}))
+	const rows = stdout.split('\n').filter((line) => /\bsuites=\d+\b/.test(line))
+	const nameOf = (line: string) => line.split(/\s+/)[0] as string
+	return { names: rows.map(nameOf), suiteless: rows.filter((l) => l.includes('suites=0')).map(nameOf) }
+}
+
+const REPO = survey()
+
+/** An adapter that has no real-boundary suite, so presenting its binary produces a `gap`. */
+function gapAdapter(): string {
+	const name = REPO.suiteless[0]
+	if (!name) expect.unreachable('every adapter carries a suite — a gap world can no longer be built')
+	return name as string
+}
+
+/** Every adapter the constructed world left off `PATH`, which the runner must report as `skip`. */
+function absentFrom(world: Record<string, Presence>): string[] {
+	return REPO.names.filter((name) => !(name in world))
+}
+
 describe('spec:cyber-mux/conformance', () => {
 	describe('--all — the real boundary, in a constructed world', () => {
 		it('conformance-all-reports-each-and-summarizes', () => {
-			// tmux really passes, wezterm is installed with no suite (gap), everything else is absent
+			// tmux really passes, a suiteless adapter is installed (gap), everything else is absent
 			// (skip) — the frozen scenario's exact shape, built rather than hoped for.
-			const bin = makeWorld({ tmux: 'real', wezterm: 'present' })
-			const { stdout } = runInWorld(bin, '--all')
+			const gap = gapAdapter()
+			const world: Record<string, Presence> = { tmux: 'real', [gap]: 'present' }
+			const { stdout } = runInWorld(makeWorld(world), '--all')
 
 			expect(lineFor(stdout, 'tmux')).toContain('pass')
-			expect(lineFor(stdout, 'wezterm')).toContain('gap')
-			assertAbsent(stdout, ['herdr', 'zellij', 'cmux', 'otty'])
+			expect(lineFor(stdout, gap)).toContain('gap')
+			assertAbsent(stdout, absentFrom(world))
 
 			// Every adapter on its own line, then the summary of the counts.
 			const summary = stdout.trimEnd().split('\n').at(-1) ?? ''
-			expect(summary).toMatch(/^6 adapters — /)
+			expect(summary).toMatch(new RegExp(`^${REPO.names.length} adapters — `))
 			expect(summary).toContain('pass=1')
 			expect(summary).toContain('gap=1')
-			expect(summary).toContain('skip=4')
+			expect(summary).toContain(`skip=${REPO.names.length - 2}`)
 		})
 
 		it('conformance-all-exits-nonzero-on-any-bad-outcome', () => {
 			// Row 1 — gap, paired with a genuine pass, so this row also proves a passing adapter does
 			// not mask a failing neighbour.
-			const gap = runInWorld(makeWorld({ tmux: 'real', wezterm: 'present' }), '--all')
+			const gapName = gapAdapter()
+			const gap = runInWorld(makeWorld({ tmux: 'real', [gapName]: 'present' }), '--all')
 			expect(lineFor(gap.stdout, 'tmux')).toContain('pass')
-			expect(lineFor(gap.stdout, 'wezterm')).toContain('gap')
+			expect(lineFor(gap.stdout, gapName)).toContain('gap')
 			expect(gap.code).toBe(1)
 
 			// Row 2 — no-coverage: tmux is on PATH but broken, so its suite's own gate skips every
@@ -227,21 +258,21 @@ describe('spec:cyber-mux/conformance', () => {
 			expect(fail.code).toBe(1)
 
 			// NOTE: rows 2 and 3 carry no passing partner. Only tmux can be made to pass safely — its
-			// suite runs against a private `-L` socket — and herdr, the only other suite-carrying
-			// adapter, has no throwaway server, so pairing against it would drive the operator's live
-			// session. Row 1 covers the does-a-pass-mask-a-bad-neighbour half; rows 2 and 3 cover only
-			// that their own outcome reaches the exit code.
+			// suite runs against a private `-L` socket — and the other suite-carrying adapters either
+			// have no throwaway server (herdr, whose one session is the operator's) or need a GUI or a
+			// PTY-backed client this fixture does not stand up. Row 1 covers the does-a-pass-mask-a-
+			// bad-neighbour half; rows 2 and 3 cover only that their own outcome reaches the exit code.
 		})
 
 		it('conformance-all-exits-zero-when-nothing-bad', () => {
-			// tmux passes and every other adapter is absent, so nothing is bad. wezterm is deliberately
-			// NOT in this world: it is suiteless, so its presence would force a gap and make exit 0
+			// tmux passes and every other adapter is absent, so nothing is bad. The suiteless adapters
+			// are deliberately NOT in this world: presenting one would force a gap and make exit 0
 			// unreachable — which is precisely why the world has to be built rather than observed.
-			const bin = makeWorld({ tmux: 'real' })
-			const { stdout, code } = runInWorld(bin, '--all')
+			const world: Record<string, Presence> = { tmux: 'real' }
+			const { stdout, code } = runInWorld(makeWorld(world), '--all')
 
 			expect(lineFor(stdout, 'tmux')).toContain('pass')
-			assertAbsent(stdout, ['herdr', 'wezterm', 'zellij', 'cmux', 'otty'])
+			assertAbsent(stdout, absentFrom(world))
 			// Skip must not be able to fail the run, or a machine with one multiplexer could never
 			// report success.
 			expect(code).toBe(0)

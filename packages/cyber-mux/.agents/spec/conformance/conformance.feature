@@ -1,10 +1,12 @@
 @frozen
 Feature: conformance — verifying one adapter against its real multiplexer
-  The maintainer-run runner (scripts/test-adapter.mjs, the test:adapter package script) that CI
-  cannot replace, because CI cannot install every multiplexer. It answers, per adapter: is this
-  multiplexer here, is there a real-boundary suite for it, and did that suite actually exercise
-  anything. It exists because `pnpm test:integration` can neither select one adapter nor tell a
-  skip apart from a pass.
+  The maintainer-run runner (scripts/test-adapter.ts, the test:adapter package script). It answers,
+  per adapter: is this multiplexer here, is there a real-boundary suite for it, and did that suite
+  actually exercise anything. It exists because `pnpm test:integration` can neither select one
+  adapter nor tell a skip apart from a pass — and a fully-skipped suite exits 0 reporting success,
+  so a green run can mean nothing was verified. CI's live-backends job installs four multiplexers
+  and runs those suites on every PR; that makes the skip-versus-pass question more load-bearing,
+  not less, since a false green there is now a green people are asked to trust.
 
   # ── Discovery (shared sub-graph) ──
   # Neither the adapter set nor the suite set is written down in the runner. A hand-maintained table
@@ -187,8 +189,8 @@ Feature: conformance — verifying one adapter against its real multiplexer
     When the runner verifies wezterm
     Then the outcome reported for wezterm is gap
     And it exits 1
-    # wezterm and zellij ship adapters with mocked unit tests only; reporting them green would
-    # assert coverage that does not exist
+    # cmux and otty ship adapters with mocked unit tests only; reporting them green would assert
+    # coverage that does not exist
 
   @id:conformance-all-skipped-is-no-coverage
   Scenario: a suite that executed no tests is reported as no coverage and exits 1
@@ -234,12 +236,14 @@ Feature: conformance — verifying one adapter against its real multiplexer
   Scenario: --all reports every adapter on its own line and summarizes the counts
     Given tmux is on PATH and its suite passes
     And herdr is absent from PATH
-    And wezterm is on PATH with no integration suite
+    And an adapter with no integration suite is on PATH
     When the runner is invoked with --all
     Then tmux is reported as pass on its own line
     And herdr is reported as skip on its own line
-    And wezterm is reported as gap on its own line
+    And the suiteless adapter is reported as gap on its own line
     And a summary of the outcome counts follows those lines
+    # this row is driven at the real boundary against this repo's own adapters, so it names the
+    # suiteless one by deriving it rather than by hardcoding a name a landing suite would falsify
 
   @id:conformance-all-exits-nonzero-on-any-bad-outcome
   Scenario Outline: --all exits 1 when any single adapter is a gap, no coverage, or a failure

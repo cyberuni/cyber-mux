@@ -1,10 +1,15 @@
 /**
  * The per-adapter conformance runner — spec: `.agents/spec/conformance/`.
  *
- * CI cannot install every multiplexer, so the real-boundary suites are verified by hand, per
- * platform. `pnpm test:integration` runs them all at once and cannot tell a skip from a pass; this
- * runner answers, per adapter: is this multiplexer here, is there a real-boundary suite for it, and
- * did that suite actually exercise anything.
+ * `pnpm test:integration` runs every real-boundary suite at once, cannot select one adapter, and
+ * cannot tell a skip from a pass — a suite whose every test self-skips makes vitest exit 0 reporting
+ * success. This runner answers, per adapter: is this multiplexer here, is there a real-boundary
+ * suite for it, and did that suite actually exercise anything.
+ *
+ * CI's live-backends job installs tmux, herdr, wezterm and zellij and runs those suites on every PR,
+ * which is what makes the skip-versus-pass question matter more rather than less: a fully-skipped
+ * suite reports green in a job that is now blocking. cmux and otty stay out of reach there — their
+ * CLIs are clients of a GUI app — so verifying them stays local, per platform, per adapter.
  *
  * A maintainer tool — `scripts/` is absent from package.json `files`, so none of this ships.
  *
