@@ -567,3 +567,48 @@ Decisions (`99-floating-panes` — the `pane:float` placement):
   tmux 3.7 is not installed in this sandbox (3.6b is) and zellij is not installed at all. The tests
   assert the argv each adapter emits against a mocked `Exec`, which is exactly the part a live binary
   would confirm. Worth one confirmation each on a live 3.7 and a live 0.44.1.
+
+Decisions (`117-float-refusal-vs-degrade` — should a float-less backend refuse or degrade, issue #117):
+
+- **the refusal STANDS: a float-less backend refuses, it does not substitute** — DECIDED, on a
+  challenge worth recording because the challenge was reasonable. `cyber-mux` exists to spawn agents,
+  so a raised objection was that refusing an open means *the agent is never created*, and a worse
+  layout beats no agent at all. The premise does not survive contact with what the refusal actually
+  does: it is **pre-flight and side-effect-free** — no command is issued, nothing is half-opened — and
+  it throws a named, catchable `FloatingPanesUnsupportedError` carrying the backend. `canFloatPanes`
+  is the pre-flight query that exists for exactly this, so "float if possible, else a tab" is two lines
+  in the CALLER. The real question is therefore not *refuse vs. spawn* but *who owns the fallback
+  policy*, and the answer is the caller: it is the only layer that knows whether co-visibility was the
+  point or a nicety. A spawner that needs a guaranteed pane should ask for `tab` outright.
+
+- **a tab would be a more truthful degrade than a split, if a degrade is ever added** — RECORDED, and
+  it sharpens why the cmux/otty defect was the worst available substitution rather than merely a wrong
+  one. A float's defining property, per `MuxPlacement`'s own contract, is that it **displaces nothing
+  and no existing pane is resized**. A `tab` preserves that property and loses only co-visibility. A
+  tiled split violates *precisely* the property the float was asked for — it resizes the region's other
+  panes. So the two adapters were not just substituting; they were substituting the one placement that
+  contradicts the request. This holds whether or not a degrade path is ever offered.
+
+- **`LivePane.floating` (issue #112) changes the calculus, and is the condition under which this may be
+  revisited** — RECORDED. The original refusal reasoning rested on a silent substitution being
+  **irrecoverable**: a caller handed a tiled pane had no way to discover it. That is no longer true —
+  the read side now reports whether a pane floats on every backend, so a degrade is detectable after
+  the fact. This does not by itself justify degrading, because detectable still requires a caller who
+  knows to look, but it removes the strongest argument against ever doing so. Anyone reopening this
+  should start here.
+
+- **any future degrade must be an OPT-IN declared by the caller, never an adapter decision** —
+  DECIDED as the shape, so the question does not get relitigated from scratch. The invariant worth
+  protecting is not "never degrade"; it is **a caller always knows what it got**. An explicit
+  tolerance (`open({ at: 'pane:float', fallback: 'tab' })`, or a CLI `--degrade`) preserves that; an
+  adapter silently choosing does not. This is the same layering the seam already uses where a degrade
+  IS truthful — `ratio` degrades to the backend's even default with a warning, and `canSizeSplits`
+  declares it — versus `canFloatPanes`, whose absence means refuse. That contrast, stated at
+  `MuxAdapter.canFloatPanes`, is the whole reason the two declarations exist rather than one, and it
+  survives this challenge intact.
+
+- **the `99-floating-panes` open item is now discharged** — RECORDED, since this log is append-only and
+  that entry closed asking for "one confirmation each on a live 3.7 and a live 0.44.1". Both are done:
+  issue #113 pinned the tmux float CREATE path against a live 3.7c and made CI build 3.7c from source
+  so the float rows execute rather than skip, and the zellij adapter now runs against a live 0.44.3 in
+  the same job. The argv that was probed from CHANGES/docs has been confirmed against real binaries.
