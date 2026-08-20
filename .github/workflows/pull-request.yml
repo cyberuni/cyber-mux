@@ -16,11 +16,13 @@ jobs:
   # re-derivation. Runs outside any multiplexer pane, which is what unlocks the placements the
   # suite gates away from a caller's own session.
   #
-  # Non-blocking for now: herdr with no attached client is unproven in CI. Once this is green
-  # across a run of PRs, drop `continue-on-error` and make it required.
+  # BLOCKING. It was `continue-on-error: true` while herdr-with-no-attached-client was unproven here,
+  # and that flag outlived its reason: because the job could not fail the run, a red real-boundary
+  # suite reported as a green run, and a false green landed on PR #114. The last thing keeping the
+  # flag on was the zellij suite's own flakiness, fixed in #115 — a lost or misdelivered `zellij
+  # action` reply read as an empty session — so a failure here is now a real one and says so.
   live-backends:
     runs-on: ubuntu-latest
-    continue-on-error: true
     env:
       # Pinned, not "latest": a herdr release should never silently change what this suite runs
       # against. Bump deliberately, the same way mise pins the toolchain.

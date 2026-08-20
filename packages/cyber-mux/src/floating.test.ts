@@ -29,12 +29,25 @@ function fakeTmuxExec(calls: string[][], responses: Record<string, string | null
 }
 
 /** zellij replies keyed by the verb (args[1]) — every call is `zellij action <verb> …`. */
-function fakeZellijExec(calls: string[][], responses: Record<string, string | null> = {}): Exec {
+function fakeZellijExec(calls: string[][], responses: Record<string, string | null | (string | null)[]> = {}): Exec {
+	const queued = new Map<string, (string | null)[]>()
 	return (_cmd, args) => {
 		calls.push(args)
-		return responses[args[1]!] ?? null
+		const verb = args[1]!
+		const canned = responses[verb]
+		// An ARRAY is a SEQUENCE of replies for repeated calls to the same verb, the last one standing
+		// for every call after it. `list-panes` needs it: a zellij open reads the listing BEFORE the
+		// command too, so it can refuse an id that names a pane which was already standing.
+		if (!Array.isArray(canned)) return canned ?? null
+		const rest = queued.get(verb) ?? [...canned]
+		const next = rest.length > 1 ? rest.shift()! : rest[0]
+		queued.set(verb, rest)
+		return next ?? null
 	}
 }
+
+/** The session BEFORE a zellij open — nothing standing, so anything the listing gains is the open's. */
+const ZELLIJ_LIST_NONE = '[]'
 
 const ZELLIJ_LIST_ONE = JSON.stringify([
 	{ id: 'terminal_9', tab_id: 2, title: 'zsh', terminal_command: 'zsh', is_focused: true },
@@ -131,31 +144,42 @@ describe('spec:cyber-mux/mux/placement', () => {
 	describe('pane:float on zellij — new-pane --floating', () => {
 		it('@id:placement-float-zellij-floating-flag', () => {
 			const calls: string[][] = []
-			const exec = fakeZellijExec(calls, { 'new-pane': 'terminal_9', 'list-panes': ZELLIJ_LIST_ONE })
+			const exec = fakeZellijExec(calls, {
+				'new-pane': 'terminal_9',
+				'list-panes': [ZELLIJ_LIST_NONE, ZELLIJ_LIST_ONE],
+			})
 			const opened = zellijMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:float' })
 			expect(opened).toEqual({ id: 'terminal_9', tab: '2' })
-			expect(calls[0]).toEqual(['action', 'new-pane', '--floating', '--cwd', '/unit'])
-			expect(calls[0]).not.toContain('--direction')
+			// `calls[0]` is the listing read BEFORE the split — the snapshot that makes the id zellij
+			// reports checkable rather than trusted.
+			expect(calls[1]).toEqual(['action', 'new-pane', '--floating', '--cwd', '/unit'])
+			expect(calls[1]).not.toContain('--direction')
 		})
 
 		it('focuses `from` first, so the float lands over the caller’s tab', () => {
 			const calls: string[][] = []
-			const exec = fakeZellijExec(calls, { 'new-pane': 'terminal_9', 'list-panes': ZELLIJ_LIST_ONE })
+			const exec = fakeZellijExec(calls, {
+				'new-pane': 'terminal_9',
+				'list-panes': [ZELLIJ_LIST_NONE, ZELLIJ_LIST_ONE],
+			})
 			zellijMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:float', from: { id: 'terminal_3' } })
 			// `new-pane` has no target flag beyond `--tab-id`, so focusing is the only anchor available.
 			expect(calls[0]).toEqual(['action', 'focus-pane-id', 'terminal_3'])
-			expect(calls[1]).toEqual(['action', 'new-pane', '--floating', '--cwd', '/unit'])
+			expect(calls[2]).toEqual(['action', 'new-pane', '--floating', '--cwd', '/unit'])
 		})
 
 		it('names the float at birth with --name, and reports the ambient session as its workspace', () => {
 			const calls: string[][] = []
-			const exec = fakeZellijExec(calls, { 'new-pane': 'terminal_9', 'list-panes': ZELLIJ_LIST_ONE })
+			const exec = fakeZellijExec(calls, {
+				'new-pane': 'terminal_9',
+				'list-panes': [ZELLIJ_LIST_NONE, ZELLIJ_LIST_ONE],
+			})
 			const opened = createZellijAdapter({ session: 'my-session' }).open(exec, {
 				cwd: '/unit',
 				at: 'pane:float',
 				label: 'notes',
 			})
-			expect(calls[0]).toEqual(['action', 'new-pane', '--floating', '--cwd', '/unit', '--name', 'notes'])
+			expect(calls[1]).toEqual(['action', 'new-pane', '--floating', '--cwd', '/unit', '--name', 'notes'])
 			// A float lives in the ambient session as much as any other pane does.
 			expect(opened.workspace).toBe('my-session')
 		})
