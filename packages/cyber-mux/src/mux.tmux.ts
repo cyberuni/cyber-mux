@@ -53,6 +53,11 @@ export const tmuxMuxAdapter: MuxAdapter = {
 	 * tmux's own `unknown command` — surfaced by the `withReason` throw in `open`, which names the
 	 * command that failed. A silent wrong-pane is the failure mode worth engineering against, and this
 	 * has none: there is nothing for an absent `new-pane` to be mistaken for.
+	 *
+	 * Both sides of this placement are now pinned against a real 3.7c binary — the read side by
+	 * `#{pane_floating_flag}`, the create side by the `new-pane` rows in `mux.tmux.integration.test.ts`.
+	 * The branch below was originally written off tmux's CHANGES file, because the tmux installed when
+	 * it landed was 3.6b and had no `new-pane` to run it against.
 	 */
 	canFloatPanes: true,
 
@@ -101,12 +106,28 @@ export const tmuxMuxAdapter: MuxAdapter = {
 			// `-e`, `-c`, `-P` and `-F` are all on `new-pane` exactly as they are on `split-window`, so the
 			// env, the cwd and the id report need no second spelling here.
 			//
-			// No size flag. `new-pane` sizes with `-x`/`-y` in COLUMNS and LINES ("The default is half the
-			// window width and a quarter the window height"), not as a fraction of a split that never
-			// happened — so `ratio` is dropped here on the one backend that can size a split, per
-			// `MuxOpenOptions.ratio`. No `-T` either: it names a floating pane's title only from 3.8, while
-			// the pane itself lands in 3.7, so the label rides the same post-birth `select-pane -T` rename
-			// every other pane placement already takes below — one spelling, and one that works on 3.7.
+			// `ratio` is dropped, and the reason is worth stating precisely because the obvious one is
+			// wrong. It is NOT that `new-pane` has no sizing flag: `-l size` and `-p percentage` are both
+			// in its synopsis, identical to `split-window`, and it ACCEPTS them and SILENTLY IGNORES them
+			// (verified on 3.7c: `-l 30%` and `-p 30` each produced the same default pane as no flag at
+			// all). Only `-x`/`-y` size a float, and they take COLUMNS and LINES — absolute cells, not a
+			// fraction of a split that never happened. So the flag does not exist to be dropped; it lies,
+			// and passing one would be a size the caller believes in and tmux never applied. `ratio` is
+			// dropped here per `MuxOpenOptions.ratio`, on the one backend that CAN size a split. (The
+			// default is half the window's width by a quarter its height — 40x6 in an 80x24 window,
+			// pinned live in the integration suite.)
+			//
+			// No `-T` either: it names a floating pane's title only from 3.8, while the pane itself lands
+			// in 3.7, so the label rides the same post-birth `select-pane -T` rename every other pane
+			// placement already takes below — one spelling, and one that works on 3.7.
+			//
+			// Nothing here suppresses the float's own activation, and nothing needs to. `new-pane` makes
+			// the float the ACTIVE pane of the window it landed in, and tmux refuses to split a float
+			// ("size or position can't split a floating pane"). So the classic hazard this adapter guards
+			// everywhere else — a target-less `split-window` quietly landing on a pane the caller did not
+			// mean — cannot go quiet after a float: the split fails, and the `withReason` throw below
+			// names the command. A loud failure is the wanted behavior, so it is pinned in the integration
+			// suite rather than worked around here.
 			const anchor = opts.from ? ['-t', opts.from.id] : []
 			args = ['new-pane', ...anchor, ...env, '-c', opts.cwd, '-P', '-F', format]
 		} else if (window) {
@@ -116,7 +137,7 @@ export const tmuxMuxAdapter: MuxAdapter = {
 			args = ['new-window', '-d', ...env, '-c', opts.cwd, '-P', '-F', format]
 		} else {
 			// `-t` whenever the caller names a pane. Without it tmux does NOT split the calling pane — it
-			// splits the session's ACTIVE pane, ignoring `$TMUX_PANE` outright (verified on tmux 3.6b: a
+			// splits the session's ACTIVE pane, ignoring `$TMUX_PANE` outright (verified on tmux 3.7c: a
 			// `split-window` run inside pane %1, with `$TMUX_PANE` correctly reading %1, split the active
 			// %0 instead). The two coincide while a human types, which is why the default reads as
 			// harmless and is not; a program driving a pane it is not focused on gets the wrong one.
@@ -176,7 +197,7 @@ export const tmuxMuxAdapter: MuxAdapter = {
 			return
 		}
 		// `-T` makes `select-pane` a pure title write: tmux returns as soon as it has set the title and
-		// never reaches the code that would make the pane active (verified on 3.6b), so this moves no
+		// never reaches the code that would make the pane active (verified on 3.7c), so this moves no
 		// focus despite the verb's name. That is what lets it serve a rename's read-only side effects.
 		exec('tmux', ['select-pane', '-t', target.id, '-T', name])
 	},
