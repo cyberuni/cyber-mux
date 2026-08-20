@@ -283,6 +283,7 @@ export function createZellijAdapter(deps: { session?: string | undefined }): Mux
 	return adapter
 }
 
+// scratch: measuring the live-backends flake rate on main; this branch is not for merge.
 export const zellijMuxAdapter: MuxAdapter = createZellijAdapter({})
 
 /** One pane record from `zellij action list-panes --json`, the fields this adapter reads. */
