@@ -18,13 +18,21 @@ export default defineConfig({
       description:
         "Cross-multiplexer pane control — one contract over tmux, herdr, and WezTerm.",
       // The cyber-* family mark: a shared command reticle around a per-package glyph
-      // (see docs/design/icon-system.md). One drawing serves both themes — the SVG
-      // flips its own fill under `prefers-color-scheme`, so light and dark point at
-      // the same file.
+      // (see docs/design/icon-system.md).
+      //
+      // The favicon self-themes: browser chrome follows the OS, so that one file
+      // flips its own fill under `prefers-color-scheme` and needs no pair.
+      //
+      // The header logo cannot. Starlight switches on `data-theme`, which this site
+      // defaults to dark independent of the OS — a single self-theming file renders
+      // black on the dark header whenever the visitor's OS is set to light. So the
+      // header ships as a pair and lets Starlight pick. The pair is also cropped
+      // tighter than the favicon: the mark's outer margin is padding a favicon needs
+      // to survive a tab strip, and padding that only shrinks it in the header.
       favicon: "/img/logo.svg",
       logo: {
-        light: "./src/assets/logo.svg",
-        dark: "./src/assets/logo.svg",
+        light: "./src/assets/logo-light.svg",
+        dark: "./src/assets/logo-dark.svg",
         alt: "cyber-mux",
       },
       social: [

@@ -12,6 +12,13 @@ html {
 	scrollbar-gutter: stable;
 }
 
+/* Starlight spaces the header logo from the title with `--sl-nav-gap`, which is the content
+   padding variable — sized for the gap between nav regions, not between a mark and the words
+   next to it. At header scale that reads as two unrelated elements sitting near each other. */
+.site-title {
+	gap: 0.5rem;
+}
+
 /* Linear design tokens — dark (default) */
 :root {
 	--sl-color-accent-low: #21243f;

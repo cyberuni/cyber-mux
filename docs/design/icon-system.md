@@ -27,7 +27,7 @@ Two failure modes to avoid, and they pull against each other:
 | Frame | two opposed corner brackets — a command reticle. Byte-identical in all four packages |
 | Glyph | fills the centered 64×64 slot, and draws the thing the package actually does |
 | Color | monochrome. The SVG flips its own fill under `prefers-color-scheme` |
-| Files per repo | `apps/website/public/img/logo.svg` (favicon) + `apps/website/src/assets/logo.svg` (sidebar logo) |
+| Files per repo | one self-theming favicon + a light/dark header pair — three files, one drawing (§6) |
 | Rejected | a hexagon or other generic "tech" container; per-package brand colors |
 
 The frame is the constant claim — *this is under one command*. The glyph is the variable — *this is
@@ -112,42 +112,87 @@ the mark carries the formation, not a single hull.
 
 ## 6. Color and theme
 
-Monochrome, one drawing for both themes. The style block lives inside the SVG, so the file is
-correct anywhere it is embedded — a docs site, a README, a GitHub org avatar — without a wrapper
-supplying a palette:
+Monochrome. One drawing, but **two theming mechanisms**, because the two places the mark lands
+answer to different signals.
+
+### The favicon self-themes
+
+Browser chrome follows the operating system, so the favicon carries its own style block and needs no
+pair. The style lives inside the SVG, which keeps the file correct anywhere it is embedded — a
+readme, a GitHub org avatar — without a wrapper supplying a palette:
 
 ```svg
 <style>.f{fill:#000}.s{fill:none;stroke:#000;stroke-width:10;stroke-linecap:round;stroke-linejoin:round}@media (prefers-color-scheme:dark){.f{fill:#fff}.s{stroke:#fff}}</style>
 ```
 
-`.f` is filled geometry, `.s` is stroked. Every glyph above uses one or both.
+`.f` is filled geometry, `.s` is stroked. Every glyph in §5 uses one or both.
 
-No per-package accent color. A brand color would compete with the glyph for the "which package is
+### The header logo ships as a pair
+
+Starlight switches themes on `data-theme`, and this site defaults to **dark regardless of the OS**.
+A single self-theming file therefore fails in a way that is easy to miss: a visitor whose OS is set
+to light, reading the dark site, gets a near-black mark on a near-black header. `prefers-color-scheme`
+never learns what `data-theme` decided.
+
+So the header takes two files and lets Starlight pick, with the ink hardcoded to the theme's own
+title color rather than pure black and white:
+
+| File | Ink | Serves |
+| --- | --- | --- |
+| `src/assets/logo-light.svg` | `#10111a` | `data-theme="light"` |
+| `src/assets/logo-dark.svg` | `#f7f8f8` | `data-theme="dark"` (the default) |
+
+**Any repo pairing a self-theming SVG with a `data-theme` site inherits this bug.** Check it by
+loading the site in its non-default theme with the OS set the other way.
+
+### No accent color
+
+Not per package, not at all. A brand color would compete with the glyph for the "which package is
 this" job, and it is the half that dies first at favicon size.
 
 ## 7. Wiring a repo
 
-Both files are needed and they are the same drawing: Starlight's `logo` takes a `src/` path it can
-process, and `favicon` takes a path under `public/`. Neither can read the other's location, so the
-file is duplicated on purpose.
+Three files, one drawing. Starlight's `logo` takes a path under `src/` it can process and `favicon`
+takes one under `public/`; neither can read the other's location, so the favicon is a separate file
+even where the artwork is identical.
 
 ```js
 favicon: "/img/logo.svg",
 logo: {
-  light: "./src/assets/logo.svg",
-  dark: "./src/assets/logo.svg",
+  light: "./src/assets/logo-light.svg",
+  dark: "./src/assets/logo-dark.svg",
   alt: "<package name>",
 },
 ```
 
-`light` and `dark` point at the same file because the SVG already handles the theme itself.
+### The header crop
+
+The favicon uses the full `0 0 128 128`. The header pair crops to `10 10 108 108`.
+
+The outer margin is padding a favicon needs to survive a tab strip. In the header the mark is sized
+to a fixed height, so that same margin only shrinks the artwork inside its box. Cropping to the
+mark's real bleed edge lets it fill the slot.
+
+### The header gap
+
+Starlight spaces the logo from the title with `--sl-nav-gap` — the content padding variable, sized
+for the distance between nav *regions*, not between a mark and the words beside it. At header scale
+it reads as two unrelated elements. In `global.css`:
+
+```css
+.site-title {
+	gap: 0.5rem;
+}
+```
 
 ## 8. Adopting this in the other three repos
 
-1. Copy `apps/website/public/img/logo.svg` from `cyber-mux`.
+1. Copy `apps/website/public/img/logo.svg` from `cyber-mux` — the self-theming favicon.
 2. Swap the glyph block for the package's glyph from §5, leaving the two frame paths untouched.
-3. Copy the result to `apps/website/src/assets/logo.svg`.
-4. Add the `favicon` / `logo` config from §7.
+3. Make the header pair from the same glyph: `logo-light.svg` and `logo-dark.svg`, cropped to
+   `10 10 108 108`, ink hardcoded per §6. Match the ink to the site's own title colors if they
+   differ from cyber-mux's.
+4. Add the `favicon` / `logo` config and the `.site-title` gap from §7.
 
 This document lives in `cyber-mux` because that is where the system was first built. It describes
 four repos, so it belongs in `cyberuni/.github` once there is a home for cross-repo design there.

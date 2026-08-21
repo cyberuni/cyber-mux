@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="10 10 108 108" role="img" aria-label="cyber-mux">
+  <g fill="none" stroke="#f7f8f8" stroke-width="10" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M17 47V17h30"/>
+    <path d="M111 81v30H81"/>
+  </g>
+  <g fill="#f7f8f8">
+    <rect x="32" y="32" width="28" height="64" rx="5"/>
+    <rect x="68" y="32" width="28" height="28" rx="5"/>
+    <rect x="68" y="68" width="28" height="28" rx="5"/>
+  </g>
+</svg>
