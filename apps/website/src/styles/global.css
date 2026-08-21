@@ -19,6 +19,13 @@ html {
 	gap: 0.5rem;
 }
 
+/* Starlight sizes the header logo to the full nav height minus its padding, which suits a wordmark
+   or a tall illustration. Ours is a compact square glyph, and at that size it outweighs the title
+   beside it. Tie it to the title's own type size instead so the two scale together. */
+.site-title img {
+	height: 1em;
+}
+
 /* Linear design tokens — dark (default) */
 :root {
 	--sl-color-accent-low: #21243f;

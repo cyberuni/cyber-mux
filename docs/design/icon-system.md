@@ -170,17 +170,31 @@ logo: {
 },
 ```
 
-### The header gap
+### The header lockup
 
-Starlight spaces the logo from the title with `--sl-nav-gap` — the content padding variable, sized
-for the distance between nav *regions*, not between a mark and the words beside it. At header scale
-it reads as two unrelated elements. In `global.css`:
+Two rules in `global.css`, both correcting Starlight defaults that assume a different kind of logo:
 
 ```css
 .site-title {
 	gap: 0.5rem;
 }
+
+.site-title img {
+	height: 1em;
+}
 ```
+
+**Gap.** Starlight spaces the logo from the title with `--sl-nav-gap` — the content padding
+variable, sized for the distance between nav *regions*, not between a mark and the words beside it.
+At header scale it reads as two unrelated elements.
+
+**Height.** Starlight sizes the logo to the full nav height minus its padding, which suits a
+wordmark or a tall illustration. This is a compact square glyph, and at that height it outweighs the
+title next to it. `1em` ties it to the title's own type size so the two scale together — 24px
+against a 24px title, rather than 40px against it.
+
+Starlight's height rule is `img:where(.astro-…)`, and `:where()` zeroes the class's specificity, so
+a plain `.site-title img` overrides it without `!important`.
 
 ## 8. Adopting this in the other three repos
 
