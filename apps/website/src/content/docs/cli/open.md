@@ -3,10 +3,17 @@ title: open
 description: Open a new pane/tab/workspace, optionally launching a command in it.
 ---
 
-### `cyber-mux open [--launch <cmd>] [--template <name>] [--cwd <path>] [--at <placement>] [--env <KEY=VALUE>...] [--label <name>]`
+## `cyber-mux open`
 
 Open a new pane and launch a command in it. Prints the new pane's `id`, and its `workspace` when the
 backend bound one (`null` otherwise).
+
+**Usage**
+
+```bash
+cyber-mux open [--launch <cmd>] [--template <name>] [--cwd <path>] \
+  [--at <placement>] [--env <KEY=VALUE>...] [--label <name>]
+```
 
 - `--launch <cmd>` — command line to run in the new pane; omit for a blank pane.
 - `--template <name>` — build a whole named pool in the opened space instead of a single pane, from a
@@ -37,7 +44,7 @@ backend bound one (`null` otherwise).
 See also [`worktree add`](/cyber-mux/cli/worktree/#cyber-mux-worktree-add) and
 [`template`](/cyber-mux/cli/template/), which share `--template`/`--at`/`--env`/`--label`.
 
-## Examples
+### Examples
 
 ```bash
 # Blank pane, split to the right of the caller

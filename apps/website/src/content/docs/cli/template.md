@@ -9,25 +9,31 @@ template schema and resolution rules. There is deliberately no `template apply` 
 `open` and [`worktree add`/`worktree open`](/cyber-mux/cli/worktree/) already do, told to build N
 panes instead of one via `--template`.
 
-### `cyber-mux template list`
+## `cyber-mux template list`
 
 Every template resolvable from here, with its source and pane count. Table columns: `name`,
 `source`, `panes`, `shadowed` (a template of the same name exists in a higher-precedence directory).
 A template that fails to parse still lists — with `panes: 0` — since `list` answers "what is here",
 not "is it any good" (that's `validate`).
 
-**Example**
+**Usage**
 
 ```bash
 cyber-mux template list
 ```
 
-### `cyber-mux template show [<name>] [--file <path>] [--desugar]`
+## `cyber-mux template show`
 
 Print a resolved template as JSON. Needs either a template `name` or `--file <path>` — missing both
 is a usage error (exit 2). `--file <path>` reads that path directly, skipping name resolution.
 `--desugar` prints the canonical `panes`/`arrange` tree exactly as `apply` builds it — useful for
 seeing what a flat-N shorthand expands to.
+
+**Usage**
+
+```bash
+cyber-mux template show [<name>] [--file <path>] [--desugar]
+```
 
 **Examples**
 
@@ -39,11 +45,17 @@ cyber-mux template show pool-4
 cyber-mux template show --file ./pool-4.json --desugar
 ```
 
-### `cyber-mux template validate [<name>] [--file <path>]`
+## `cyber-mux template validate`
 
 Check a template's schema without opening anything. Same name-or-`--file` requirement as `show`.
 Every error is reported at once, one per line, each naming its own JSON path — silent (no output) on
 a valid template, which is what a CI hook checks for; exit `1` on an invalid one.
+
+**Usage**
+
+```bash
+cyber-mux template validate [<name>] [--file <path>]
+```
 
 **Example**
 
@@ -52,9 +64,16 @@ a valid template, which is what a CI hook checks for; exit `1` on an invalid one
 cyber-mux template validate pool-4
 ```
 
-### `cyber-mux template save <name> --from <pane> [--workspace] [--description <text>] [--to repo|user] [--force]`
+## `cyber-mux template save`
 
 Capture an already-open pane pool as a reusable template.
+
+**Usage**
+
+```bash
+cyber-mux template save <name> --from <pane> [--workspace] \
+  [--description <text>] [--to repo|user] [--force]
+```
 
 - `--from <pane>` — the pane whose region to capture; defaults to the calling process's own pane.
   Takes either a pane id or a label — see [Pane](/cyber-mux/concepts/pane/) for resolution rules.
@@ -90,11 +109,18 @@ cyber-mux template save pool-4
 cyber-mux template save pool-4 --from %3 --workspace --force
 ```
 
-### `cyber-mux template edit [<name>] [--set <pane>=<value>] [--interactive] [--field command|label] [--dry-run]`
+## `cyber-mux template edit`
 
 Show a template's panes, and fill them in. This is `save`'s other half: a capture lands with no
 `command` on any pane, and filling them in by hand means opening the JSON and counting braces to
 work out which leaf is the pane on the left.
+
+**Usage**
+
+```bash
+cyber-mux template edit [<name>] [--set <pane>=<value>] [--interactive] \
+  [--field command|label] [--dry-run]
+```
 
 Three modes. **The bare form lists and mutates nothing**, so finding out what is there can never
 change it:
@@ -174,9 +200,9 @@ asked for — a caller wanting machine output has said it is not a human. Use `-
 A template's spelling survives an edit either way: one written with the flat `panes` + `arrange`
 sugar comes back out flat, never re-spelled as a `root` tree.
 
-### `--template <name>` on `open` / `worktree add` / `worktree open`
+## `--template <name>`
 
-Build a whole named pool in the newly opened space instead of a single pane or bare checkout.
-Resolved and validated **before** anything opens, so a typo in the name or an invalid template
-leaves nothing behind. Conflicts with `--launch` and `--env` — the template owns everything in the
-panes it declares.
+On `open` / `worktree add` / `worktree open`: build a whole named pool in the newly opened space
+instead of a single pane or bare checkout. Resolved and validated **before** anything opens, so a
+typo in the name or an invalid template leaves nothing behind. Conflicts with `--launch` and
+`--env` — the template owns everything in the panes it declares.

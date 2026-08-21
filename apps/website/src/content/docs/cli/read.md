@@ -3,15 +3,21 @@ title: read
 description: Capture a pane's output.
 ---
 
-### `cyber-mux read <pane> [--lines <n> | --full]`
+## `cyber-mux read`
 
 Capture a pane's output. A failed read captures nothing — the structured error is the whole of stdout,
 never partial pane output followed by an error.
 
+**Usage**
+
+```bash
+cyber-mux read <pane> [--lines <n> | --full]
+```
+
 `<pane>` takes either a pane id or a label — see [Pane](/cyber-mux/concepts/pane/) for resolution
 rules.
 
-## The read window
+### The read window
 
 Every capture is bounded, so `read` has one knob for how much of the pane it takes and one escape
 hatch for taking all of it:
@@ -46,7 +52,7 @@ read.
 cannot recover is scrollback the multiplexer itself dropped long ago — "everything the backend holds"
 is the ceiling of the honest answer.
 
-## Examples
+### Examples
 
 ```bash
 cyber-mux read %3
