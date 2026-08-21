@@ -1,7 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="10 10 108 108" role="img" aria-label="cyber-mux">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="cyber-mux">
   <g fill="none" stroke="#f7f8f8" stroke-width="10" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M17 47V17h30"/>
-    <path d="M111 81v30H81"/>
+    <path d="M17 63V17h46"/>
+    <path d="M111 65v46H65"/>
   </g>
   <g fill="#f7f8f8">
     <rect x="32" y="32" width="28" height="64" rx="5"/>

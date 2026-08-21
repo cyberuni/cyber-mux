@@ -52,9 +52,14 @@ bracket. That clearance is what keeps the mark legible at 16×16.
 Two brackets, top-left and bottom-right. Not four — an asymmetric pair reads as a reticle locking
 on, and it costs two strokes instead of four, which is what survives a favicon.
 
+The arms run nearly to the midpoint of each side. Short arms were the first draft and they failed
+the only test that matters: at the 40px the site header renders, a 10-unit stroke against the
+glyph's solid blocks read as two stray tick marks rather than a frame. Lengthening the arms costs
+no clearance — they run along the edges, away from the glyph — so it is free.
+
 ```svg
-<path class="s" d="M17 47V17h30"/>
-<path class="s" d="M111 81v30H81"/>
+<path class="s" d="M17 63V17h46"/>
+<path class="s" d="M111 65v46H65"/>
 ```
 
 Stroke `10`, `linecap="round"`, `linejoin="round"`. Copy these two paths verbatim; they are the
@@ -165,14 +170,6 @@ logo: {
 },
 ```
 
-### The header crop
-
-The favicon uses the full `0 0 128 128`. The header pair crops to `10 10 108 108`.
-
-The outer margin is padding a favicon needs to survive a tab strip. In the header the mark is sized
-to a fixed height, so that same margin only shrinks the artwork inside its box. Cropping to the
-mark's real bleed edge lets it fill the slot.
-
 ### The header gap
 
 Starlight spaces the logo from the title with `--sl-nav-gap` — the content padding variable, sized
@@ -189,9 +186,9 @@ it reads as two unrelated elements. In `global.css`:
 
 1. Copy `apps/website/public/img/logo.svg` from `cyber-mux` — the self-theming favicon.
 2. Swap the glyph block for the package's glyph from §5, leaving the two frame paths untouched.
-3. Make the header pair from the same glyph: `logo-light.svg` and `logo-dark.svg`, cropped to
-   `10 10 108 108`, ink hardcoded per §6. Match the ink to the site's own title colors if they
-   differ from cyber-mux's.
+3. Make the header pair from the same glyph: `logo-light.svg` and `logo-dark.svg`, same
+   `0 0 128 128` viewBox, ink hardcoded per §6. Match the ink to the site's own title colors if
+   they differ from cyber-mux's.
 4. Add the `favicon` / `logo` config and the `.site-title` gap from §7.
 
 This document lives in `cyber-mux` because that is where the system was first built. It describes

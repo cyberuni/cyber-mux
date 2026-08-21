@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="cyber-mux">
   <!-- Family frame: the cyber-* command reticle. Identical in every cyber-* package. -->
-  <path class="s" d="M17 47V17h30"/>
-  <path class="s" d="M111 81v30H81"/>
+  <path class="s" d="M17 63V17h46"/>
+  <path class="s" d="M111 65v46H65"/>
   <!-- Glyph slot (32..96): cyber-mux drives panes. -->
   <rect class="f" x="32" y="32" width="28" height="64" rx="5"/>
   <rect class="f" x="68" y="32" width="28" height="28" rx="5"/>

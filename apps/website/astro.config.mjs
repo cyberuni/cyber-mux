@@ -26,9 +26,7 @@ export default defineConfig({
       // The header logo cannot. Starlight switches on `data-theme`, which this site
       // defaults to dark independent of the OS — a single self-theming file renders
       // black on the dark header whenever the visitor's OS is set to light. So the
-      // header ships as a pair and lets Starlight pick. The pair is also cropped
-      // tighter than the favicon: the mark's outer margin is padding a favicon needs
-      // to survive a tab strip, and padding that only shrinks it in the header.
+      // header ships as a pair and lets Starlight pick.
       favicon: "/img/logo.svg",
       logo: {
         light: "./src/assets/logo-light.svg",
