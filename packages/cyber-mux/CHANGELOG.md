@@ -1,5 +1,178 @@
 # cyber-mux
 
+## 0.5.0
+
+### Minor Changes
+
+- 3fd1c3c: Add cmux backend adapter
+  
+  cmux is a Ghostty-based macOS terminal built for AI coding agents. This adds detection (`$CMUX_WORKSPACE_ID`) and a full `MuxAdapter` implementation using cmux's CLI (`cmux new-pane`, `cmux send`, etc.).
+  
+  - Detection via `$CMUX_WORKSPACE_ID` env variable
+  - Pane identity via `$CMUX_SURFACE_ID` (cmux's "surface" is the terminal unit)
+  - Supports workspace, tab (surface), and pane:right/pane:down placements
+  - Supports split sizing via `--size` flag
+  - No `--env` flag support (env compensation via command prefix)
+  - No geometry/regions support (cmux CLI doesn't report positions)
+  - macOS-only (cmux is a native Swift/AppKit app)
+- 2c7de82: Add a `pane:float` placement — a pane that sits above the tiled layout instead of taking a share of
+  it, so nothing else is resized.
+  
+  - `MuxPlacement` gains `'pane:float'`, and `--at pane:float` gains the matching CLI choice. A
+    floating pane is an ordinary `OpenedPane` with a real id, so `read`/`sendText`/`submit`/
+    `waitForOutput`/`teardown` drive it unchanged.
+  - **tmux** (≥ 3.7, `new-pane`) and **zellij** (`new-pane --floating`) open a real one.
+  - **wezterm** and **herdr** have no floating-pane concept and **refuse by name** — a new
+    `FloatingPanesUnsupportedError` from `open`, surfaced by the CLI as `backend-unsupported` (exit 1)
+    — rather than quietly substituting a tiled split, which would resize the region's other panes.
+    `MuxAdapter.canFloatPanes` (with the `canFloatPanes(adapter)` helper) is how a caller asks before
+    opening; the refusal is raised before any backend command, so a refused float opens nothing.
+  - `ratio` is dropped on a float on every backend, tmux included: a float takes no share of the
+    region, so there is no original pane whose fraction it could be.
+- 2eefb02: `LivePane` now reports whether a pane FLOATS, so a caller can tell a float from a tiled pane after
+  the open that made it — the read side of the `pane:float` placement.
+  
+  - `LivePane.floating` is **required**, the only required field on the type beyond `id`/`mux`. Every
+    backend can answer, so absence is not one of its states: an optional field would leave a caller
+    guessing whether a missing value meant *not floating* or *cannot tell*.
+  - **tmux** reads `#{pane_floating_flag}` and **zellij** reads `is_floating`, each appended to the
+    pane listing the adapter already asks for — no extra command on either.
+  - **herdr**, **wezterm**, **cmux** and **otty** answer `false` **by construction**: they have no
+    floating-pane concept, so every pane they can report really is tiled. Deliberately not a named
+    refusal — the *create* side has no truthful pane to hand back and refuses by name, while the
+    *read* side has one, which is why this rides `LivePane` rather than a capability object.
+  - `cyber-mux list --format json` carries the new field per pane; the human table is unchanged.
+- fd13d41: Add otty backend adapter
+  
+  otty is a native terminal-centric workspace app with integrated multiplexing, built for AI coding agents. This adds detection and a full `MuxAdapter` implementation using otty's CLI.
+  
+  - Detection via `$OTTY_PANE_ID` env variable
+  - Supports workspace (window), tab, and pane:right/pane:down placements
+  - Send-keys supports text and key tokens in one atomic call
+  - No split sizing support (`canSizeSplits: false`)
+  - No `--env` flag support (env compensation via command prefix)
+  - No geometry/regions support (otty CLI doesn't report positions)
+  - macOS/Windows desktop app
+- 1535fab: `read` reports whether the capture dropped older rows, and `--full` takes the rest
+  
+  `MuxAdapter.read` (and the bound `MuxSession.read`) now answers with `{ text, truncated? }` instead
+  of a bare string, so a caller matching against a snapshot can tell a short pane from a capture that
+  hit its bound. Pass `MuxReadOptions.truncation` to have the backend determine it; leave it off and
+  `truncated` is **absent** — never `false`, because a `false` that means "I did not check" is
+  indistinguishable from "you have everything" (the conflation herdr itself shipped a fix for in 0.8.0,
+  herdrdev/herdr#1717).
+  
+  `MuxReadOptions.lines` gains `'all'` — the same window knob at its limit, for the whole scrollback.
+  One option rather than a second `full?: boolean`, so no caller can spell a contradiction the seam
+  would need a precedence rule for. It also makes the truncation answer free at that end: an unbounded
+  window omitted nothing by construction, so no adapter spends a probe on it.
+  
+  Real on every backend, by one rule: ask for one row more than the captured window and compare row
+  counts (`isReadTruncated`, `read-window.ts`). tmux takes `-S -(N+1)` and spells `'all'` as `-S -`,
+  WezTerm `--start-line -(N+1)`, Zellij compares against the full dump its `lines` read already holds
+  (no extra query) and takes `--full` for `'all'`, and herdr probes `--source recent` — its CLI prints
+  the read's text alone and never surfaces the `truncated` its socket API computes.
+  
+  Opt-in at the seam because the probe costs one extra backend query and `read` is the hottest verb
+  there — `pollForOutput` runs it once per poll tick. Omitted, the argv is byte-identical to the read
+  that has always been issued.
+  
+  CLI: `cyber-mux read` now carries one read window and one escape hatch — `--lines <n>` bounds it,
+  `--full` takes the whole scrollback, and passing both is a usage error (exit 2). It **always** reports
+  truncation, no flag needed: a truncated capture is followed by a `truncated` field and a `help:` entry
+  naming `--full` as the fix (AXI #3's shape), while a complete capture stays the pane's raw bytes alone
+  so `read | grep` is unchanged. `--format json` spells `truncated` either way. The answer is never on
+  stderr, which agents do not read.
+  
+  Callers reading text from `read` now take `.text` (`nudge` and `waitForOutput` already do
+  internally).
+
+### Patch Changes
+
+- f66590d: Refuse a `pane:float` open on **cmux** and **otty** instead of silently substituting a right split.
+  
+  Both adapters declared they cannot float (no `canFloatPanes`) but never enforced it: `open()`
+  resolved placement as down-or-right, so `at: 'pane:float'` fell through to a tiled split and was
+  reported as success — a pane with a real id and none of the property the caller asked for. They now
+  throw `FloatingPanesUnsupportedError` naming the backend, before any command is issued, the same as
+  wezterm and herdr.
+  
+  The CLI was already correct (it checks `canFloatPanes` and refuses before reaching an adapter); the
+  hole was on the library surface, where a caller holding an adapter calls `open()` directly.
+- 303a0e9: Fix two zellij `list-panes --json` field names, verified against a live 0.44.3 binary
+  
+  The zellij adapter was built from a documentation probe, and two of the field names it read do not
+  exist in zellij's actual output. Driving the adapter against a real binary surfaced both.
+  
+  - `pane_command` is really `terminal_command`. The adapter drops a pane's title when that title is
+    just the running command zellij gave an unnamed pane — a guard that stops every shell pane from
+    reporting the same manufactured `label`. Reading the wrong name meant the guard compared against
+    `undefined` and never fired, so unnamed panes exported their own command line as an authored
+    label. It now fires.
+  - `pane_cwd` does not exist; zellij's pane records carry no cwd field at all. `LivePane.cwd` was
+    therefore never populated for zellij and the code that read it was dead. It is gone, so a zellij
+    pane is honestly cwd-less rather than appearing to sometimes report one.
+- 586f9a9: Stop a lost or misdelivered zellij CLI reply from becoming a wrong answer
+  
+  Zellij 0.44.3 can deliver a `zellij action` reply to the wrong command. Under CPU contention a
+  command exits 0 having printed nothing, and the payload it should have received arrives on the
+  stdout of the command issued after it. Reproduced by alternating `new-tab` and `list-panes --json`
+  forty times on a loaded two-core box: twice in forty, the `new-tab` printed an empty string and the
+  `list-panes` that followed it printed `27`. Two hundred back-to-back `list-panes --json` calls with
+  no mutating verb between them lost nothing, so it is the mutating verbs that open the window.
+  
+  Two of the adapter's answers were wrong in the face of that. An empty reply to `list-panes --json`
+  was read as an empty session — but a live zellij session always has at least one pane, and reading
+  zero made every id the adapter resolves fail at once. And the id `new-pane`/`new-tab` printed was
+  taken on trust, so a stale one could name a pane that had been standing all along and hand the
+  caller somebody else's pane.
+  
+  The listing is now re-asked when a read does not come back as a pane array, so `[]` means zellij
+  answered with no panes rather than that zellij did not answer. And an `open()` reads the listing
+  before the command as well as after: a reported id is believed only where it names a pane that was
+  not already there, which closes the phantom guard that `new-pane --direction` needs — the split
+  prints a plausible id and exits 0 having created nothing when the attached client sits on a plugin
+  pane. Where the id cannot be believed, a single pane that appeared over the open answers instead, so
+  an open that genuinely happened is no longer failed for a reply zellij dropped.
+  
+  An `open()` also no longer resolves to a PLUGIN pane. Zellij loads plugin panes on its own schedule,
+  so a tab opened by `new-tab` can be carrying one in the same listing as its own initial pane, and
+  that record can sort first. Caught at the real boundary: an `open()` at `tab` returned `plugin_15`,
+  an id that exists — so nothing downstream refused it — and the `rename()` after it renamed a pane the
+  caller never opened. Both `new-tab` and `new-pane` create a terminal pane, so that is what an open
+  now resolves to.
+- 58061b3: Report a zellij pane's working directory, verified against a live 0.44.3 binary
+  
+  `LivePane.cwd` was never populated on zellij, so callers filtering a listing by directory got
+  nothing back from this backend. The adapter carried the claim that `list-panes --json` has no cwd
+  field at all on 0.44.3 — a probe conclusion drawn from a record that genuinely has none.
+  
+  `pane_cwd` is real, and so is `pane_command` beside it. Both are present on a **terminal** pane's
+  record and omitted entirely on a **plugin** pane's, which is how a probe that sampled a plugin pane
+  read them as absent from the schema. A driven 0.44.3 session reports `pane_cwd` on every terminal
+  pane, and `listPanes` now fills `LivePane.cwd` from it — free, in the `list-panes --json` call the
+  listing already makes. A record with no directory to report still carries no `cwd`, rather than an
+  empty or invented one.
+  
+  The label guard is unchanged: it reads `terminal_command`, which is null for a plain shell, and that
+  is the field it wants.
+- d1da9a6: Give zellij's plugin and terminal panes distinct ids in the live listing
+  
+  A zellij pane number is unique only within a kind: zellij numbers plugin panes and terminal panes in
+  separate spaces, so a live 0.44.3 session reports `id: 0` for both its suppressed `zellij:link`
+  plugin pane and its first terminal pane. The adapter stringified that number as-is, so two genuinely
+  different panes were reported under one `LivePane.id` — an identity hazard for everything that
+  resolves by id, including the guard that catches an `open()` reporting a pane it never created.
+  
+  The listing now qualifies a bare number with the kind `is_plugin` names, so those two panes are
+  reported as `plugin_0` and `terminal_0`. Both prefixed forms are what `zellij action --pane-id`
+  itself accepts, and `terminal_N` is already what `new-pane` prints, so a qualified id is directly
+  drivable. An id zellij already spelled out is passed through untouched.
+  
+  **A zellij `LivePane.id` therefore reads `terminal_3` where it used to read `3`.** A bare number
+  still resolves — it addresses the terminal pane, on the backend and in this adapter alike — so ids
+  already held by a caller keep working.
+
 ## 0.4.0
 
 ### Minor Changes
