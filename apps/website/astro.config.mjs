@@ -17,6 +17,16 @@ export default defineConfig({
       title: "cyber-mux",
       description:
         "Cross-multiplexer pane control — one contract over tmux, herdr, and WezTerm.",
+      // The cyber-* family mark: a shared command reticle around a per-package glyph
+      // (see docs/design/icon-system.md). One drawing serves both themes — the SVG
+      // flips its own fill under `prefers-color-scheme`, so light and dark point at
+      // the same file.
+      favicon: "/img/logo.svg",
+      logo: {
+        light: "./src/assets/logo.svg",
+        dark: "./src/assets/logo.svg",
+        alt: "cyber-mux",
+      },
       social: [
         {
           icon: "github",
