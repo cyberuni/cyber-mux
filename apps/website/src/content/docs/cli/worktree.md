@@ -9,9 +9,17 @@ through that binding where it exists and fall back to plain git plus a normal
 [`open`](/cyber-mux/cli/open/) where it does not, so the same command works on both. See
 [multiplexers](/cyber-mux/multiplexers/) and [worktrees](/cyber-mux/concepts/worktrees/).
 
-### `cyber-mux worktree add --branch <branch> [--path <path>] [--base <ref>] [--launch <cmd>] [--template <name>] [--at <placement>] [--env <KEY=VALUE>...] [--label <name>]`
+## `cyber-mux worktree add`
 
 Create a git worktree, and open it when given a placement.
+
+**Usage**
+
+```bash
+cyber-mux worktree add --branch <branch> [--path <path>] [--base <ref>] \
+  [--launch <cmd>] [--template <name>] [--at <placement>] \
+  [--env <KEY=VALUE>...] [--label <name>]
+```
 
 - `--branch <branch>` — required; the branch the new worktree checks out.
 - `--path <path>` — defaults to `<parent>/<repo>.worktrees/<branch>`, a sibling of the primary
@@ -64,12 +72,19 @@ cyber-mux worktree add --branch feat/x --at workspace --launch "claude"
 cyber-mux worktree add --branch feat/x --path ~/code/my-app.worktrees/feat-x --base origin/main
 ```
 
-### `cyber-mux worktree open <path> [--launch <cmd>] [--template <name>] [--at <placement>] [--env <KEY=VALUE>...] [--label <name>]`
+## `cyber-mux worktree open`
 
 Open an existing worktree, grouping it with its repo where the backend can bind. This is the remedy
 for a checkout made by a bare `worktree add` — add now, group later. Same flags as `worktree add`
 minus `--branch`/`--path`/`--base` (the worktree already exists); prints the same `root`, `branch`,
 `pane`, `workspace` shape.
+
+**Usage**
+
+```bash
+cyber-mux worktree open <path> [--launch <cmd>] [--template <name>] \
+  [--at <placement>] [--env <KEY=VALUE>...] [--label <name>]
+```
 
 **Example**
 
@@ -77,10 +92,16 @@ minus `--branch`/`--path`/`--base` (the worktree already exists); prints the sam
 cyber-mux worktree open ~/code/my-app.worktrees/feat-x --at workspace
 ```
 
-### `cyber-mux worktree list`
+## `cyber-mux worktree list`
 
 Every worktree of the repo, whether each is still **needed**, and the workspace each is currently
 open in. Table columns: `branch` (`(detached)` when none), `root`, `workspace`.
+
+**Usage**
+
+```bash
+cyber-mux worktree list
+```
 
 Markers ride on the column they are about, so no one-bit fact spends a column of its own:
 
@@ -94,7 +115,7 @@ A `root` under your home directory is also shortened to `~/…`. Every marker an
 **table-only**: `--format json` carries the raw `linked`, `prunable`, `merged`, and `dirty` booleans
 and the absolute `root`, unmarked.
 
-#### `(removable)` — is this worktree still needed?
+### `(removable)` — is this worktree still needed?
 
 A worktree is marked `(removable)` when **all** of the following hold:
 
@@ -156,9 +177,15 @@ cyber-mux worktree list --format json | jq -r '
   | .root'
 ```
 
-### `cyber-mux worktree remove <path> [--force]`
+## `cyber-mux worktree remove`
 
 Remove a worktree, releasing its workspace if one is bound.
+
+**Usage**
+
+```bash
+cyber-mux worktree remove <path> [--force]
+```
 
 The gates are identical on every backend: it refuses the primary checkout (absolute — `--force` never
 overrides it), tolerates a checkout already gone from disk, and refuses to discard uncommitted

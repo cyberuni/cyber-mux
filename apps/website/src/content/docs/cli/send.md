@@ -3,17 +3,29 @@ title: send
 description: Drive a pane's input without taking its turn.
 ---
 
-### `cyber-mux send text <pane> <text>`
+## `cyber-mux send text`
 
 Type literal text into a pane, pressing no Enter — a word that happens to name a key (`Enter`,
 `Up`) is typed as characters, never interpreted as that key.
 
-### `cyber-mux send keys <pane> <keys...>`
+**Usage**
+
+```bash
+cyber-mux send text <pane> <text>
+```
+
+## `cyber-mux send keys`
 
 Press named keys in a pane, in order, typing nothing. Portable core vocabulary: `Up Down Left Right
 Enter Escape Tab Space Backspace C-c F1`–`F12`; anything outside the core is forwarded verbatim to
 the backend. `send keys <pane> Enter` does press Enter and does take the pane's turn — because the
 caller asked for it.
+
+**Usage**
+
+```bash
+cyber-mux send keys <pane> <keys...>
+```
 
 Bare `cyber-mux send` (no `text`/`keys` subcommand) is incomplete input: help on stdout, exit `2`.
 

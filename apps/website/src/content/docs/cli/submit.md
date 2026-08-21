@@ -3,17 +3,23 @@ title: submit
 description: Take a pane's turn.
 ---
 
-### `cyber-mux submit <pane> [text]`
+## `cyber-mux submit`
 
 Take a pane's turn: given `text`, types it literally then always presses Enter. Given no text (or
 empty text), sends a bare Enter only — flushing an already-staged buffer without re-typing it, so a
 repeated flush cannot duplicate the message. [`open --launch`](/cyber-mux/cli/open/) uses this verb
 internally.
 
+**Usage**
+
+```bash
+cyber-mux submit <pane> [text]
+```
+
 `<pane>` takes either a pane id or a label — see [Pane](/cyber-mux/concepts/pane/) for resolution
 rules.
 
-## Examples
+### Examples
 
 ```bash
 # Type text and press Enter in one step
