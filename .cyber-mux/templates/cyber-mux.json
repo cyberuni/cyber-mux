@@ -1,0 +1,43 @@
+{
+	"name": "cyber-mux",
+	"description": "Captured from a live region — geometry only; add a command to each pane.",
+	"tabs": [
+		{
+			"label": "Bunker",
+			"root": {
+				"type": "split",
+				"direction": "right",
+				"first": {
+					"type": "pane",
+					"command": "claude"
+				},
+				"second": {
+					"type": "split",
+					"direction": "right",
+					"first": {
+						"type": "pane"
+					},
+					"second": {
+						"type": "split",
+						"direction": "right",
+						"first": {
+							"type": "pane",
+							"command": "nr web dev"
+						},
+						"second": {
+							"type": "pane"
+						}
+					}
+				},
+				"ratio": 0.38
+			}
+		},
+		{
+			"label": "Website",
+			"root": {
+				"type": "pane",
+				"command": "nr web build"
+			}
+		}
+	]
+}
