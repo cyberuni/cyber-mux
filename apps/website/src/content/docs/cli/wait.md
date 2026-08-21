@@ -3,10 +3,17 @@ title: wait
 description: Block until a pane's output matches, or the timeout elapses.
 ---
 
-### `cyber-mux wait <pane> (--match <text> | --regex <pattern>) [--timeout <ms>] [--lines <n>]`
+## `cyber-mux wait`
 
 Block until the pane's output matches, then exit `0`. If the deadline passes first, exit `1` — the
 verdict rides the exit code, so a shell caller branches on it without parsing anything.
+
+**Usage**
+
+```bash
+cyber-mux wait <pane> (--match <text> | --regex <pattern>) \
+  [--timeout <ms>] [--lines <n>]
+```
 
 Pass exactly one pattern. `--match <text>` is a **literal substring** and is the portable form: it
 means the same on every backend. `--regex <pattern>` is matched by the backend's own engine (Rust's
@@ -29,7 +36,7 @@ reporting an instant false timeout.
 `<pane>` takes either a pane id or a label — see [Pane](/cyber-mux/concepts/pane/) for resolution
 rules.
 
-## Examples
+### Examples
 
 ```bash
 # Wait for a harness to finish booting

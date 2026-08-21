@@ -3,14 +3,20 @@ title: close
 description: Close a pane.
 ---
 
-### `cyber-mux close <pane>`
+## `cyber-mux close`
 
 Close a pane.
+
+**Usage**
+
+```bash
+cyber-mux close <pane>
+```
 
 `<pane>` takes either a pane id or a label — see [Pane](/cyber-mux/concepts/pane/) for resolution
 rules.
 
-## Examples
+### Examples
 
 ```bash
 cyber-mux close %3
