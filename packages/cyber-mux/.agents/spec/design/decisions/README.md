@@ -928,3 +928,37 @@ Decisions (`opensWithoutStealingFocus` — issue #133, the focus-on-open declara
   stated that way in the adapter rather than as a flat "verified", because the same suite run on a
   machine with no zellij skips every row and still reports green (#125): the claim is about where it
   ran, not that it passed.
+
+Decisions (`135-pane-resize` — the resize seam member, issue #135):
+
+- **pane resize is an ABSOLUTE ratio, and it lives on `RegionInspector`** — DECIDED (issue #135).
+  The issue laid out three placements and leaned toward a `canResizePanes` declaration plus a
+  required member that refuses, by analogy with `canSizeSplits` and `canFloatPanes`. Deciding it
+  against the capability matrix instead — reading the four relative primitives rather than the
+  issue's summary of them — landed somewhere else, because **the verb's shape decides its home**.
+  Probed:
+  - tmux `resize-pane -t <id> -x/-y <n>` — absolute, in CELLS (3.7c, live). `-x <pct>` is a
+    percentage of the **window**, not of the pane's split region, so it is wrong at any nesting
+    depth and is not used.
+  - herdr `pane resize --pane <id> --direction <l|r|u|d> --amount <float>` — a **delta on the
+    enclosing split's ratio** (0.8.2, live). `--direction` names where the DIVIDER moves, not which
+    pane grows: `right`/`down` raise the ratio and `left`/`up` lower it, whichever side the `--pane`
+    sits on. It resolves against the nearest ancestor split on the direction's own axis. None of
+    that is in `--help`, which lists the four values and says nothing about what they move.
+  - otty `pane resize --right N --down N` — relative, in CELLS (docs only, no binary here).
+  - zellij `action resize [right|left|up|down|+|-]` — relative, **no amount argument at all** and no
+    stated step size (docs only, no binary here).
+
+  A RELATIVE seam verb is therefore unspellable: its `amount` would be a ratio on herdr, cells on
+  otty, and nothing zellij could honor in any units. An ABSOLUTE ratio means one thing everywhere —
+  but no backend takes one, so every adapter must first know what the pane's split region measures.
+  That is `describeRegion`'s fact and nothing else's, so the write shares the reads' all-or-nothing
+  precondition exactly, and `canResizePanes` would only be a second spelling of `regions !==
+  undefined` that can drift from it.
+  **This retires the issue's own objection to the `RegionInspector` placement** — that it would deny
+  zellij and otty a capability they have. It does not: they have a *relative nudge*, which is a
+  different verb, and neither can answer this one. The implementor set is unchanged (tmux, herdr) and
+  the refusal is the absence of `regions`, surfaced by name through `PaneResizeUnsupportedError`.
+  **Unverified, and stated as such:** the otty and zellij readings are from published CLI docs; this
+  machine has neither binary. Nothing in either adapter changed — both simply continue to omit
+  `regions` — so no untested command shape was written on the strength of those docs.

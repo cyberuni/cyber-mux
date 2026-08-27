@@ -21,6 +21,7 @@ supports and what cyber-mux does when it falls short.
 | Size splits           | ✓                       | ✓                       | ✓                       | ✓                       | ✗                       | ✓                       | ✗                       |
 | Floating pane         | ✓ (tmux 3.7+, `new-pane`) | ✗ (refused by name)   | ✗ (refused by name)     | ✗ (refused by name)     | ✓ (`new-pane --floating`) | ✗ (refused by name)   | ✗ (refused by name)     |
 | Opens without stealing focus | ✓ (`-d`)          | ✓ (`-d`)                | ✓ (`--no-focus`)        | ✗                       | ✓ (Zellij 0.45+)        | ✗                       | ✗                       |
+| Resize an open pane   | ✓                       | ✓                       | ✓                       | ✗ (refused by name)     | ✗ (refused by name)     | ✗ (refused by name)     | ✗ (refused by name)     |
 
 ## tmux
 
@@ -191,7 +192,10 @@ limitations rather than forced parity:
   pane, which cyber-mux does not use. A requested `ratio` is dropped and the caller gets Zellij's own
   even split, the same degrade path as a backend with no `canSizeSplits`.
 - **No region introspection yet.** Pane geometry is deliberately not implemented (a follow-up), so
-  `template save` refuses on Zellij by naming the backend, the same as WezTerm.
+  `template save` refuses on Zellij by naming the backend, the same as WezTerm. Zellij *does* have
+  `zellij action resize`, but it takes a direction and no amount — a nudge of a size it never states —
+  and with no rects to measure against, nothing can converge that on a named fraction. So
+  `resizePane` is refused on Zellij too.
 
 ## The common shape
 
@@ -243,6 +247,8 @@ was available to verify against:
 - **Atomic send-keys.** `pane send-keys` can mix literal text and `key:` tokens in one call — cyber-mux
   composes `sendText` and `sendKeys` from this.
 - **No region introspection.** Pane geometry is not reported, so `template save` refuses on otty.
+  `otty pane resize --right N` exists but counts **cells**, and with no pane positions there is no
+  split extent to take a fraction of, so `resizePane` — which takes a ratio — is refused as well.
 - **macOS/Windows desktop app.**
 
 ## GNU Screen — detected, not driven
