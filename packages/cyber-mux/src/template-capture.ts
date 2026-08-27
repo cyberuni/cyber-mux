@@ -1,6 +1,7 @@
 import { relative, sep } from 'node:path'
 import type { Exec } from './exec.ts'
-import type { MuxAdapter, MuxTarget, PaneRect, RegionPane, WorkspaceTab } from './mux.ts'
+import type { MuxAdapter, MuxTarget, RegionPane, WorkspaceTab } from './mux.ts'
+import { partition, type RegionTree } from './region-tree.ts'
 import type { PaneNode, SplitNode, TabNode, Template, TemplateNode } from './template.ts'
 
 /**
@@ -29,22 +30,6 @@ import type { PaneNode, SplitNode, TabNode, Template, TemplateNode } from './tem
  * a pane's `label`. A template out of this module is a DRAFT with `command` left for the author.
  */
 
-/** A partition of the region — the same shape as `TemplateNode`, before panes become `PaneNode`s. */
-type RegionTree = RegionLeaf | RegionSplit
-
-interface RegionLeaf {
-	type: 'pane'
-	pane: RegionPane
-}
-
-interface RegionSplit {
-	type: 'split'
-	direction: 'right' | 'down'
-	ratio?: number | undefined
-	first: RegionTree
-	second: RegionTree
-}
-
 export interface TemplateCapture {
 	template: Template
 	/**
@@ -52,120 +37,6 @@ export interface TemplateCapture {
 	 * stderr so this module stays pure and the rules stay testable without capturing output.
 	 */
 	warnings: string[]
-}
-
-const right = (rect: PaneRect): number => rect.x + rect.width
-const bottom = (rect: PaneRect): number => rect.y + rect.height
-
-/**
- * The axis a cut runs along. `right` means a vertical divider with panes side by side — the schema's
- * vocabulary, where the name says where the NEW pane goes rather than which way the divider lies.
- */
-interface Axis {
-	direction: 'right' | 'down'
-	/** Where a pane starts on this axis. */
-	start: (rect: PaneRect) => number
-	/** Where a pane ends on this axis. */
-	end: (rect: PaneRect) => number
-}
-
-const HORIZONTAL: Axis = { direction: 'right', start: (r) => r.x, end: right }
-const VERTICAL: Axis = { direction: 'down', start: (r) => r.y, end: bottom }
-
-interface Cut {
-	direction: 'right' | 'down'
-	ratio: number
-	first: RegionPane[]
-	second: RegionPane[]
-}
-
-/**
- * The lowest cut on this axis that separates the panes cleanly, or `undefined` if none does.
- *
- * Taking the LOWEST rather than any is what produces a right-comb for an n-ary row: three panes side
- * by side cut first into `[a][b c]`, then `[b][c]` — the exact tree `desugar`'s `comb` emits for
- * `arrange: even-horizontal`, reached from the opposite direction.
- *
- * A candidate is any pane's start edge. It separates cleanly when every pane lies wholly before it
- * or wholly after it, and both sides have something in them.
- */
-function findCut(panes: RegionPane[], axis: Axis): Cut | undefined {
-	const candidates = [...new Set(panes.map((p) => axis.start(p.rect)))].sort((a, b) => a - b)
-	for (const at of candidates) {
-		const first = panes.filter((p) => axis.end(p.rect) <= at)
-		const second = panes.filter((p) => axis.start(p.rect) >= at)
-		if (first.length === 0 || second.length === 0) continue
-		// Anything straddling the line lands in neither group, so the counts not adding up IS the
-		// "this cut crosses a pane" test — no separate overlap check needed.
-		if (first.length + second.length !== panes.length) continue
-		return { direction: axis.direction, ratio: ratioOf(panes, second, axis), first, second }
-	}
-	return undefined
-}
-
-/**
- * The fraction of the split region kept by `first` — the schema's `ratio`.
- *
- * Measured as the COMPLEMENT of what `second` occupies, over the whole region: `1 - second/total`.
- * The obvious `first / (first + second)` is subtly wrong on any backend that draws a divider, and
- * the arithmetic says why — tmux splitting a 50-row region reports 34 + 15, with the 51st row eaten
- * by the divider. `first / (first + second)` reads 34/49 = 0.69; the true split was 0.7, and the
- * divider row belongs to neither pane's height while still costing the region a row.
- *
- * Taking the complement puts that row back where the backend's own arithmetic puts it: tmux's `-l`
- * sizes the NEW pane, so `second` is exactly the fraction asked for and `first` keeps the rest,
- * divider included. That reads 1 - 15/50 = 0.7 — the number the split was actually made with. On a
- * backend with no divider (herdr) the two formulas agree, so nothing is traded for the fix.
- *
- * Both checked against live binaries: this recovers tmux's `-l 40%`/`-l 30%` splits as 0.6/0.7
- * exactly, and reproduces herdr's to within the cell it rounds to.
- */
-function ratioOf(all: RegionPane[], second: RegionPane[], axis: Axis): number {
-	const total = extent(all, axis)
-	if (total <= 0) return 0.5
-	return 1 - extent(second, axis) / total
-}
-
-/** How far a group of panes reaches along an axis — its bounding box on that axis. */
-function extent(panes: RegionPane[], axis: Axis): number {
-	const starts = panes.map((p) => axis.start(p.rect))
-	const ends = panes.map((p) => axis.end(p.rect))
-	return Math.max(...ends) - Math.min(...starts)
-}
-
-/**
- * Cut the region into a binary tree, recursively.
- *
- * **`right` is tried before `down`, and the order is load-bearing on a grid.** A 2x2 is genuinely
- * ambiguous — cutting it vertically first and horizontally first both describe the same screen, and
- * neither is more true. Columns-then-rows is the tie-break because that is what `desugar`'s `tiled`
- * emits, so a tiled pool exports back as the tree it was built from rather than its transpose.
- *
- * A region no cut separates cannot come out of a multiplexer: both backends build regions BY
- * splitting, so every region they can report is guillotine-cuttable by construction. Reaching the
- * throw means the geometry did not come from where we think it did — which is worth saying loudly
- * rather than papering over with a tree that misplaces the user's panes.
- */
-function partition(panes: RegionPane[]): RegionTree {
-	if (panes.length === 1) return { type: 'pane', pane: panes[0]! }
-	const cut = findCut(panes, HORIZONTAL) ?? findCut(panes, VERTICAL)
-	if (!cut) {
-		throw new Error(
-			`this region's panes do not form a splittable tree (${panes.length} panes: ${panes.map((p) => p.id).join(', ')}) — ` +
-				'export can only capture a region built by splitting',
-		)
-	}
-	const node: RegionSplit = {
-		type: 'split',
-		direction: cut.direction,
-		first: partition(cut.first),
-		second: partition(cut.second),
-	}
-	const ratio = roundRatio(cut.ratio)
-	// An even split is the schema's DEFAULT, so an even cut emits no ratio at all rather than `0.5`.
-	// Keeps an exported grid as clean as the hand-written one it should match.
-	if (ratio !== 0.5) node.ratio = ratio
-	return node
 }
 
 /**
@@ -316,7 +187,11 @@ function convert(node: RegionTree, ctx: CaptureContext): TemplateNode {
 		first: convert(node.first, ctx),
 		second: convert(node.second, ctx),
 	}
-	if (node.ratio !== undefined) split.ratio = node.ratio
+	// The capture's own presentation of the tree's raw ratio: two decimals for a template a human
+	// reads, and an EVEN cut emits nothing at all because `0.5` is the schema's default. `region-tree.ts`
+	// keeps the unrounded fact for the consumer that needs every digit (`RegionInspector.resizePane`).
+	const ratio = roundRatio(node.ratio)
+	if (ratio !== 0.5) split.ratio = ratio
 	return split
 }
 
