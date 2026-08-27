@@ -318,7 +318,10 @@ describe.skipIf(!hasTmux())('spec:cyber-mux/mux', () => {
 			expect(taken).toBeDefined()
 			// The seam's own definition of what the region reads back at: 1 - second / total.
 			const total = kept!.rect.width + taken!.rect.width + 1
-			expect(1 - taken!.rect.width / total).toBeCloseTo(0.7, 2)
+			// Within ONE CELL, derived from the region rather than a constant. A cell-based backend can
+			// only land on k/total, so the achievable ratio nearest 0.7 is off by up to 1/total — a fixed
+			// tolerance would pass at one terminal size and fail at the next.
+			expect(Math.abs(1 - taken!.rect.width / total - 0.7)).toBeLessThanOrEqual(1 / total)
 			// And the ORIGINAL pane is the one that grew — the half a wrong sign convention gets backwards.
 			expect(kept!.rect.width).toBeGreaterThan(taken!.rect.width)
 		})
