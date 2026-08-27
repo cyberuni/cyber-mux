@@ -2,6 +2,7 @@ import { type Exec, nodeExec } from './exec.ts'
 import { createCmuxAdapter } from './mux.cmux.ts'
 import { herdrMuxAdapter } from './mux.herdr.ts'
 import { createOttyAdapter } from './mux.otty.ts'
+import { rmuxMuxAdapter } from './mux.rmux.ts'
 import { tmuxMuxAdapter } from './mux.tmux.ts'
 import type {
 	AgentStatus,
@@ -30,8 +31,8 @@ import { type NudgeOptions, type NudgeResult, nudge } from './nudge.ts'
 /**
  * Resolve the raw backend for the multiplexer this process is inside, via the two-mode mux probe
  * (`$CYBER_MUX` fast-path/override, else ancestry discovery from `$$` falling back to the
- * `$TMUX`/`$HERDR_ENV`/`$WEZTERM_PANE`/`$ZELLIJ`/`$CMUX_WORKSPACE_ID` hint when the walk is
- * inconclusive) — tmux/herdr/wezterm/zellij/cmux map to their adapters; anything else throws,
+ * `$RMUX`/`$TMUX`/`$HERDR_ENV`/`$WEZTERM_PANE`/`$ZELLIJ`/`$CMUX_WORKSPACE_ID` hint when the walk is
+ * inconclusive) — tmux/rmux/herdr/wezterm/zellij/cmux/otty map to their adapters; anything else throws,
  * because a caller asking to drive panes with no multiplexer has an unmet precondition, and a loud,
  * actionable failure beats a silent no-op.
  *
@@ -61,6 +62,11 @@ import { type NudgeOptions, type NudgeResult, nudge } from './nudge.ts'
 export function resolveMuxAdapter(env: NodeJS.ProcessEnv, exec: Exec = nodeExec): MuxAdapter {
 	const probe = probeMultiplexer(exec, env)
 	if (probe.mux === 'tmux') return tmuxMuxAdapter
+	// rmux needs no ambient binding (unlike zellij/cmux/otty): its pane ids are server-global, so the
+	// adapter is a constant. The probe has already done the work that matters here — an rmux pane sets
+	// `$TMUX`/`$TMUX_PANE` as well as its own `$RMUX`/`$RMUX_PANE`, and `probeMultiplexer` resolves
+	// that ambiguity in rmux's favor rather than leaving it to this dispatch.
+	if (probe.mux === 'rmux') return rmuxMuxAdapter
 	if (probe.mux === 'herdr') return herdrMuxAdapter
 	if (probe.mux === 'wezterm') return weztermMuxAdapter
 	if (probe.mux === 'zellij') return createZellijAdapter({ session: env['ZELLIJ_SESSION_NAME'] })
@@ -71,13 +77,14 @@ export function resolveMuxAdapter(env: NodeJS.ProcessEnv, exec: Exec = nodeExec)
 			'cyber-mux detected GNU Screen, which it cannot drive: Screen addresses its split regions ' +
 				'positionally (no per-pane id) and leaves $WINDOW unset in panes opened via `screen -X`, so a ' +
 				'pane has no stable identity to send to, read from, or self-identify by. Run inside tmux ' +
-				'($TMUX), herdr ($HERDR_ENV=1), wezterm ($WEZTERM_PANE set), zellij ($ZELLIJ set), or cmux ' +
-				'($CMUX_WORKSPACE_ID set) instead.',
+				'($TMUX), rmux ($RMUX set), herdr ($HERDR_ENV=1), wezterm ($WEZTERM_PANE set), zellij ' +
+				'($ZELLIJ set), or cmux ($CMUX_WORKSPACE_ID set) instead.',
 		)
 	}
 	throw new Error(
-		'cyber-mux requires a session backend — run inside tmux ($TMUX), herdr ($HERDR_ENV=1), wezterm ' +
-			'($WEZTERM_PANE set), zellij ($ZELLIJ set), cmux ($CMUX_WORKSPACE_ID set), or otty ($OTTY_PANE_ID set)',
+		'cyber-mux requires a session backend — run inside tmux ($TMUX), rmux ($RMUX set), herdr ' +
+			'($HERDR_ENV=1), wezterm ($WEZTERM_PANE set), zellij ($ZELLIJ set), cmux ($CMUX_WORKSPACE_ID set), ' +
+			'or otty ($OTTY_PANE_ID set)',
 	)
 }
 

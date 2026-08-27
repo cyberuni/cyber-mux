@@ -4,6 +4,7 @@
 	"description": "Cross-multiplexer pane control — one contract over tmux and herdr",
 	"keywords": [
 		"tmux",
+		"rmux",
 		"herdr",
 		"multiplexer",
 		"terminal",

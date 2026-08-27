@@ -29,7 +29,7 @@ import { probeMultiplexer, currentPane, nodeExec, type MuxProbe } from 'cyber-mu
 
 Two-mode detection:
 
-1. **Fast-path** — `$CYBER_MUX` (`tmux | herdr | wezterm | zellij | screen | none`) is trusted
+1. **Fast-path** — `$CYBER_MUX` (`tmux | rmux | herdr | wezterm | zellij | screen | none`) is trusted
    outright, and also serves as an **override** (`=none` forces no-mux even inside a real
    multiplexer). `$CYBER_MUX_PANE` carries the pane id. `screen` is **recognized** here but is **not a
    drivable backend** — `probeMultiplexer` reports `mux: 'screen'`, and `resolveMux`/`resolveMuxAdapter`
@@ -55,7 +55,8 @@ const probe = probeMultiplexer(nodeExec, process.env)
 ## `currentPane(env)`
 
 This session's own pane, resolved from **env alone** (no `ps` walk): the `$CYBER_MUX_PANE` fast-path,
-then `$TMUX_PANE`, `$HERDR_PANE_ID`, `$WEZTERM_PANE`, `$ZELLIJ_PANE_ID`. Returns `{ mux, pane }` tagged
+then `$RMUX_PANE`, `$TMUX_PANE`, `$HERDR_PANE_ID`, `$WEZTERM_PANE`, `$ZELLIJ_PANE_ID` (checked in that
+order — an rmux pane sets `$TMUX_PANE` too, so `$RMUX_PANE` must be asked first). Returns `{ mux, pane }` tagged
 with the multiplexer, or `undefined` when the session is in no pane-carrying multiplexer. This is the
 mux-agnostic self-identity key that [`mux.callerPane()`](/cyber-mux/api/mux-adapter/#muxcallerpane)
 (and the raw [`callerPane`](/cyber-mux/api/mux-adapter/#callerpaneadapter-env)) is built on.

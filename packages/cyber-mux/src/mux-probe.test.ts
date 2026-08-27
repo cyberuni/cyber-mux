@@ -154,6 +154,64 @@ describe('spec:cyber-mux/mux/detection', () => {
 			})
 		})
 
+		// rmux's ancestry marker is `rmux-daemon`, not `rmux`: a pane's shell is parented by the
+		// long-lived daemon, which is what a `ps -o ppid=,comm=` walk from inside a real rmux pane
+		// actually climbs to (probed on 0.10.0).
+		it('walks to rmux-daemon and reads $RMUX_PANE as the pane', () => {
+			const pid = process.pid
+			const exec = psChain({
+				[pid]: [pid + 1, 'node'],
+				[pid + 1]: [pid + 2, 'zsh'],
+				[pid + 2]: [1, 'rmux-daemon'],
+			})
+			expect(probeMultiplexer(exec, { RMUX_PANE: '%7' })).toEqual({ mux: 'rmux', pane: '%7', via: 'ancestry' })
+		})
+
+		it('$RMUX alone is a fast-positive hint the walk falls back to, attaching the separate $RMUX_PANE', () => {
+			const noPs: Exec = () => null
+			expect(probeMultiplexer(noPs, { RMUX: '/tmp/rmux/default,123,0', RMUX_PANE: '%4' })).toEqual({
+				mux: 'rmux',
+				pane: '%4',
+				via: 'ancestry',
+			})
+		})
+
+		// THE ordering trap, and the single most load-bearing detection claim this backend adds. A real
+		// rmux pane sets `$TMUX` and `$TMUX_PANE` alongside its own vars, to the SAME values, for tmux
+		// compatibility (probed live on rmux 0.10.0 by dumping a pane's environment). So an env that
+		// carries both is rmux, not tmux — and getting it backwards would resolve every rmux session to
+		// the tmux adapter, where rmux's own PATH shim named `tmux` would keep the mistake silent
+		// instead of loud.
+		it('detection-rmux-wins-over-its-own-tmux-compat-vars', () => {
+			const noPs: Exec = () => null
+			const triple = '/tmp/rmux-1000/sock,46694,0'
+			expect(probeMultiplexer(noPs, { RMUX: triple, RMUX_PANE: '%1', TMUX: triple, TMUX_PANE: '%1' })).toEqual({
+				mux: 'rmux',
+				pane: '%1',
+				via: 'ancestry',
+			})
+		})
+
+		// The reverse is unreachable in the wild — tmux does not set `$RMUX` — but the row pins that
+		// tmux is still detected as tmux rather than being shadowed by the new branch.
+		it('a tmux pane is still tmux: $TMUX without $RMUX is unaffected by the rmux branch', () => {
+			const noPs: Exec = () => null
+			expect(probeMultiplexer(noPs, { TMUX: 't', TMUX_PANE: '%2' })).toEqual({
+				mux: 'tmux',
+				pane: '%2',
+				via: 'ancestry',
+			})
+		})
+
+		it('recognizes the $CYBER_MUX=rmux override', () => {
+			const noExec: Exec = () => null
+			expect(probeMultiplexer(noExec, { CYBER_MUX: 'rmux', CYBER_MUX_PANE: '%5' })).toEqual({
+				mux: 'rmux',
+				pane: '%5',
+				via: 'env',
+			})
+		})
+
 		it('reports none when neither ancestry nor an env hint finds a multiplexer', () => {
 			const noPs: Exec = () => null
 			expect(probeMultiplexer(noPs, {})).toEqual({ mux: 'none', via: 'ancestry' })
@@ -163,6 +221,24 @@ describe('spec:cyber-mux/mux/detection', () => {
 	describe('currentPane — env-only self pane resolution', () => {
 		it('reads $TMUX_PANE as a tmux pane', () => {
 			expect(currentPane({ TMUX_PANE: '%3' })).toEqual({ mux: 'tmux', pane: '%3' })
+		})
+
+		it('reads $RMUX_PANE as an rmux pane', () => {
+			expect(currentPane({ RMUX_PANE: '%3' })).toEqual({ mux: 'rmux', pane: '%3' })
+		})
+
+		// The same ordering trap one layer down. `currentPane` is the SELF-identity key, so reading an
+		// rmux pane as tmux here hands `callerPane` a pane the tmux adapter would then drive with the
+		// wrong binary — see the probe-level row above for why both vars are present at once.
+		it('reads a pane carrying BOTH $RMUX_PANE and $TMUX_PANE as rmux, never tmux', () => {
+			expect(currentPane({ RMUX_PANE: '%1', TMUX_PANE: '%1' })).toEqual({ mux: 'rmux', pane: '%1' })
+		})
+
+		it('tags the $CYBER_MUX_PANE fast-path rmux when $CYBER_MUX=rmux', () => {
+			expect(currentPane({ CYBER_MUX: 'rmux', CYBER_MUX_PANE: '%5', TMUX_PANE: '%3' })).toEqual({
+				mux: 'rmux',
+				pane: '%5',
+			})
 		})
 
 		it('reads $HERDR_PANE_ID as a herdr pane', () => {

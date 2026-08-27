@@ -65,6 +65,8 @@ describe('spec:cyber-mux/library — published surface', () => {
 				'DEFAULT_WAIT_POLL_MS',
 				'FULL_SCROLLBACK_LINES',
 				'FloatingPanesUnsupportedError',
+				'RMUX_TAB_NAME_OPTION',
+				'RMUX_WORKSPACE_GROUP_OPTION',
 				'TMUX_TAB_NAME_OPTION',
 				'TMUX_WORKSPACE_GROUP_OPTION',
 				'assertWaitPattern',
@@ -89,6 +91,10 @@ describe('spec:cyber-mux/library — published surface', () => {
 				'refuseFloatingPane',
 				'resolveMux',
 				'resolveMuxAdapter',
+				// rmux's option constants and adapter ride the barrel exactly as tmux's do — the two
+				// backends have the same shape, and an out-of-tree caller that reaches for one has the same
+				// reason to reach for the other.
+				'rmuxMuxAdapter',
 				'tmuxMuxAdapter',
 				'weztermMuxAdapter',
 				'withReason',

@@ -37,6 +37,11 @@ jobs:
       # left every float row SKIPPING here — present in the report, covering nothing. Pinned to an
       # exact release for the same reason herdr and zellij are.
       TMUX_VERSION: 3.7c
+      # Pinned for the same reason as every binary above: an rmux release should never silently
+      # change what this suite runs against. There is no version FLOOR here — unlike zellij and tmux,
+      # nothing the rmux adapter drives landed in a specific release; 0.10.0 is simply the version the
+      # adapter was probed against and the one its comments name.
+      RMUX_VERSION: v0.10.0
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -127,6 +132,29 @@ jobs:
           sudo install -m 0755 "${RUNNER_TEMP}/zellij" /usr/local/bin/zellij
           zellij --version
           script --version | head -1
+
+      # rmux ships prebuilt release tarballs, so this needs no Rust toolchain — `cargo install rmux`
+      # would work but costs a full release build on every run.
+      #
+      # `install.sh --prefix`, NOT a bare `install -m 0755 bin/rmux /usr/local/bin`: the `rmux` binary
+      # is a launcher that resolves a PRIVATE helper at `<prefix>/libexec/rmux/rmux`, and a copied-out
+      # binary dies with `private rmux helper not found under libexec/rmux` on the first command.
+      # Verified by doing exactly that and watching it fail, then watching the installer's layout
+      # work. The installer also runs its own post-install layout smoke, so a broken extract fails
+      # here rather than as a suite-wide skip.
+      #
+      # rmux needs no server started: like tmux, each `-L <socket>` command spawns its own
+      # `rmux-daemon` on demand, and the suite creates and kills a throwaway one per run.
+      - name: Install rmux ${{ env.RMUX_VERSION }}
+        run: |
+          curl -fsSL -o "${RUNNER_TEMP}/rmux.tar.gz" \
+            "https://github.com/Helvesec/rmux/releases/download/${RMUX_VERSION}/rmux-${RMUX_VERSION#v}-linux-x86_64.tar.gz"
+          tar -xzf "${RUNNER_TEMP}/rmux.tar.gz" -C "${RUNNER_TEMP}"
+          sudo "${RUNNER_TEMP}/rmux-${RMUX_VERSION#v}-linux-x86_64/install.sh" --prefix /usr/local
+          # Fail the step here rather than letting the whole rmux suite silently SKIP on a runner
+          # where the install quietly produced nothing — the exact failure shape issue #125 names.
+          rmux -V
+          rmux -V | grep -q "${RMUX_VERSION#v}"
 
       - run: pnpm install --frozen-lockfile
 

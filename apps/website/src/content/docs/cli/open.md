@@ -27,8 +27,9 @@ cyber-mux open [--launch <cmd>] [--template <name>] [--cwd <path>] \
   window) — never a detached tmux session, which would be invisible to `focus`. `pane:float` opens a
   **floating pane** — one that sits above the tiled layout rather than taking a share of it, so
   nothing else is resized. It is the one placement that is not universal: **tmux 3.7+** (`new-pane`)
-  and **zellij** (`new-pane --floating`) open a real one, while **wezterm** and **herdr** have no such
-  concept and refuse it with `backend-unsupported` (exit 1) rather than quietly substituting a split.
+  and **zellij** (`new-pane --floating`) open a real one, while **wezterm**, **rmux**, and **herdr**
+  have no such concept and refuse it with `backend-unsupported` (exit 1) rather than quietly
+  substituting a split.
   The value is always accepted by the flag — which backend can realize it is a runtime answer.
 - `--env <KEY=VALUE>` — repeatable; sets each variable natively at the pane's birth.
 - `--label <name>` — names whatever `--at` opened, at whatever tier it opened it:
