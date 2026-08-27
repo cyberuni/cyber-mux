@@ -766,3 +766,49 @@ Decisions (`136-rmux-adapter` — the seventh backend, and whether it shares the
   `focus` success path — `switch-client` → `select-window` → `select-pane` with a client attached —
   was probed by hand against a pty client but is NOT pinned by `mux.rmux.integration.test.ts`, which
   runs detached on purpose; the suite pins only its unresolvable-pane refusal.
+
+Decisions (`otty-agent-lifecycle` — whether otty can implement `AgentLifecycle`):
+
+- **otty `watch:<agent>` — VERDICT: gate 1 fails, `AgentLifecycle` stays ABSENT on otty.** Read
+  2026-08-26 against docs.otty.sh only (`/reference/cli`, `/terminal-features/progress-state`,
+  `/workflows/cli-usage`, `/agents/supported-agents`, `/agents/parallel-tasks`, `/vt/osc/osc-26`,
+  `/reference/applescript`, `/terminal-features/term-value`). **Nothing here was probed** — otty is a
+  GUI-only app and is not installed on the machine this was decided on, so every statement below is a
+  docs claim, not a measurement.
+  The real signature is `otty watch:<agent> <id>`, not the bare `otty watch:<agent>` that issue #134
+  quoted — and the dropped positional is exactly what decides the gate. `<id>` is the **agent session
+  id**, not a pane id: *"otty watch:claude <session-id> … The session ID is the one from Agent
+  History"* (CLI Usage), *"blocks until that Claude session is idle"* (Progress State). Its whole flag
+  table is `--interval-ms` (5000), `--timeout-secs` (0), `--unknown-timeout-secs` (60), `-v`; there is
+  no pane selector on it, and none among the global flags either — while every pane-scoped verb
+  (`pane show`/`send-keys`/`capture`) documents `--pane <id|index>`. So `waitForState(exec, target,
+  opts)`, which is handed a pane id, has nothing to hand `watch:`.
+  **No documented CLI route from a pane id to an agent session id.** otty binds the two in the other
+  direction and internally: a hook reports `otty state:<agent> state=… agent-pid=… session-id=…`, and
+  *"Otty matches an event to a pane by process tree: the reported `agent-pid` has to be a descendant
+  of some pane's shell"* (Supported Agents). No command prints that mapping back out; `otty panes
+  --json` has **no documented schema at all** in the docs, let alone a session or agent field. A
+  lookalike built on `read()` polling remains refused for #94's reason, so the honest answer is
+  absence, and `deriveAgentWait`'s existing refusal on otty stays correct.
+- **`<agent>` is part of the verb, which is a second gate the issue did not name.** `watch:` is
+  spelled per agent kind (`watch:claude` / `watch:codex` / `watch:opencode`), so even a `--pane`
+  selector would leave the adapter needing the agent KIND running in that pane — another fact no
+  documented CLI read reports.
+- **Question 2, answered though moot: otty waits on `idle` and nothing else.** *"Blocks until the
+  named code-agent session … reaches the `idle` state"*; exit `0` on idle (or if the session has
+  since closed), `4` if it never reported a usable state, `6` if the agent has no integration
+  installed, `9` on timeout. So an implementation would have to refuse any `until` that is not exactly
+  `['idle']`, **by name**; `timeoutMs` would round to `--timeout-secs`' second granularity; and exits
+  `4`/`6` are neither a reached state nor a timeout, so each would need its own named error.
+  The state vocabulary otty's hooks report is `processing | idle | awaiting`.
+- **A docs inconsistency the next reader should not trip on.** `/reference/cli` documents the report
+  as `otty state:<agent> key=value …` with `state=processing|idle|awaiting`, while `/vt/osc/osc-26`
+  documents `otty agent:set --code-agent claude --session "$SID" --status running|awaiting-approval|
+  finished`. Two spellings and two vocabularies for the same report inside one docs set; which one
+  ships is unresolved from the docs.
+- **`LivePane.agentStatus` on otty: unanswerable, stays `undefined`.** otty plainly HOLDS per-pane
+  agent state — it badges tabs with it — but no documented CLI read exposes it: no such field in
+  `otty panes --json` (undocumented schema), `otty state:` is the write side, and the AppleScript
+  per-tab properties are `contents`/`history`/`busy`/`process` with no agent state (and are macOS-only,
+  outside the `Exec` seam regardless).
+  ISSUE: https://github.com/cyberuni/cyber-mux/issues/134
