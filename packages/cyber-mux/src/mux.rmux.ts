@@ -76,6 +76,19 @@ export const rmuxMuxAdapter: MuxAdapter = {
 	// it). Omitted rather than declared `false`, the same way wezterm, cmux and otty omit it; the
 	// absence IS the declaration, and `open` below carries the enforcement.
 
+	/**
+	 * Every route passes `-d`, so no open moves the attached client — the same answer tmux gives, and
+	 * for the same reason, since rmux reimplements tmux's command language and inherits the behavior
+	 * along with the flag. Verified live on 0.10.0 rather than inherited from that resemblance, on an
+	 * isolated socket: a bare `split-window` in a session focused on `%0` left `%1` active, `-d` left
+	 * focus on `%0`, and `-P -F` printed the new id either way. `new-window -d` was already here.
+	 *
+	 * There is no focus move to undo on top of that, as on tmux: `-t` targets the pane to split
+	 * directly, so rmux never has to VISIT a pane to choose it. And no third route to cover — rmux has
+	 * no `new-pane`, so `pane:float` is refused before any command is issued.
+	 */
+	opensWithoutStealingFocus: true,
+
 	open(exec, opts) {
 		// rmux has tmux's tiers, so it has tmux's collapse: no Workspace level, and "window" is its
 		// name for the Tab concept. Both 'workspace' (own visible space) and 'tab' become a new WINDOW
@@ -148,7 +161,10 @@ export const rmuxMuxAdapter: MuxAdapter = {
 			// its own even default.
 			const size = opts.ratio != null ? ['-l', toRmuxSize(opts.ratio)] : []
 			const direction = at === 'pane:down' ? '-v' : '-h'
-			args = ['split-window', direction, ...from, ...size, ...env, '-c', opts.cwd, '-P', '-F', format]
+			// `-d` for `new-window`'s reason one tier down: a bare `split-window` makes the NEW pane the
+			// session's active one (measured on 0.10.0), which is the same focus theft `-d` has always
+			// suppressed on the window route. `-P -F` still reports the new pane's id with it.
+			args = ['split-window', '-d', direction, ...from, ...size, ...env, '-c', opts.cwd, '-P', '-F', format]
 		}
 		// A window takes its name at birth — `-n` also turns rmux's `automatic-rename` off for it, so
 		// the name survives whatever the pane goes on to run. Verified live on 0.10.0:

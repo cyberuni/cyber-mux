@@ -54,6 +54,20 @@ export function createWeztermAdapter(deps: { newId: NewId }): MuxAdapter {
 		// CLI's own help text, not a live binary — see `toWeztermSize`.
 		canSizeSplits: true,
 
+		/**
+		 * `false`: WezTerm's CLI documents no suppress-focus flag on any creating verb — neither
+		 * `cli spawn` (which opens a tab or a window) nor `cli split-pane` — and both activate what they
+		 * create. So every open moves the user, and this says so rather than pretending otherwise.
+		 *
+		 * There is nothing to emulate it with. Re-activating the caller's pane afterward would be a
+		 * `cli activate-pane` — a second visible focus move, landing the user back where they started
+		 * after a visible detour — which is worse than the honest `false`, not better.
+		 *
+		 * Read off the WezTerm CLI reference, NOT verified against a live binary: there is no wezterm on
+		 * the machine this was written on, the same disclaimer the rest of this header carries.
+		 */
+		opensWithoutStealingFocus: false,
+
 		open(exec, opts) {
 			const at = opts.at ?? 'tab'
 			if (at === 'workspace') {

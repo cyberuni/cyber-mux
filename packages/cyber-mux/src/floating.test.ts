@@ -86,21 +86,21 @@ describe('spec:cyber-mux/mux/placement', () => {
 			const opened = tmuxMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:float' })
 			// A float lands in a window it did not open — the caller's own, exactly as a split does.
 			expect(opened).toEqual({ id: '%9', tab: '@1' })
-			expect(calls[0]).toEqual(['new-pane', '-c', '/unit', '-P', '-F', '#{pane_id}\t#{window_id}'])
+			expect(calls[0]).toEqual(['new-pane', '-d', '-c', '/unit', '-P', '-F', '#{pane_id}\t#{window_id}'])
 		})
 
 		it('@id:placement-float-tmux-anchored-and-named — anchored on from with -t', () => {
 			const calls: string[][] = []
 			const exec = fakeTmuxExec(calls, { 'new-pane': '%9\t@1' })
 			tmuxMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:float', from: { id: '%3' } })
-			expect(calls[0]?.slice(0, 3)).toEqual(['new-pane', '-t', '%3'])
+			expect(calls[0]?.slice(0, 3)).toEqual(['new-pane', '-d', '-t'])
 		})
 
 		it('carries env natively — `new-pane` takes -e exactly as split-window does', () => {
 			const calls: string[][] = []
 			const exec = fakeTmuxExec(calls, { 'new-pane': '%9\t@1' })
 			tmuxMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:float', env: { A: '1' } })
-			expect(calls[0]).toEqual(['new-pane', '-e', 'A=1', '-c', '/unit', '-P', '-F', '#{pane_id}\t#{window_id}'])
+			expect(calls[0]).toEqual(['new-pane', '-d', '-e', 'A=1', '-c', '/unit', '-P', '-F', '#{pane_id}\t#{window_id}'])
 			// No launch given, so nothing is submitted — the env rode in on the open itself.
 			expect(calls).toHaveLength(1)
 		})
@@ -152,7 +152,7 @@ describe('spec:cyber-mux/mux/placement', () => {
 			expect(opened).toEqual({ id: 'terminal_9', tab: '2' })
 			// `calls[0]` is the listing read BEFORE the split — the snapshot that makes the id zellij
 			// reports checkable rather than trusted.
-			expect(calls[1]).toEqual(['action', 'new-pane', '--floating', '--cwd', '/unit'])
+			expect(calls[1]).toEqual(['action', 'new-pane', '--floating', '--no-focus', '--cwd', '/unit'])
 			expect(calls[1]).not.toContain('--direction')
 		})
 
@@ -164,7 +164,11 @@ describe('spec:cyber-mux/mux/placement', () => {
 			})
 			zellijMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:float', from: { id: 'terminal_3' } })
 			// `new-pane` has no target flag beyond `--tab-id`, so focusing is the only anchor available.
-			expect(calls[0]).toEqual(['action', 'focus-pane-id', 'terminal_3'])
+			// The listing comes first now — it carries the pane focus is restored to afterwards — and
+			// `--no-focus` is absent on this path ON PURPOSE: it would re-anchor the float on the issuing
+			// pane and make the focus move above pointless. See `focus-on-open.test.ts`.
+			expect(calls[0]).toEqual(['action', 'list-panes', '--json'])
+			expect(calls[1]).toEqual(['action', 'focus-pane-id', 'terminal_3'])
 			expect(calls[2]).toEqual(['action', 'new-pane', '--floating', '--cwd', '/unit'])
 		})
 
@@ -179,7 +183,7 @@ describe('spec:cyber-mux/mux/placement', () => {
 				at: 'pane:float',
 				label: 'notes',
 			})
-			expect(calls[1]).toEqual(['action', 'new-pane', '--floating', '--cwd', '/unit', '--name', 'notes'])
+			expect(calls[1]).toEqual(['action', 'new-pane', '--floating', '--no-focus', '--cwd', '/unit', '--name', 'notes'])
 			// A float lives in the ambient session as much as any other pane does.
 			expect(opened.workspace).toBe('my-session')
 		})

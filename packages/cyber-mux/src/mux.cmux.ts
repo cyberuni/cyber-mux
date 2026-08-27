@@ -53,6 +53,18 @@ export function createCmuxAdapter(deps: { workspace?: string | undefined }): Mux
 
 		canSizeSplits: true,
 
+		/**
+		 * `false`, and cmux needs BOTH halves to be true to say otherwise. No creating verb documents a
+		 * suppress-focus flag, so a new pane activates; and `new-pane` has no split-TARGET flag, so
+		 * `from` is honored by focusing that surface first (see the header and `open` below) — a focus
+		 * move made before the open even runs. Suppressing only one would still move the user, which
+		 * the seam's own wording rules out.
+		 *
+		 * Read off cmux's documented CLI, NOT verified against a live binary — no cmux on the machine
+		 * this was written on, matching the rest of this header.
+		 */
+		opensWithoutStealingFocus: false,
+
 		open(exec, opts) {
 			const at = opts.at ?? 'tab'
 

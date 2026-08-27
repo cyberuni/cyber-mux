@@ -812,3 +812,81 @@ Decisions (`otty-agent-lifecycle` — whether otty can implement `AgentLifecycle
   per-tab properties are `contents`/`history`/`busy`/`process` with no agent state (and are macOS-only,
   outside the `Exec` seam regardless).
   ISSUE: https://github.com/cyberuni/cyber-mux/issues/134
+Decisions (`opensWithoutStealingFocus` — issue #133, the focus-on-open declaration):
+
+- **the issue's premise was wrong about tmux and herdr, and the fix is bigger than zellij** —
+  DECIDED. #133 states that "every backend but zellij opens without stealing the user's focus". That
+  holds only for the TAB/WORKSPACE routes. Measured against live binaries: on tmux 3.7c a bare
+  `split-window` in a session focused on `%0` left `%1` active, and a bare `new-pane` did the same for
+  a float — the adapter passed `-d` on `new-window` only, so every `pane:*` open moved the user. herdr
+  was the opposite surprise: `pane split` carried no `--no-focus`, but 0.8.2 leaves focus on the pane
+  it split either way, so its gap was declarative rather than behavioral. So `-d` was added to tmux's
+  `split-window` and `new-pane`, and `--no-focus` to herdr's `pane split`. A declaration that says
+  "every route" has to mean it; discovering three unflagged routes is the reason the declaration is
+  worth having rather than an argument against it.
+
+- **REQUIRED on the seam, unlike `canSizeSplits`/`canFloatPanes`** — DECIDED, and it is the one place
+  the three differ. Those two are optional because absence has a truthful reading: there is no `-l` to
+  pass, no float verb to call, so `undefined` and `false` say the same thing. Here they do not. A new
+  adapter that simply never considered focus would read `undefined`, indistinguishable from one that
+  considered it and found no primitive — a caller cannot tell an unanswered question from a negative
+  answer. The seam takes the adapter author's debt over the caller's ambiguity, the trade `rename`
+  already makes.
+
+- **an END-STATE property, not "focus never moves"** — DECIDED. `true` means an open leaves focus
+  where it found it. It deliberately does NOT mean no focus move occurs at any instant, because zellij
+  cannot offer that on the one route that has to CHOOSE a split target: `new-pane` has no split-target
+  flag, so `from` is honored by focusing that pane first, and that move is real. Defining the
+  invariant on the end state is what lets zellij answer `true` by undoing the move instead of
+  pretending it does not happen. The adapter comment says the round trip is visible.
+
+- **zellij's floor moves to 0.45.0; no fallback path, no version probe** — DECIDED. `--no-focus`
+  landed in 0.45.0 (confirmed by bisecting the source: `grep -c no_focus zellij-utils/src/cli.rs`
+  returns 0 at both `v0.44.0` and `v0.43.1`). Four reasons compound against a conditional
+  declaration: the seam member is static, with no runtime probe behind it, so a conditional value has
+  nowhere to live and `true`-then-degrade would lie in exactly the way the declaration exists to
+  prevent; version-probing would be a new behavior for a file that reads no version anywhere, costing
+  an exec per open; a fallback would be a second code path nothing here can exercise, since there is
+  no zellij on this machine and the integration suite skips its rows without one (#125); and the 0.44
+  failure is LOUD and creates nothing — zellij parses in clap's strict mode (no `ignore_errors`,
+  `allow_hyphen_values`, `allow_external_subcommands`, or `trailing_var_arg` anywhere in
+  `zellij-utils/src/cli.rs` at v0.45.0), so an unknown `--no-focus` is a parse error and a nonzero
+  exit. Same precedent tmux's unconditional `new-pane` declaration set.
+
+- **`--no-focus` is NOT passed on zellij's `from` path, and `focus-last-pane` is not used at all** —
+  DECIDED, against #133's proposal, which assumed `--no-focus` only suppresses the new pane's
+  activation. It does more than that: per `zellij-server/src/route.rs`'s `new_pane_routing` at
+  v0.45.0, a `--no-focus` open resolves its anchor as `--tab-id` if given, else the pane named by
+  `$ZELLIJ_PANE_ID` — the pane the command was ISSUED from, which the flag's own help text states —
+  and only failing both, the client's current pane. The focused pane is never consulted. So focusing
+  `from` and then passing `--no-focus` would split the pane cyber-mux is running in, print a plausible
+  id for it, and exit 0: the silent wrong-pane failure this adapter exists to refuse. The `from` path
+  therefore omits the flag and restores focus afterward instead.
+  `focus-last-pane` (also 0.45.0) was rejected as the restore primitive for two independent reasons:
+  it operates on the ACTIVE TAB only (v0.45.0 `screen.rs` dispatches it under
+  `active_tab_and_connected_client_id!`) while `from` may live in another tab, and it reads a focus
+  history one entry deep while the sequence here makes two moves — so even within one tab it would
+  land on `from` rather than on the caller. `focus-pane-id` with an explicit id has neither limit and
+  is already driven against a live 0.44.3.
+  Impersonating the issuing pane (`ZELLIJ_PANE_ID=<from> zellij action new-pane --no-focus`) would buy
+  both properties at once and was rejected as unavailable: `Exec` takes a command and args and no env,
+  by construction. Widening the seam every adapter shares to reach one backend's undocumented internal
+  is not worth one avoided focus move.
+
+- **wezterm/cmux/otty declare `false` rather than emulating** — DECIDED. None documents a
+  suppress-focus flag on any creating verb; cmux and otty additionally focus the split target first,
+  so an open moves the user twice. Re-focusing the caller afterward is available in principle to cmux
+  and otty (both report `is_focused`) and NOT to wezterm, which has no focus-query primitive at all.
+  It is not implemented for any of the three: all are alpha adapters written from documentation with
+  no live binary, and an unverifiable three-command restore dance is worse than an honest `false`. The
+  declaration describes what the adapter does, not what its backend might permit.
+
+- **verification is split, and the split is stated in each file** — DECIDED. tmux's half is driven
+  against a live 3.7c (5 rows in `mux.tmux.integration.test.ts`, including the one that replaced the
+  now-obsolete "a target-less split right after a float fails loudly" row — `-d` removes the
+  activation that made it fail). herdr's half was measured by hand against a live 0.8.2 and is NOT in
+  the integration suite: asserting it needs the suite to focus a workspace, which would make
+  `test:integration` steal the user's focus — unacceptable in a block whose own name promises
+  "always safe". zellij's half is UNVERIFIED against a running binary and says so in the adapter
+  header, the declaration comment, and the website page; it was read out of the v0.45.0 source tree,
+  not off a live `--help`.

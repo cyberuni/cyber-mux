@@ -28,10 +28,15 @@ jobs:
       # against. Bump deliberately, the same way mise pins the toolchain.
       HERDR_VERSION: v0.8.0
       WEZTERM_VERSION: 20240203-110809-5046fc22
-      # 0.44.x or newer is a HARD floor, not a preference: the whole per-pane-addressable surface the
-      # adapter stands on (`--pane-id` across the verbs, `list-panes --json`, ids returned from
-      # `new-pane`/`new-tab`, `focus-pane-id`) landed in 0.44.0. Older binaries fail every command.
-      ZELLIJ_VERSION: v0.44.3
+      # 0.45.0 or newer is a HARD floor, not a preference, and it is the floor `mux.zellij.ts`
+      # declares. Two releases set it. 0.44.0 brought the per-pane-addressable surface the adapter
+      # stands on (`--pane-id` across the verbs, `list-panes --json`, ids returned from
+      # `new-pane`/`new-tab`, `focus-pane-id`); below it every command fails. 0.45.0 brought
+      # `--no-focus`, which `open` passes on `new-tab` and on a `new-pane` that names no `from` — on
+      # 0.44.x that is an unknown argument, so zellij exits nonzero having created nothing and every
+      # open dies. This pin and the adapter's declared floor have to move together: pinning lower
+      # does not test an older floor, it just fails the whole suite.
+      ZELLIJ_VERSION: v0.45.0
       # 3.7 or newer is a HARD floor for the floating-pane rows: `new-pane` is tmux 3.7's own command
       # and simply does not exist below it. Ubuntu's packaged tmux is 3.4, so `apt-get install tmux`
       # left every float row SKIPPING here — present in the report, covering nothing. Pinned to an

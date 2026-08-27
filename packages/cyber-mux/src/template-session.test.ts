@@ -81,6 +81,7 @@ function fakeAdapter(opts: { canSizeSplits?: boolean; failOnOpen?: number; works
 	let n = 0
 	const adapter: MuxAdapter = {
 		name: 'fake',
+		opensWithoutStealingFocus: true,
 		...(opts.canSizeSplits === false ? {} : { canSizeSplits: true }),
 		rename: () => {
 			calls.log.push('rename')
@@ -154,7 +155,9 @@ function tmuxSplits(calls: string[][]) {
 		.map((c) => {
 			const size = c.indexOf('-l')
 			return {
-				direction: c[1] === '-v' ? 'down' : 'right',
+				// Searched rather than read at a fixed index: every split now leads with `-d` (so it never
+				// moves the attached client), which would silently turn every direction into 'right' here.
+				direction: c.includes('-v') ? 'down' : 'right',
 				ratio: size === -1 ? null : 1 - Number.parseInt(c[size + 1]!, 10) / 100,
 			}
 		})

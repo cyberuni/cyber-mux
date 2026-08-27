@@ -16,7 +16,7 @@ describe('spec:cyber-mux/mux/placement', () => {
 		const exec = fakeExec(calls, { 'split-window': '%9\t@1' })
 		const target = tmuxMuxAdapter.open(exec, { cwd: '/unit', launch: 'claude', at: 'pane:right' })
 		expect(target).toEqual({ id: '%9', tab: '@1' })
-		expect(calls[0]).toEqual(['split-window', '-h', '-c', '/unit', '-P', '-F', '#{pane_id}\t#{window_id}'])
+		expect(calls[0]).toEqual(['split-window', '-d', '-h', '-c', '/unit', '-P', '-F', '#{pane_id}\t#{window_id}'])
 		// --launch SUBMITS: typed literally, then Enter — so the command actually runs rather than
 		// sitting staged. Two calls, since tmux has no atomic literal-text-plus-Enter primitive.
 		expect(calls[1]).toEqual(['send-keys', '-t', '%9', '-l', 'claude'])
@@ -102,8 +102,8 @@ describe('spec:cyber-mux/mux/placement', () => {
 		// indexing would break on a change that has nothing to do with placement.
 		const placements = calls.filter((c) => c[0] === 'split-window' || c[0] === 'new-window')
 		expect(placements).toEqual([
-			['split-window', '-h', '-c', '/u', '-P', '-F', '#{pane_id}\t#{window_id}'],
-			['split-window', '-v', '-c', '/u', '-P', '-F', '#{pane_id}\t#{window_id}'],
+			['split-window', '-d', '-h', '-c', '/u', '-P', '-F', '#{pane_id}\t#{window_id}'],
+			['split-window', '-d', '-v', '-c', '/u', '-P', '-F', '#{pane_id}\t#{window_id}'],
 			['new-window', '-d', '-c', '/u', '-P', '-F', '#{pane_id}\t#{window_id}'],
 		])
 	})
@@ -119,8 +119,8 @@ describe('spec:cyber-mux/mux/placement', () => {
 		tmuxMuxAdapter.open(exec, { cwd: '/u', at: 'pane:right', from: { id: '%3' } })
 		tmuxMuxAdapter.open(exec, { cwd: '/u', at: 'pane:down', from: { id: '%3' } })
 		expect(calls.filter((c) => c[0] === 'split-window')).toEqual([
-			['split-window', '-h', '-t', '%3', '-c', '/u', '-P', '-F', '#{pane_id}\t#{window_id}'],
-			['split-window', '-v', '-t', '%3', '-c', '/u', '-P', '-F', '#{pane_id}\t#{window_id}'],
+			['split-window', '-d', '-h', '-t', '%3', '-c', '/u', '-P', '-F', '#{pane_id}\t#{window_id}'],
+			['split-window', '-d', '-v', '-t', '%3', '-c', '/u', '-P', '-F', '#{pane_id}\t#{window_id}'],
 		])
 	})
 
@@ -146,6 +146,7 @@ describe('spec:cyber-mux/mux/placement', () => {
 		tmuxMuxAdapter.open(exec, { cwd: '/u', at: 'pane:right', from: { id: '%3' }, ratio: 0.333 })
 		expect(calls[0]).toEqual([
 			'split-window',
+			'-d',
 			'-h',
 			'-t',
 			'%3',
@@ -236,6 +237,7 @@ describe('spec:cyber-mux/mux/placement', () => {
 		tmuxMuxAdapter.open(exec, { cwd: '/u', at: 'pane:right', env: { ROLE: 'worker', TIER: 'gpu' } })
 		expect(calls[0]).toEqual([
 			'split-window',
+			'-d',
 			'-h',
 			'-e',
 			'ROLE=worker',
@@ -403,6 +405,7 @@ describe('spec:cyber-mux/mux/placement', () => {
 			'pane:right' as const,
 			[
 				'split-window',
+				'-d',
 				'-h',
 				'-e',
 				'ROLE=planner',
@@ -480,7 +483,7 @@ describe('spec:cyber-mux/mux/placement', () => {
 		tmuxMuxAdapter.open(exec, { cwd: '/u', at: 'pane:right' })
 		// The pre-`from` behavior, kept for a caller that cannot identify itself: tmux's active
 		// pane is a guess, but it is a better outcome than refusing to open at all.
-		expect(calls[0]).toEqual(['split-window', '-h', '-c', '/u', '-P', '-F', '#{pane_id}\t#{window_id}'])
+		expect(calls[0]).toEqual(['split-window', '-d', '-h', '-c', '/u', '-P', '-F', '#{pane_id}\t#{window_id}'])
 		expect(calls[0]).not.toContain('-t')
 	})
 
@@ -577,7 +580,7 @@ describe('spec:cyber-mux/mux/placement', () => {
 		const calls: string[][] = []
 		const exec = fakeExec(calls, { 'split-window': '%9\t@1' })
 		tmuxMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right', label: 'my-name' })
-		expect(calls[0]).toEqual(['split-window', '-h', '-c', '/unit', '-P', '-F', '#{pane_id}\t#{window_id}'])
+		expect(calls[0]).toEqual(['split-window', '-d', '-h', '-c', '/unit', '-P', '-F', '#{pane_id}\t#{window_id}'])
 		expect(calls[1]).toEqual(['select-pane', '-t', '%9', '-T', 'my-name'])
 	})
 

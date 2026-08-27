@@ -53,6 +53,23 @@ export const herdrMuxAdapter: MuxAdapter = {
 	// convention, so it passes through unconverted (unlike tmux's `-l`). Re-verified against 0.8.0.
 	canSizeSplits: true,
 
+	/**
+	 * Every creating verb this adapter issues carries `--no-focus`, so no open moves the user.
+	 *
+	 * `workspace create` and `tab create` have carried it from the start. `pane split` did NOT, and
+	 * measuring it against a live 0.8.2 is what settled whether that was a hole: with the client
+	 * focused on the pane being split, a bare `herdr pane split` left focus exactly where it was, and
+	 * so did the same command with `--no-focus`. herdr's split simply does not activate what it
+	 * creates. So the flag added there is a measured NO-OP today, and it is passed anyway — the seam
+	 * now DECLARES this property, and a declaration backed by a backend default is one a future herdr
+	 * release can falsify without anything here having to be wrong first. Every route saying what it
+	 * wants is what makes the boolean above enforceable rather than incidental.
+	 *
+	 * No focus move to undo on top of that: `pane split <id>` names its target directly, so herdr
+	 * never has to VISIT a pane to choose which one gets split.
+	 */
+	opensWithoutStealingFocus: true,
+
 	open(exec, opts) {
 		const at = opts.at ?? 'tab'
 		// herdr takes a label at birth for a workspace and a tab, but not for a split — a pane is
@@ -115,6 +132,11 @@ export const herdrMuxAdapter: MuxAdapter = {
 			// against 0.8.0: splitting a 44-column region at `--ratio 0.333` left the original 15 columns
 			// (0.7.4: a 201-column region left 67).
 			const size = opts.ratio != null ? ['--ratio', toHerdrRatio(opts.ratio)] : []
+			// `--no-focus` for the reason `workspace create`/`tab create` pass it, though here it changes
+			// nothing today: 0.8.2's `pane split` already leaves focus on the pane it split (measured, see
+			// `opensWithoutStealingFocus`). Stated rather than relied on — the seam declares this now, and
+			// an invariant that holds only because of a backend default is one a release note can break
+			// silently.
 			const out = exec('herdr', [
 				'pane',
 				'split',
@@ -125,6 +147,7 @@ export const herdrMuxAdapter: MuxAdapter = {
 				opts.cwd,
 				...size,
 				...env,
+				'--no-focus',
 			])
 			if (!out) throw new Error(withReason(exec, 'herdr pane split failed'))
 			opened = parsePaneId(out)
