@@ -650,3 +650,46 @@ Decisions (`backend-survey-2026-08` — feasibility verdicts for multiplexers no
   agent-workflow terminal, the same niche cmux and otty occupy). Star counts queried 2026-08-20.
   These carry NO verdict: they were surveyed for existence, never gated on the three drivability
   criteria. Do not cite this list as evidence any of them can or cannot be driven.
+
+Decisions (`backend-survey-2026-08b` — feasibility verdicts for multiplexers not yet driven):
+
+- **`Helvesec/rmux` — VERDICT: viable.** 2,598 stars, probed 2026-08-26 against a **live binary**,
+  rmux 0.10.0 installed via `cargo install rmux --locked` — not against the docs, which were
+  inconclusive on gates 2 and 3 because rmux.io/docs/cli documents the typed SDK rather than the
+  CLI's print behavior. Installing it was what settled this, and it is the first candidate in either
+  sweep that could be probed rather than read.
+  Gate 1 (per-pane identity) **CLEARED**: tmux-shaped stable ids — `list-panes -F '#{pane_id}'`
+  returns `%0`, and `send-keys -t %1` followed by `capture-pane -p -t %1` round-trips a value, so a
+  pane is addressable by id from outside. Real identity, not a relative selector.
+  Gate 2 (id at birth) **CLEARED**: `split-window -d -t probe -P -F '#{pane_id}'` prints `%1` —
+  tmux's own `-P -F` print-format.
+  Gate 3 (enumeration) **CLEARED**: `list-panes -t probe -F '#{pane_id}'` lists `%0`/`%1`, with
+  arbitrary `-F` formats, so the snapshot-before/diff-after recovery is available too.
+  Also held, probed the same session: `-c`/`-e` for cwd and env at birth (`split-window -c /etc -e
+  CM_PROBE=yes` → `%2 /etc`); the `@cm_ws` user-option mechanism INCLUDING the server-side filter
+  (`list-windows -f '#{==:#{@cm_ws},grp1}'` → `@0`), which is `TMUX_WORKSPACE_GROUP_OPTION`'s exact
+  design working unmodified; and `#{window_layout}` returning tmux's nested layout string, so
+  `RegionInspector` is realizable. `rmux list-commands` reports ~90 tmux-named commands.
+  One gap: **no floating panes** — `new-pane` (tmux 3.7's) answers `unknown command`, so rmux would
+  declare `canFloatPanes: false` and refuse `pane:float` by name.
+  Runs natively on Linux, macOS, and **Windows**, which no current backend does.
+  ISSUE: https://github.com/cyberuni/cyber-mux/issues/136
+
+- **`Gaurav-Gosain/tuios` — VERDICT: ungated, still.** 3,558 stars, looked at 2026-08-26 against the
+  README only. It has a documented JSON verb protocol for driving its daemon (`docs/protocol.md`)
+  plus `tuios tape exec` for replaying scripted workflows against a running session, so it is NOT a
+  keybinding-only TUI and the protocol is where the gates would be decided. The README does not
+  establish per-pane id addressing either way. Recorded as ungated rather than blocked-upstream
+  because nothing was probed: reading `docs/protocol.md` is the unstarted work, not a recheck
+  trigger. **NEXT STEP:** read `docs/protocol.md` and gate it there.
+
+- **Discovery refreshed 2026-08-26** across `terminal multiplexer`, `tmux alternative`, and
+  `terminal workspace panes`. New above the 500-star line since `backend-survey-2026-08`:
+  `muxy-app/muxy` (2,218, Swift — a libghostty macOS terminal), ungated. Surfaced and DROPPED as not
+  pane hosts: `eneskirca/nodeterm` (1,330 — a tmux-BACKED front-end, so tmux is the multiplexer and
+  cyber-mux already drives it), `decolua/9remote` (534 — a phone remote-control front-end), and
+  `mrjones2014/smart-splits.nvim` (1,715 — a Neovim plugin).
+  Still carrying NO verdict, unchanged from `backend-survey-2026-08`: `directvt/vtm`,
+  `aaronjanse/3mux`, `prompt-toolkit/pymux`, `deadpixi/mtm`, `Yazelix/nova`, `cosmos72/twin`,
+  `martanne/abduco`, `iAmCorey/kooky`, plus `muxy-app/muxy` above. Do not cite this list as evidence
+  any of them can or cannot be driven.
