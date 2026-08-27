@@ -94,8 +94,8 @@ cyber-mux template save <name> --from <pane> [--workspace] \
   template is never silently discarded.
 
 Refuses (exit 1) when the backend cannot report the geometry `save` needs: plain `save` needs
-`describeRegion`; `--workspace` needs `describeWorkspace`. Both tmux and herdr support both; WezTerm
-and Zellij support neither, and `save` refuses on them by naming the backend.
+`describeRegion`; `--workspace` needs `describeWorkspace`. tmux, rmux, and herdr support both;
+WezTerm and Zellij support neither, and `save` refuses on them by naming the backend.
 
 **Examples**
 

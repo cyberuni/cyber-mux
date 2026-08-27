@@ -8,8 +8,8 @@ two-mode.
 
 ## 1. Fast-path / override
 
-If `CYBER_MUX` is set to a known value (`tmux`, `herdr`, `wezterm`, `zellij`, `cmux`, `otty`, `screen`,
-or `none`), it is trusted outright. `CYBER_MUX_PANE` carries the pane id alongside it.
+If `CYBER_MUX` is set to a known value (`tmux`, `rmux`, `herdr`, `wezterm`, `zellij`, `cmux`, `otty`,
+`screen`, or `none`), it is trusted outright. `CYBER_MUX_PANE` carries the pane id alongside it.
 
 This also acts as an **override**: `CYBER_MUX=none` forces no-mux behavior even inside a real
 multiplexer.
@@ -20,7 +20,7 @@ reported truthfully rather than silently ignored — but `cyber-mux` **cannot dr
 rejects the value with a named error instead of returning a backend. Screen addresses its split
 regions positionally (no per-pane id) and leaves `$WINDOW` unset in panes opened via `screen -X`, so
 a pane has no stable identity to send to, read from, or self-identify by — the affordance every driven
-backend depends on. Use `tmux`, `herdr`, `wezterm`, `zellij`, `cmux`, or `otty`.
+backend depends on. Use `tmux`, `rmux`, `herdr`, `wezterm`, `zellij`, `cmux`, or `otty`.
 :::
 
 ```bash
@@ -33,23 +33,25 @@ discovery.
 ## 2. Ancestry discovery
 
 With no fast-path set, `cyber-mux` walks the process ancestry from its own PID (`ps -o ppid=,comm=`),
-looking for a `tmux`, `herdr`, `wezterm`/`wezterm-gui`/`wezterm-mux-server`, `zellij`, `otty`, or
-`screen` ancestor. It walks *past* the tool's own shell — the immediate parent is often not the
-human's pane. cmux and otty are GUI apps whose process names are not discoverable via ancestry, so
-they are detected by env hint only.
+looking for a `tmux`, `rmux-daemon` (or bare `rmux`), `herdr`, `wezterm`/`wezterm-gui`/`wezterm-mux-server`,
+`zellij`, `otty`, or `screen` ancestor. It walks *past* the tool's own shell — the immediate parent is
+often not the human's pane. cmux and otty are GUI apps whose process names are not discoverable via
+ancestry, so they are detected by env hint only.
 
-If the walk is inconclusive (e.g. `ps` is unavailable), it falls back to the `$TMUX` / `$HERDR_ENV` /
-`$WEZTERM_PANE` / `$ZELLIJ` / `$CMUX_WORKSPACE_ID` / `$OTTY_PANE_ID` environment hints — the
-fast-positive signal used only when the walk itself found nothing. WezTerm has no separate "inside
-wezterm" flag the way `$TMUX`/`$HERDR_ENV` are: `$WEZTERM_PANE` **is** the hint, doubling as both the
-signal and the pane id. Zellij sets `$ZELLIJ` inside any Zellij pane, the same ambient-flag shape as
-`$TMUX`/`$HERDR_ENV`. cmux sets `$CMUX_WORKSPACE_ID` and otty sets `$OTTY_PANE_ID`. These hints are
-**never trusted over ancestry** — an ancestry-verified multiplexer always wins over a stale env hint.
-The Zellij adapter requires Zellij ≥ 0.44.1, the release that added per-pane CLI addressing.
+If the walk is inconclusive (e.g. `ps` is unavailable), it falls back to the `$RMUX` / `$TMUX` /
+`$HERDR_ENV` / `$WEZTERM_PANE` / `$ZELLIJ` / `$CMUX_WORKSPACE_ID` / `$OTTY_PANE_ID` environment hints —
+the fast-positive signal used only when the walk itself found nothing, checked in that order (rmux
+before tmux, since an rmux pane sets `$TMUX` too — see below). WezTerm has no separate "inside
+wezterm" flag the way `$TMUX`/`$HERDR_ENV`/`$RMUX` are: `$WEZTERM_PANE` **is** the hint, doubling as
+both the signal and the pane id. Zellij sets `$ZELLIJ` inside any Zellij pane, the same ambient-flag
+shape as `$TMUX`/`$HERDR_ENV`. cmux sets `$CMUX_WORKSPACE_ID` and otty sets `$OTTY_PANE_ID`. These
+hints are **never trusted over ancestry** — an ancestry-verified multiplexer always wins over a stale
+env hint. The Zellij adapter requires Zellij ≥ 0.44.1, the release that added per-pane CLI addressing.
 
 ## Self pane
 
 `cyber-mux` resolves *its own* pane from environment alone (no `ps` walk): the `CYBER_MUX_PANE`
-fast-path, then `$TMUX_PANE` (tmux), then `$HERDR_PANE_ID` (herdr), then `$WEZTERM_PANE` (wezterm),
-then `$ZELLIJ_PANE_ID` (zellij), then `$CMUX_SURFACE_ID` (cmux), then `$OTTY_PANE_ID` (otty). This is
-the identity key a session uses to address itself.
+fast-path, then `$RMUX_PANE` (rmux), then `$TMUX_PANE` (tmux), then `$HERDR_PANE_ID` (herdr), then
+`$WEZTERM_PANE` (wezterm), then `$ZELLIJ_PANE_ID` (zellij), then `$CMUX_SURFACE_ID` (cmux), then
+`$OTTY_PANE_ID` (otty). rmux is checked before tmux because an rmux pane sets `$TMUX_PANE` too, for
+tmux compatibility. This is the identity key a session uses to address itself.

@@ -4,7 +4,7 @@ description: The one contract over every multiplexer — resolving a session, an
 ---
 
 `MuxAdapter` is the contract the whole library exists to provide: one set of verbs that means the
-same thing on tmux, herdr, WezTerm, and Zellij. You rarely touch it directly — you *resolve* a
+same thing on tmux, rmux, herdr, WezTerm, and Zellij. You rarely touch it directly — you *resolve* a
 `MuxSession` for the multiplexer you are inside, with its `Exec` already bound, and call its methods.
 
 Import from the main entry:
@@ -21,13 +21,13 @@ import {
 
 ### `resolveMux(env, deps?)` → `MuxSession`
 
-Run the [probe](/cyber-mux/api/probe/), pick the matching adapter (`tmux` / `herdr` / `wezterm` /
-`zellij`), and return it as a `MuxSession` with `Exec` **bound**. Throws if the process is in no
+Run the [probe](/cyber-mux/api/probe/), pick the matching adapter (`tmux` / `rmux` / `herdr` /
+`wezterm` / `zellij`), and return it as a `MuxSession` with `Exec` **bound**. Throws if the process is in no
 supported multiplexer.
 
 ```ts
 const mux = resolveMux(process.env)
-mux.name // 'tmux' | 'herdr' | 'wezterm' | 'zellij'
+mux.name // 'tmux' | 'rmux' | 'herdr' | 'wezterm' | 'zellij'
 ```
 
 `deps.exec` (default `nodeExec`) is both the runner the detection probe uses AND the default every
@@ -79,7 +79,7 @@ placement decides which:
 | --- | --- |
 | `'tab'` (default) | A new tab in the current (or `within`) workspace. |
 | `'pane:right'` / `'pane:down'` | A split of the `from` pane. |
-| `'pane:float'` | A floating pane above the layout, resizing nothing. **tmux 3.7+ and zellij only** — wezterm and herdr throw `FloatingPanesUnsupportedError`; ask `adapter.canFloatPanes` first. |
+| `'pane:float'` | A floating pane above the layout, resizing nothing. **tmux 3.7+ and zellij only** — wezterm, rmux, and herdr throw `FloatingPanesUnsupportedError`; ask `adapter.canFloatPanes` first. |
 | `'workspace'` | A genuinely separate workspace/session, leaving the caller's untouched. |
 
 Key `MuxOpenOptions` fields:
@@ -157,10 +157,10 @@ use. Both are reached bound, the same way as the rest of the session (methods ta
 `Exec`):
 
 - **`mux.worktree?`** — a [`BoundWorktreeWorkspaceCapability`](/cyber-mux/api/worktree/#binding-a-worktree-to-a-workspace),
-  present on herdr. On tmux, WezTerm, and Zellij it is `undefined`; fall back to plain git plus
+  present on herdr. On tmux, rmux, WezTerm, and Zellij it is `undefined`; fall back to plain git plus
   [`mux.open`](#opening-panes).
 - **`mux.regions?`** — geometry introspection (`describeRegion` / `describeWorkspace`), present on
-  tmux and herdr, absent on WezTerm and Zellij. Backs `template save`.
+  tmux, rmux, and herdr, absent on WezTerm and Zellij. Backs `template save`.
 
 - **`mux.canSizeSplits?`** — whether the backend honors `ratio`; `false`/absent means a requested
   ratio degrades to the backend's own even split.
@@ -178,13 +178,13 @@ import { resolveMuxAdapter, callerPane, nodeExec, withReason, type MuxAdapter, t
 
 ### `resolveMuxAdapter(env, exec?)` → `MuxAdapter`
 
-Run the [probe](/cyber-mux/api/probe/) and return the matching raw adapter (`tmux` / `herdr` /
-`wezterm` / `zellij`). Throws if the process is in no supported multiplexer. `exec` defaults to
+Run the [probe](/cyber-mux/api/probe/) and return the matching raw adapter (`tmux` / `rmux` /
+`herdr` / `wezterm` / `zellij`). Throws if the process is in no supported multiplexer. `exec` defaults to
 `nodeExec`; `resolveMux` calls this internally and binds the result into a `MuxSession`.
 
 ```ts
 const adapter = resolveMuxAdapter(process.env)
-adapter.name // 'tmux' | 'herdr' | 'wezterm' | 'zellij'
+adapter.name // 'tmux' | 'rmux' | 'herdr' | 'wezterm' | 'zellij'
 ```
 
 ### `callerPane(adapter, env)`

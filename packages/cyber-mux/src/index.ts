@@ -1,6 +1,6 @@
 /**
  * The library barrel — the `.` entry. Pure re-exports of the cross-multiplexer core: the
- * `MuxAdapter` contract and its types, the mux probe, backend selection, the three adapters, the
+ * `MuxAdapter` contract and its types, the mux probe, backend selection, the adapters, the
  * turn-taking `nudge`, the portable output wait (`wait-output.ts`), the read-window rule
  * (`read-window.ts`), the floating-pane refusal (`floating.ts` — here rather than on a subpath
  * because the verb it refuses, `open`, is on the surface everybody gets), and the `Exec`/`NewId` seams
@@ -15,6 +15,7 @@ export * from './backend.ts'
 export * from './exec.ts'
 export * from './floating.ts'
 export * from './mux.herdr.ts'
+export * from './mux.rmux.ts'
 export * from './mux.tmux.ts'
 export * from './mux.ts'
 export * from './mux.wezterm.ts'

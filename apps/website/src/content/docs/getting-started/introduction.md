@@ -8,9 +8,14 @@ panes — open, send, submit, read, focus, close, list — regardless of the ter
 happen to be inside. It also manages **git worktrees** bound to a workspace, and can build a whole
 named **template** of panes in one call.
 
-Today it supports six backends:
+Today it supports seven backends:
 
 - **tmux** — the ubiquitous terminal multiplexer ([tmux](https://github.com/tmux/tmux)).
+- **rmux** — an async Rust reimplementation of the tmux command language
+  ([Helvesec/rmux](https://github.com/Helvesec/rmux)) that runs natively on Linux, macOS, **and
+  Windows** — the first backend here to run natively there. Built and verified against a live rmux
+  0.10.0 on Linux; the Windows and macOS claim is about rmux's own portability and has not been
+  exercised there.
 - **herdr** — an agent-aware multiplexer ([herdr.dev](https://herdr.dev)).
 - **WezTerm** (alpha) — a GUI terminal with a built-in multiplexer ([wezterm.org](https://wezterm.org)), driven through `wezterm cli`.
   Built against `wezterm cli --help`/the CLI reference rather than a live GUI — treat it as
@@ -35,7 +40,7 @@ the same core directly — see the [Library API](/cyber-mux/api/).
 # What multiplexer am I in?
 npx cyber-mux doctor
 
-# Just the backend name (tmux / herdr / wezterm / zellij / cmux / otty / none)
+# Just the backend name (tmux / rmux / herdr / wezterm / zellij / cmux / otty / none)
 npx cyber-mux mode
 ```
 
@@ -44,8 +49,8 @@ skip detection entirely.
 
 ## Where next
 
-- [Multiplexers](/cyber-mux/multiplexers/) — the tmux, herdr, WezTerm, Zellij, cmux, and otty backends
-  and how their feature sets differ.
+- [Multiplexers](/cyber-mux/multiplexers/) — the tmux, rmux, herdr, WezTerm, Zellij, cmux, and otty
+  backends and how their feature sets differ.
 - [Detection](/cyber-mux/concepts/detection/) — how cyber-mux figures out where it is running.
 - [Templates](/cyber-mux/concepts/templates/) — named, reusable pane pools.
 - [Worktrees](/cyber-mux/concepts/worktrees/) — git worktrees bound to a workspace.

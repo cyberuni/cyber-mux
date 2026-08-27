@@ -4,6 +4,7 @@ import type { Exec } from './exec.ts'
 import { createCmuxAdapter } from './mux.cmux.ts'
 import { herdrMuxAdapter } from './mux.herdr.ts'
 import { createOttyAdapter } from './mux.otty.ts'
+import { rmuxMuxAdapter } from './mux.rmux.ts'
 import { tmuxMuxAdapter } from './mux.tmux.ts'
 import { weztermMuxAdapter } from './mux.wezterm.ts'
 import { createZellijAdapter } from './mux.zellij.ts'
@@ -26,6 +27,20 @@ describe('spec:cyber-mux/mux/detection', () => {
 
 		it('prefers tmux when both are set', () => {
 			expect(resolveMuxAdapter({ TMUX: 't', HERDR_ENV: '1' }, noAncestry)).toBe(tmuxMuxAdapter)
+		})
+
+		it('detection-backend-selected-by-env', () => {
+			expect(resolveMuxAdapter({ RMUX: '/tmp/rmux/sock,1,0' }, noAncestry)).toBe(rmuxMuxAdapter)
+		})
+
+		// An rmux pane sets $TMUX and $TMUX_PANE too, so the two hints arrive TOGETHER on every real
+		// rmux session — this is not a contrived combination. Resolving it to the tmux adapter would
+		// shell out to a `tmux` binary that is, on a machine with rmux installed, rmux's own PATH shim:
+		// the mixup would produce plausible output rather than an error, which is what makes the order
+		// worth a row of its own here as well as in the probe's suite.
+		it('resolves an rmux pane to the rmux adapter even though it also carries $TMUX', () => {
+			const triple = '/tmp/rmux-1000/sock,46694,0'
+			expect(resolveMuxAdapter({ RMUX: triple, TMUX: triple, TMUX_PANE: '%1' }, noAncestry)).toBe(rmuxMuxAdapter)
 		})
 
 		it('detection-backend-selected-by-env', () => {
@@ -92,6 +107,7 @@ describe('spec:cyber-mux/mux/detection', () => {
 			expect(callerPane(createZellijAdapter({}), { ZELLIJ_PANE_ID: 'terminal_3' })).toEqual({ id: 'terminal_3' })
 			expect(callerPane(createCmuxAdapter({}), { CMUX_SURFACE_ID: 'surface:7' })).toEqual({ id: 'surface:7' })
 			expect(callerPane(createOttyAdapter({}), { OTTY_PANE_ID: 'pane:1' })).toEqual({ id: 'pane:1' })
+			expect(callerPane(rmuxMuxAdapter, { RMUX_PANE: '%7' })).toEqual({ id: '%7' })
 		})
 
 		it('honors the $CYBER_MUX_PANE fast-path a spawn propagates', () => {
@@ -118,6 +134,11 @@ describe('spec:cyber-mux/mux/detection', () => {
 			expect(callerPane(herdrMuxAdapter, { TMUX_PANE: '%7' })).toBeUndefined()
 			expect(callerPane(tmuxMuxAdapter, { HERDR_ENV: '1', HERDR_PANE_ID: 'w3:p1' })).toBeUndefined()
 			expect(callerPane(tmuxMuxAdapter, { CYBER_MUX: 'herdr', CYBER_MUX_PANE: 'w9:p3' })).toBeUndefined()
+			// rmux and tmux are the pair where this is EASIEST to get wrong, because the pane ids share a
+			// shape (`%N`) and an rmux pane carries both env vars. The tmux adapter must not adopt an rmux
+			// pane: the id would look valid and address a pane on a server the tmux binary cannot see.
+			expect(callerPane(tmuxMuxAdapter, { RMUX_PANE: '%1', TMUX_PANE: '%1' })).toBeUndefined()
+			expect(callerPane(rmuxMuxAdapter, { TMUX_PANE: '%7' })).toBeUndefined()
 		})
 	})
 })

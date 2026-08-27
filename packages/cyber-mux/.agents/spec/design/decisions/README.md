@@ -650,3 +650,119 @@ Decisions (`backend-survey-2026-08` — feasibility verdicts for multiplexers no
   agent-workflow terminal, the same niche cmux and otty occupy). Star counts queried 2026-08-20.
   These carry NO verdict: they were surveyed for existence, never gated on the three drivability
   criteria. Do not cite this list as evidence any of them can or cannot be driven.
+
+Decisions (`backend-survey-2026-08b` — feasibility verdicts for multiplexers not yet driven):
+
+- **`Helvesec/rmux` — VERDICT: viable.** 2,598 stars, probed 2026-08-26 against a **live binary**,
+  rmux 0.10.0 installed via `cargo install rmux --locked` — not against the docs, which were
+  inconclusive on gates 2 and 3 because rmux.io/docs/cli documents the typed SDK rather than the
+  CLI's print behavior. Installing it was what settled this, and it is the first candidate in either
+  sweep that could be probed rather than read.
+  Gate 1 (per-pane identity) **CLEARED**: tmux-shaped stable ids — `list-panes -F '#{pane_id}'`
+  returns `%0`, and `send-keys -t %1` followed by `capture-pane -p -t %1` round-trips a value, so a
+  pane is addressable by id from outside. Real identity, not a relative selector.
+  Gate 2 (id at birth) **CLEARED**: `split-window -d -t probe -P -F '#{pane_id}'` prints `%1` —
+  tmux's own `-P -F` print-format.
+  Gate 3 (enumeration) **CLEARED**: `list-panes -t probe -F '#{pane_id}'` lists `%0`/`%1`, with
+  arbitrary `-F` formats, so the snapshot-before/diff-after recovery is available too.
+  Also held, probed the same session: `-c`/`-e` for cwd and env at birth (`split-window -c /etc -e
+  CM_PROBE=yes` → `%2 /etc`); the `@cm_ws` user-option mechanism INCLUDING the server-side filter
+  (`list-windows -f '#{==:#{@cm_ws},grp1}'` → `@0`), which is `TMUX_WORKSPACE_GROUP_OPTION`'s exact
+  design working unmodified; and `#{window_layout}` returning tmux's nested layout string, so
+  `RegionInspector` is realizable. `rmux list-commands` reports ~90 tmux-named commands.
+  One gap: **no floating panes** — `new-pane` (tmux 3.7's) answers `unknown command`, so rmux would
+  declare `canFloatPanes: false` and refuse `pane:float` by name.
+  Runs natively on Linux, macOS, and **Windows**, which no current backend does.
+  ISSUE: https://github.com/cyberuni/cyber-mux/issues/136
+
+- **`Gaurav-Gosain/tuios` — VERDICT: ungated, still.** 3,558 stars, looked at 2026-08-26 against the
+  README only. It has a documented JSON verb protocol for driving its daemon (`docs/protocol.md`)
+  plus `tuios tape exec` for replaying scripted workflows against a running session, so it is NOT a
+  keybinding-only TUI and the protocol is where the gates would be decided. The README does not
+  establish per-pane id addressing either way. Recorded as ungated rather than blocked-upstream
+  because nothing was probed: reading `docs/protocol.md` is the unstarted work, not a recheck
+  trigger. **NEXT STEP:** read `docs/protocol.md` and gate it there.
+
+- **Discovery refreshed 2026-08-26** across `terminal multiplexer`, `tmux alternative`, and
+  `terminal workspace panes`. New above the 500-star line since `backend-survey-2026-08`:
+  `muxy-app/muxy` (2,218, Swift — a libghostty macOS terminal), ungated. Surfaced and DROPPED as not
+  pane hosts: `eneskirca/nodeterm` (1,330 — a tmux-BACKED front-end, so tmux is the multiplexer and
+  cyber-mux already drives it), `decolua/9remote` (534 — a phone remote-control front-end), and
+  `mrjones2014/smart-splits.nvim` (1,715 — a Neovim plugin).
+  Still carrying NO verdict, unchanged from `backend-survey-2026-08`: `directvt/vtm`,
+  `aaronjanse/3mux`, `prompt-toolkit/pymux`, `deadpixi/mtm`, `Yazelix/nova`, `cosmos72/twin`,
+  `martanne/abduco`, `iAmCorey/kooky`, plus `muxy-app/muxy` above. Do not cite this list as evidence
+  any of them can or cannot be driven.
+
+Decisions (`136-rmux-adapter` — the seventh backend, and whether it shares the tmux adapter's code, issue #136):
+
+- **COPY `mux.tmux.ts`, do not share it** — DECIDED, and this was the CR's open question. rmux
+  reimplements ~90 commands under tmux's own names, flags, target syntax and `#{…}` format
+  vocabulary, so a shared implementation parameterized by binary name was genuinely available and is
+  what a first reading suggests. Rejected for three reasons that compounded. **(1) The seam's own
+  argument.** rmux is a separate project that TRACKS tmux, not a tmux version; every future
+  divergence would land as a conditional inside the tmux adapter, which is the argument this seam
+  already makes against emulation. **(2) The comments are verification claims.** This repo's rule is
+  that "verified against X" means someone ran it against X — so the tmux adapter's comments name
+  3.7c and the rmux adapter's name 0.10.0, and a shared file could not honestly carry both. That is
+  not a stylistic cost; a merged comment would have to either drop both binaries' provenance or
+  assert one binary's behavior for the other. **(3) They already diverge, in more than one member.**
+  `canFloatPanes` was the known one, and its 15-line justification on the tmux side is entirely about
+  tmux 3.7's `new-pane` — text with no meaning on a backend that has no such command. Probing turned
+  up a SECOND divergence the issue did not know about (below). Two on day one is not "a near-duplicate
+  that may drift"; it is already drift. **Accepted cost, stated plainly:** ~570 duplicated lines, and
+  a bug fixed in one adapter's shared-looking helpers (`parsePaneLocation`, `paneLabel`,
+  `splitOpenReport`) will not reach the other. Mitigated only by each file naming the other in its
+  header, which is weaker than a compiler. Revisit if a third tmux-language backend appears — at
+  three, the arithmetic changes.
+
+- **rmux and tmux disagree about what a target-less `split-window` splits** — the divergence the
+  probe found and the issue did not predict, recorded because it is the concrete evidence behind the
+  decision above. Probed on rmux 0.10.0: a target-less `split-window` run INSIDE pane `%1` (window
+  `@0`) put its new pane in `@0` beside `%1`, while the session's active pane was `%2` in a different
+  window — so rmux resolves the CALLING pane from `$RMUX_PANE`/`$TMUX_PANE`. tmux does the opposite,
+  and `mux.tmux.ts` says so from its own 3.7c probe: it splits the ACTIVE pane and ignores
+  `$TMUX_PANE` outright. rmux's behavior is the friendlier one and the adapter deliberately does NOT
+  lean on it — `from` names which pane to split, which is not always the caller's, so `-t` is passed
+  on both backends. Had these shared one implementation, this would already be conditional #2.
+
+- **Detection is SOLVED, not deferred to the override** — DECIDED: `$RMUX` is the fast-positive hint
+  and `$RMUX_PANE` the self-identity key, with `rmux-daemon` in the ancestry walk. The issue left
+  this open ("no `$TMUX`-equivalent env var was confirmed") and allowed shipping override-only; that
+  fallback was not needed. Probed by dumping a live pane's own environment on 0.10.0:
+  `RMUX=<socket>,<pid>,<session>` (tmux's exact triple), `RMUX_PANE=%1`, `TERM_PROGRAM=rmux`, and a
+  `ps -o ppid=,comm=` walk from inside a pane climbing `sh → zsh → rmux-daemon`.
+  **The trap, and the load-bearing half of this decision:** an rmux pane ALSO sets `$TMUX` and
+  `$TMUX_PANE`, to the same values, for tmux compatibility — and puts a PATH shim literally named
+  `tmux` in front of them. So `$TMUX` is evidence of "some tmux-language multiplexer", never of tmux
+  itself, and both `currentPane` and the ancestry fallback ask rmux BEFORE tmux. Getting that order
+  wrong resolves every rmux session to the tmux adapter, and the shim is what would make the
+  misdetection invisible rather than loud. The reverse mistake is unreachable: tmux does not set
+  `$RMUX`.
+
+- **`canFloatPanes` is OMITTED, not declared `false`** — DECIDED, following wezterm/cmux/otty rather
+  than the issue's wording. `new-pane` is absent from rmux's command table (`unknown command:
+  new-pane`, and it is not in `list-commands`), so `open({ at: 'pane:float' })` calls
+  `refuseFloatingPane('rmux')` BEFORE building any argv — no exec is spent on a refusal, and a float
+  can never degrade into a `split-window`. The read side answers `floating: false` by construction and
+  the `listPanes` format asks for no floating variable at all: rmux expands the unknown
+  `#{pane_floating_flag}` to the empty string, so requesting it would produce a column that reads as
+  `false` by accident rather than by construction.
+
+- **`rmux wait-pane` is deliberately NOT used** — DECIDED: `waitForOutput` runs the shared
+  `capture-pane` poll every polling backend uses. rmux ships `wait-pane` among its non-tmux
+  extensions, so a native wait was available. Declined because the seam's `waitForOutput` matches
+  text the CALLER supplies, the shared poll already answers it identically on every backend, and a
+  second implementation would be an rmux-only path to keep honest for no behavior a caller can
+  observe. Recorded so the option is not rediscovered as an oversight. (herdr's native wait is the
+  contrast that justifies the rule rather than breaking it: herdr's wait is a different envelope with
+  its own error shapes, which the poll genuinely cannot reproduce.)
+
+- **What the live probe did NOT cover** — stated because the honesty bar requires it. Everything above
+  was run against rmux **0.10.0 on Linux**, on an isolated `-L` socket. Nothing was driven on
+  **Windows or macOS**, which is the strategic reason this backend was wanted, so "the first native
+  Windows backend" is a claim about rmux's portability and NOT about a cyber-mux run anyone has
+  observed there. No other rmux version was exercised, and the adapter takes no version reading. The
+  `focus` success path — `switch-client` → `select-window` → `select-pane` with a client attached —
+  was probed by hand against a pty client but is NOT pinned by `mux.rmux.integration.test.ts`, which
+  runs detached on purpose; the suite pins only its unresolvable-pane refusal.
