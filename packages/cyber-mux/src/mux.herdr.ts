@@ -17,6 +17,7 @@ import type {
 } from './mux.ts'
 import { assertRatioInRange } from './ratio.ts'
 import { capturedRows, FULL_SCROLLBACK_LINES, isReadTruncated } from './read-window.ts'
+import { type EnclosingSplit, enclosingSplit } from './region-tree.ts'
 import { assertWaitPattern } from './wait-output.ts'
 import { normalizeWorktreePath } from './worktree.ts'
 
@@ -418,6 +419,51 @@ export const herdrMuxAdapter: MuxAdapter = {
 		},
 
 		/**
+		 * `pane resize --direction <d> --amount <f>` — a signed DELTA on the enclosing split's ratio,
+		 * which is why the current ratio has to be read first. herdr's `--direction` names where the
+		 * DIVIDER moves, not which pane grows: `right`/`down` raise the split's ratio and `left`/`up`
+		 * lower it, whichever side of it the `--pane` sits on. So the target's side never enters the
+		 * direction — only the sign of the delta does.
+		 *
+		 * The current ratio is derived from the RECTS, not read off `layout.splits[].ratio`, for
+		 * `describeRegion`'s reason exactly: the splits array is flat and its parent links live only in
+		 * an undocumented id convention (`split_1_0`), so matching a pane to its split there would bet on
+		 * a spelling herdr never promised. The rects say the same thing in a fact it does promise.
+		 *
+		 * Verified against a live herdr 0.8.2 (`mux.herdr.integration.test.ts`), which is also where the
+		 * `--direction` semantics above were established: `--direction right --amount 0.1` moved a 0.5
+		 * split to 0.6 whether the `--pane` was the left one or the right one, and on a nested region
+		 * `--direction down` resized the enclosing stacked split rather than the outer one.
+		 */
+		resizePane(exec, target, ratio) {
+			const panes = herdrRegionPanes(exec, target.id, herdrPaneDetails(exec))
+			const split = enclosingSplit(panes, target.id)
+			if (!split) {
+				throw new Error(`herdr pane ${target.id} is the only pane in its region — there is no split to resize`)
+			}
+			const delta = toHerdrResizeDelta(split, ratio)
+			// An exact no-op is not sent. herdr would accept `--amount 0` and change nothing, but a resize
+			// that already holds should cost no exec and no revision bump — a caller restoring a layout
+			// that has not drifted is the common case, not the rare one.
+			if (delta === 0) return
+			const direction = herdrResizeDirection(split.direction, delta)
+			if (
+				exec('herdr', [
+					'pane',
+					'resize',
+					'--pane',
+					target.id,
+					'--direction',
+					direction,
+					'--amount',
+					String(Math.abs(delta)),
+				]) === null
+			) {
+				throw new Error(withReason(exec, `herdr could not resize pane ${target.id}`))
+			}
+		},
+
+		/**
 		 * herdr HAS a workspace tier, so the workspace is a fact the backend holds rather than one
 		 * cyber-mux has to reconstruct: the caller's pane names its `workspace_id`, `tab list --workspace`
 		 * enumerates that workspace's tabs, and `pane list --workspace` hands back every pane already
@@ -631,6 +677,40 @@ function herdrPaneDetails(exec: Exec, workspace?: string | undefined): Map<strin
  */
 function envFlags(env: Record<string, string> | undefined): string[] {
 	return env ? Object.entries(env).flatMap(([k, v]) => ['--env', `${k}=${v}`]) : []
+}
+
+/**
+ * The seam's `ratio` as the SIGNED delta `pane resize --amount` wants, in the same fraction-of-the-
+ * split-region units herdr's own `--ratio` uses at birth.
+ *
+ * Both numbers are the FIRST side's fraction, so the target's side is folded in here (`1 - ratio` when
+ * the target is the second side) and the direction below reads only the sign. Measured against the
+ * split's current ratio as `region-tree.ts` derives it, never against `layout.splits[].ratio` — one
+ * definition of "what this split is at" seam-wide is what makes a resize to the ratio a region was
+ * just described at a no-op.
+ */
+function toHerdrResizeDelta(split: EnclosingSplit, ratio: number): number {
+	assertRatioInRange(ratio)
+	const delta = (split.targetIsFirst ? ratio : 1 - ratio) - split.firstRatio
+	// Rounded, and not for looks: `0.6 - 0.5` is `0.09999999999999998` in binary floating point, so an
+	// unrounded delta both spells an ugly `--amount` and — the part that matters — makes an exact no-op
+	// land on `1e-17` instead of `0`, defeating the skip below. Six decimals is finer than any cell a
+	// terminal has, so nothing a user could see is traded for it.
+	return Math.round(delta * 1e6) / 1e6
+}
+
+/**
+ * Which way herdr moves the divider for a delta of this sign, on a split of this axis.
+ *
+ * `right`/`down` RAISE the enclosing split's ratio and `left`/`up` lower it — established against a
+ * live 0.8.2 rather than read off `--help`, which lists the four values and says nothing about what
+ * they move. The axis picks the pair because herdr resolves `--direction` against the nearest ancestor
+ * split on that axis: asking `right` of a pane inside a stacked split walks past it to the outer one,
+ * which would resize a split the caller never named.
+ */
+function herdrResizeDirection(axis: 'right' | 'down', delta: number): string {
+	if (axis === 'right') return delta > 0 ? 'right' : 'left'
+	return delta > 0 ? 'down' : 'up'
 }
 
 /**

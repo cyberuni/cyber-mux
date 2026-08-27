@@ -570,13 +570,23 @@ export interface WorktreeWorkspaceCapability {
 
 /**
  * The optional capability a backend implements when its pane listing reports pane GEOMETRY —
- * position, not merely size. That one fact is what both members are derived from, and the single
- * all-or-nothing precondition that bundles them into ONE object rather than two separate optional
+ * position, not merely size. That one fact is what every member here is derived from, and the single
+ * all-or-nothing precondition that bundles them into ONE object rather than separate optional
  * methods (mirroring `WorktreeWorkspaceCapability`): a backend either reports pane rects or it does
- * not, and neither read is possible without them. tmux (`#{window_layout}`) and herdr (`pane
+ * not, and no member is possible without them. tmux (`#{window_layout}`) and herdr (`pane
  * layout`'s rects) both report position, so both ship this; WezTerm's `list` reports a pane's size
  * but no position — nothing to build a `PaneRect` from — so it omits this entirely. A caller that
  * finds this absent refuses (`template save` exits naming the backend) rather than guessing a tree.
+ *
+ * **Two reads and a WRITE, and the write's presence here is a claim worth defending**, because a
+ * resize looks at first like a pane-control verb that belongs on `MuxAdapter` beside `open`. It does
+ * not, and the reason is that `resizePane` takes a RATIO. No backend has a primitive that takes one:
+ * tmux `resize-pane -x/-y` counts cells, herdr `pane resize --amount` takes a ratio DELTA, otty
+ * `pane resize --right N` counts cells, zellij `action resize` takes a direction and no amount at all.
+ * Turning the seam's fraction into any of those first requires knowing what the pane's split region
+ * currently measures — which is `describeRegion`'s fact and nothing else's. So the write shares the
+ * reads' precondition exactly rather than merely sitting near them, and a backend that reports no
+ * rects could not implement it if it were declared elsewhere.
  */
 export interface RegionInspector {
 	/**
@@ -631,6 +641,45 @@ export interface RegionInspector {
 	 * the user's screen.
 	 */
 	describeWorkspace(exec: Exec, target: MuxTarget): WorkspaceTab[]
+	/**
+	 * Resize the target pane inside the split it sits directly in. `ratio` is the fraction of that
+	 * SPLIT REGION the target keeps — the same convention and the same `0 < ratio < 1` precondition
+	 * (`assertRatioInRange`) `MuxOpenOptions.ratio` carries, so a caller that opened a split at a ratio
+	 * restores it with the same number. The sign convention is the same trap `MuxOpenOptions.ratio`
+	 * documents, converted PER BACKEND rather than once: herdr's own number counts the same way and
+	 * tmux's does not.
+	 *
+	 * **Absolute, not a nudge, and that decision is what decides who can implement it.** The relative
+	 * form looks more portable — four backends have a relative primitive and only tmux has an absolute
+	 * one — but its `amount` cannot be spelled portably at all: herdr's is a ratio delta, otty's is a
+	 * count of cells, and zellij's `action resize` takes no amount whatsoever, only a direction and a
+	 * step whose size it never states. One seam number meaning three different things per backend, with
+	 * one backend unable to honor it in any units, is the silently-wrong result this seam refuses. A
+	 * ratio means one thing everywhere, and every backend that can report geometry can compute its own
+	 * primitive's argument from it.
+	 *
+	 * **So this is not on `MuxAdapter` behind a `canResizePanes` boolean**, which is the shape
+	 * `canSizeSplits` and `canFloatPanes` would suggest by analogy, and the analogy is what breaks. A
+	 * declaration is worth its cost when the capability it declares is INDEPENDENT of the others — a
+	 * backend can float without sizing, and size without floating, so neither fact is derivable from
+	 * anything else on the seam. Resize is not independent: a backend can realize it exactly when it
+	 * reports rects, so `canResizePanes` would be a second spelling of `regions !== undefined` and a
+	 * second spelling is a thing that can drift. The absence of `regions` IS the refusal, the same one
+	 * `template save` already makes, surfaced by name through `PaneResizeUnsupportedError`
+	 * (`resize.ts`).
+	 *
+	 * **zellij and otty are not denied something they have.** That was the fear that argued for a
+	 * capability of its own, and it does not survive the verb being absolute. zellij can move a divider
+	 * by an unstated step and reports no rects, so nothing can converge it on a named fraction — only a
+	 * loop with no termination proof, which is the lookalike emulation `agentLifecycle`'s absence
+	 * already refuses. otty counts cells and its `panes` listing reports no position, so there is no
+	 * extent to take the fraction OF. Both have a relative nudge; neither has this verb. The
+	 * all-or-nothing rule holds and the implementor set is unchanged.
+	 *
+	 * Throws rather than reporting a false success: on a region with no split at all (a lone pane has
+	 * no fraction to keep), on a `ratio` outside `(0, 1)`, and when the backend's own resize fails.
+	 */
+	resizePane(exec: Exec, target: MuxTarget, ratio: number): void
 }
 
 /** What a `waitForState` blocks on: the states that end the wait, and how long it may run. */
@@ -915,12 +964,13 @@ export interface MuxAdapter {
 	 */
 	listPanes(exec: Exec): LivePane[]
 	/**
-	 * The optional geometry-introspection capability — `describeRegion` and `describeWorkspace` bundled
-	 * as one object (see `RegionInspector`), present on a backend whose pane listing reports pane
+	 * The optional pane-geometry capability — `describeRegion`, `describeWorkspace` and `resizePane`
+	 * bundled as one object (see `RegionInspector`), present on a backend whose pane listing reports pane
 	 * POSITION and absent on one that cannot. `template save` gates on it — refusing by NAMING the
 	 * backend rather than degrading, because a region the backend cannot describe has nothing to degrade
-	 * to. Bundled rather than shipped as two loose optional methods for the same reason `worktree` is
-	 * one object: the two reads share a single all-or-nothing precondition.
+	 * to. Bundled rather than shipped as loose optional methods for the same reason `worktree` is
+	 * one object: all three share a single all-or-nothing precondition — the two reads cannot answer
+	 * without rects, and the write cannot turn a ratio into its backend's own argument without them.
 	 */
 	readonly regions?: RegionInspector | undefined
 	/**

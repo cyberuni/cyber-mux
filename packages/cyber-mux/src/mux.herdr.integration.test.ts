@@ -338,4 +338,63 @@ describe.skipIf(!hasHerdr())('spec:cyber-mux/mux', () => {
 			}
 		})
 	})
+	/**
+	 * Pane resize against the real 0.8.2 binary, in its own isolated workspace — this is where herdr's
+	 * `--direction` semantics were ESTABLISHED rather than merely re-asserted: `herdr pane resize
+	 * --help` names the four values and says nothing about what they move, so the rule the adapter
+	 * encodes (right/down raise the enclosing split's ratio, whichever side the `--pane` is on) is only
+	 * true because it was run here.
+	 */
+	describe('herdrMuxAdapter — real herdr boundary, pane resize', () => {
+		let cwd: string
+		let root: { id: string }
+		let split: { id: string }
+		let workspaceId: string | undefined
+
+		beforeAll(() => {
+			cwd = mkdtempSync(join(tmpdir(), 'cyber-mux-itest-'))
+			root = herdrMuxAdapter.open(realExec, { cwd, launch: 'sh', at: 'workspace' })
+			workspaceId = paneLocation(root.id).workspaceId
+			split = herdrMuxAdapter.open(realExec, { cwd, launch: 'sh', at: 'pane:right', from: root, ratio: 0.5 })
+		})
+
+		afterAll(() => {
+			if (workspaceId) {
+				try {
+					execFileSync('herdr', ['workspace', 'close', workspaceId], { stdio: 'ignore' })
+				} catch {
+					// already gone
+				}
+			}
+			rmSync(cwd, { recursive: true, force: true })
+		})
+
+		/** The fraction the region actually reads back at, by the seam's own definition: 1 - second/total. */
+		function liveRatio(): number {
+			const panes = herdrMuxAdapter.regions!.describeRegion(realExec, root)
+			const first = panes.find((p) => p.id === root.id)!
+			const second = panes.find((p) => p.id === split.id)!
+			const total =
+				Math.max(first.rect.x + first.rect.width, second.rect.x + second.rect.width) -
+				Math.min(first.rect.x, second.rect.x)
+			return 1 - second.rect.width / total
+		}
+
+		it('resizePane() grows the ORIGINAL pane to the ratio asked for', () => {
+			expect(liveRatio()).toBeCloseTo(0.5, 2)
+			herdrMuxAdapter.regions!.resizePane(realExec, root, 0.7)
+			expect(liveRatio()).toBeCloseTo(0.7, 2)
+		})
+
+		it('resizePane() on the NEW pane moves the divider the other way — the side is in the delta, not the direction', () => {
+			herdrMuxAdapter.regions!.resizePane(realExec, split, 0.6)
+			expect(liveRatio()).toBeCloseTo(0.4, 2)
+		})
+
+		it('resizePane() to the ratio the region already reads at leaves it exactly where it was', () => {
+			const before = liveRatio()
+			herdrMuxAdapter.regions!.resizePane(realExec, root, Math.round(before * 100) / 100)
+			expect(liveRatio()).toBeCloseTo(before, 2)
+		})
+	})
 })

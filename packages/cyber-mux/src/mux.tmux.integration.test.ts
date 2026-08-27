@@ -296,5 +296,50 @@ describe.skipIf(!hasTmux())('spec:cyber-mux/mux', () => {
 			expect(whole.text).toContain('row-1\n')
 			expect(whole.truncated).toBe(false)
 		})
+		/**
+		 * The round trip the seam's `ratio` promises, against the real binary: open a split at a ratio,
+		 * read the region back, resize to a NEW ratio, and read it back again. This is where the sign
+		 * convention is actually pinned — `split-window -l` sizes the NEW pane and `resize-pane -x` sizes
+		 * the TARGET, so an adapter that inverted one of them would still pass every mocked test and
+		 * silently size the wrong pane here.
+		 */
+		it('resizePane() moves the real divider to the ratio asked for, and reads back at that ratio', () => {
+			const regions = tmuxMuxAdapter.regions
+			if (!regions) throw new Error('the tmux adapter must implement regions')
+			const opened = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
+			const split = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'pane:right', from: opened, ratio: 0.5 })
+			expect(split.id).toMatch(/^%\d+$/)
+
+			regions.resizePane(exec, opened, 0.7)
+			const after = regions.describeRegion(exec, opened)
+			const kept = after.find((p) => p.id === opened.id)
+			const taken = after.find((p) => p.id === split.id)
+			expect(kept).toBeDefined()
+			expect(taken).toBeDefined()
+			// The seam's own definition of what the region reads back at: 1 - second / total.
+			const total = kept!.rect.width + taken!.rect.width + 1
+			expect(1 - taken!.rect.width / total).toBeCloseTo(0.7, 2)
+			// And the ORIGINAL pane is the one that grew — the half a wrong sign convention gets backwards.
+			expect(kept!.rect.width).toBeGreaterThan(taken!.rect.width)
+		})
+
+		it('resizePane() on the NEW pane sizes that pane, not the one it was split from', () => {
+			const regions = tmuxMuxAdapter.regions
+			if (!regions) throw new Error('the tmux adapter must implement regions')
+			const opened = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
+			const split = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'pane:right', from: opened, ratio: 0.5 })
+
+			regions.resizePane(exec, split, 0.75)
+			const after = regions.describeRegion(exec, opened)
+			const taken = after.find((p) => p.id === split.id)
+			expect(taken!.rect.width).toBeGreaterThan(after.find((p) => p.id === opened.id)!.rect.width)
+		})
+
+		it('resizePane() throws on a region tmux reports as a single pane', () => {
+			const regions = tmuxMuxAdapter.regions
+			if (!regions) throw new Error('the tmux adapter must implement regions')
+			const opened = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
+			expect(() => regions.resizePane(exec, opened, 0.6)).toThrow(/is the only pane in its region/)
+		})
 	})
 })
