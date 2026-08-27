@@ -2,17 +2,20 @@
 'cyber-mux': minor
 ---
 
-Declare `MuxAdapter.opensWithoutStealingFocus`, and make it true on tmux, herdr, and Zellij.
+Declare `MuxAdapter.opensWithoutStealingFocus`, and make it true on tmux, rmux, herdr, and Zellij.
 
-Opening a pane is not supposed to drag the user somewhere. Nothing on the seam said so, and three
-routes did not honor it. `open()` now leaves the caller's focus where it found it on tmux, herdr, and
-Zellij 0.45+, and every adapter declares which answer it gives.
+Opening a pane is not supposed to drag the user somewhere. Nothing on the seam said so, and four
+routes did not honor it. `open()` now leaves the caller's focus where it found it on tmux, rmux,
+herdr, and Zellij 0.45+, and every adapter declares which answer it gives.
 
 **Behavior changes**
 
 - **tmux** passes `-d` on `split-window` and `new-pane` as well as `new-window`. Previously a
   `pane:right`, `pane:down`, or `pane:float` open moved the attached client onto the new pane;
   `new-window -d` was the only route that did not. Measured on 3.7c.
+- **rmux** passes `-d` on `split-window` as well as `new-window`, the same hole tmux had and for the
+  same reason — rmux reimplements tmux's command language. Verified live on 0.10.0, not inferred from
+  the resemblance. It has no `new-pane`, so there is no float route to cover.
 - **herdr** passes `--no-focus` on `pane split` as well as `workspace create` and `tab create`. On
   0.8.2 the split already left focus alone, so this changes nothing observable — it is passed so the
   guarantee does not rest on a backend default.
@@ -30,6 +33,11 @@ add it. It follows `canSizeSplits` — a declaration the caller reads, not a `Mu
 but is required rather than optional because `undefined` here cannot be distinguished from an author
 who never considered focus. `false` (WezTerm, cmux, otty) is a degrade, not a refusal: the open still
 returns the pane you asked for, it just moves the user to it.
+
+**Zellij users on 0.44.x must upgrade.** The adapter declared `≥ 0.44.1` and now declares `≥ 0.45.0`.
+A `--no-focus` open on an older binary is an unknown-argument error, so it fails loudly and creates
+nothing rather than mis-targeting a pane — the same way an old tmux answers `new-pane` with `unknown
+command`. The adapter version-probes nothing, by design.
 
 Zellij's `--no-focus` is **unverified against a running binary** — read out of the v0.45.0 source
 tree, not driven, because no Zellij is available to this project's integration suite.

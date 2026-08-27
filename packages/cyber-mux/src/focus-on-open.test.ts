@@ -3,6 +3,7 @@ import type { Exec } from './exec.ts'
 import { cmuxMuxAdapter } from './mux.cmux.ts'
 import { herdrMuxAdapter } from './mux.herdr.ts'
 import { ottyMuxAdapter } from './mux.otty.ts'
+import { rmuxMuxAdapter } from './mux.rmux.ts'
 import { tmuxMuxAdapter } from './mux.tmux.ts'
 import type { MuxAdapter } from './mux.ts'
 import { weztermMuxAdapter } from './mux.wezterm.ts'
@@ -26,7 +27,7 @@ import { zellijMuxAdapter } from './mux.zellij.ts'
 
 // ── fakes ──────────────────────────────────────────────────────────────────────────────────────
 
-/** tmux keys off `args[0]`: every call is `tmux <command> …`. */
+/** tmux keys off `args[0]`: every call is `tmux <command> …`. rmux speaks the same language. */
 function tmuxExec(calls: string[][]): Exec {
 	return (_cmd, args) => {
 		calls.push(args)
@@ -83,6 +84,7 @@ describe('spec:cyber-mux/mux/placement', () => {
 		// a type error rather than a silent `undefined` this row would have to accept.
 		it.each<{ adapter: MuxAdapter; keepsFocus: boolean }>([
 			{ adapter: tmuxMuxAdapter, keepsFocus: true },
+			{ adapter: rmuxMuxAdapter, keepsFocus: true },
 			{ adapter: herdrMuxAdapter, keepsFocus: true },
 			{ adapter: zellijMuxAdapter, keepsFocus: true },
 			{ adapter: weztermMuxAdapter, keepsFocus: false },
@@ -113,6 +115,26 @@ describe('spec:cyber-mux/mux/placement', () => {
 			expect(created).toBeDefined()
 			// Position asserted, not just presence: tmux takes `-d` among the flags, and pinning it
 			// immediately after the command name is what keeps the argv rows in the adapter suites exact.
+			expect(created![1]).toBe('-d')
+		})
+	})
+
+	// ── rmux: `-d` on every route it has ─────────────────────────────────────────────────────────
+
+	describe('rmux backs the declaration with -d on every route', () => {
+		// rmux reimplements tmux's command language, so it inherits both the flag and the behavior —
+		// verified live on 0.10.0, not assumed from the resemblance. It has no `new-pane`, so there is
+		// no float route here: `pane:float` is refused before any command is issued.
+		it.each([
+			{ at: 'tab', command: 'new-window' },
+			{ at: 'workspace', command: 'new-window' },
+			{ at: 'pane:right', command: 'split-window' },
+			{ at: 'pane:down', command: 'split-window' },
+		] as const)('open({ at: $at }) passes -d to $command', ({ at, command }) => {
+			const calls: string[][] = []
+			rmuxMuxAdapter.open(tmuxExec(calls), { cwd: '/u', at })
+			const created = calls.find((c) => c[0] === command)
+			expect(created).toBeDefined()
 			expect(created![1]).toBe('-d')
 		})
 	})

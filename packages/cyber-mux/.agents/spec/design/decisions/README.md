@@ -814,6 +814,14 @@ Decisions (`otty-agent-lifecycle` — whether otty can implement `AgentLifecycle
   ISSUE: https://github.com/cyberuni/cyber-mux/issues/134
 Decisions (`opensWithoutStealingFocus` — issue #133, the focus-on-open declaration):
 
+- **rmux had tmux's hole too, and it was verified rather than inherited** — DECIDED, after #136
+  landed the seventh backend mid-flight. rmux reimplements tmux's command language, so the resemblance
+  invites assuming its answer; it was probed instead, on an isolated socket against a live 0.10.0. The
+  result matched tmux exactly: `new-window` already carried `-d`, a bare `split-window` left the NEW
+  pane active, `-d` left focus on the original, and `-P -F` reported the id either way. So `-d` was
+  added to `split-window` and rmux declares `true`. It has no `new-pane` at all, so there is no third
+  route — `pane:float` is refused before any command is issued. Four real-boundary rows pin it.
+
 - **the issue's premise was wrong about tmux and herdr, and the fix is bigger than zellij** —
   DECIDED. #133 states that "every backend but zellij opens without stealing the user's focus". That
   holds only for the TAB/WORKSPACE routes. Measured against live binaries: on tmux 3.7c a bare
@@ -881,6 +889,15 @@ Decisions (`opensWithoutStealingFocus` — issue #133, the focus-on-open declara
   no live binary, and an unverifiable three-command restore dance is worse than an honest `false`. The
   declaration describes what the adapter does, not what its backend might permit.
 
+- **CI's `ZELLIJ_VERSION` pin moves with the declared floor, or the floor is a fiction** — DECIDED,
+  after the live-backends job answered it: `pull-request.yml` pinned `v0.44.3`, and every one of the
+  ten zellij integration rows died at once on the unknown `--no-focus`. That failure signature —
+  ALL of them, not a partial set — is what separates it from the known #115 flake. The pin is now
+  `v0.45.0`, with the reason written beside it: a workflow that pins below the adapter's floor does
+  not test an older floor, it just fails the whole suite. The floor also had to move in three prose
+  places that each restated it (`multiplexers.md`, `getting-started/introduction.md`,
+  `concepts/detection.md`) — a version restated in four files is a version that drifts.
+
 - **verification is split, and the split is stated in each file** — DECIDED. tmux's half is driven
   against a live 3.7c (5 rows in `mux.tmux.integration.test.ts`, including the one that replaced the
   now-obsolete "a target-less split right after a float fails loudly" row — `-d` removes the
@@ -889,4 +906,6 @@ Decisions (`opensWithoutStealingFocus` — issue #133, the focus-on-open declara
   `test:integration` steal the user's focus — unacceptable in a block whose own name promises
   "always safe". zellij's half is UNVERIFIED against a running binary and says so in the adapter
   header, the declaration comment, and the website page; it was read out of the v0.45.0 source tree,
-  not off a live `--help`.
+  not off a live `--help`. rmux's half is driven against a live 0.10.0 (4 rows in
+  `mux.rmux.integration.test.ts`, reading `#{pane_active}` rather than an attached client's focus,
+  because that suite runs detached by construction).

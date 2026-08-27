@@ -62,7 +62,10 @@ adapter was built and verified against a live rmux 0.10.0 on **Linux**, and has 
 on Windows or macOS.
 
 - **No workspace tier**, the same as tmux: both `workspace` and `tab` placements collapse to a new
-  **window**, opened with `-d` so it never steals the caller's focus.
+  **window**.
+- **Never steals focus.** `-d` on both creating commands, `new-window` and `split-window`. Verified
+  live on 0.10.0 rather than inherited from the tmux resemblance: a bare `split-window` made the new
+  pane active, and `-d` left the original active while `-P -F` still reported the new id.
 - **No worktree binding.** Like tmux, it has no workspace tier to bind a git worktree to, so it
   omits the optional `worktree` capability; callers fall back to plain git plus a
   placement-appropriate `open()`.
@@ -153,8 +156,10 @@ against — so its gaps are real, spec'd limitations rather than forced parity:
 
 Driven via `zellij action` (`new-pane`, `new-tab`, `write-chars`, `send-keys`, `dump-screen`,
 `focus-pane-id`, `list-panes --json`, `rename-pane`, `rename-tab-by-id`, `close-pane`, …) against
-[Zellij](https://zellij.dev)'s built-in multiplexer. Requires Zellij ≥ 0.44.1, the release that
-added per-pane CLI addressing. Built from the Zellij docs and CHANGELOG rather than empirically — no
+[Zellij](https://zellij.dev)'s built-in multiplexer. Requires Zellij ≥ 0.45.0. Two releases set that floor:
+0.44 added per-pane CLI addressing, without which no faithful adapter is possible, and 0.45.0 added
+`--no-focus`, which every open that has no split target to choose now passes. On an older binary
+that flag is an unknown argument, so the open fails loudly rather than silently stealing focus. Built from the Zellij docs and CHANGELOG rather than empirically — no
 live Zellij binary was available to verify against — so, like WezTerm, its gaps are real, spec'd
 limitations rather than forced parity:
 

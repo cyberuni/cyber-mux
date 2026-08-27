@@ -21,7 +21,7 @@ Today it supports seven backends:
   Built against `wezterm cli --help`/the CLI reference rather than a live GUI — treat it as
   unverified until confirmed against a real WezTerm session.
 - **Zellij** (alpha) — a terminal workspace with a built-in multiplexer ([zellij.dev](https://zellij.dev)), driven through `zellij action`.
-  Requires Zellij ≥ 0.44.1. Built from the Zellij docs and CHANGELOG rather than a live binary —
+  Requires Zellij ≥ 0.45.0. Built from the Zellij docs and CHANGELOG rather than a live binary —
   treat it as unverified until confirmed against a real Zellij session.
 - **cmux** (alpha) — a Ghostty-based macOS terminal built for AI coding agents ([cmux.com](https://cmux.com)), driven through `cmux` CLI.
   Built from the cmux docs rather than a live GUI — treat it as unverified until confirmed against a
