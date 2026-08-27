@@ -30,12 +30,21 @@ import { normalizeWorktreePath } from './worktree.ts'
  * The pane lifecycle (split/run/read/close) is verified against a live herdr binary; `pane split`
  * returns a JSON `pane_info` envelope whose id is extracted in `parsePaneId`.
  *
- * **Verified against 0.8.0** (protocol 19), re-probed against a live server. Everything this adapter
- * drives held: the split/read/run/send-keys lifecycle, `pane wait-output`'s success and error
- * envelopes, `pane list`/`get`/`layout`, `workspace create`/`tab create`, and the `env` and worktree
- * parameter sets below. The per-claim markers that follow name the version each was LAST established
- * against — a claim still reading 0.7.4/0.7.5 is one 0.8.0 gave no occasion to re-measure (no attached
- * client, or no live agent in the pane), not one that failed.
+ * **Verified against 0.8.2** (protocol 20), re-probed against a live server by re-running
+ * `mux.herdr.integration.test.ts` — the real-boundary suite, not a hand check. Everything this
+ * adapter drives held: the split/read/run/send-keys lifecycle, `pane wait-output`'s success and
+ * error envelopes, `pane list`/`get`/`layout`, `workspace create`/`tab create`, and the `env` and
+ * worktree parameter sets below. The per-claim markers that follow name the version each was LAST
+ * established against — a claim still reading 0.7.4/0.7.5/0.8.0 is one a later release gave no
+ * occasion to re-measure (no attached client, or no live agent in the pane), not one that failed.
+ *
+ * What 0.8.2 did NOT re-establish, stated so the claim above is not read wider than it is: the two
+ * current-pane-context opens (`at:'tab'`, `at:'pane:right'`) skip when the suite runs INSIDE a herdr
+ * pane, and they are the only cases that exercise `--current`. 0.8.2 fixed `pane current`, `pane
+ * get`, and `pane layout --current` to resolve the CALLING pane rather than another client's focused
+ * pane (herdr #2297, #2298) — but that fix names none of `pane split`, which is where this file's one
+ * `--current` sits. So the 0.7.4 caveat on it below stands, unmeasured against 0.8.2 rather than
+ * re-confirmed.
  */
 export const herdrMuxAdapter: MuxAdapter = {
 	name: 'herdr',
