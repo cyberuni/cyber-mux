@@ -573,8 +573,8 @@ export interface WorktreeWorkspaceCapability {
  * position, not merely size. That one fact is what every member here is derived from, and the single
  * all-or-nothing precondition that bundles them into ONE object rather than separate optional
  * methods (mirroring `WorktreeWorkspaceCapability`): a backend either reports pane rects or it does
- * not, and no member is possible without them. tmux (`#{window_layout}`) and herdr (`pane
- * layout`'s rects) both report position, so both ship this; WezTerm's `list` reports a pane's size
+ * not, and no member is possible without them. tmux and rmux (`#{pane_left}`/`#{pane_top}`) and herdr
+ * (`pane layout`'s rects) all report position, so all three ship this; WezTerm's `list` reports a pane's size
  * but no position — nothing to build a `PaneRect` from — so it omits this entirely. A caller that
  * finds this absent refuses (`template save` exits naming the backend) rather than guessing a tree.
  *
@@ -650,8 +650,9 @@ export interface RegionInspector {
 	 * tmux's does not.
 	 *
 	 * **Absolute, not a nudge, and that decision is what decides who can implement it.** The relative
-	 * form looks more portable — four backends have a relative primitive and only tmux has an absolute
-	 * one — but its `amount` cannot be spelled portably at all: herdr's is a ratio delta, otty's is a
+	 * form looks more portable — five backends have a relative primitive and only tmux and its
+	 * reimplementation rmux have an absolute one — but its `amount` cannot be spelled portably at all:
+	 * herdr's is a ratio delta, otty's is a
 	 * count of cells, and zellij's `action resize` takes no amount whatsoever, only a direction and a
 	 * step whose size it never states. One seam number meaning three different things per backend, with
 	 * one backend unable to honor it in any units, is the silently-wrong result this seam refuses. A
@@ -674,7 +675,8 @@ export interface RegionInspector {
 	 * loop with no termination proof, which is the lookalike emulation `agentLifecycle`'s absence
 	 * already refuses. otty counts cells and its `panes` listing reports no position, so there is no
 	 * extent to take the fraction OF. Both have a relative nudge; neither has this verb. The
-	 * all-or-nothing rule holds and the implementor set is unchanged.
+	 * all-or-nothing rule holds and the implementor set is unchanged — it is exactly the set that ships
+	 * `regions` (tmux, rmux, herdr), which is the point.
 	 *
 	 * Throws rather than reporting a false success: on a region with no split at all (a lone pane has
 	 * no fraction to keep), on a `ratio` outside `(0, 1)`, and when the backend's own resize fails.

@@ -40,6 +40,9 @@ Drives [tmux](https://github.com/tmux/tmux) via its CLI (`split-window`, `new-wi
   `open()`.
 - **No harness awareness.** tmux cannot say which agent runs in a pane, so `listPanes` leaves
   `harness` unset.
+- **Can resize an open pane.** `resize-pane -x/-y` takes a cell count, so cyber-mux converts the
+  seam's ratio against the pane's own split region rather than sending `-x <percent>`, which tmux
+  reads against the *window* — the same number only when the window holds a single split.
 - `focus` resolves the pane's session and window from `list-panes -a` first, then beams in order:
   `switch-client` → `select-window` → `select-pane`. An unresolvable pane throws rather than issuing
   a false-success beam.
@@ -86,6 +89,10 @@ on Windows or macOS.
 - **Reports region geometry.** `list-panes -t <id> -F '#{pane_left}…'` reports window-relative
   rects with the divider column excluded, so rmux implements the optional `regions` capability and
   `template save` works on it.
+- **Can resize an open pane.** `resize-pane -x/-y` takes a cell count, so cyber-mux converts the
+  seam's ratio against the pane's own split region rather than sending a percentage — rmux reads
+  `-x 60%` against the *window*, exactly as tmux does, which is a different number at any nesting
+  depth. Verified on a live rmux 0.10.0.
 - **No harness awareness and no agent-state feed** — herdr is the only backend with either.
 - `focus` resolves the pane's session and window from `list-panes -a`, then beams
   `switch-client` → `select-window` → `select-pane`, the same sequence as tmux.

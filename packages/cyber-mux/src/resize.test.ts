@@ -3,6 +3,7 @@ import type { Exec } from './exec.ts'
 import { cmuxMuxAdapter } from './mux.cmux.ts'
 import { herdrMuxAdapter } from './mux.herdr.ts'
 import { ottyMuxAdapter } from './mux.otty.ts'
+import { rmuxMuxAdapter } from './mux.rmux.ts'
 import { tmuxMuxAdapter } from './mux.tmux.ts'
 import { weztermMuxAdapter } from './mux.wezterm.ts'
 import { zellijMuxAdapter } from './mux.zellij.ts'
@@ -14,14 +15,15 @@ const noExec: Exec = () => {
 
 /**
  * The capability matrix, asserted on the REAL adapters rather than on stubs — the point of the member
- * is which backends can carry it, so a fake would test nothing. tmux and herdr report pane rects and
- * so can turn a ratio into their own resize argument; the other four cannot, and the two of those that
+ * is which backends can carry it, so a fake would test nothing. tmux, rmux and herdr report pane
+ * rects and so can turn a ratio into their own resize argument; the other four cannot, and the two of those that
  * do own a relative resize verb (zellij `action resize`, otty `pane resize --right N`) are refused
  * anyway, because a nudge of an unstated size and a count of cells are not the fraction this verb takes.
  */
 describe('derivePaneResize', () => {
 	it.each([
 		['tmux', tmuxMuxAdapter],
+		['rmux', rmuxMuxAdapter],
 		['herdr', herdrMuxAdapter],
 	])('%s carries the capability', (_name, adapter) => {
 		expect(adapter.regions?.resizePane).toBeTypeOf('function')

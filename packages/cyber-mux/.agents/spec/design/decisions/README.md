@@ -940,6 +940,11 @@ Decisions (`135-pane-resize` — the resize seam member, issue #135):
   - tmux `resize-pane -t <id> -x/-y <n>` — absolute, in CELLS (3.7c, live). `-x <pct>` is a
     percentage of the **window**, not of the pane's split region, so it is wrong at any nesting
     depth and is not used.
+  - rmux `resize-pane -t <id> -x/-y <n>` — the same, and probed as its own claim rather than
+    inherited from the sibling adapter (0.10.0, live, isolated socket). Every case matched tmux 3.7c
+    number for number: `-x 120` in a 200-column window left 120 + 79 + a divider column, `-y` did the
+    same on a stacked split, a nested resize left the outer divider alone, and `-x 60%` was 60% of the
+    WINDOW — the reading that makes cells rather than percent the right rendering here too.
   - herdr `pane resize --pane <id> --direction <l|r|u|d> --amount <float>` — a **delta on the
     enclosing split's ratio** (0.8.2, live). `--direction` names where the DIVIDER moves, not which
     pane grows: `right`/`down` raise the ratio and `left`/`up` lower it, whichever side the `--pane`
@@ -957,8 +962,11 @@ Decisions (`135-pane-resize` — the resize seam member, issue #135):
   undefined` that can drift from it.
   **This retires the issue's own objection to the `RegionInspector` placement** — that it would deny
   zellij and otty a capability they have. It does not: they have a *relative nudge*, which is a
-  different verb, and neither can answer this one. The implementor set is unchanged (tmux, herdr) and
-  the refusal is the absence of `regions`, surfaced by name through `PaneResizeUnsupportedError`.
+  different verb, and neither can answer this one. The implementor set is exactly the set that ships
+  `regions` — tmux, rmux and herdr — and the refusal is the absence of `regions`, surfaced by name
+  through `PaneResizeUnsupportedError`. rmux arrived (#139) after this was decided and needed no
+  amendment to it, which is the property a derived capability was chosen for: it answered the member
+  because it already reported rects.
   **Unverified, and stated as such:** the otty and zellij readings are from published CLI docs; this
   machine has neither binary. Nothing in either adapter changed — both simply continue to omit
   `regions` — so no untested command shape was written on the strength of those docs.

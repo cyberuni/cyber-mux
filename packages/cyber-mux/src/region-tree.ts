@@ -8,7 +8,7 @@ import type { PaneRect, RegionPane } from './mux.ts'
  * Its own module because two different capabilities now derive the SAME tree from the same rects, and
  * a second derivation is the way they come to disagree about the user's screen. `template save`
  * (`template-capture.ts`) reads the tree forwards into a template; `RegionInspector.resizePane`
- * (the tmux and herdr adapters) reads one node of it to turn a ratio into its backend's own resize
+ * (the tmux, rmux and herdr adapters) reads one node of it to turn a ratio into its backend's own resize
  * argument. Both are downstream of `RegionInspector.describeRegion`'s promise — rects, never a tree —
  * so the guillotine cut lives here, once, and neither imports the other.
  *
