@@ -164,12 +164,13 @@ describe('spec:cyber-mux/mux/placement', () => {
 			})
 			zellijMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:float', from: { id: 'terminal_3' } })
 			// `new-pane` has no target flag beyond `--tab-id`, so focusing is the only anchor available.
-			// The listing comes first now — it carries the pane focus is restored to afterwards — and
+			// The reads come first now — `list-clients` carries the pane focus is restored to — and
 			// `--no-focus` is absent on this path ON PURPOSE: it would re-anchor the float on the issuing
 			// pane and make the focus move above pointless. See `focus-on-open.test.ts`.
 			expect(calls[0]).toEqual(['action', 'list-panes', '--json'])
-			expect(calls[1]).toEqual(['action', 'focus-pane-id', 'terminal_3'])
-			expect(calls[2]).toEqual(['action', 'new-pane', '--floating', '--cwd', '/unit'])
+			expect(calls[1]).toEqual(['action', 'list-clients'])
+			expect(calls[2]).toEqual(['action', 'focus-pane-id', 'terminal_3'])
+			expect(calls[3]).toEqual(['action', 'new-pane', '--floating', '--cwd', '/unit'])
 		})
 
 		it('names the float at birth with --name, and reports the ambient session as its workspace', () => {

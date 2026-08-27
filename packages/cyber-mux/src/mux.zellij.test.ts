@@ -115,12 +115,14 @@ describe('spec:cyber-mux/mux/placement', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'new-pane': 'terminal_9', 'list-panes': [LIST_NONE, LIST_ONE] })
 			zellijMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right', from: { id: 'terminal_3' } })
-			// The listing now comes FIRST, before the focus move rather than after it: it carries the
-			// pane focus has to be put back on, and that reading is only the right one while the move has
-			// not happened yet.
+			// Two reads come FIRST, both before the focus move: the pane listing (the open's BEFORE side)
+			// and `list-clients` (where focus has to be put back). The second is only the right answer
+			// while the move has not happened yet. This fake answers `list-clients` with null, so there
+			// is no restore to assert here — `focus-on-open.test.ts` covers that.
 			expect(calls[0]).toEqual(['action', 'list-panes', '--json'])
-			expect(calls[1]).toEqual(['action', 'focus-pane-id', 'terminal_3'])
-			expect(calls[2]).toEqual(['action', 'new-pane', '--direction', 'right', '--cwd', '/unit'])
+			expect(calls[1]).toEqual(['action', 'list-clients'])
+			expect(calls[2]).toEqual(['action', 'focus-pane-id', 'terminal_3'])
+			expect(calls[3]).toEqual(['action', 'new-pane', '--direction', 'right', '--cwd', '/unit'])
 		})
 
 		it('open() drops a ratio — a tiled split is always even', () => {

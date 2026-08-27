@@ -909,3 +909,22 @@ Decisions (`opensWithoutStealingFocus` — issue #133, the focus-on-open declara
   not off a live `--help`. rmux's half is driven against a live 0.10.0 (4 rows in
   `mux.rmux.integration.test.ts`, reading `#{pane_active}` rather than an attached client's focus,
   because that suite runs detached by construction).
+
+- **the restore reads `list-clients`, not `list-panes --json`'s `is_focused`** — DECIDED, after the
+  first draft got it wrong. `is_focused` looked like the obvious field and is not: the zellij
+  integration suite already records, from the real boundary, that a live session marks `is_focused:
+  true` on MORE THAN ONE record at once — a floating plugin pane and the tiled pane beneath it — so
+  it answers "focused within its layer", not "where the client is". Scanning for the first such
+  record could restore focus onto a PLUGIN pane the user was never on, which is a focus move the
+  restore INVENTED, strictly worse than the theft it exists to undo. `zellij action list-clients`
+  names the client's pane directly, in the `terminal_N` form `focus-pane-id` takes — proven by the
+  suite's own parked-client precondition, which polls that column until it equals a known pane id.
+  Caught by reading the suite's live notes rather than by a failing test, because no row asserted
+  where focus ENDED; two now do.
+
+- **CI is the zellij evidence, and a local green run is not** — DECIDED. With the pin at 0.45.0 the
+  zellij suite runs all 13 rows in CI, and two new rows there assert the client does not move — one
+  per mechanism (`--no-focus`, and the `from` restore). That is what backs zellij's `true`. It is
+  stated that way in the adapter rather than as a flat "verified", because the same suite run on a
+  machine with no zellij skips every row and still reports green (#125): the claim is about where it
+  ran, not that it passed.

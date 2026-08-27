@@ -39,5 +39,5 @@ A `--no-focus` open on an older binary is an unknown-argument error, so it fails
 nothing rather than mis-targeting a pane — the same way an old tmux answers `new-pane` with `unknown
 command`. The adapter version-probes nothing, by design.
 
-Zellij's `--no-focus` is **unverified against a running binary** — read out of the v0.45.0 source
-tree, not driven, because no Zellij is available to this project's integration suite.
+Zellij's `--no-focus` was written from the v0.45.0 source tree rather than a live binary, and is now
+driven in CI against a real Zellij 0.45.0.

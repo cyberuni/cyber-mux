@@ -49,30 +49,41 @@ function herdrExec(calls: string[][]): Exec {
 	}
 }
 
-/** zellij keys off `args[1]`: every call is `zellij action <verb> …`. */
-function zellijExec(calls: string[][], listings: string[]): Exec {
+/**
+ * zellij keys off `args[1]`: every call is `zellij action <verb> …`.
+ *
+ * `client` is what `list-clients` answers with — a header row plus one client row whose SECOND
+ * column is the pane id, which is the shape the adapter parses. `undefined` stands for a session no
+ * client has attached to, where the real binary prints a header and nothing under it.
+ */
+function zellijExec(calls: string[][], listings: string[], client?: string): Exec {
 	const queued = [...listings]
 	return (_cmd, args) => {
 		calls.push(args)
 		if (args[1] === 'list-panes') return queued.length > 1 ? queued.shift()! : (queued[0] ?? '[]')
+		if (args[1] === 'list-clients')
+			return client ? `CLIENT_ID PANE_ID RUNNING\n1 ${client} zsh` : 'CLIENT_ID PANE_ID RUNNING'
 		if (args[1] === 'new-pane') return 'terminal_9'
 		if (args[1] === 'new-tab') return '2'
 		return ''
 	}
 }
 
-/** A session with one pane standing, and it is the FOCUSED one — the pane a restore has to land on. */
-const ZELLIJ_FOCUSED_ON_3 = JSON.stringify([
-	{ id: 3, tab_id: 1, title: 'zsh', terminal_command: 'zsh', is_focused: true },
-])
+/** The panes standing before an open — the BEFORE side the reported id is checked against. */
+const ZELLIJ_STANDING = JSON.stringify([{ id: 3, tab_id: 1, title: 'zsh', terminal_command: 'zsh', is_focused: true }])
 /** The same session AFTER the open, now carrying the pane the open made. */
 const ZELLIJ_AFTER = JSON.stringify([
 	{ id: 3, tab_id: 1, title: 'zsh', terminal_command: 'zsh', is_focused: false },
 	{ id: 9, tab_id: 2, title: 'zsh', terminal_command: 'zsh', is_focused: true },
 ])
-/** A session no client has attached to: a real listing, and nothing in it reports focus. */
-const ZELLIJ_NOBODY_FOCUSED = JSON.stringify([
-	{ id: 3, tab_id: 1, title: 'zsh', terminal_command: 'zsh', is_focused: false },
+/**
+ * The arrangement a live zellij really produces: a floating PLUGIN pane and a tiled terminal pane
+ * BOTH reporting `is_focused`, with the plugin sorting first. Recorded from the real boundary by
+ * `mux.zellij.integration.test.ts` — it is why the restore cannot read this field.
+ */
+const ZELLIJ_PLUGIN_ALSO_FOCUSED = JSON.stringify([
+	{ id: 0, tab_id: 1, is_plugin: true, is_floating: true, is_focused: true },
+	{ id: 5, tab_id: 1, title: 'zsh', terminal_command: 'zsh', is_focused: true },
 ])
 
 // ── the declaration ────────────────────────────────────────────────────────────────────────────
@@ -171,12 +182,14 @@ describe('spec:cyber-mux/mux/placement', () => {
 			{ at: 'pane:float', verb: 'new-pane' },
 		] as const)('open({ at: $at }) with no `from` passes --no-focus to `$verb` and moves nothing', ({ at, verb }) => {
 			const calls: string[][] = []
-			zellijMuxAdapter.open(zellijExec(calls, [ZELLIJ_FOCUSED_ON_3, ZELLIJ_AFTER]), { cwd: '/u', at })
+			zellijMuxAdapter.open(zellijExec(calls, [ZELLIJ_STANDING, ZELLIJ_AFTER]), { cwd: '/u', at })
 			const created = calls.find((c) => c[1] === verb)
 			expect(created).toBeDefined()
 			expect(created).toContain('--no-focus')
-			// The whole point of the flag on this path: no focus verb is issued at all, before or after.
+			// The whole point of the flag on this path: no focus verb is issued at all, before or after —
+			// and nothing even ASKS where the client is, because there is nothing to put back.
 			expect(calls.some((c) => c[1] === 'focus-pane-id')).toBe(false)
+			expect(calls.some((c) => c[1] === 'list-clients')).toBe(false)
 		})
 
 		// The most load-bearing row in this file. `--no-focus` does not merely suppress the new pane's
@@ -186,7 +199,7 @@ describe('spec:cyber-mux/mux/placement', () => {
 		// row ever goes green with `--no-focus` present, `from` has stopped meaning anything on zellij.
 		it('open() with a `from` must NOT pass --no-focus — it would silently split the issuing pane', () => {
 			const calls: string[][] = []
-			zellijMuxAdapter.open(zellijExec(calls, [ZELLIJ_FOCUSED_ON_3, ZELLIJ_AFTER]), {
+			zellijMuxAdapter.open(zellijExec(calls, [ZELLIJ_STANDING, ZELLIJ_AFTER]), {
 				cwd: '/u',
 				at: 'pane:right',
 				from: { id: 'terminal_3' },
@@ -198,15 +211,17 @@ describe('spec:cyber-mux/mux/placement', () => {
 
 		it('open() with a `from` puts focus back on the pane that had it, in order', () => {
 			const calls: string[][] = []
-			zellijMuxAdapter.open(zellijExec(calls, [ZELLIJ_FOCUSED_ON_3, ZELLIJ_AFTER]), {
+			zellijMuxAdapter.open(zellijExec(calls, [ZELLIJ_STANDING, ZELLIJ_AFTER], 'terminal_3'), {
 				cwd: '/u',
 				at: 'pane:right',
 				from: { id: 'terminal_5' },
 			})
-			// Read the listing BEFORE moving focus (the reading is only right while the move has not
-			// happened), then focus the split target, then split it, then land back where it started.
+			// Both reads happen BEFORE the focus move — `list-clients` is only the right answer while the
+			// move has not happened — then focus the split target, split it, and land back where it
+			// started.
 			expect(calls.map((c) => [c[1], c[2]])).toEqual([
 				['list-panes', '--json'],
+				['list-clients', undefined],
 				['focus-pane-id', 'terminal_5'],
 				['new-pane', '--direction'],
 				['list-panes', '--json'],
@@ -214,12 +229,31 @@ describe('spec:cyber-mux/mux/placement', () => {
 			])
 		})
 
-		// A session no client has attached to reports every pane unfocused (see the adapter header).
-		// There is nothing to restore then — and nothing was stolen either, so issuing a focus verb
-		// would be inventing a focus move rather than undoing one.
-		it('open() with a `from` restores nothing when no pane reported focus', () => {
+		// The restore reads `list-clients`, NOT `list-panes --json`'s `is_focused`, and this row is the
+		// regression guard for why. A live zellij marks `is_focused: true` on more than one record at
+		// once — a floating plugin pane AND the tiled pane under it — so a scan for the first such record
+		// can pick the PLUGIN pane and restore focus onto a pane the user was never on. That is a focus
+		// move invented by the restore, strictly worse than the theft it undoes. Here the client is on
+		// terminal_5 while a plugin pane sorts first and claims focus in its own layer; the restore must
+		// follow the client.
+		it('open() with a `from` restores the CLIENT’s pane, not the first is_focused record', () => {
 			const calls: string[][] = []
-			zellijMuxAdapter.open(zellijExec(calls, [ZELLIJ_NOBODY_FOCUSED, ZELLIJ_AFTER]), {
+			zellijMuxAdapter.open(zellijExec(calls, [ZELLIJ_PLUGIN_ALSO_FOCUSED, ZELLIJ_AFTER], 'terminal_5'), {
+				cwd: '/u',
+				at: 'pane:right',
+				from: { id: 'terminal_9' },
+			})
+			const restore = calls.filter((c) => c[1] === 'focus-pane-id').at(-1)
+			expect(restore).toEqual(['action', 'focus-pane-id', 'terminal_5'])
+			expect(restore).not.toContain('plugin_0')
+		})
+
+		// A session no client has attached to prints a `list-clients` header and nothing under it. There
+		// is nothing to restore then — and nothing was stolen either, so issuing a focus verb would be
+		// inventing a focus move rather than undoing one.
+		it('open() with a `from` restores nothing when no client is attached', () => {
+			const calls: string[][] = []
+			zellijMuxAdapter.open(zellijExec(calls, [ZELLIJ_STANDING, ZELLIJ_AFTER]), {
 				cwd: '/u',
 				at: 'pane:right',
 				from: { id: 'terminal_5' },

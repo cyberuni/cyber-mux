@@ -149,13 +149,13 @@ export function createZellijAdapter(deps: { session?: string | undefined }): Mux
 		 *   a real, visible round trip. `--no-focus` is deliberately NOT passed here; see `open`, where
 		 *   passing it would silently split the WRONG pane.
 		 *
-		 * **Unverified against a running zellij.** There is no zellij binary on the machine this was
-		 * written on, and this repo's zellij integration suite SKIPS every row without one (issue #125),
-		 * so a green suite is not evidence here. `--no-focus` was read out of the v0.45.0 source tree
-		 * (`zellij-utils/src/cli.rs`, the `no_focus: bool` field on `CliAction::NewPane`/`NewTab`), not
-		 * off a live `--help`. The restore half is on firmer ground: `focus-pane-id` and `list-panes
-		 * --json`'s `is_focused` are both already driven against a live 0.44.3 by the integration suite.
-		 * The same disclaimer `mux.wezterm.ts` and `mux.cmux.ts` carry applies to the flag itself.
+		 * **Written blind, now driven in CI.** There is no zellij on the machine this was written on, so
+		 * `--no-focus` was read out of the v0.45.0 source tree (`zellij-utils/src/cli.rs`, the
+		 * `no_focus: bool` field on `CliAction::NewPane`/`NewTab`) rather than off a live `--help`. CI's
+		 * live-backends job pins 0.45.0 and runs `mux.zellij.integration.test.ts` against it, where two
+		 * rows assert the CLIENT does not move — one per mechanism above. That is the evidence for this
+		 * boolean. A LOCAL run is not: the suite skips every row when no binary is present and still
+		 * reports green (issue #125).
 		 */
 		opensWithoutStealingFocus: true,
 
@@ -203,17 +203,20 @@ export function createZellijAdapter(deps: { session?: string | undefined }): Mux
 			// construction. Reaching for it would widen the seam every adapter shares to buy one backend an
 			// undocumented internal.)
 			//
-			// One `list-panes` serves both jobs below, taken BEFORE anything else happens: the id set is
-			// the open's BEFORE side (see `openedForPane` — the id zellij prints is only believable once it
-			// names a pane that was not already standing), and `is_focused` is where focus has to be put
-			// back. Listing first also means the reading predates the focus move, which is the only moment
-			// it is the answer we want.
-			const standing = listZellijPanes(exec)
-			const before = new Set(standing.map((pane) => normalizePaneId(pane.id)))
-			// Undefined when no pane reports focus — a session no client has attached to answers exactly
-			// that (see the header). Nothing to restore then, and nothing was stolen either.
-			const focusedBefore = standing.find((pane) => pane.is_focused === true)
-			const restoreTo = focusedBefore ? normalizePaneId(focusedBefore.id) : undefined
+			// The open's BEFORE side (see `openedForPane` — the id zellij prints is only believable once it
+			// names a pane that was not already standing).
+			const before = paneIdSet(exec)
+			// Where focus has to be put back, read BEFORE the move below — the only moment it is the
+			// answer we want. `list-clients`, NOT `list-panes --json`'s `is_focused`, and that is a
+			// correctness fix rather than a preference: `is_focused` is true on MORE THAN ONE record at a
+			// time (a live session marks both the floating plugin pane and the tiled pane beneath it), so
+			// it answers "focused within its layer", not "where the client is". Scanning for the first
+			// `is_focused` record could therefore pick a PLUGIN pane and restore focus onto a pane the
+			// user was never on — a focus move INVENTED by the restore, which is worse than the theft it
+			// exists to undo. `list-clients` names the client's pane directly. Observed live and recorded
+			// by `mux.zellij.integration.test.ts`'s `clientPane`, whose parked-client precondition is what
+			// proves this column carries the `terminal_N` form `focus-pane-id` takes.
+			const restoreTo = opts.from ? clientPane(exec) : undefined
 			// `from` is honored by focusing that pane FIRST — still the sole way to choose which pane a
 			// split lands beside, and for a float how it lands over the caller's REGION rather than the one
 			// the user is looking at. That focus move is now UNDONE at the end of this branch rather than
@@ -247,7 +250,7 @@ export function createZellijAdapter(deps: { session?: string | undefined }): Mux
 			// cross tabs. It also reads a focus history one entry deep, and the sequence here makes two
 			// moves, so even within one tab it would land on `from` rather than on the caller. An explicit
 			// id has neither limit, and it is a primitive already driven against a live 0.44.3.
-			if (opts.from && restoreTo) exec('zellij', ['action', 'focus-pane-id', restoreTo])
+			if (restoreTo) exec('zellij', ['action', 'focus-pane-id', restoreTo])
 			runLaunch(adapter, exec, opened, opts.env, opts.launch)
 			return opened
 		},
@@ -534,6 +537,25 @@ function listZellijPanes(exec: Exec): ZellijPane[] {
  */
 function paneIdSet(exec: Exec): ReadonlySet<string> {
 	return new Set(listZellijPanes(exec).map((p) => normalizePaneId(p.id)))
+}
+
+/**
+ * The pane THE CLIENT is on, or `undefined` when nothing answers — the restore target an open that
+ * moved focus has to land back on.
+ *
+ * `zellij action list-clients` prints a header row and then one row per client; the second
+ * whitespace-separated column is the pane id, in the `terminal_N`/`plugin_N` form `focus-pane-id`
+ * accepts. The FIRST client row is taken: this adapter is single-client throughout (`MuxTarget`
+ * carries no client qualifier any more than it carries a session one), and with several attached
+ * there is no "the caller's client" for it to prefer.
+ *
+ * `undefined` on an empty or unparseable answer — a session no client has ever attached to reports
+ * exactly that. Nothing to restore then, and nothing was stolen either, so the caller issues no
+ * focus verb rather than inventing one.
+ */
+function clientPane(exec: Exec): string | undefined {
+	const row = (exec('zellij', ['action', 'list-clients']) ?? '').split('\n')[1]
+	return row?.trim().split(/\s+/)[1] || undefined
 }
 
 /**

@@ -250,6 +250,34 @@ describe.skipIf(!hasZellij() || !hasScript())('spec:cyber-mux/mux', () => {
 			expect(adapter.listPanes(exec).length).toBeGreaterThan(before)
 		})
 
+		// `opensWithoutStealingFocus`, at the only boundary that can answer it. Every other row here
+		// proves the flag was SPELLED; this pair proves zellij honors it — and until this branch bumped
+		// CI's pin to 0.45.0 there was no binary that could run them at all, because `--no-focus` did not
+		// exist below it.
+		//
+		// `clientPane`, not `isPaneFocused`: a live session reports `is_focused` on more than one record
+		// at once (see `clientPane`'s own note), so only `list-clients` answers "where the client is",
+		// which is what the declaration is about.
+		it('open() with no `from` moves the client nowhere — the --no-focus path', async () => {
+			expect(await parkClientOn(base)).toBe(base)
+			const target = adapter.open(exec, { cwd, at: 'tab' })
+			// Waiting for the pane to exist is what gives the server a full round trip to move the client
+			// if it were going to. Asserting immediately could pass on a move that had not landed yet.
+			expect(await existsEventually(target)).toBe('true')
+			expect(clientPane()).toBe(base)
+		})
+
+		it('open() with a `from` puts the client back where it was — the restore path', async () => {
+			expect(await parkClientOn(base)).toBe(base)
+			const target = adapter.open(exec, { cwd, at: 'pane:right', from: { id: base } })
+			expect(await existsEventually(target)).toBe('true')
+			// Polled, not read once: `focus-pane-id` returns when the server accepts it, not when the
+			// client has moved — the same gap `parkClientOn` exists for. The claim is that focus ENDS
+			// where it started, which is what the seam declares; it passes through `from` on the way.
+			expect(await pollUntil(clientPane, (pane) => pane === base)).toBe(base)
+			expect(clientPane()).not.toBe(target.id)
+		})
+
 		it('open() at pane:float actually creates a real floating pane, backing canFloatPanes', async () => {
 			const target = adapter.open(exec, { cwd, at: 'pane:float' })
 			expect(await existsEventually(target)).toBe('true')

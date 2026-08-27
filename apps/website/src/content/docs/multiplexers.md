@@ -185,7 +185,8 @@ limitations rather than forced parity:
   the focused one, so passing it would split the wrong pane. That path instead focuses the target,
   splits it, and then focuses back to the pane that had focus before — a visible round trip, ending
   where it started. On Zellij < 0.45.0 the open fails loudly with Zellij's own unknown-argument error
-  rather than silently stealing focus.
+  rather than silently stealing focus. Both mechanisms are asserted against a real Zellij 0.45.0 in
+  CI's live-backends job.
 - **Cannot size a split.** Zellij's tiled splits are always even; sizing a pane requires a floating
   pane, which cyber-mux does not use. A requested `ratio` is dropped and the caller gets Zellij's own
   even split, the same degrade path as a backend with no `canSizeSplits`.
