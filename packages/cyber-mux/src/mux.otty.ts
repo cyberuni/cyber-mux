@@ -45,6 +45,16 @@ export function createOttyAdapter(deps: { window?: string | undefined }): MuxAda
 
 		canSizeSplits: false,
 
+		/**
+		 * `false`, for cmux's two reasons exactly: no suppress-focus flag is documented on `pane split`,
+		 * `tab new`, or `open`, and `from` is honored by focusing the target pane first (`open` below),
+		 * so an open moves the user twice over.
+		 *
+		 * Read off otty's documented CLI, NOT verified against a live binary — no otty on the machine
+		 * this was written on, matching the rest of this header.
+		 */
+		opensWithoutStealingFocus: false,
+
 		open(exec, opts) {
 			const at = opts.at ?? 'tab'
 

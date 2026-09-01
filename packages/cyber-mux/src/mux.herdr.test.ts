@@ -111,7 +111,7 @@ describe('spec:cyber-mux/mux/placement', () => {
 			// The workspace the split LANDED IN — the caller's own. Free: it rides in on the same output
 			// the pane id is read from.
 			expect(target).toEqual({ id: 'w3:pB', tab: 'w3:t1', workspace: 'w3' })
-			expect(calls[0]).toEqual(['pane', 'split', '--current', '--direction', 'right', '--cwd', '/unit'])
+			expect(calls[0]).toEqual(['pane', 'split', '--current', '--direction', 'right', '--cwd', '/unit', '--no-focus'])
 			expect(calls[1]).toEqual(['pane', 'run', 'w3:pB', 'claude'])
 		})
 
@@ -261,8 +261,8 @@ describe('spec:cyber-mux/mux/placement', () => {
 			herdrMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right', from: { id: 'w3:pA' } })
 			herdrMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:down', from: { id: 'w3:pA' } })
 			expect(calls).toEqual([
-				['pane', 'split', 'w3:pA', '--direction', 'right', '--cwd', '/unit'],
-				['pane', 'split', 'w3:pA', '--direction', 'down', '--cwd', '/unit'],
+				['pane', 'split', 'w3:pA', '--direction', 'right', '--cwd', '/unit', '--no-focus'],
+				['pane', 'split', 'w3:pA', '--direction', 'down', '--cwd', '/unit', '--no-focus'],
 			])
 			expect(calls.every((c) => !c.includes('--current'))).toBe(true)
 		})
@@ -276,7 +276,7 @@ describe('spec:cyber-mux/mux/placement', () => {
 			const exec = fakeExec(calls, { 'pane split': splitOut })
 			herdrMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right' })
 			// Kept for a caller that cannot identify itself: herdr's guess beats refusing to open.
-			expect(calls[0]).toEqual(['pane', 'split', '--current', '--direction', 'right', '--cwd', '/unit'])
+			expect(calls[0]).toEqual(['pane', 'split', '--current', '--direction', 'right', '--cwd', '/unit', '--no-focus'])
 		})
 
 		// `ratio` is the fraction kept by the ORIGINAL pane, and herdr's `--ratio` sizes exactly that —
@@ -287,7 +287,18 @@ describe('spec:cyber-mux/mux/placement', () => {
 			const splitOut = JSON.stringify({ result: { pane: { pane_id: 'w3:pB', tab_id: 'w3:t1' } } })
 			const exec = fakeExec(calls, { 'pane split': splitOut })
 			herdrMuxAdapter.open(exec, { cwd: '/u', at: 'pane:right', from: { id: 'w3:pA' }, ratio: 0.333 })
-			expect(calls[0]).toEqual(['pane', 'split', 'w3:pA', '--direction', 'right', '--cwd', '/u', '--ratio', '0.333'])
+			expect(calls[0]).toEqual([
+				'pane',
+				'split',
+				'w3:pA',
+				'--direction',
+				'right',
+				'--cwd',
+				'/u',
+				'--ratio',
+				'0.333',
+				'--no-focus',
+			])
 			// 0.667 would be the inversion tmux needs — applying it here too is the failure this catches.
 			expect(calls[0]).not.toContain('0.667')
 		})
@@ -333,6 +344,7 @@ describe('spec:cyber-mux/mux/placement', () => {
 				'ROLE=worker',
 				'--env',
 				'TIER=gpu',
+				'--no-focus',
 			])
 		})
 
@@ -491,6 +503,7 @@ describe('spec:cyber-mux/mux/placement', () => {
 				'/unit',
 				'--env',
 				'ROLE=planner',
+				'--no-focus',
 			])
 		})
 
@@ -620,7 +633,7 @@ describe('spec:cyber-mux/mux/placement', () => {
 				at: 'pane:right',
 				label: 'my-name',
 			})
-			expect(calls[0]).toEqual(['pane', 'split', '--current', '--direction', 'right', '--cwd', '/unit'])
+			expect(calls[0]).toEqual(['pane', 'split', '--current', '--direction', 'right', '--cwd', '/unit', '--no-focus'])
 			expect(calls[1]).toEqual(['pane', 'rename', 'w3:pB', 'my-name'])
 		})
 

@@ -9,12 +9,37 @@ import { pollForOutput } from './wait-output.ts'
  * action …` (https://zellij.dev/documentation/cli-actions), the same synchronous-CLI shape tmux,
  * herdr and wezterm already give `Exec`.
  *
- * Requires **Zellij ≥ 0.44.1**. The whole per-pane-addressable surface this adapter stands on landed
+ * Requires **Zellij ≥ 0.45.0**. The whole per-pane-addressable surface this adapter stands on landed
  * in 0.44.0 (2026-03-23): `--pane-id` across the action verbs, `list-panes --json`, ids returned from
- * `new-pane`/`new-tab`, and `focus-pane-id`. Before that release Zellij's CLI was almost entirely
- * FOCUS-relative — no stable per-pane handle — and no faithful adapter was possible. On an older
- * binary these commands fail and the adapter surfaces the failure rather than silently mis-targeting
- * the focused pane.
+ * `new-pane`/`new-tab`, and `focus-pane-id` (0.44.1). Before that release Zellij's CLI was almost
+ * entirely FOCUS-relative — no stable per-pane handle — and no faithful adapter was possible. On an
+ * older binary these commands fail and the adapter surfaces the failure rather than silently
+ * mis-targeting the focused pane.
+ *
+ * The floor moved from 0.44.1 to **0.45.0** (2026-08-20) for `--no-focus`, which is what lets this
+ * backend answer `opensWithoutStealingFocus` at all. Raising it rather than keeping the old
+ * focus-stealing path as a fallback, for four reasons that compound:
+ *
+ * - The seam member is a **static declaration**, like `canSizeSplits` and `canFloatPanes` — there is
+ *   no runtime probe behind any of them. An adapter cannot declare `true` and then quietly degrade on
+ *   an old binary without lying in precisely the way the declaration exists to prevent, and a
+ *   conditional value has nowhere to live.
+ * - Version-probing to decide would be a NEW behavior for this file, which reads no version anywhere,
+ *   and would cost an exec on every open to pre-empt a failure zellij already reports precisely.
+ * - A fallback would be a second code path that nothing here can ever exercise: there is no zellij on
+ *   the machine this was written on, and the integration suite skips its rows without one (issue
+ *   #125). Untested code guarding an untestable condition is a liability, not a safety net.
+ * - The 0.44 failure is LOUD and creates nothing. Zellij's CLI parses in clap's strict mode (the
+ *   v0.45.0 tree sets no `ignore_errors`, `allow_hyphen_values`, `allow_external_subcommands`, or
+ *   `trailing_var_arg` anywhere in `zellij-utils/src/cli.rs`), so an unknown `--no-focus` is a parse
+ *   error on stderr and a nonzero exit — surfaced by the `withReason` throw in `open`, which names the
+ *   command. There is no silent wrong-pane for it to become, which is the one failure mode worth
+ *   engineering against. tmux sets this precedent exactly: `new-pane` is declared unconditionally and
+ *   an older binary fails with tmux's own `unknown command`.
+ *
+ * **The 0.45.0 surface is UNVERIFIED against a running binary** — read out of the v0.45.0 source tree
+ * (`zellij-utils/src/cli.rs`, `zellij-server/src/route.rs`), not driven. Everything below attributed
+ * to 0.44.3 was driven, and stays driven; the two claims are kept apart on purpose.
  *
  * Originally probed from the Zellij docs + CHANGELOG alone; now **driven against a live 0.44.3
  * binary** by `mux.zellij.integration.test.ts`, so the command shapes below carry the same
@@ -72,8 +97,11 @@ import { pollForOutput } from './wait-output.ts'
  *   callers degrade to the even default, the same path the flag's absence already documents.
  * - **`new-pane` has no split-TARGET flag.** It splits the focused pane (or the biggest space); the
  *   only flag is `--tab-id`. So `from` — which pane a `pane:*` split lands beside — is honored by
- *   FOCUSING that pane first, the sole way to choose the split target. That is a real focus move, and
- *   the honest cost of getting the RIGHT pane split.
+ *   FOCUSING that pane first, the sole way to choose the split target. That is still a real focus
+ *   move; what changed in 0.45.0 is that it is now UNDONE, not that it stopped happening. See
+ *   `opensWithoutStealingFocus`, and `open` for why `--no-focus` cannot be the answer on that path —
+ *   it re-anchors the split on the ISSUING pane and would make the focus move pointless and the target
+ *   wrong.
  * - **No pane geometry adapter.** `list-panes --json` does report `pane_x`/`pane_y`, so `regions`
  *   (`describeRegion`/`describeWorkspace`) is IMPLEMENTABLE here — unlike wezterm, which lacks
  *   position entirely — but the cell-vs-divider semantics of Zellij's rects need a live binary to pin,
@@ -109,13 +137,38 @@ export function createZellijAdapter(deps: { session?: string | undefined }): Mux
 		// of the result is 0.44's, the same release this whole adapter already requires.
 		canFloatPanes: true,
 
+		/**
+		 * Every route this adapter can take ends with the caller's focus where it started, which is the
+		 * end-state the seam declares — NOT "focus never moves at any instant", which zellij cannot offer
+		 * on the one route that has to choose a split target. Two different mechanisms get there, and
+		 * which one applies is decided by whether `from` was named:
+		 *
+		 * - **No target to choose** (`new-tab`, and `new-pane` with no `from`): `--no-focus`, and nothing
+		 *   moves at all. Zellij 0.45.0's flag, on the verbs this adapter uses.
+		 * - **A named `from`**: focus it, split it, then focus back to the pane that was focused before —
+		 *   a real, visible round trip. `--no-focus` is deliberately NOT passed here; see `open`, where
+		 *   passing it would silently split the WRONG pane.
+		 *
+		 * **Written blind, now driven in CI.** There is no zellij on the machine this was written on, so
+		 * `--no-focus` was read out of the v0.45.0 source tree (`zellij-utils/src/cli.rs`, the
+		 * `no_focus: bool` field on `CliAction::NewPane`/`NewTab`) rather than off a live `--help`. CI's
+		 * live-backends job pins 0.45.0 and runs `mux.zellij.integration.test.ts` against it, where two
+		 * rows assert the CLIENT does not move — one per mechanism above. That is the evidence for this
+		 * boolean. A LOCAL run is not: the suite skips every row when no binary is present and still
+		 * reports green (issue #125).
+		 */
+		opensWithoutStealingFocus: true,
+
 		open(exec, opts) {
 			const at = opts.at ?? 'tab'
 			// `workspace` and `tab` both open a new TAB in the ambient session — the collapse forced by
 			// session-scoped pane ids plus a session-less `MuxTarget` (see the header). tmux makes the
 			// same collapse onto a Window; the one difference is that `workspace` is still reported here.
 			if (at === 'tab' || at === 'workspace') {
-				const args = ['action', 'new-tab', '--cwd', opts.cwd]
+				// `--no-focus` (0.45.0) opens the tab without moving any client — tmux's `new-window -d` and
+				// herdr's `tab create --no-focus`, finally spellable here. A new tab chooses no target, so
+				// this route needs nothing else to leave focus alone.
+				const args = ['action', 'new-tab', '--no-focus', '--cwd', opts.cwd]
 				// `--name` names the tab at birth — native, unlike wezterm's post-birth `set-tab-title`.
 				if (opts.label) args.push('--name', opts.label)
 				// The pane ids standing BEFORE the command, which is what makes the id it reports checkable:
@@ -131,26 +184,73 @@ export function createZellijAdapter(deps: { session?: string | undefined }): Mux
 				return opened
 			}
 			// pane:right / pane:down / pane:float — all three are `new-pane`, which has no target flag
-			// beyond `--tab-id`, so `from` is honored by focusing that pane FIRST. For a split that is the
-			// only way to choose which pane it lands beside; for a float it is how the float lands over the
-			// caller's REGION rather than the one the user is looking at — the same anchor one tier up.
-			// Omitted `from` takes whatever is focused, the backend default the seam documents (never
-			// silently "the caller's pane").
+			// beyond `--tab-id`. That single missing flag is what forks this whole branch in two, because
+			// zellij 0.45.0's `--no-focus` does not merely suppress the new pane's activation: it also
+			// REPLACES how the target is chosen. From the v0.45.0 source (`zellij-server/src/route.rs`,
+			// `new_pane_routing`), a `--no-focus` open resolves its anchor as `--tab-id` if given, else the
+			// pane named by `$ZELLIJ_PANE_ID` — the pane the command was ISSUED from, which the flag's own
+			// help text says out loud — and only failing both, the client's current pane. The focused pane
+			// is not consulted.
+			//
+			// So the two halves of `from` support and `--no-focus` are mutually exclusive here, and it is
+			// not a matter of ordering: focusing a pane and then passing `--no-focus` splits the pane
+			// cyber-mux is RUNNING IN, reports a plausible id for it, and exits 0. That is the silent
+			// wrong-pane failure this adapter is built to refuse, so `--no-focus` is passed only where
+			// there is no target to choose.
+			//
+			// (Impersonating the issuing pane — `ZELLIJ_PANE_ID=<from> zellij action new-pane --no-focus` —
+			// would get both at once, and is not available: `Exec` runs a command and args, with no env, by
+			// construction. Reaching for it would widen the seam every adapter shares to buy one backend an
+			// undocumented internal.)
+			//
+			// The open's BEFORE side (see `openedForPane` — the id zellij prints is only believable once it
+			// names a pane that was not already standing).
+			const before = paneIdSet(exec)
+			// Where focus has to be put back, read BEFORE the move below — the only moment it is the
+			// answer we want. `list-clients`, NOT `list-panes --json`'s `is_focused`, and that is a
+			// correctness fix rather than a preference: `is_focused` is true on MORE THAN ONE record at a
+			// time (a live session marks both the floating plugin pane and the tiled pane beneath it), so
+			// it answers "focused within its layer", not "where the client is". Scanning for the first
+			// `is_focused` record could therefore pick a PLUGIN pane and restore focus onto a pane the
+			// user was never on — a focus move INVENTED by the restore, which is worse than the theft it
+			// exists to undo. `list-clients` names the client's pane directly. Observed live and recorded
+			// by `mux.zellij.integration.test.ts`'s `clientPane`, whose parked-client precondition is what
+			// proves this column carries the `terminal_N` form `focus-pane-id` takes.
+			const restoreTo = opts.from ? clientPane(exec) : undefined
+			// `from` is honored by focusing that pane FIRST — still the sole way to choose which pane a
+			// split lands beside, and for a float how it lands over the caller's REGION rather than the one
+			// the user is looking at. That focus move is now UNDONE at the end of this branch rather than
+			// left standing, which is the whole of what changed.
 			if (opts.from) adapter.focus(exec, opts.from)
 			// `--floating` and `--direction` are mutually exclusive by construction: a float sits above the
 			// layout, so there is no side of anything for it to be on. `ratio` is dropped on BOTH paths
 			// here — a tiled split cannot be sized at all (see `canSizeSplits`), and a float has no
 			// original pane whose fraction it could be (see `MuxOpenOptions.ratio`).
 			const placement = at === 'pane:float' ? ['--floating'] : ['--direction', at === 'pane:down' ? 'down' : 'right']
-			const args = ['action', 'new-pane', ...placement, '--cwd', opts.cwd]
+			// `--no-focus` ONLY with no `from` to honor. There it is strictly better than the focus dance
+			// below: nothing moves at any instant, and the anchor it picks — the issuing pane — is a
+			// sharper default than "whatever the user happens to be looking at". That IS a change to this
+			// backend's no-`from` default, and the seam permits it: `MuxOpenOptions.from` specifies that
+			// omitting it means "whatever this backend defaults to" and that the defaults differ per
+			// backend, which is exactly why it tells callers to pass it.
+			const focusFlag = opts.from ? [] : ['--no-focus']
+			const args = ['action', 'new-pane', ...placement, ...focusFlag, '--cwd', opts.cwd]
 			// `--name` names the pane at birth — Zellij can title a pane, unlike wezterm.
 			if (opts.label) args.push('--name', opts.label)
-			// Snapshotted BEFORE the command, for the reason `openedForPane` documents: the id zellij prints
-			// is only believable once it names a pane that was not already standing.
-			const before = paneIdSet(exec)
 			const out = exec('zellij', args)
 			if (out === null) throw new Error(withReason(exec, 'zellij action new-pane failed'))
 			const opened = openedForPane(exec, out.trim(), before, deps.session)
+			// Put focus back where the open found it. Only on the `from` path — the other one never moved
+			// it — and only when a pane actually reported focus.
+			//
+			// `focus-pane-id`, NOT 0.45.0's `focus-last-pane`, and the choice is forced rather than
+			// stylistic. `focus-last-pane` restores the previously-focused pane WITHIN THE ACTIVE TAB
+			// (v0.45.0 `screen.rs` dispatches it under `active_tab_and_connected_client_id!`), and `from`
+			// is free to live in another tab — this adapter's own `focus` exists because zellij pane ids
+			// cross tabs. It also reads a focus history one entry deep, and the sequence here makes two
+			// moves, so even within one tab it would land on `from` rather than on the caller. An explicit
+			// id has neither limit, and it is a primitive already driven against a live 0.44.3.
+			if (restoreTo) exec('zellij', ['action', 'focus-pane-id', restoreTo])
 			runLaunch(adapter, exec, opened, opts.env, opts.launch)
 			return opened
 		},
@@ -437,6 +537,25 @@ function listZellijPanes(exec: Exec): ZellijPane[] {
  */
 function paneIdSet(exec: Exec): ReadonlySet<string> {
 	return new Set(listZellijPanes(exec).map((p) => normalizePaneId(p.id)))
+}
+
+/**
+ * The pane THE CLIENT is on, or `undefined` when nothing answers — the restore target an open that
+ * moved focus has to land back on.
+ *
+ * `zellij action list-clients` prints a header row and then one row per client; the second
+ * whitespace-separated column is the pane id, in the `terminal_N`/`plugin_N` form `focus-pane-id`
+ * accepts. The FIRST client row is taken: this adapter is single-client throughout (`MuxTarget`
+ * carries no client qualifier any more than it carries a session one), and with several attached
+ * there is no "the caller's client" for it to prefer.
+ *
+ * `undefined` on an empty or unparseable answer — a session no client has ever attached to reports
+ * exactly that. Nothing to restore then, and nothing was stolen either, so the caller issues no
+ * focus verb rather than inventing one.
+ */
+function clientPane(exec: Exec): string | undefined {
+	const row = (exec('zellij', ['action', 'list-clients']) ?? '').split('\n')[1]
+	return row?.trim().split(/\s+/)[1] || undefined
 }
 
 /**

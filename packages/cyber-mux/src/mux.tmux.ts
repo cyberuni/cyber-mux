@@ -61,6 +61,19 @@ export const tmuxMuxAdapter: MuxAdapter = {
 	 */
 	canFloatPanes: true,
 
+	/**
+	 * Every route passes `-d`, so no open moves the attached client. tmux is the backend where this
+	 * cost the most to make true: `-d` was already on `new-window`, but `split-window` and `new-pane`
+	 * were issuing it nowhere, and both ACTIVATE what they create. Measured on 3.7c rather than read
+	 * off the man page — a bare `split-window` in a session focused on %0 left %1 active, and a bare
+	 * `new-pane` did the same for the float; with `-d` each left focus on %0 and still printed the new
+	 * id through `-P -F`. So the flag costs the id report nothing, which is what makes it free to add.
+	 *
+	 * There is no focus move to undo on top of that, unlike zellij: `-t` targets the pane to split
+	 * directly, so tmux never has to VISIT a pane to choose it.
+	 */
+	opensWithoutStealingFocus: true,
+
 	open(exec, opts) {
 		// tmux has fewer tiers than herdr: no Workspace level, and "window" is its name for the Tab
 		// concept. So both 'workspace' (own visible space) and 'tab' collapse to a new WINDOW — the
@@ -121,19 +134,26 @@ export const tmuxMuxAdapter: MuxAdapter = {
 			// in 3.7, so the label rides the same post-birth `select-pane -T` rename every other pane
 			// placement already takes below — one spelling, and one that works on 3.7.
 			//
-			// Nothing here suppresses the float's own activation, and nothing needs to. `new-pane` makes
-			// the float the ACTIVE pane of the window it landed in, and tmux refuses to split a float
-			// ("size or position can't split a floating pane"). So the classic hazard this adapter guards
-			// everywhere else — a target-less `split-window` quietly landing on a pane the caller did not
-			// mean — cannot go quiet after a float: the split fails, and the `withReason` throw below
-			// names the command. A loud failure is the wanted behavior, so it is pinned in the integration
-			// suite rather than worked around here.
+			// `-d` suppresses the float's own activation, which a bare `new-pane` performs: it makes the
+			// float the ACTIVE pane of the window it landed in (measured on 3.7c). That activation used to
+			// stand, and it bought one accidental safety property worth naming as it goes — tmux refuses
+			// to split a float ("size or position can't split a floating pane"), so a target-less
+			// `split-window` issued right after one FAILED rather than landing somewhere unintended.
+			//
+			// Losing it costs nothing, because `-d` removes the thing that made the target-less split
+			// land on the float in the first place. Focus is now exactly where it was before the open, so
+			// a later split with no `from` resolves to the pane it would have resolved to had the float
+			// never happened — the backend default the seam documents, rather than a pane the open moved
+			// the user onto. A loud failure was only ever the better of two wrong answers; not moving
+			// focus is the right one. The integration suite pins the new property in the old row's place.
 			const anchor = opts.from ? ['-t', opts.from.id] : []
-			args = ['new-pane', ...anchor, ...env, '-c', opts.cwd, '-P', '-F', format]
+			args = ['new-pane', '-d', ...anchor, ...env, '-c', opts.cwd, '-P', '-F', format]
 		} else if (window) {
 			// `-d` keeps focus on the caller (opens the window in the background) — without it tmux
 			// switches the attached client to the new window, stealing the caller's focus. The returned
-			// pane id and subsequent `send-keys -t` still target the new pane.
+			// pane id and subsequent `send-keys -t` still target the new pane. This was the adapter's
+			// only `-d` for a long time; it is now on all three routes, which is what lets this backend
+			// declare `opensWithoutStealingFocus`.
 			args = ['new-window', '-d', ...env, '-c', opts.cwd, '-P', '-F', format]
 		} else {
 			// `-t` whenever the caller names a pane. Without it tmux does NOT split the calling pane — it
@@ -146,7 +166,11 @@ export const tmuxMuxAdapter: MuxAdapter = {
 			// its own even default.
 			const size = opts.ratio != null ? ['-l', toTmuxSize(opts.ratio)] : []
 			const direction = at === 'pane:down' ? '-v' : '-h'
-			args = ['split-window', direction, ...from, ...size, ...env, '-c', opts.cwd, '-P', '-F', format]
+			// `-d` for `new-window`'s reason one tier down: a bare `split-window` makes the NEW pane the
+			// session's active one (measured on 3.7c — splitting a session focused on %0 left %1 active),
+			// which is the same focus theft `-d` has always suppressed on the window route. `-P -F` still
+			// reports the new pane's id with it, so nothing downstream changes.
+			args = ['split-window', '-d', direction, ...from, ...size, ...env, '-c', opts.cwd, '-P', '-F', format]
 		}
 		// A window takes its name at birth — `-n` also turns tmux's `automatic-rename` off for it, so
 		// the name survives whatever the pane goes on to run. A pane has no such flag; its title is

@@ -880,6 +880,7 @@ describe('cyber-mux/mux — cli-driven library surface', () => {
 			await run(tmuxProgram, ['open', '--at', 'pane:right'])
 			expect(tmuxCalls[0]).toEqual([
 				'split-window',
+				'-d',
 				'-h',
 				'-t',
 				'%3',
@@ -901,7 +902,16 @@ describe('cyber-mux/mux — cli-driven library surface', () => {
 				}),
 			})
 			await run(herdrProgram, ['open', '--at', 'pane:right'])
-			expect(herdrCalls[0]).toEqual(['pane', 'split', 'w3:pA', '--direction', 'right', '--cwd', process.cwd()])
+			expect(herdrCalls[0]).toEqual([
+				'pane',
+				'split',
+				'w3:pA',
+				'--direction',
+				'right',
+				'--cwd',
+				process.cwd(),
+				'--no-focus',
+			])
 			expect(herdrCalls[0]).not.toContain('--current')
 		})
 
@@ -2702,7 +2712,8 @@ describe('spec:cyber-mux/cli/placement', () => {
 		const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec })
 		await run(program, ['open', '--launch', 'claude', '--at', 'pane:down'])
 		expect(calls[0]?.[0]).toBe('split-window')
-		expect(calls[0]?.[1]).toBe('-v') // pane:down maps to a vertical split
+		expect(calls[0]?.[1]).toBe('-d') // every open passes -d, so it never moves the attached client
+		expect(calls[0]?.[2]).toBe('-v') // pane:down maps to a vertical split
 	})
 
 	it('@id:placement-launch-optional', async () => {

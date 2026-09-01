@@ -46,7 +46,8 @@ wezterm" flag the way `$TMUX`/`$HERDR_ENV`/`$RMUX` are: `$WEZTERM_PANE` **is** t
 both the signal and the pane id. Zellij sets `$ZELLIJ` inside any Zellij pane, the same ambient-flag
 shape as `$TMUX`/`$HERDR_ENV`. cmux sets `$CMUX_WORKSPACE_ID` and otty sets `$OTTY_PANE_ID`. These
 hints are **never trusted over ancestry** — an ancestry-verified multiplexer always wins over a stale
-env hint. The Zellij adapter requires Zellij ≥ 0.44.1, the release that added per-pane CLI addressing.
+env hint. The Zellij adapter requires Zellij ≥ 0.45.0 — 0.44 added per-pane CLI addressing, 0.45.0 added the
+`--no-focus` flag every focus-preserving open passes.
 
 ## Self pane
 

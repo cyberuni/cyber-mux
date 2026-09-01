@@ -52,7 +52,7 @@ describe('spec:cyber-mux/mux/placement', () => {
 			// standing, and once after, because new-pane reports only a bare pane id and the tab costs a
 			// separate call. The before read is what makes the reported id checkable rather than trusted.
 			expect(calls[0]).toEqual(['action', 'list-panes', '--json'])
-			expect(calls[1]).toEqual(['action', 'new-pane', '--direction', 'right', '--cwd', '/unit'])
+			expect(calls[1]).toEqual(['action', 'new-pane', '--direction', 'right', '--no-focus', '--cwd', '/unit'])
 			expect(calls[2]).toEqual(['action', 'list-panes', '--json'])
 		})
 
@@ -60,7 +60,7 @@ describe('spec:cyber-mux/mux/placement', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'new-pane': 'terminal_9', 'list-panes': [LIST_NONE, LIST_ONE] })
 			zellijMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:down' })
-			expect(calls[1]).toEqual(['action', 'new-pane', '--direction', 'down', '--cwd', '/unit'])
+			expect(calls[1]).toEqual(['action', 'new-pane', '--direction', 'down', '--no-focus', '--cwd', '/unit'])
 		})
 
 		it('open() reports the ambient session as the workspace when the adapter is bound to one', () => {
@@ -74,7 +74,7 @@ describe('spec:cyber-mux/mux/placement', () => {
 			// new-tab reports the TAB id; the tab's initial pane is the list-panes record carrying it.
 			const exec = fakeExec(calls, { 'new-tab': '2', 'list-panes': [LIST_NONE, LIST_ONE] })
 			const target = zellijMuxAdapter.open(exec, { cwd: '/unit', at: 'tab' })
-			expect(calls[1]).toEqual(['action', 'new-tab', '--cwd', '/unit'])
+			expect(calls[1]).toEqual(['action', 'new-tab', '--no-focus', '--cwd', '/unit'])
 			expect(target).toEqual({ id: 'terminal_9', tab: '2' })
 		})
 
@@ -83,7 +83,7 @@ describe('spec:cyber-mux/mux/placement', () => {
 			const exec = fakeExec(calls, { 'new-tab': '2', 'list-panes': [LIST_NONE, LIST_ONE] })
 			const target = sessionAdapter.open(exec, { cwd: '/unit', at: 'workspace' })
 			// identical to a `tab` open — the collapse forced by session-scoped ids + a session-less target.
-			expect(calls[1]).toEqual(['action', 'new-tab', '--cwd', '/unit'])
+			expect(calls[1]).toEqual(['action', 'new-tab', '--no-focus', '--cwd', '/unit'])
 			expect(target).toEqual({ id: 'terminal_9', tab: '2', workspace: 'my-session' })
 		})
 
@@ -91,29 +91,45 @@ describe('spec:cyber-mux/mux/placement', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'new-tab': '2', 'list-panes': [LIST_NONE, LIST_ONE] })
 			zellijMuxAdapter.open(exec, { cwd: '/unit', at: 'tab', label: 'ledger' })
-			expect(calls[1]).toEqual(['action', 'new-tab', '--cwd', '/unit', '--name', 'ledger'])
+			expect(calls[1]).toEqual(['action', 'new-tab', '--no-focus', '--cwd', '/unit', '--name', 'ledger'])
 		})
 
 		it('open() names the pane at birth with --name — Zellij can title a pane, unlike wezterm', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'new-pane': 'terminal_9', 'list-panes': [LIST_NONE, LIST_ONE] })
 			zellijMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right', label: 'worker' })
-			expect(calls[1]).toEqual(['action', 'new-pane', '--direction', 'right', '--cwd', '/unit', '--name', 'worker'])
+			expect(calls[1]).toEqual([
+				'action',
+				'new-pane',
+				'--direction',
+				'right',
+				'--no-focus',
+				'--cwd',
+				'/unit',
+				'--name',
+				'worker',
+			])
 		})
 
 		it('open() with a `from` focuses that pane first — the only way to choose the split target', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'new-pane': 'terminal_9', 'list-panes': [LIST_NONE, LIST_ONE] })
 			zellijMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right', from: { id: 'terminal_3' } })
-			expect(calls[0]).toEqual(['action', 'focus-pane-id', 'terminal_3'])
-			expect(calls[2]).toEqual(['action', 'new-pane', '--direction', 'right', '--cwd', '/unit'])
+			// Two reads come FIRST, both before the focus move: the pane listing (the open's BEFORE side)
+			// and `list-clients` (where focus has to be put back). The second is only the right answer
+			// while the move has not happened yet. This fake answers `list-clients` with null, so there
+			// is no restore to assert here — `focus-on-open.test.ts` covers that.
+			expect(calls[0]).toEqual(['action', 'list-panes', '--json'])
+			expect(calls[1]).toEqual(['action', 'list-clients'])
+			expect(calls[2]).toEqual(['action', 'focus-pane-id', 'terminal_3'])
+			expect(calls[3]).toEqual(['action', 'new-pane', '--direction', 'right', '--cwd', '/unit'])
 		})
 
 		it('open() drops a ratio — a tiled split is always even', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'new-pane': 'terminal_9', 'list-panes': [LIST_NONE, LIST_ONE] })
 			zellijMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right', ratio: 0.333 })
-			expect(calls[1]).toEqual(['action', 'new-pane', '--direction', 'right', '--cwd', '/unit'])
+			expect(calls[1]).toEqual(['action', 'new-pane', '--direction', 'right', '--no-focus', '--cwd', '/unit'])
 			expect(calls[1]).not.toContain('--width')
 			expect(calls[1]).not.toContain('33')
 		})

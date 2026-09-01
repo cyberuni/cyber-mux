@@ -99,6 +99,28 @@ describe.skipIf(!hasRmux())('spec:cyber-mux/mux', () => {
 			rmuxMuxAdapter.teardown(exec, target)
 		})
 
+		// The declaration's own claim, driven rather than argued: after an open at every placement the
+		// session is still on the pane it started on. `-d` is a claim about what RMUX does with a flag,
+		// which no mocked `Exec` can answer — the unit rows can only prove the flag was spelled.
+		//
+		// `#{pane_active}` off `list-panes` rather than `display-message -p '#{pane_id}'`: this session
+		// is detached by construction (see the harness above), so there is no attached client whose
+		// focus could be read. The active pane is the same fact one layer down, and it is the one a
+		// client would land on.
+		it.each([
+			'tab',
+			'workspace',
+			'pane:right',
+			'pane:down',
+		] as const)('open({ at: %s }) does not move the active pane — backing opensWithoutStealingFocus', (at) => {
+			const before = exec('rmux', ['display-message', '-p', '-t', 'main', '#{pane_id}'])
+			expect(before).toMatch(/^%\d+$/)
+			const opened = rmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at })
+			expect(opened.id).not.toBe(before)
+			expect(exec('rmux', ['display-message', '-p', '-t', 'main', '#{pane_id}'])).toBe(before)
+			rmuxMuxAdapter.teardown(exec, opened)
+		})
+
 		it('listPanes() sees the real pane, cwd and all', () => {
 			const target = rmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
 			const panes = rmuxMuxAdapter.listPanes(exec)

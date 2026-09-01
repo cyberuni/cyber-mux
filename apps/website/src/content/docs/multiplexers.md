@@ -20,6 +20,7 @@ supports and what cyber-mux does when it falls short.
 | Knows the running harness | ✗                   | ✗                       | ✓                       | ✗                       | ✗                       | ✗                       | ✗                       |
 | Size splits           | ✓                       | ✓                       | ✓                       | ✓                       | ✗                       | ✓                       | ✗                       |
 | Floating pane         | ✓ (tmux 3.7+, `new-pane`) | ✗ (refused by name)   | ✗ (refused by name)     | ✗ (refused by name)     | ✓ (`new-pane --floating`) | ✗ (refused by name)   | ✗ (refused by name)     |
+| Opens without stealing focus | ✓ (`-d`)          | ✓ (`-d`)                | ✓ (`--no-focus`)        | ✗                       | ✓ (Zellij 0.45+)        | ✗                       | ✗                       |
 
 ## tmux
 
@@ -28,7 +29,11 @@ Drives [tmux](https://github.com/tmux/tmux) via its CLI (`split-window`, `new-wi
 
 - **No workspace tier.** tmux calls the tab concept a *window* and has nothing above it, so both
   `workspace` and `tab` placements collapse to a new **window** — the finest "own visible space"
-  tmux offers. New windows open with `-d` so spawning never steals the caller's focus.
+  tmux offers.
+- **Never steals focus.** Every creating command passes `-d`: `new-window` always did, and
+  `split-window` and `new-pane` now do too. Without it tmux activates whatever it just created, so a
+  `pane:right` open used to move the attached client onto the new pane. It no longer does, on any
+  placement.
 - **No worktree binding.** tmux has no workspace tier to bind a git worktree to, so it omits the
   optional `worktree` capability; callers fall back to plain git plus a placement-appropriate
   `open()`.
@@ -57,7 +62,10 @@ adapter was built and verified against a live rmux 0.10.0 on **Linux**, and has 
 on Windows or macOS.
 
 - **No workspace tier**, the same as tmux: both `workspace` and `tab` placements collapse to a new
-  **window**, opened with `-d` so it never steals the caller's focus.
+  **window**.
+- **Never steals focus.** `-d` on both creating commands, `new-window` and `split-window`. Verified
+  live on 0.10.0 rather than inherited from the tmux resemblance: a bare `split-window` made the new
+  pane active, and `-d` left the original active while `-P -F` still reported the new id.
 - **No worktree binding.** Like tmux, it has no workspace tier to bind a git worktree to, so it
   omits the optional `worktree` capability; callers fall back to plain git plus a
   placement-appropriate `open()`.
@@ -108,6 +116,9 @@ defensively.
   group needs its parent.
 - **Knows the running harness.** `listPanes` reports each pane's running harness, because herdr knows
   which agent is in each pane.
+- **Never steals focus.** `workspace create`, `tab create`, and `pane split` all pass `--no-focus`.
+  On herdr 0.8.2 the split already left focus alone without the flag; it is passed anyway so the
+  guarantee does not rest on a backend default that a later release could change.
 
 ## WezTerm (alpha)
 
@@ -145,8 +156,10 @@ against — so its gaps are real, spec'd limitations rather than forced parity:
 
 Driven via `zellij action` (`new-pane`, `new-tab`, `write-chars`, `send-keys`, `dump-screen`,
 `focus-pane-id`, `list-panes --json`, `rename-pane`, `rename-tab-by-id`, `close-pane`, …) against
-[Zellij](https://zellij.dev)'s built-in multiplexer. Requires Zellij ≥ 0.44.1, the release that
-added per-pane CLI addressing. Built from the Zellij docs and CHANGELOG rather than empirically — no
+[Zellij](https://zellij.dev)'s built-in multiplexer. Requires Zellij ≥ 0.45.0. Two releases set that floor:
+0.44 added per-pane CLI addressing, without which no faithful adapter is possible, and 0.45.0 added
+`--no-focus`, which every open that has no split target to choose now passes. On an older binary
+that flag is an unknown argument, so the open fails loudly rather than silently stealing focus. Built from the Zellij docs and CHANGELOG rather than empirically — no
 live Zellij binary was available to verify against — so, like WezTerm, its gaps are real, spec'd
 limitations rather than forced parity:
 
@@ -165,6 +178,15 @@ limitations rather than forced parity:
   `rename-tab-by-id` rename an already-open space.
 - **Reports focused pane for real.** `list-panes --json` carries an `is_focused` field per pane, so
   `isPaneFocused` answers `true`/`false` rather than `unknown`.
+- **Opens without stealing focus, from Zellij 0.45.0.** That release added `--no-focus`, which is why
+  the adapter's floor moved from 0.44.1 to 0.45.0. A `tab`/`workspace` open, and a `pane:*` open that
+  names no `from`, pass the flag and move nothing. A `pane:*` open that *does* name a `from` cannot:
+  under `--no-focus` Zellij anchors the split on the pane the command was issued from rather than on
+  the focused one, so passing it would split the wrong pane. That path instead focuses the target,
+  splits it, and then focuses back to the pane that had focus before — a visible round trip, ending
+  where it started. On Zellij < 0.45.0 the open fails loudly with Zellij's own unknown-argument error
+  rather than silently stealing focus. Both mechanisms are asserted against a real Zellij 0.45.0 in
+  CI's live-backends job.
 - **Cannot size a split.** Zellij's tiled splits are always even; sizing a pane requires a floating
   pane, which cyber-mux does not use. A requested `ratio` is dropped and the caller gets Zellij's own
   even split, the same degrade path as a backend with no `canSizeSplits`.

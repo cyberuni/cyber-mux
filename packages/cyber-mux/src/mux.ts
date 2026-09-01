@@ -765,6 +765,37 @@ export interface MuxAdapter {
 	 */
 	readonly canFloatPanes?: boolean | undefined
 	/**
+	 * Whether `open()` leaves the caller's focus where it was. `true` = this backend has a primitive
+	 * for it and **every** route uses it; `false` = the backend's CLI offers none, and an open moves
+	 * the user. A caller driving a pane pool needs to know whether its opens are visible to the human
+	 * watching — three opens that each drag the eye somewhere else is a different product than three
+	 * that appear quietly.
+	 *
+	 * **Declared, like `canSizeSplits` — never a `MuxOpenOptions` flag.** No caller wants the stealing
+	 * behavior, so an option would be a branch every caller writes and none takes. And unlike a float,
+	 * `false` here is not a refusal: an open that moves focus still returns the pane the caller asked
+	 * for, so the honest answer is to say so and let the caller decide, exactly the degrade a ratio
+	 * takes. There is also nothing to emulate with — re-focusing the caller afterward is a SECOND
+	 * visible focus move, not the absence of one — which is why this is normalized at the declaration
+	 * altitude and not at the behavior one.
+	 *
+	 * **REQUIRED, unlike the two capability flags above**, and that is the one place the three differ.
+	 * Their absence has a truthful reading — no `-l` to pass, no float verb to call — so `undefined`
+	 * and `false` mean the same thing and nothing is lost. Here they do not: a new adapter that simply
+	 * never considered focus would read as `undefined`, indistinguishable from one that considered it
+	 * and found no primitive, and a caller cannot tell an unanswered question from a negative answer.
+	 * So the seam takes the adapter author's debt over the caller's ambiguity, the trade `rename`
+	 * already makes.
+	 *
+	 * `true` is a claim about every route `open()` can take — tab, workspace, and each `pane:*`
+	 * placement — including the focus move an adapter makes to CHOOSE a split target. A backend whose
+	 * `new-pane` has no target flag honors `from` by focusing that pane first (zellij, cmux, otty); on
+	 * such a backend `true` requires undoing that move as well, not just suppressing the new pane's
+	 * activation. Suppressing one and not the other is still a focus move, and must be declared
+	 * `false`.
+	 */
+	readonly opensWithoutStealingFocus: boolean
+	/**
 	 * Present only on a backend that binds a git worktree to a workspace (herdr); `undefined` on one
 	 * with no such concept (tmux), where callers fall back to plain git plus `open()`.
 	 */

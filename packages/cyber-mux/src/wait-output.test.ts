@@ -24,6 +24,7 @@ function fakeAdapter(opts: { reads: string[]; alive?: (readCount: number) => boo
 	}
 	const adapter: MuxAdapter = {
 		name: 'fake',
+		opensWithoutStealingFocus: true,
 		open: unused,
 		rename: unused,
 		group: unused,

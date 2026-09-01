@@ -164,6 +164,11 @@ use. Both are reached bound, the same way as the rest of the session (methods ta
 
 - **`mux.canSizeSplits?`** — whether the backend honors `ratio`; `false`/absent means a requested
   ratio degrades to the backend's own even split.
+- **`mux.opensWithoutStealingFocus`** — whether `open()` leaves the caller's focus where it was.
+  Unlike the two flags above this one is **required**, so every adapter answers it: `true` on tmux,
+  herdr, and Zellij (0.45+), `false` on WezTerm, cmux, and otty, whose CLIs offer no way to suppress
+  the focus move. `false` is a degrade, not a refusal — the open still returns the pane you asked
+  for, it just moves the user to it.
 
 ## The raw seam
 

@@ -192,28 +192,48 @@ describe.skipIf(!hasTmux())('spec:cyber-mux/mux', () => {
 			tmuxMuxAdapter.teardown(exec, tiled)
 		})
 
-		// Recorded rather than defended against, because the failure is the behavior we want. `new-pane`
-		// makes the float the ACTIVE pane of the window it landed in, and tmux refuses to split a float
-		// ("size or position can't split a floating pane"). So a target-less split issued while the
-		// client is looking at that window does not silently split the wrong pane — it fails loudly,
-		// through the `withReason` throw `open` already carries. No adapter change; this row is here so
-		// the property cannot quietly stop holding.
+		// This row replaces one that pinned the opposite property, and the swap is the point. A float used
+		// to become the ACTIVE pane of its window, and tmux refuses to split a float ("size or position
+		// can't split a floating pane") — so a target-less split right after one FAILED, which was
+		// recorded here as the behavior we wanted. `new-pane -d` removes the activation, so it no longer
+		// fails; what it does instead is what this row now pins, at the boundary that decides it.
 		//
-		// The float is opened with no `from` ON PURPOSE: that is what puts it in the window the client is
-		// attached to, which is the only arrangement where a target-less split resolves to it at all. A
-		// float anchored elsewhere leaves the active pane untouched, and the split lands where it always
-		// did.
-		it.skipIf(!tmuxHasFloatingPanes())(
-			'a target-less split right after a float fails loudly instead of splitting the wrong pane',
-			() => {
-				const float = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'pane:float' })
-				expect(exec('tmux', ['display-message', '-p', '#{pane_id}'])).toBe(float.id)
-				expect(() => tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'pane:right' })).toThrow(
-					'tmux split-window failed',
-				)
-				tmuxMuxAdapter.teardown(exec, float)
-			},
-		)
+		// The float is opened with no `from` ON PURPOSE, exactly as before: that is what puts it in the
+		// window the client is attached to, the only arrangement where a target-less split could resolve
+		// to it at all. The assertion is that it does not — the client is still on the pane it was on,
+		// and the split that follows lands there, which is the backend default the seam documents rather
+		// than a pane an open dragged the user onto. A loud failure was only ever the better of two wrong
+		// answers.
+		it.skipIf(!tmuxHasFloatingPanes())('a float leaves the client where it was, and a later split lands there', () => {
+			const before = exec('tmux', ['display-message', '-p', '#{pane_id}'])
+			const float = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'pane:float' })
+			// The float exists and is a real float — this is not passing because nothing was created.
+			expect(tmuxMuxAdapter.paneExists(exec, float)).toBe(true)
+			expect(exec('tmux', ['display-message', '-p', '#{pane_id}'])).toBe(before)
+			expect(exec('tmux', ['display-message', '-p', '#{pane_id}'])).not.toBe(float.id)
+			// It resolves to the pane the client was on, so it neither throws nor lands on the float.
+			const split = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'pane:right' })
+			expect(exec('tmux', ['display-message', '-p', '#{pane_id}'])).toBe(before)
+			tmuxMuxAdapter.teardown(exec, split)
+			tmuxMuxAdapter.teardown(exec, float)
+		})
+
+		// The declaration's own claim, driven rather than argued: after an open at every placement the
+		// attached client is on the pane it started on. This is the row that would have caught the hole
+		// the `-d`-less `split-window` left, and it is a real-binary row because `-d` is a claim about
+		// what TMUX does with a flag, which no mocked `Exec` can answer.
+		it.each([
+			'tab',
+			'workspace',
+			'pane:right',
+			'pane:down',
+		] as const)('open({ at: %s }) does not move the attached client — backing opensWithoutStealingFocus', (at) => {
+			const before = exec('tmux', ['display-message', '-p', '#{pane_id}'])
+			const opened = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at })
+			expect(opened.id).not.toBe(before)
+			expect(exec('tmux', ['display-message', '-p', '#{pane_id}'])).toBe(before)
+			tmuxMuxAdapter.teardown(exec, opened)
+		})
 
 		it('teardown() actually kills the real pane', () => {
 			const target = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })

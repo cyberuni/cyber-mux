@@ -21,6 +21,7 @@ function fakeAdapter(
 	let readIndex = 0
 	const adapter: MuxAdapter = {
 		name: 'fake',
+		opensWithoutStealingFocus: true,
 		open: () => {
 			throw new Error('not used')
 		},
