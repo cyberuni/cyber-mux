@@ -1,5 +1,86 @@
 # cyber-mux
 
+## 0.6.0
+
+### Minor Changes
+
+- 8469598: Declare `MuxAdapter.opensWithoutStealingFocus`, and make it true on tmux, rmux, herdr, and Zellij.
+  
+  Opening a pane is not supposed to drag the user somewhere. Nothing on the seam said so, and four
+  routes did not honor it. `open()` now leaves the caller's focus where it found it on tmux, rmux,
+  herdr, and Zellij 0.45+, and every adapter declares which answer it gives.
+  
+  **Behavior changes**
+  
+  - **tmux** passes `-d` on `split-window` and `new-pane` as well as `new-window`. Previously a
+    `pane:right`, `pane:down`, or `pane:float` open moved the attached client onto the new pane;
+    `new-window -d` was the only route that did not. Measured on 3.7c.
+  - **rmux** passes `-d` on `split-window` as well as `new-window`, the same hole tmux had and for the
+    same reason — rmux reimplements tmux's command language. Verified live on 0.10.0, not inferred from
+    the resemblance. It has no `new-pane`, so there is no float route to cover.
+  - **herdr** passes `--no-focus` on `pane split` as well as `workspace create` and `tab create`. On
+    0.8.2 the split already left focus alone, so this changes nothing observable — it is passed so the
+    guarantee does not rest on a backend default.
+  - **Zellij** requires **0.45.0** (up from 0.44.1), the release that added `--no-focus`. A `tab` or
+    `workspace` open, and a `pane:*` open naming no `from`, pass the flag. A `pane:*` open that names a
+    `from` cannot: under `--no-focus` Zellij anchors the split on the pane the command was issued from
+    rather than the focused one, so passing it would split the wrong pane. That path focuses the target,
+    splits it, then focuses back to the pane that had focus. On an older Zellij the open fails loudly
+    with Zellij's own unknown-argument error instead of silently stealing focus.
+  
+  **New seam member**
+  
+  `opensWithoutStealingFocus: boolean` is **required** on `MuxAdapter`, so a third-party adapter must
+  add it. It follows `canSizeSplits` — a declaration the caller reads, not a `MuxOpenOptions` flag —
+  but is required rather than optional because `undefined` here cannot be distinguished from an author
+  who never considered focus. `false` (WezTerm, cmux, otty) is a degrade, not a refusal: the open still
+  returns the pane you asked for, it just moves the user to it.
+  
+  **Zellij users on 0.44.x must upgrade.** The adapter declared `≥ 0.44.1` and now declares `≥ 0.45.0`.
+  A `--no-focus` open on an older binary is an unknown-argument error, so it fails loudly and creates
+  nothing rather than mis-targeting a pane — the same way an old tmux answers `new-pane` with `unknown
+  command`. The adapter version-probes nothing, by design.
+  
+  Zellij's `--no-focus` was written from the v0.45.0 source tree rather than a live binary, and is now
+  driven in CI against a real Zellij 0.45.0.
+- dc2d3f0: Add `RegionInspector.resizePane` — a pane's size can now be changed after birth, not only chosen at
+  it. `resizePane(exec, target, ratio)` takes the same fraction-of-the-split-region
+  `MuxOpenOptions.ratio` takes, so a caller that opened a split at a ratio restores it with the same
+  number.
+  
+  Implemented on tmux, rmux and herdr, and verified against live binaries (tmux 3.7c, rmux 0.10.0,
+  herdr 0.8.2). It rides the existing optional `regions` capability rather than a new `canResizePanes`
+  declaration, because a ratio is not a primitive any backend has: every one of them needs the region's
+  current geometry to turn it into its own resize argument, which is exactly what `regions` reports —
+  so a backend that reports rects answers the member for free. wezterm, zellij, cmux and otty do not
+  report geometry and so refuse by name with the new `PaneResizeUnsupportedError`, raised by the new
+  `derivePaneResize` orchestrator.
+- c498513: Add an rmux backend
+  
+  `cyber-mux` now drives [rmux](https://github.com/Helvesec/rmux), an async Rust reimplementation of
+  the tmux command language, alongside tmux, herdr, WezTerm, Zellij, cmux and otty. rmux runs natively
+  on Linux, macOS and Windows — it is the first backend that runs natively on Windows.
+  
+  The adapter realizes the existing `MuxAdapter` contract plus `RegionInspector`, with no seam change:
+  placements, naming, workspace grouping, reads, waits, focus and region geometry all work, and
+  splits can be sized. Detection recognizes rmux through `$RMUX` and `$RMUX_PANE`, through an
+  `rmux-daemon` process ancestor, and through the explicit `CYBER_MUX=rmux` override.
+  
+  One capability is genuinely absent: rmux has no floating panes. `new-pane` — the tmux 3.7 command
+  `--at pane:float` drives — is not part of rmux's command set, so a float is **refused by name**
+  (`FloatingPanesUnsupportedError`) rather than quietly substituted with a tiled split, exactly as
+  WezTerm, herdr, cmux and otty refuse it. Every other placement is available.
+  
+  **If you use rmux and tmux on the same machine, detection order matters and is now handled.** An
+  rmux pane exports `$TMUX` and `$TMUX_PANE` as well as its own `$RMUX`/`$RMUX_PANE`, for tmux
+  compatibility, and rmux puts a `tmux` shim on `$PATH`. `cyber-mux` therefore asks the rmux question
+  first: a pane carrying both resolves to rmux. Nothing about tmux detection changes.
+  
+  Verified against a live rmux 0.10.0 binary on Linux, including a real-boundary suite
+  (`pnpm --filter cyber-mux test:integration`) that drives the actual binary on a throwaway socket.
+  Not exercised on Windows or macOS — the native-Windows claim is about rmux's own portability, not
+  about a `cyber-mux` run anyone has observed there.
+
 ## 0.5.0
 
 ### Minor Changes
