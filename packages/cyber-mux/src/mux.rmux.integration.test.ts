@@ -403,5 +403,52 @@ describe.skipIf(!hasRmux())('spec:cyber-mux/mux', () => {
 			rmuxMuxAdapter.teardown(exec, target)
 			expect(() => rmuxMuxAdapter.focus(exec, target)).toThrow(/could not be resolved/)
 		})
+		/**
+		 * The round trip the seam's `ratio` promises, against the real binary. This is where the sign
+		 * convention is pinned: `split-window -l` sizes the NEW pane and `resize-pane -x` sizes the
+		 * TARGET, so an adapter that inverted one of them would pass every mocked row and silently size
+		 * the wrong pane here. Run against rmux rather than inherited from the tmux suite — the two
+		 * adapters are copies on purpose, and a copy's verification claim has to be its own.
+		 */
+		it('resizePane() moves the real divider to the ratio asked for, and reads back at that ratio', () => {
+			const regions = rmuxMuxAdapter.regions
+			if (!regions) throw new Error('the rmux adapter must implement regions')
+			const opened = rmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
+			const split = rmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'pane:right', from: opened, ratio: 0.5 })
+
+			regions.resizePane(exec, opened, 0.7)
+			const after = regions.describeRegion(exec, opened)
+			const kept = after.find((p) => p.id === opened.id)!
+			const taken = after.find((p) => p.id === split.id)!
+			// The seam's own definition of what the region reads back at: 1 - second / total, the divider
+			// included in the total.
+			const total = kept.rect.width + taken.rect.width + 1
+			// Within ONE CELL, derived from the region rather than a constant: a cell-based backend can
+			// only land on k/total, and this session is 80 columns wide by harness choice — a fixed
+			// tolerance would encode that width and break at the next one.
+			expect(Math.abs(1 - taken.rect.width / total - 0.7)).toBeLessThanOrEqual(1 / total)
+			// And the ORIGINAL pane is the one that grew — the half a wrong sign convention gets backwards.
+			expect(kept.rect.width).toBeGreaterThan(taken.rect.width)
+		})
+
+		it('resizePane() on the NEW pane sizes that pane, not the one it was split from', () => {
+			const regions = rmuxMuxAdapter.regions
+			if (!regions) throw new Error('the rmux adapter must implement regions')
+			const opened = rmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
+			const split = rmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'pane:right', from: opened, ratio: 0.5 })
+
+			regions.resizePane(exec, split, 0.75)
+			const after = regions.describeRegion(exec, opened)
+			expect(after.find((p) => p.id === split.id)!.rect.width).toBeGreaterThan(
+				after.find((p) => p.id === opened.id)!.rect.width,
+			)
+		})
+
+		it('resizePane() throws on a region rmux reports as a single pane', () => {
+			const regions = rmuxMuxAdapter.regions
+			if (!regions) throw new Error('the rmux adapter must implement regions')
+			const opened = rmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
+			expect(() => regions.resizePane(exec, opened, 0.6)).toThrow(/is the only pane in its region/)
+		})
 	})
 })

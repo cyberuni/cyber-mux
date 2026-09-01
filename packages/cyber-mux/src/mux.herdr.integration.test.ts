@@ -338,4 +338,86 @@ describe.skipIf(!hasHerdr())('spec:cyber-mux/mux', () => {
 			}
 		})
 	})
+	/**
+	 * Pane resize against the real 0.8.2 binary, in its own isolated workspace — this is where herdr's
+	 * `--direction` semantics were ESTABLISHED rather than merely re-asserted: `herdr pane resize
+	 * --help` names the four values and says nothing about what they move, so the rule the adapter
+	 * encodes (right/down raise the enclosing split's ratio, whichever side the `--pane` is on) is only
+	 * true because it was run here.
+	 */
+	describe('herdrMuxAdapter — real herdr boundary, pane resize', () => {
+		let cwd: string
+		let root: { id: string }
+		let split: { id: string }
+		let workspaceId: string | undefined
+
+		beforeAll(() => {
+			cwd = mkdtempSync(join(tmpdir(), 'cyber-mux-itest-'))
+			root = herdrMuxAdapter.open(realExec, { cwd, launch: 'sh', at: 'workspace' })
+			workspaceId = paneLocation(root.id).workspaceId
+			split = herdrMuxAdapter.open(realExec, { cwd, launch: 'sh', at: 'pane:right', from: root, ratio: 0.5 })
+		})
+
+		afterAll(() => {
+			if (workspaceId) {
+				try {
+					execFileSync('herdr', ['workspace', 'close', workspaceId], { stdio: 'ignore' })
+				} catch {
+					// already gone
+				}
+			}
+			rmSync(cwd, { recursive: true, force: true })
+		})
+
+		/**
+		 * The fraction the region actually reads back at, by the seam's own definition (1 - second/total),
+		 * beside the width it is quantized to.
+		 *
+		 * The width is returned, not discarded, because it is the only honest tolerance a row below can
+		 * assert with. A divider sits on a whole COLUMN, so the only ratios this region can hold are
+		 * `k / total`: on a 200-column region the nearest one to 0.4 is 0.4 exactly, and on the 18-column
+		 * region a headless herdr hands out it is 7/18 = 0.3889. A fixed tolerance encodes one terminal
+		 * size and fails at the next — this suite runs at whatever size the machine gives it.
+		 */
+		function liveSplit(): { ratio: number; total: number } {
+			const panes = herdrMuxAdapter.regions!.describeRegion(realExec, root)
+			const first = panes.find((p) => p.id === root.id)!
+			const second = panes.find((p) => p.id === split.id)!
+			const total =
+				Math.max(first.rect.x + first.rect.width, second.rect.x + second.rect.width) -
+				Math.min(first.rect.x, second.rect.x)
+			return { ratio: 1 - second.rect.width / total, total }
+		}
+
+		/** How far a ratio may miss on a region this wide: one cell, the finest move it can make. */
+		function expectWithinOneCell(actual: { ratio: number; total: number }, wanted: number): void {
+			expect(Math.abs(actual.ratio - wanted)).toBeLessThanOrEqual(1 / actual.total)
+		}
+
+		it('resizePane() grows the ORIGINAL pane to the ratio asked for', () => {
+			expectWithinOneCell(liveSplit(), 0.5)
+			herdrMuxAdapter.regions!.resizePane(realExec, root, 0.7)
+			expectWithinOneCell(liveSplit(), 0.7)
+		})
+
+		it('resizePane() on the NEW pane moves the divider the other way — the side is in the delta, not the direction', () => {
+			const before = liveSplit()
+			herdrMuxAdapter.regions!.resizePane(realExec, split, 0.6)
+			const after = liveSplit()
+			expectWithinOneCell(after, 0.4)
+			// The direction, asserted on its own rather than left to the tolerance: growing the RIGHT pane
+			// must move the divider LEFT. On a region too narrow for 0.7 and 0.4 to be more than a cell
+			// apart, the tolerance alone would not tell a move from a no-op.
+			expect(after.ratio).toBeLessThan(before.ratio)
+		})
+
+		it('resizePane() to the ratio the region already reads at sends nothing and moves nothing', () => {
+			const before = liveSplit()
+			herdrMuxAdapter.regions!.resizePane(realExec, root, before.ratio)
+			// Exactly equal, not merely close: the adapter computes the same delta from the same rects,
+			// gets zero, and skips the exec entirely. Anything else means it issued a resize it should not
+			// have.
+			expect(liveSplit().ratio).toBe(before.ratio)
+		})
+	})
 })

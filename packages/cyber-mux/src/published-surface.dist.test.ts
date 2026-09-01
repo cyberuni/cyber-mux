@@ -65,6 +65,7 @@ describe('spec:cyber-mux/library — published surface', () => {
 				'DEFAULT_WAIT_POLL_MS',
 				'FULL_SCROLLBACK_LINES',
 				'FloatingPanesUnsupportedError',
+				'PaneResizeUnsupportedError',
 				'RMUX_TAB_NAME_OPTION',
 				'RMUX_WORKSPACE_GROUP_OPTION',
 				'TMUX_TAB_NAME_OPTION',
@@ -76,6 +77,9 @@ describe('spec:cyber-mux/library — published surface', () => {
 				'createWeztermAdapter',
 				'createZellijAdapter',
 				'currentPane',
+				// The pane-resize orchestrator, beside `refuseFloatingPane` and for its reason: an out-of-tree
+				// caller gates on the capability through one spelling of the refusal rather than its own.
+				'derivePaneResize',
 				'herdrMuxAdapter',
 				'isReadTruncated',
 				'isStaged',

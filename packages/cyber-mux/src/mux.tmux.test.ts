@@ -1107,3 +1107,74 @@ describe('tmuxMuxAdapter — wait-output by polling', () => {
 		).rejects.toThrow(/no longer exists/)
 	})
 })
+
+describe('tmuxMuxAdapter — pane resize', () => {
+	/**
+	 * `resizePane` rides the same optional `regions` object — bind it once, so a member that goes
+	 * missing fails loudly here rather than silently skipping the cases below.
+	 */
+	const resizePane = tmuxMuxAdapter.regions?.resizePane
+	if (!resizePane) throw new Error('the tmux adapter must implement resizePane')
+
+	// The same 3-pane 200x50 window, captured from a live 3.7c: %0 full-height on the left, %1 over %2
+	// on the right. 120 + 79 = 199 rather than 200 because tmux eats a column for the divider — the
+	// arithmetic below has to put it back, which is the whole reason this fixture is not tidied.
+	const RESIZE_OUT = [
+		'%0\t0\t0\t120\t50\t/repo\tzeta\tzeta',
+		'%1\t121\t0\t79\t35\t/repo\tzeta\tzeta',
+		'%2\t121\t36\t79\t14\t/repo\tzeta\tzeta',
+	].join('\n')
+
+	it('resizePane() sizes the pane in CELLS on its own split’s axis, not in window percent', () => {
+		const calls: string[][] = []
+		const exec = fakeExec(calls, { 'list-panes': RESIZE_OUT, 'resize-pane': '' })
+		resizePane(exec, { id: '%0' }, 0.6)
+		// 0.6 of the 200-column region leaves the far side round(0.4 * 200) = 80, and the divider takes
+		// one more, so the target keeps 119. A percentage would have been read against the WINDOW, which
+		// is the same number here only because this split IS the window.
+		expect(calls[1]).toEqual(['resize-pane', '-t', '%0', '-x', '119'])
+	})
+
+	it('resizePane() uses -y on a stacked split, measured against that split’s region only', () => {
+		const calls: string[][] = []
+		const exec = fakeExec(calls, { 'list-panes': RESIZE_OUT, 'resize-pane': '' })
+		resizePane(exec, { id: '%1' }, 0.7)
+		// %1's split is the inner one — 50 rows tall, not 200 columns wide. round(0.3 * 50) = 15 for %2,
+		// one row for the divider, 34 for %1.
+		expect(calls[1]).toEqual(['resize-pane', '-t', '%1', '-y', '34'])
+	})
+
+	it('resizePane() sizes the SECOND side directly, with no divider subtraction', () => {
+		const calls: string[][] = []
+		const exec = fakeExec(calls, { 'list-panes': RESIZE_OUT, 'resize-pane': '' })
+		resizePane(exec, { id: '%2' }, 0.3)
+		expect(calls[1]).toEqual(['resize-pane', '-t', '%2', '-y', '15'])
+	})
+
+	// The property a caller restoring a drifted layout depends on: describe a region, resize to the
+	// ratio it just reported, and the pane must not move. It holds only because the write goes through
+	// the same complement definition (`1 - second / total`) the read derives — the other formula is off
+	// by exactly the divider tmux ate.
+	it('resizePane() is a no-op at the ratio describeRegion just reported', () => {
+		const calls: string[][] = []
+		const exec = fakeExec(calls, { 'list-panes': RESIZE_OUT, 'resize-pane': '' })
+		resizePane(exec, { id: '%0' }, 0.605)
+		expect(calls[1]).toEqual(['resize-pane', '-t', '%0', '-x', '120'])
+	})
+
+	it('resizePane() refuses a ratio outside (0, 1) rather than rendering a broken size', () => {
+		const exec = fakeExec([], { 'list-panes': RESIZE_OUT, 'resize-pane': '' })
+		expect(() => resizePane(exec, { id: '%0' }, 0)).toThrow(/ratio must be strictly between 0 and 1/)
+		expect(() => resizePane(exec, { id: '%0' }, 1.5)).toThrow(/ratio must be strictly between 0 and 1/)
+	})
+
+	it('resizePane() throws on a lone pane — there is no split to take a fraction of', () => {
+		const exec = fakeExec([], { 'list-panes': '%0\t0\t0\t200\t50\t/repo\tzeta\tzeta' })
+		expect(() => resizePane(exec, { id: '%0' }, 0.6)).toThrow(/is the only pane in its region/)
+	})
+
+	it('resizePane() throws when tmux’s own resize fails', () => {
+		const exec = fakeExec([], { 'list-panes': RESIZE_OUT })
+		expect(() => resizePane(exec, { id: '%0' }, 0.6)).toThrow(/tmux could not resize pane %0/)
+	})
+})

@@ -4,6 +4,7 @@ import { refuseFloatingPane } from './floating.ts'
 import type { LivePane, MuxAdapter, MuxReadOptions, MuxTarget, OpenedPane, RegionPane, WorkspaceTab } from './mux.ts'
 import { assertRatioInRange } from './ratio.ts'
 import { isReadTruncated } from './read-window.ts'
+import { type EnclosingSplit, enclosingSplit } from './region-tree.ts'
 import { pollForOutput } from './wait-output.ts'
 
 /**
@@ -385,6 +386,32 @@ export const rmuxMuxAdapter: MuxAdapter = {
 		},
 
 		/**
+		 * `resize-pane -x/-y` in CELLS, never `-x <percent>`. rmux reads a percentage against the WINDOW
+		 * exactly as tmux does, while the seam's `ratio` is a fraction of the pane's own SPLIT REGION —
+		 * the same number only in a two-pane window, so a nested layout would be sized against the wrong
+		 * denominator. PROBED rather than inherited from the tmux adapter, because that is this backend's
+		 * rule (see the header): on rmux 0.10.0 in a 200-column window, `-x 60%` produced a 120-column
+		 * pane — 60% of the window — with the region's own split at a different fraction entirely.
+		 *
+		 * Verified against a live rmux 0.10.0 (`mux.rmux.integration.test.ts`): `-x` sizes the target pane
+		 * and its sibling absorbs the difference, `-y` does the same on a stacked split, and a resize
+		 * inside a nested region leaves the outer divider where it was — every case matching tmux 3.7c's
+		 * behavior number for number, which is what makes the shared `toRmuxResizeCells` arithmetic honest
+		 * rather than assumed.
+		 */
+		resizePane(exec, target, ratio) {
+			const panes = describeRmuxRegion(exec, target.id)
+			const split = enclosingSplit(panes, target.id)
+			if (!split) {
+				throw new Error(`rmux pane ${target.id} is the only pane in its region — there is no split to resize`)
+			}
+			const flag = split.direction === 'right' ? '-x' : '-y'
+			if (exec('rmux', ['resize-pane', '-t', target.id, flag, String(toRmuxResizeCells(split, ratio))]) === null) {
+				throw new Error(withReason(exec, `rmux could not resize pane ${target.id}`))
+			}
+		},
+
+		/**
 		 * rmux has NO workspace tier — `workspace` and `tab` both collapse onto a Window — so a workspace
 		 * is not a fact this backend holds. What it holds is the grouping TAG the walk wrote
 		 * (`MuxOpenOptions.workspaceGroup`, stored in a window user option), so the read here is
@@ -538,6 +565,25 @@ function splitOpenReport(out: string, command: string): [string, string] {
 	const [pane, windowId] = out.split('\t')
 	if (!pane || !windowId) throw new Error(`rmux ${command} did not report the new pane's id and window id`)
 	return [pane, windowId]
+}
+
+/**
+ * The seam's `ratio` as the CELL count `resize-pane -x/-y` wants for the target pane — rmux's copy of
+ * the tmux adapter's `toTmuxResizeCells`, for the header's reason.
+ *
+ * Computed through the SECOND side rather than the target directly, because that is the definition
+ * `ratioOf` (`region-tree.ts`) reads a live split back with, and a write that used the other formula
+ * would not round-trip: rmux eats a column for the divider exactly as tmux does (probed on 0.10.0 —
+ * a 200-column window splits into 119 + 80), so `first / (first + second)` and `1 - second / total`
+ * disagree by that column. The divider is MEASURED rather than assumed to be one, so nothing here
+ * depends on that probe staying true.
+ */
+function toRmuxResizeCells(split: EnclosingSplit, ratio: number): number {
+	assertRatioInRange(ratio)
+	const second = Math.round((split.targetIsFirst ? 1 - ratio : ratio) * split.extent)
+	if (!split.targetIsFirst) return second
+	const divider = split.extent - split.targetExtent - split.otherExtent
+	return split.extent - divider - second
 }
 
 /**

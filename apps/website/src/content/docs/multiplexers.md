@@ -21,6 +21,7 @@ supports and what cyber-mux does when it falls short.
 | Size splits           | ✓                       | ✓                       | ✓                       | ✓                       | ✗                       | ✓                       | ✗                       |
 | Floating pane         | ✓ (tmux 3.7+, `new-pane`) | ✗ (refused by name)   | ✗ (refused by name)     | ✗ (refused by name)     | ✓ (`new-pane --floating`) | ✗ (refused by name)   | ✗ (refused by name)     |
 | Opens without stealing focus | ✓ (`-d`)          | ✓ (`-d`)                | ✓ (`--no-focus`)        | ✗                       | ✓ (Zellij 0.45+)        | ✗                       | ✗                       |
+| Resize an open pane   | ✓                       | ✓                       | ✓                       | ✗ (refused by name)     | ✗ (refused by name)     | ✗ (refused by name)     | ✗ (refused by name)     |
 
 ## tmux
 
@@ -39,6 +40,9 @@ Drives [tmux](https://github.com/tmux/tmux) via its CLI (`split-window`, `new-wi
   `open()`.
 - **No harness awareness.** tmux cannot say which agent runs in a pane, so `listPanes` leaves
   `harness` unset.
+- **Can resize an open pane.** `resize-pane -x/-y` takes a cell count, so cyber-mux converts the
+  seam's ratio against the pane's own split region rather than sending `-x <percent>`, which tmux
+  reads against the *window* — the same number only when the window holds a single split.
 - `focus` resolves the pane's session and window from `list-panes -a` first, then beams in order:
   `switch-client` → `select-window` → `select-pane`. An unresolvable pane throws rather than issuing
   a false-success beam.
@@ -85,6 +89,10 @@ on Windows or macOS.
 - **Reports region geometry.** `list-panes -t <id> -F '#{pane_left}…'` reports window-relative
   rects with the divider column excluded, so rmux implements the optional `regions` capability and
   `template save` works on it.
+- **Can resize an open pane.** `resize-pane -x/-y` takes a cell count, so cyber-mux converts the
+  seam's ratio against the pane's own split region rather than sending a percentage — rmux reads
+  `-x 60%` against the *window*, exactly as tmux does, which is a different number at any nesting
+  depth. Verified on a live rmux 0.10.0.
 - **No harness awareness and no agent-state feed** — herdr is the only backend with either.
 - `focus` resolves the pane's session and window from `list-panes -a`, then beams
   `switch-client` → `select-window` → `select-pane`, the same sequence as tmux.
@@ -191,7 +199,10 @@ limitations rather than forced parity:
   pane, which cyber-mux does not use. A requested `ratio` is dropped and the caller gets Zellij's own
   even split, the same degrade path as a backend with no `canSizeSplits`.
 - **No region introspection yet.** Pane geometry is deliberately not implemented (a follow-up), so
-  `template save` refuses on Zellij by naming the backend, the same as WezTerm.
+  `template save` refuses on Zellij by naming the backend, the same as WezTerm. Zellij *does* have
+  `zellij action resize`, but it takes a direction and no amount — a nudge of a size it never states —
+  and with no rects to measure against, nothing can converge that on a named fraction. So
+  `resizePane` is refused on Zellij too.
 
 ## The common shape
 
@@ -243,6 +254,8 @@ was available to verify against:
 - **Atomic send-keys.** `pane send-keys` can mix literal text and `key:` tokens in one call — cyber-mux
   composes `sendText` and `sendKeys` from this.
 - **No region introspection.** Pane geometry is not reported, so `template save` refuses on otty.
+  `otty pane resize --right N` exists but counts **cells**, and with no pane positions there is no
+  split extent to take a fraction of, so `resizePane` — which takes a ratio — is refused as well.
 - **macOS/Windows desktop app.**
 
 ## GNU Screen — detected, not driven

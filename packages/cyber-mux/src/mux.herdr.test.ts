@@ -1594,3 +1594,93 @@ describe('herdrMuxAdapter — native wait-output', () => {
 		expect(calls).toEqual([])
 	})
 })
+describe('herdrMuxAdapter — pane resize', () => {
+	const resizePane = herdrMuxAdapter.regions?.resizePane
+	if (!resizePane) throw new Error('the herdr adapter must implement resizePane')
+
+	/**
+	 * A live 0.8.2 capture: a 256-column region split right at 0.5, whose right side is split down at
+	 * 0.5. herdr draws no divider, so each split's two sides add up to its whole extent exactly —
+	 * the opposite of tmux, and the reason neither adapter hard-codes a divider width.
+	 */
+	const LAYOUT = JSON.stringify({
+		result: {
+			layout: {
+				panes: [
+					{ pane_id: 'wK4:p1', rect: { x: 36, y: 1, width: 128, height: 56 } },
+					{ pane_id: 'wK4:p2', rect: { x: 164, y: 1, width: 128, height: 28 } },
+					{ pane_id: 'wK4:p3', rect: { x: 164, y: 29, width: 128, height: 28 } },
+				],
+				// Present and deliberately unread: the parent of `split_1_1` lives only in that id string.
+				splits: [
+					{ direction: 'right', id: 'split_0_root', ratio: 0.5, rect: { x: 36, y: 1, width: 256, height: 56 } },
+					{ direction: 'down', id: 'split_1_1', ratio: 0.5, rect: { x: 164, y: 1, width: 128, height: 56 } },
+				],
+				tab_id: 'wK4:t1',
+				workspace_id: 'wK4',
+			},
+		},
+	})
+	const LIST = JSON.stringify({ result: { panes: [{ pane_id: 'wK4:p1', cwd: '/tmp' }] } })
+	const responses = { 'pane layout': LAYOUT, 'pane list': LIST, 'pane resize': '{}' }
+
+	it('resizePane() sends a SIGNED delta on the split’s current ratio, not the ratio itself', () => {
+		const calls: string[][] = []
+		resizePane(fakeExec(calls, responses), { id: 'wK4:p1' }, 0.6)
+		// The split is at 0.5 and p1 is its first side, so 0.6 is a +0.1 move of the divider.
+		expect(calls).toContainEqual(['pane', 'resize', '--pane', 'wK4:p1', '--direction', 'right', '--amount', '0.1'])
+	})
+
+	it('resizePane() flips the DIRECTION rather than the sign for a shrink', () => {
+		const calls: string[][] = []
+		resizePane(fakeExec(calls, responses), { id: 'wK4:p1' }, 0.4)
+		expect(calls).toContainEqual(['pane', 'resize', '--pane', 'wK4:p1', '--direction', 'left', '--amount', '0.1'])
+	})
+
+	// herdr's `--direction` names where the DIVIDER moves, not which pane grows. So the target's side
+	// is folded into the delta (`1 - ratio` on the second side) and never into the direction: growing
+	// the RIGHT pane to 0.6 moves the divider LEFT.
+	it('resizePane() folds the target’s side into the delta, not into the direction', () => {
+		const pair = JSON.stringify({
+			result: {
+				layout: {
+					panes: [
+						{ pane_id: 'wK4:p1', rect: { x: 36, y: 1, width: 128, height: 56 } },
+						{ pane_id: 'wK4:p2', rect: { x: 164, y: 1, width: 128, height: 56 } },
+					],
+					tab_id: 'wK4:t1',
+					workspace_id: 'wK4',
+				},
+			},
+		})
+		const calls: string[][] = []
+		resizePane(fakeExec(calls, { ...responses, 'pane layout': pair }), { id: 'wK4:p2' }, 0.6)
+		// Growing the RIGHT pane to 0.6 moves the divider LEFT — the split's own ratio drops to 0.4.
+		expect(calls).toContainEqual(['pane', 'resize', '--pane', 'wK4:p2', '--direction', 'left', '--amount', '0.1'])
+	})
+
+	it('resizePane() resolves the direction on the ENCLOSING split’s axis, not the region’s', () => {
+		const calls: string[][] = []
+		resizePane(fakeExec(calls, responses), { id: 'wK4:p3' }, 0.3)
+		// p3 sits in the inner STACKED split, so the axis is up/down. Asking `right` here would walk
+		// herdr past it to the outer split — a resize of something the caller never named.
+		expect(calls).toContainEqual(['pane', 'resize', '--pane', 'wK4:p3', '--direction', 'down', '--amount', '0.2'])
+	})
+
+	it('resizePane() sends nothing at all when the pane is already at the ratio asked for', () => {
+		const calls: string[][] = []
+		resizePane(fakeExec(calls, responses), { id: 'wK4:p1' }, 0.5)
+		expect(calls.some((c) => c[1] === 'resize')).toBe(false)
+	})
+
+	it('resizePane() refuses a ratio outside (0, 1) rather than rendering a broken amount', () => {
+		expect(() => resizePane(fakeExec([], responses), { id: 'wK4:p1' }, 1)).toThrow(
+			/ratio must be strictly between 0 and 1/,
+		)
+	})
+
+	it('resizePane() throws when herdr’s own resize fails', () => {
+		const exec = fakeExec([], { 'pane layout': LAYOUT, 'pane list': LIST })
+		expect(() => resizePane(exec, { id: 'wK4:p1' }, 0.6)).toThrow(/herdr could not resize pane wK4:p1/)
+	})
+})
