@@ -8,8 +8,10 @@ import {
 	outcomeOf,
 	project,
 	type RunnerDeps,
+	reportFor,
 	type SuiteReport,
 	suitesFor,
+	type VitestReport,
 	verify,
 	vitestArgs,
 } from './test-adapter.ts'
@@ -51,8 +53,13 @@ describe('spec:cyber-mux/conformance', () => {
 		installed?: readonly string[]
 		reports?: Record<string, SuiteReport>
 		inside?: PaneMux | undefined
+		/** The vitest report `--report=<file>` finds at whatever path it is handed. */
+		vitest?: VitestReport
+		/** What reading that path throws instead, for the unreadable-report branch. */
+		readError?: Error
 	}) {
 		const runs: { name: string; suites: readonly string[] }[] = []
+		const reads: string[] = []
 		const lines: string[] = []
 		const deps: RunnerDeps = {
 			listSrcFiles: () => opts.files ?? REAL_FILES,
@@ -62,10 +69,30 @@ describe('spec:cyber-mux/conformance', () => {
 				return opts.reports?.[name] ?? PASSING
 			},
 			insideMux: () => opts.inside,
+			readReport: (path) => {
+				reads.push(path)
+				if (opts.readError) throw opts.readError
+				return opts.vitest ?? {}
+			},
 		}
 		const run = (...argv: string[]) => main(argv, deps, (line) => lines.push(line))
-		return { deps, runs, lines, run, out: () => lines.join('\n') }
+		return { deps, runs, reads, lines, run, out: () => lines.join('\n') }
 	}
+
+	/**
+	 * A vitest JSON report, written the way vitest writes one: absolute paths, one entry per test
+	 * carrying its status. `'skipped'` is what a `describe.skipIf` gate produces — the exact shape
+	 * that makes vitest exit 0 having verified nothing.
+	 */
+	const vitestReport = (files: Record<string, readonly string[]>): VitestReport => ({
+		testResults: Object.entries(files).map(([name, statuses]) => ({
+			name: `/home/runner/work/cyber-mux/packages/cyber-mux/src/${name}`,
+			assertionResults: statuses.map((status) => ({ status })),
+		})),
+	})
+
+	const executed = (n: number) => Array.from({ length: n }, () => 'passed')
+	const allSkipped = (n: number) => Array.from({ length: n }, () => 'skipped')
 
 	const adapter = (over: Partial<Adapter> = {}): Adapter => ({
 		name: 'tmux',
@@ -104,6 +131,7 @@ describe('spec:cyber-mux/conformance', () => {
 			},
 			runSuites: () => PASSING,
 			insideMux: () => undefined,
+			readReport: () => ({}),
 		})
 		expect(probed).toContain('cmux')
 	})
@@ -246,6 +274,145 @@ describe('spec:cyber-mux/conformance', () => {
 		expect(out()).toContain('--all')
 	})
 
+	// ── test-adapter --report=<file> — the same rule, over a run that already happened ──
+	//
+	// This is the shape CI runs. `live-backends` keeps `pnpm cm test:integration` — one vitest
+	// process over every suite, including `scripts/`, which no adapter owns and `--all` therefore
+	// never runs — and then hands the JSON report here. Nothing about coverage is redefined: the
+	// counts arrive from a file rather than a spawn, and `verify`/`outcomeOf` decide as before.
+
+	// The discovery fixture above deliberately leaves wezterm and zellij suiteless, which is a `gap`
+	// and a different question from this one. These rows are about a suite that EXISTS and did or did
+	// not execute, so they run against the world `live-backends` actually installs: four adapters,
+	// every one of them carrying a real-boundary suite.
+	const CI_FILES = [...REAL_FILES, 'mux.wezterm.integration.test.ts', 'mux.zellij.integration.test.ts']
+	const CI_INSTALLED = ['tmux', 'herdr', 'wezterm', 'zellij']
+
+	const CI_RUN = {
+		'mux.tmux.integration.test.ts': executed(18),
+		'mux.herdr.integration.test.ts': executed(16),
+		'cli.herdr.integration.test.ts': executed(1),
+		'mux.wezterm.integration.test.ts': executed(7),
+		'mux.zellij.integration.test.ts': executed(15),
+	}
+
+	it('conformance-report-folds-a-run-per-adapter', () => {
+		const report = vitestReport({
+			'mux.herdr.integration.test.ts': ['passed', 'failed', 'skipped'],
+			'cli.herdr.integration.test.ts': ['passed'],
+			'mux.tmux.integration.test.ts': executed(18),
+		})
+		// herdr's two suites fold together, and tmux's eighteen stay out of them.
+		expect(reportFor(report, suitesFor(REAL_FILES, 'herdr'))).toEqual({
+			collected: 4,
+			passed: 2,
+			failed: 1,
+			skipped: 1,
+		})
+	})
+
+	it('conformance-report-matches-a-suite-on-any-separator', () => {
+		// The report names an absolute path from whatever platform produced it; `suites` names a bare
+		// file name. Matching on the file name is what lets a Windows report be read anywhere.
+		const report: VitestReport = {
+			testResults: [
+				{
+					name: 'D:\\a\\cyber-mux\\packages\\cyber-mux\\src\\mux.tmux.integration.test.ts',
+					assertionResults: [{ status: 'passed' }],
+				},
+			],
+		}
+		expect(reportFor(report, ['mux.tmux.integration.test.ts']).passed).toBe(1)
+	})
+
+	it('conformance-report-passes-when-every-installed-adapter-executed', () => {
+		const { run, runs, reads, out } = harness({
+			files: CI_FILES,
+			installed: CI_INSTALLED,
+			vitest: vitestReport(CI_RUN),
+		})
+		expect(run('--report=/tmp/report.json')).toBe(0)
+		expect(reads).toEqual(['/tmp/report.json'])
+		// The whole point of this mode: the counts come from the file, so vitest is never spawned again.
+		expect(runs).toEqual([])
+		expect(out()).toMatch(/tmux\s+pass — 18 executed/)
+		expect(out()).toMatch(/zellij\s+pass — 15 executed/)
+	})
+
+	it('conformance-report-no-coverage-names-the-adapter-that-executed-nothing', () => {
+		// Issue #125's run, exactly: zellij installed, its suite collected and skipped every test,
+		// vitest exits 0 reporting success. Four passing neighbours do not average it away.
+		const { run, out } = harness({
+			files: CI_FILES,
+			installed: CI_INSTALLED,
+			vitest: vitestReport({ ...CI_RUN, 'mux.zellij.integration.test.ts': allSkipped(13) }),
+		})
+		expect(run('--report=/tmp/report.json')).toBe(1)
+		expect(out()).toMatch(/zellij\s+no-coverage — the suite ran but executed 0 tests \(13 skipped\)/)
+		expect(out()).toMatch(/tmux\s+pass/)
+	})
+
+	it('conformance-report-untouched-suite-is-no-coverage', () => {
+		// An installed adapter whose suite the run never reached at all verified exactly as much as
+		// one whose every test skipped itself, so it gets the same verdict.
+		const { run, out } = harness({
+			files: CI_FILES,
+			installed: CI_INSTALLED,
+			vitest: vitestReport({ ...CI_RUN, 'mux.wezterm.integration.test.ts': [] }),
+		})
+		expect(run('--report=/tmp/report.json')).toBe(1)
+		expect(out()).toMatch(/wezterm\s+no-coverage/)
+	})
+
+	it('conformance-report-leaves-an-uninstalled-adapter-alone', () => {
+		// The local guarantee, and the reason this mode can be demanded in CI without changing what a
+		// developer sees: a machine without zellij skips it, silently, and the run still exits 0. Only
+		// a machine that HAS the binary is asked to have covered it.
+		const { run, out } = harness({
+			files: CI_FILES,
+			installed: ['tmux', 'herdr'],
+			vitest: vitestReport({
+				'mux.tmux.integration.test.ts': executed(18),
+				'mux.herdr.integration.test.ts': executed(16),
+				'cli.herdr.integration.test.ts': executed(1),
+			}),
+		})
+		expect(run('--report=/tmp/report.json')).toBe(0)
+		expect(out()).toMatch(/zellij\s+skip — not installed/)
+		expect(out()).toMatch(/wezterm\s+skip — not installed/)
+	})
+
+	it('conformance-report-is-exempt-from-the-refusal', () => {
+		// It reads a run that already happened, so it drives no multiplexer and endangers no pane.
+		const { run, runs, out } = harness({
+			installed: ['tmux'],
+			inside: 'herdr',
+			vitest: vitestReport({ 'mux.tmux.integration.test.ts': executed(18) }),
+		})
+		expect(run('--report=/tmp/report.json')).toBe(0)
+		expect(out()).not.toContain('refusing to run')
+		expect(runs).toEqual([])
+	})
+
+	it('conformance-report-without-a-file-is-a-usage-error', () => {
+		const { run, reads, out } = harness({ installed: ['tmux'] })
+		expect(run('--report=')).toBe(2)
+		expect(out()).toContain('--report needs the file to read')
+		expect(reads).toEqual([])
+	})
+
+	it('conformance-unreadable-report-is-an-error-not-a-pass', () => {
+		// A report that cannot be read is the one thing this mode must never call a pass — it is the
+		// same "nothing was verified" the tool exists to refuse, arriving one step earlier.
+		const { run, out } = harness({
+			installed: ['tmux'],
+			readError: new Error('ENOENT: no such file or directory'),
+		})
+		expect(run('--report=/tmp/missing.json')).toBe(1)
+		expect(out()).toContain('cannot read the vitest report at /tmp/missing.json')
+		expect(out()).toContain('ENOENT')
+	})
+
 	// ── Refusing to run from inside a multiplexer ──
 
 	it('conformance-refuses-inside-a-multiplexer', () => {
@@ -294,6 +461,7 @@ describe('spec:cyber-mux/conformance', () => {
 			isInstalled: () => true,
 			runSuites: () => PASSING,
 			insideMux: () => undefined,
+			readReport: () => ({}),
 		}
 		expect(verify(adapter({ installed: false }), deps).outcome).toBe('skip')
 		expect(verify(adapter({ suites: [] }), deps).outcome).toBe('gap')
