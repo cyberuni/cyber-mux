@@ -1,4 +1,4 @@
-import { envFallback, shellQuote } from './env-fallback.ts'
+import { launchFallback } from './env-fallback.ts'
 import { type Exec, withReason } from './exec.ts'
 import { refuseFloatingPane } from './floating.ts'
 import type { LivePane, MuxAdapter, MuxReadOptions, OpenedPane } from './mux.ts'
@@ -418,16 +418,14 @@ function openedPane(paneId: string, tabId: string | undefined, window: string | 
  * set natively.
  *
  * `cwd` is passed by the `tab` route ALONE — the one route with no working-directory flag to send
- * (the header says why). It rides as a `cd` on the command line, the same last-resort shape
- * `envFallback` uses for env, and unlike env it needs no command to ride: a tab with a cwd and no
- * launch still lands in the right directory, because the `cd` is sent alone.
+ * (the header says why). The other two routes pass none, and for the same reason: they already set
+ * the directory natively — `pane split --cwd`, and `otty open [path]`'s positional — so a `cd` there
+ * would push into shell history a directory the pane is already in.
  *
- * The other two routes pass none, and for the same reason: they already set the directory natively —
- * `pane split --cwd`, and `otty open [path]`'s positional — so a `cd` there would push into shell
- * history a directory the pane is already in.
- *
- * The env prefix goes INSIDE the `cd`'s `&&`, never outside it: `env K=V cd '/x' && cmd` would set
- * the variables on `cd` and leave `cmd` without them. Same rule, same reason, as `mux.cmux.ts`.
+ * Both compensations — the env prefix and the `cd` — and the order they compose in are
+ * `launchFallback`'s (`env-fallback.ts`); this route hands it what it lost and submits what comes
+ * back. `mux.cmux.ts` calls the same function for the same reason, which is why the rule lives there
+ * and not here.
  */
 function runLaunch(
 	adapter: MuxAdapter,
@@ -437,24 +435,15 @@ function runLaunch(
 	launch: string | undefined,
 	cwd?: string | undefined,
 ) {
-	const fallback = envFallback(env, launch)
+	const fallback = launchFallback(env, launch, cwd)
 	if (fallback.kind === 'dropped') {
 		process.stderr.write(
 			`env (${fallback.variables.join(', ')}) could not be set on this otty pane — ` +
 				'otty has no --env flag on pane split/tab new/open\n',
 		)
-		// env is lost, the directory need not be: a `cd` carries with no command to ride.
-		if (cwd) adapter.submit(exec, target, `cd ${shellQuote(cwd)}`)
-		return
+		// env is lost, the directory need not be: the `cd` still comes back and is still submitted.
 	}
-	const command = cwd ? cdPrefixed(cwd, fallback.command) : fallback.command
-	if (command !== undefined) adapter.submit(exec, target, command)
-}
-
-/** `cd <dir>` on its own, or chained ahead of the command that must run in that directory. */
-function cdPrefixed(cwd: string, command: string | undefined): string {
-	const cd = `cd ${shellQuote(cwd)}`
-	return command === undefined ? cd : `${cd} && ${command}`
+	if (fallback.command !== undefined) adapter.submit(exec, target, fallback.command)
 }
 
 /** otty's documented `--size` range on `pane split`: a whole percent, 10 through 90. */

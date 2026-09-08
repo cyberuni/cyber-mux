@@ -1618,3 +1618,43 @@ Decisions (`142-pane-zoom` — the zoom seam member, issue #142):
   argv. The transfer row was checked against its own failure — deleting tmux's `select-pane` turns
   it red while every mocked row stays green, which is the whole argument for where this was tested.
   ISSUE: https://github.com/cyberuni/cyber-mux/issues/142
+
+Decisions (`173-extract-cd-fallback` — the cwd `cd`-fallback lives with the env prefix):
+
+- **The `cd` fallback moves into `env-fallback.ts` as `launchFallback`, and the two compensations
+  become ONE function** — DECIDED, not two functions side by side. A route that lost both env and cwd
+  must compose them in one order (`cd '/x' && env K=V cmd`, the env INSIDE the `&&`), so any shape
+  that lets a caller apply them separately leaves the ordering at the call site, which is exactly
+  where the second copy got written. `launchFallback(env, launch, cwd)` returns the finished command
+  line; the caller submits it and, on `kind: 'dropped'`, writes its own backend-named warning. The
+  warning text stays per-adapter because it names that backend's missing flags; nothing else does.
+
+- **`kind: 'dropped'` now carries a `command`** — DECIDED, and it is the reason the union was kept
+  rather than flattened. Dropped means ENV was lost for want of a command to ride; the `cd` needs no
+  command, so the directory survives and must still be submitted. Both prior copies got this right by
+  hand (`if (cwd) adapter.submit(…)` before the early `return`); the extracted shape makes it
+  structural instead of remembered. A flat `{ command, droppedEnv }` was rejected: a caller could
+  submit the command and never read `droppedEnv`, silently swallowing the warning — the failure mode
+  this whole module exists to prevent.
+
+- **An empty `cwd` is treated as none.** `MuxOpenOptions.cwd` is a REQUIRED string, so a caller with
+  no directory to name passes `''`. Both copies tested it with a truthiness check; the extraction
+  keeps that rather than `cwd === undefined`, which would emit `cd ''`.
+
+- **No other adapter silently drops `cwd`** — the issue's "while you are there" check, run over every
+  creating route in all seven adapters and answered from the SOURCE, not from a docs page. tmux
+  (`new-pane`/`new-window`/`split-window` `-c`), rmux (`new-window`/`split-window` `-c`), herdr
+  (`workspace create`/`tab create`/`pane split --cwd`), zellij (`new-tab`/`new-pane --cwd`), wezterm
+  (`cli spawn`/`spawn --new-window`/`split-pane --cwd`), cmux's `workspace`/`new-surface` and otty's
+  `open` positional and `pane split --cwd` all pass it natively; cmux `new-pane` and otty `tab new`
+  are the two fallback routes and are now the two callers of `launchFallback`. There is no third
+  route to wire, and no route that accepts a cwd and discards it. This is the answer as of this
+  commit — a NEW adapter, or a new route on an existing one, has to answer it again.
+
+- **Pure refactor, proven by mutation rather than asserted.** Behavior is unchanged and no changeset
+  was added. Three mutations of the extracted function were each run and each went red: env moved
+  OUTSIDE the `&&` (5 failures — the new unit row plus both adapters' argv rows), the `cd` withheld on
+  the dropped-env path (2), and the shell-quote removed (10). Nothing was driven live: cmux and otty
+  have no binary on any CI runner (#128), which is why both call sites are pinned by mocked-`Exec`
+  argv assertions and why those assertions are what the mutations had to break.
+  ISSUE: https://github.com/cyberuni/cyber-mux/issues/173
