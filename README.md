@@ -1,5 +1,11 @@
 # cyber-mux
 
+[![npm version](https://img.shields.io/npm/v/cyber-mux.svg)](https://www.npmjs.com/package/cyber-mux)
+[![npm downloads](https://img.shields.io/npm/dm/cyber-mux.svg)](https://www.npmjs.com/package/cyber-mux)
+[![release](https://github.com/cyberuni/cyber-mux/actions/workflows/release.yml/badge.svg)](https://github.com/cyberuni/cyber-mux/actions/workflows/release.yml)
+[![docs](https://img.shields.io/badge/docs-cyberuni.github.io-blue)](https://cyberuni.github.io/cyber-mux/)
+[![license](https://img.shields.io/npm/l/cyber-mux.svg)](https://www.npmjs.com/package/cyber-mux)
+
 Cross-multiplexer pane control for AI-agent tooling. One contract over terminal multiplexers
 (**tmux**, **herdr**) — open, send, read, focus, and close panes without caring which multiplexer
 you are inside.
