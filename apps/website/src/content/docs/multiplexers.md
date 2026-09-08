@@ -15,10 +15,10 @@ supports and what cyber-mux does when it falls short.
 | --------------------- | ----------------------- | ----------------------- | ----------------------- | ----------------------- | ----------------------- | ----------------------- | ----------------------- |
 | Workspace tier        | ✗ (collapses to window) | ✗ (collapses to window) | ✓                       | ✓ (a real Window/Workspace split) | ✗ (placement collapses to tab, but occupancy is reported) | ✓ (Window/Workspace) | ✓ (Window) |
 | Worktree binding      | ✗                       | ✗                       | ✓                       | ✗                       | ✗                       | ✗                       | ✗                       |
-| Name a pane           | —                       | —                       | ✓                       | ✗ (throws / warns)      | ✓                       | ✓                       | ✗ (throws / warns)      |
+| Name a pane           | —                       | —                       | ✓                       | ✗ (throws / warns)      | ✓                       | ✓ (names its surface)   | ✗ (throws / warns)      |
 | Report focused pane   | best-effort             | best-effort             | best-effort             | ✗ (always `unknown`)    | ✓ (`list-panes --json`) | ✓                       | ✓                       |
 | Knows the running harness | ✗                   | ✗                       | ✓                       | ✗                       | ✗                       | ✗                       | ✗                       |
-| Size splits           | ✓                       | ✓                       | ✓                       | ✓                       | ✗                       | ✓                       | ✓ (`--size`, 10–90%)    |
+| Size splits           | ✓                       | ✓                       | ✓                       | ✓                       | ✗                       | ✗                       | ✓ (`--size`, 10–90%)    |
 | Floating pane         | ✓ (tmux 3.7+, `new-pane`) | ✗ (refused by name)   | ✗ (refused by name)     | ✗ (refused by name)     | ✓ (`new-pane --floating`) | ✗ (refused by name)   | ✗ (refused by name)     |
 | Opens without stealing focus | ✓ (`-d`)          | ✓ (`-d`)                | ✓ (`--no-focus`)        | ✗                       | ✓ (Zellij 0.45+)        | ✗                       | ✗                       |
 | Resize an open pane   | ✓                       | ✓                       | ✓                       | ✗ (refused by name)     | ✗ (refused by name)     | ✗ (refused by name)     | ✗ (refused by name)     |
@@ -232,15 +232,17 @@ unreadable focus state — is reported as *unknown*, never a false negative.
 
 ## cmux (alpha)
 
-Driven via `cmux` CLI (`new-pane`, `new-surface`, `new-workspace`, `send`, `send-key`, `read-screen`,
-`focus-panel`, `close-surface`, `list-panes`, …) against [cmux](https://cmux.com), a Ghostty-based
-macOS terminal built for AI coding agents.
+Driven via `cmux` CLI (`new-pane`, `new-surface`, `workspace create`, `send`, `send-key`,
+`read-screen`, `focus-panel`, `close-surface`, `list-panels`, `rename-tab`, …) against
+[cmux](https://cmux.com), a Ghostty-based macOS terminal built for AI coding agents.
 
-**Not verified against a live binary as of 2026-09-06** — built from the cmux docs and CLI
-reference. cmux is a macOS GUI app, so CI's Linux `live-backends` runner has none to drive: there is
-no cmux row in that job and no `mux.cmux.integration.test.ts`. Unlike the WezTerm and Zellij sections
-above, nothing here names a version it was driven against. Its gaps are still real, spec'd
-limitations rather than forced parity, but they are docs claims awaiting a real boundary:
+**Not verified against a live binary as of 2026-09-08** — read off cmux's own Swift source
+(`manaflow-ai/cmux` at commit `71eb616d`): the CLI's argument parser, its own verb inventory, the
+server-side payload builders, and its `docs/cli-contract.md`. cmux is a macOS GUI app, so CI's Linux
+`live-backends` runner has none to drive: there is no cmux row in that job and no
+`mux.cmux.integration.test.ts`. Unlike the WezTerm and Zellij sections above, nothing here names a
+version it was driven against. A source read is stronger than the docs read this section used to rest
+on, and it is still not a verification:
 
 - **Has a real workspace tier.** cmux's hierarchy is Window → Workspace → Pane → Surface, where a
   **Surface** is the terminal unit (a tab within a pane). `--at workspace` maps to a new workspace;
@@ -256,13 +258,26 @@ limitations rather than forced parity, but they are docs claims awaiting a real 
   calls for the same id open nothing.
 - **Never binds a git worktree.** Its CLI has no `worktree` subcommand or concept of one, so — like
   WezTerm and Zellij — it falls back to plain git plus a placement-appropriate `open()`.
-- **No `--env` flag on any space-creating command.** Every cmux open takes the same
-  command-prefix-or-warn fallback as WezTerm and Zellij.
-- **Can name a pane/surface.** `rename-surface` and `rename-pane` rename an already-open space; no
-  birth flag, so naming is always post-birth.
-- **Reports focused surface.** `list-panes --json` carries an `is_focused` field per surface, so
+- **Env is native at the workspace tier, and not adopted yet.** `workspace create` takes a repeatable
+  `--env KEY=VALUE` (and `--env-file`) that later panes and surfaces in that workspace inherit;
+  `new-surface` and `new-pane` take none. Every open still takes the same command-prefix-or-warn
+  fallback as WezTerm and Zellij — swapping a working compensation for a native flag would change
+  behavior on source-only evidence, so it waits for a real boundary
+  ([#132](https://github.com/cyberuni/cyber-mux/issues/132)).
+- **Names a surface, never a pane.** `rename-tab --surface <id> --title <text>` is the only rename in
+  reach: cmux has no pane-rename verb at any layer, because a pane is a geometric container with no
+  name. A `--label` on a split therefore names the split's surface. A **workspace** is the exception
+  and is named at birth, by `workspace create --name`.
+- **Reports focused surface.** `list-panels --json` carries a `focused` field per surface, so
   `isPaneFocused` answers `true`/`false` rather than `unknown`.
-- **Can size a split.** `new-pane --size` sizes the new pane; `ratio` is inverted (same as tmux).
+- **Cannot size a split.** `new-pane` has no size flag, and `resize-pane` is cell-based rather than
+  fractional, so a `ratio` degrades to cmux's own even split.
+- **Cannot set a split's directory natively.** `new-surface` and `workspace create` both take `--cwd`;
+  `new-pane` does not. A `pane:*` open carries the directory as a `cd` on the command line instead —
+  a shell-level cd, so it lands in that surface's shell history and means nothing in a non-shell
+  surface.
+- **Reports no working directory in the listing.** A surface row carries the directory it was
+  *created* with, not where its shell is, so `LivePane.cwd` is absent on cmux rather than stale.
 - **No region introspection.** Pane geometry is not reported by the CLI, so `template save` refuses
   on cmux by naming the backend.
 - **macOS only** (cmux is a native Swift/AppKit app).

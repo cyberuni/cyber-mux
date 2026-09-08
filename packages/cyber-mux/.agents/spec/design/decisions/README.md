@@ -1312,3 +1312,62 @@ Decisions (`worktree-landed-signals` — issue #151, squash-merge detection in w
   should not carry the caller's name in any case. The integration suite now drives the library through
   an `Exec` with every ambient identity STRIPPED, so the layer can never again pass for a reason that
   lives in the developer's global gitconfig rather than in the code.
+
+Decisions (`132-cmux-broken-members` — six `MuxAdapter` members that could not work on cmux, issue #132):
+
+- **The six were re-derived against cmux's source, not accepted from the issue.** Read 2026-09-08 from
+  `manaflow-ai/cmux` at `71eb616d6f3fb4dcc707b206e08752c297917e02` (2026-09-08, `main`) — the CLI
+  dispatch and per-command parsers in `CLI/cmux.swift`, the CLI's own verb inventory in
+  `CLI/CMUXCLI+CommandSuggestions.swift`, the socket payload builders under
+  `Packages/macOS/CmuxControlSocket/` and `Sources/`, and `docs/cli-contract.md`. **Nothing was run
+  against a binary** — cmux is macOS-GUI-only and this machine is WSL2 Linux, so no claim here reaches
+  the bar `mux.tmux.ts`/`mux.herdr.ts` meet; #128 still tracks the missing real-boundary suite. The
+  issue's own read was at `525352e`; every defect below was re-confirmed at the newer commit rather
+  than carried over.
+
+- **Confirmed and fixed.** `new-pane` takes only `--type --direction --url --profile --placement
+  --focus --workspace --window` and validates no unknown flag (`cmux.swift:7263`), so the `--cwd` and
+  `--size` the adapter sent were accepted and ignored — `canSizeSplits: true` was a false claim, and
+  the split opened in the wrong directory. `new-workspace` hardcodes `honorJSONOutput: false`
+  (`:7155`, gated at `:10491`), so `--json new-workspace` prints `OK workspace:N` and the workspace
+  route threw on every call; the namespaced `workspace create` (`:11166`) honors `--json`.
+  `list-panes` (`pane.list`) answers `{"panes":[…]}` while the adapter required a top-level array of
+  panes holding surface OBJECTS, so `listCmuxSurfaces` returned `[]` for every real response and took
+  `listPanes`, `paneExists` and `isPaneFocused` down with it; `list-panels` (`surface.list`) is the
+  surface-tier verb, keyed `ref`/`title`/`focused`/`pane_ref`/`selected_in_pane`
+  (`ControlCommandCoordinator+Surface.swift:150`). `rename-surface`/`rename-pane` exist nowhere —
+  cmux's only rename verbs are `rename-tab`, `rename-window`, `rename-workspace` — and there is no
+  pane rename at any layer, so both seam tiers land on `rename-tab --surface … --title …`.
+
+- **One defect was overstated, and is recorded as measured rather than as filed.** The issue says
+  `teardown()` "hard-errors" on every call. It does not: `close-surface` falls back to
+  `$CMUX_WORKSPACE_ID` when given no `--workspace`/`--window` (`cmux.swift:7351`) and only refuses
+  when that is unset too (`:7373`). The real failures are narrower — a library caller with no cmux env
+  gets the refusal, and a surface outside the caller's own workspace resolves against the WRONG
+  workspace. `teardown` now names the workspace whenever the adapter is bound to one.
+
+- **The issue's "minor" whitespace claim is wrong for this adapter's argv, and a different `send`
+  hazard is real.** `send` joins its remaining positionals with single spaces (`cmux.swift:7674`), so
+  runs of whitespace survive as long as the text is ONE argv element — which is exactly how
+  `sendText`/`submit` pass it. What does bite is `unescapeSendText` (`:20173`): `send` interprets
+  `\n`/`\r` as Enter and `\t` as Tab in the text it is given, so a literal backslash-n in a caller's
+  string presses Enter. That is a turn-taking hazard, it is NOT one of the six, and it is left for its
+  own change rather than folded into this one.
+
+- **A defect in the `workspace-group` route landed by #162 fell out of this read and is fixed here.**
+  `workspace.create` reports `{window_*, workspace_*, surface_*}` and **no `pane_ref`**
+  (`TerminalController+WorkspaceCreate.swift:156-198`), so a workspace open's `OpenedPane.tab` is a
+  SURFACE ref, not the pane ref the fixture assumed. `paneToWorkspace` sent only `pane_id`, and cmux's
+  handle registry is keyed by the ref STRING rather than by kind (`uuidAny` →
+  `handles.uuid(forRef:)`), so a surface handle resolved to a UUID naming no pane and the routing fell
+  back to the CALLER's workspace — grouping the wrong space, silently. The lookup now verifies each
+  attempt against its own rows and tries the surface spelling when the pane one does not hold the
+  target.
+
+- **Held for a Mac, deliberately.** `identify`-backed `isPaneFocused`, any `capabilities` pre-flight,
+  and adopting `workspace create --env` all replace WORKING behavior on source-only evidence, so they
+  stay out. One more found in this pass and not acted on: `new-pane`/`new-surface`/`workspace create`
+  all take `--focus <true|false>` and apply it with `defaultValue: false`, which contradicts the
+  `opensWithoutStealingFocus: false` this adapter declares and the "cmux's CLI offers no way to
+  suppress the focus move" the website says. Flipping that flips real behavior for every caller, so it
+  wants its own issue and a live check, not a docs edit.
