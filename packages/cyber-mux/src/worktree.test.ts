@@ -340,8 +340,13 @@ describe('spec:cyber-mux/mux/worktree', () => {
 		}): Exec => {
 			return (_cmd, args) => {
 				answers.calls?.push(args)
-				const verb = args[0] === '-C' ? args[2] : args[0]
-				switch (verb) {
+				// Strip the leading global options the way git itself does — repeated `-c <k=v>` pairs and
+				// `-C <root>` — so routing is on the SUBCOMMAND and its own arguments, at stable indices. A
+				// fake that indexed the raw argv would break the moment a call gains a global option, which
+				// is exactly what happened when the squash probe started carrying its own identity.
+				const rest = [...args]
+				while (rest[0] === '-c' || rest[0] === '-C') rest.splice(0, 2)
+				switch (rest[0]) {
 					case 'symbolic-ref':
 						return answers.originHead === undefined ? 'origin/main' : answers.originHead
 					case 'branch':
@@ -354,12 +359,12 @@ describe('spec:cyber-mux/mux/worktree', () => {
 							.map((name) => `${name}\t${answers.gone?.includes(name) ? '[gone]' : ''}`)
 							.join('\n')
 					case 'merge-base':
-						return `base-${args[4]}`
+						return `base-${rest[2]}`
 					case 'commit-tree':
-						// args[3] is `<branch>^{tree}` — carry the branch into the id so `cherry` can answer.
-						return `synthetic-${args[3]!.replace('^{tree}', '')}`
+						// `<branch>^{tree}` — carry the branch into the id so `cherry` can answer.
+						return `synthetic-${rest[1]!.replace('^{tree}', '')}`
 					case 'cherry': {
-						const branch = args[4]!.replace('synthetic-', '')
+						const branch = rest[2]!.replace('synthetic-', '')
 						return answers.squashApplied?.includes(branch) ? `- ${branch}` : `+ ${branch}`
 					}
 					default:
@@ -402,6 +407,17 @@ describe('spec:cyber-mux/mux/worktree', () => {
 			expect(calls.filter((args) => args.includes('--merged'))).toHaveLength(1)
 			expect(calls.filter((args) => args.includes('for-each-ref'))).toHaveLength(1)
 			expect(calls.filter((args) => args.includes('merge-base')).map((args) => args[4])).not.toContain('feat/deleted')
+		})
+
+		it('worktree-landed-layered-signals', () => {
+			// The squash probe carries its OWN identity. `git commit-tree` refuses outright ("empty ident
+			// name") on a machine that has never configured git — a CI runner, a fresh container — and
+			// without this the whole layer would go dark exactly there while passing on every developer
+			// laptop. Caught by the live-backends job; pinned here so it stays caught.
+			const calls: string[][] = []
+			byRoot(gitFake({ merged: 'main', squashApplied: ['feat/squashed'], calls }))
+			const probe = calls.find((args) => args.includes('commit-tree'))!
+			expect(probe.slice(0, 4)).toEqual(['-c', 'user.name=cyber-mux', '-c', 'user.email=probe@cyber-mux.invalid'])
 		})
 
 		it('worktree-landed-signal-positive-only', () => {

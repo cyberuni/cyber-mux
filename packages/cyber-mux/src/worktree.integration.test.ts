@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { nodeExec } from './exec.ts'
+import type { Exec } from './exec.ts'
 import { isWorktreeRemovable, listWorktreesFromGit, provisionWorktree, type WorktreeEntry } from './worktree.ts'
 
 /**
@@ -21,6 +21,31 @@ import { isWorktreeRemovable, listWorktreesFromGit, provisionWorktree, type Work
  */
 describe('spec:cyber-mux/mux/worktree — landed signals against real git', () => {
 	let root: string
+
+	/**
+	 * `nodeExec` with every ambient git identity STRIPPED — no `GIT_AUTHOR_*`/`GIT_COMMITTER_*`, and
+	 * `GIT_CONFIG_GLOBAL`/`GIT_CONFIG_SYSTEM` pointed at nothing. The library is driven through this
+	 * rather than through `nodeExec` on purpose: the squash layer builds a synthetic commit, and
+	 * `git commit-tree` REFUSES ("empty ident name") when nothing names an author, which is the state
+	 * of a machine that has never configured git — a CI runner, a fresh container. Driven through a
+	 * developer's own configured git the layer passes for a reason that is not in the code; driven
+	 * through this, the probe has to carry its own identity or the whole layer goes dark.
+	 *
+	 * The scratch-repo BUILDER (`git` below) keeps its explicit identity — it makes real commits and
+	 * has every right to say who made them. This is only for the library under test.
+	 */
+	const bareExec: Exec = (cmd, args) => {
+		try {
+			const { GIT_AUTHOR_NAME, GIT_AUTHOR_EMAIL, GIT_COMMITTER_NAME, GIT_COMMITTER_EMAIL, ...env } = process.env
+			return execFileSync(cmd, args, {
+				encoding: 'utf8',
+				stdio: ['ignore', 'pipe', 'pipe'],
+				env: { ...env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' },
+			}).trim()
+		} catch {
+			return null
+		}
+	}
 
 	/** One git invocation in a scratch repo, with identity and hooks forced so a contributor's own
 	 * global config (a `commit.gpgsign`, a template dir, a default branch name) cannot change what
@@ -85,7 +110,7 @@ describe('spec:cyber-mux/mux/worktree — landed signals against real git', () =
 	}
 
 	const entryFor = (clone: string, path: string): WorktreeEntry => {
-		const entries = listWorktreesFromGit(nodeExec, clone)
+		const entries = listWorktreesFromGit(bareExec, clone)
 		const entry = entries.find((candidate) => candidate.root === path)
 		// Split from the field assertions on purpose: a missing ENTRY and a missing FIELD are different
 		// failures, and `find(...)?.merged` cannot tell them apart.
@@ -197,7 +222,7 @@ describe('spec:cyber-mux/mux/worktree — landed signals against real git', () =
 		const { clone } = scratchRepo('pool')
 		const path = worktreeOnBranch(clone, 'feat/pooled', 'g.txt', 'g\n')
 		squashMerge(clone, 'feat/pooled')
-		const result = provisionWorktree(nodeExec, clone, {
+		const result = provisionWorktree(bareExec, clone, {
 			create: { path: join(clone, '..', 'unused-wt'), branch: 'feat/next' },
 		})
 		expect(result.action).toBe('reused')
@@ -214,7 +239,7 @@ describe('spec:cyber-mux/mux/worktree — landed signals against real git', () =
 		const { clone } = scratchRepo('pool-busy')
 		worktreeOnBranch(clone, 'feat/busy', 'h.txt', 'h\n')
 		const fresh = join(clone, '..', 'fresh-wt')
-		const result = provisionWorktree(nodeExec, clone, { create: { path: fresh, branch: 'feat/fresh' } })
+		const result = provisionWorktree(bareExec, clone, { create: { path: fresh, branch: 'feat/fresh' } })
 		expect(result.action).toBe('created')
 	})
 

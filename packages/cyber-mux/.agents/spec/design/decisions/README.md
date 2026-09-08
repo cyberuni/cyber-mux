@@ -1301,3 +1301,14 @@ Decisions (`worktree-landed-signals` — issue #151, squash-merge detection in w
   opt-in implementation and resolves `--repo` from the `origin` remote rather than from the process
   cwd, because `Exec` runs commands without one. Not wired into any CLI verb by this change — the
   `cyber-mux worktree` flag that would expose it is a separate unit of work.
+
+- **The squash probe carries its OWN git identity** — DECIDED, after the live-backends job caught what
+  a developer machine structurally cannot. `git commit-tree` refuses with `fatal: empty ident name`
+  when neither the environment nor git's config names an author, which is the state of any machine
+  that has never configured git — a CI runner, a fresh container. Left to the ambient identity the
+  whole `squash-patch` layer goes silently dark there and every squash-merged worktree reads unlanded
+  again, i.e. exactly the bug this work exists to fix, reappearing only off the author's laptop. The
+  probe therefore passes `-c user.name` / `-c user.email` inline; the object is a throwaway that
+  should not carry the caller's name in any case. The integration suite now drives the library through
+  an `Exec` with every ambient identity STRIPPED, so the layer can never again pass for a reason that
+  lives in the developer's global gitconfig rather than in the code.

@@ -343,7 +343,27 @@ function isSquashApplied(exec: Exec, primaryRoot: string, target: string, branch
 	const base = git(['merge-base', target, branch])
 	if (!base) return false
 	// `commit-tree` takes the tree-ish directly, so the branch tree needs no separate `rev-parse`.
-	const synthetic = git(['commit-tree', `${branch}^{tree}`, '-p', base, '-m', 'cyber-mux squash probe'])
+	//
+	// The identity is supplied INLINE, and is not a nicety: `commit-tree` refuses outright ("empty ident
+	// name") when neither the environment nor git's config names an author, which is the state of any
+	// machine that has not configured git yet — a CI runner, a fresh container. Left to the ambient
+	// identity this whole layer would go silently dark there and every squash-merged worktree would read
+	// unlanded again, which is the exact bug this exists to fix (caught by the live-backends job, whose
+	// runner has no git identity). A throwaway probe object should not carry the caller's name anyway.
+	const synthetic = exec('git', [
+		'-c',
+		'user.name=cyber-mux',
+		'-c',
+		'user.email=probe@cyber-mux.invalid',
+		'-C',
+		primaryRoot,
+		'commit-tree',
+		`${branch}^{tree}`,
+		'-p',
+		base,
+		'-m',
+		'cyber-mux squash probe',
+	])
 	if (!synthetic) return false
 	const cherry = git(['cherry', target, synthetic])
 	if (cherry === null) return false
