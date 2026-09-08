@@ -23,14 +23,15 @@ npm install cyber-mux
 
 ## Entry points
 
-Three subpaths, each a different slice of the core. Import from the narrowest one that covers your
+Four subpaths, each a different slice of the core. Import from the narrowest one that covers your
 need.
 
 | Import | What it is | Page |
 | --- | --- | --- |
-| `cyber-mux` | The mux core — [`resolveMux`](/cyber-mux/api/mux-adapter/) and the [`MuxSession`](/cyber-mux/api/mux-adapter/) it returns, the raw [`MuxAdapter`](/cyber-mux/api/mux-adapter/#the-raw-seam) contract underneath, the three adapters, [`nudge`](/cyber-mux/api/nudge/), the [probe](/cyber-mux/api/probe/), and the `Exec`/`NewId` seams. | [MuxAdapter](/cyber-mux/api/mux-adapter/) |
+| `cyber-mux` | The mux core — [`resolveMux`](/cyber-mux/api/mux-adapter/) and the [`MuxSession`](/cyber-mux/api/mux-adapter/) it returns, the raw [`MuxAdapter`](/cyber-mux/api/mux-adapter/#the-raw-seam) contract underneath, the adapters, [`nudge`](/cyber-mux/api/nudge/), the [probe](/cyber-mux/api/probe/), and the `Exec`/`NewId` seams. | [MuxAdapter](/cyber-mux/api/mux-adapter/) |
 | `cyber-mux/worktree` | `worktreeApi` — the git-worktree helpers (list, resolve, remove safely) with `Exec`/`fs` bound — over the raw exec-first functions. | [Worktree](/cyber-mux/api/worktree/) |
 | `cyber-mux/template` | `templateApi` — bound resolution — plus the template schema, validator, and flat-N desugarer. | [Template](/cyber-mux/api/template/) |
+| `cyber-mux/agent` | `deriveAgentWait` — the agent-lifecycle wait — plus its two refusals and the state-set helpers. | [Agent](/cyber-mux/api/agent/) |
 
 ## The seam pattern
 

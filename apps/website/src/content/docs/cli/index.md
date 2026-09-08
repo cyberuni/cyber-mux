@@ -12,7 +12,7 @@ pane-addressing rules.
 
 **Pane arguments** (`<pane>`) take either a pane **id** or a human **label** — an id is matched
 first, and only a locator that matches no id is checked against labels. A label matching more than
-one live pane is an ambiguity error (exit 1) naming every candidate; a locator matching nothing is
+one live pane is an ambiguity error (exit 2) naming every candidate; a locator matching nothing is
 handed straight to the backend as an id and takes that verb's own not-found path. See
 [Pane](/cyber-mux/concepts/pane/) for the full resolution rules and how to discover ids/labels with
 [`list`](/cyber-mux/cli/list/).
@@ -40,8 +40,12 @@ conflicting flags) — the fix is a different invocation, not a retry.
 
 - [`list`](/cyber-mux/cli/list/) — enumerate every live pane.
 - [`exists`](/cyber-mux/cli/exists/) — probe whether a single pane is still live.
+- [`agent`](/cyber-mux/cli/agent/) — `status` a pane's agent-lifecycle state, or `wait` for it to
+  reach one.
 
 ## Worktrees and templates
 
-- [`worktree`](/cyber-mux/cli/worktree/) — `add` / `open` / `list` / `remove` git worktrees.
-- [`template`](/cyber-mux/cli/template/) — `list` / `show` / `validate` / `save` named pane pools.
+- [`worktree`](/cyber-mux/cli/worktree/) — `add` / `provision` / `open` / `list` / `prune` / `remove`
+  git worktrees.
+- [`template`](/cyber-mux/cli/template/) — `list` / `show` / `validate` / `save` / `edit` named pane
+  pools.
