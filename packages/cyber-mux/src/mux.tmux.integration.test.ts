@@ -424,3 +424,133 @@ describe.skipIf(!hasTmux())('spec:cyber-mux/mux', () => {
 		})
 	})
 })
+
+// A second real-tmux boundary, driven the way #177 is actually reached: a caller with NO locale in its
+// environment AND no `$TMUX` in it either. Both halves are load-bearing, and the second one was
+// measured rather than assumed.
+//
+// tmux mangles its command output for a client it does not consider UTF-8 — every byte outside
+// printable ASCII becomes a literal `_`, the TAB this adapter's formats separate fields with included.
+// Two things independently make a client UTF-8, and a test has to defeat both:
+//
+//   1. A `LANG`/`LC_ALL`/`LC_CTYPE` containing the substring "UTF-8" or "UTF8" (tmux(1) `-u`). Every
+//      other integration suite in this repo inherits the developer's or the runner's environment, which
+//      carries one — which is precisely why `live-backends` stayed green across every release that
+//      shipped this bug.
+//   2. `$TMUX` being set, which makes the command client one INSIDE a session and gives it the
+//      containing client's UTF-8 state instead. Measured on 3.7c: with `$TMUX` set and no locale at
+//      all, `list-panes -a -F '#{pane_id}<TAB>#{window_id}'` still returns a real tab. That is the
+//      honest limit on this bug's blast radius — a caller running inside a pane was never affected —
+//      and it is also why the suite ABOVE could not have caught it even with the locale stripped: it
+//      sets `$TMUX` on purpose.
+//
+// So the fixture below strips both: an environment built from nothing but `PATH` and `HOME`, which is
+// what a systemd unit, a cron job, a container entrypoint or a non-interactive ssh session actually
+// hands a process. `CYBER_MUX=tmux` is the documented way such a caller reaches this adapter.
+//
+// Without `$TMUX` the adapter's target-less commands resolve against the socket's most recently used
+// session, which on an isolated single-session `-L` server is the one this block creates.
+describe.skipIf(!hasTmux())('spec:cyber-mux/mux', () => {
+	describe('tmuxMuxAdapter — real tmux boundary, no locale and no $TMUX', () => {
+		const socket = `${SOCKET}-nolocale`
+		let cwd: string
+		let exec: Exec
+
+		beforeAll(() => {
+			cwd = mkdtempSync(join(tmpdir(), 'cyber-mux-itest-nolocale-'))
+			// `PATH` so tmux is findable and `HOME` so it has somewhere to look for a config; nothing else.
+			// Deliberately NOT spread from `process.env` — that would re-import the very variables under
+			// test, and it is what makes this block's environment a claim rather than a hope.
+			const env: Record<string, string> = {
+				PATH: process.env['PATH'] ?? '',
+				HOME: process.env['HOME'] ?? '',
+			}
+			execFileSync('tmux', ['-L', socket, 'new-session', '-d', '-s', 'main', '-c', cwd], { env })
+			exec = (cmd, args) => {
+				try {
+					const fullArgs = cmd === 'tmux' ? ['-L', socket, ...args] : args
+					return execFileSync(cmd, fullArgs, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], env }).trim()
+				} catch {
+					return null
+				}
+			}
+		})
+
+		afterAll(() => {
+			try {
+				execFileSync('tmux', ['-L', socket, 'kill-server'])
+			} catch {
+				// already gone
+			}
+			rmSync(cwd, { recursive: true, force: true })
+		})
+
+		/**
+		 * A pane created WITHOUT going through the adapter, asking tmux for a single-field format that has
+		 * no separator to lose. The rows that are about `listPanes` use it so that reverting the fix turns
+		 * THEM red on their own claim: driving `open` for the setup would fail first, on `open`'s parse,
+		 * and a row that never reaches its own subject proves nothing about it.
+		 */
+		function rawOpen(): string {
+			const id = exec('tmux', ['new-window', '-d', '-c', cwd, '-P', '-F', '#{pane_id}', 'sh'])
+			if (!id || !/^%\d+$/.test(id)) throw new Error(`the fixture could not open a pane: ${id}`)
+			return id
+		}
+
+		// The environment this block claims to run under, asserted rather than described — a fixture that
+		// quietly grew a `LANG` back would turn every row below into a test of nothing, silently, and the
+		// whole point of this block is that it is the one place in the suite where that matters.
+		it('drives tmux with no locale and no $TMUX in the environment', () => {
+			const seen = (exec('sh', ['-c', 'env']) ?? '').split('\n').map((l) => l.split('=')[0])
+			expect(seen).not.toContain('LANG')
+			expect(seen).not.toContain('LC_ALL')
+			expect(seen).not.toContain('LC_CTYPE')
+			expect(seen).not.toContain('TMUX')
+		})
+
+		// The bug as filed. `open` asks for `#{pane_id}\t#{window_id}` and splits the reply on the tab; a
+		// tab tmux rendered as `_` leaves ONE field, so the id swallows the window id and the tab is lost.
+		// Both halves are asserted: a suite that only checked `tab` would pass an adapter still handing
+		// back `%1_@1` as a pane id.
+		it('open() reports a clean pane id and window id, not one field with a `_` where the tab was', () => {
+			const opened = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
+			expect(opened.id).toMatch(/^%\d+$/)
+			expect(opened.tab).toMatch(/^@\d+$/)
+			tmuxMuxAdapter.teardown(exec, opened)
+		})
+
+		// The consequence the issue is named for: N panes collapsing into ONE record whose id is the whole
+		// line. Two panes are opened so the COUNT is itself a claim — a listing that returned a single
+		// junk row satisfies neither the id shape nor the pair.
+		it('listPanes() returns one record PER pane, each with a real id and cwd', () => {
+			const first = { id: rawOpen() }
+			const second = { id: rawOpen() }
+
+			const panes = tmuxMuxAdapter.listPanes(exec)
+
+			for (const pane of panes) expect(pane.id).toMatch(/^%\d+$/)
+			const mine = panes.filter((p) => p.id === first.id || p.id === second.id)
+			expect(mine).toHaveLength(2)
+			for (const pane of mine) expect(pane.cwd).toBe(cwd)
+
+			tmuxMuxAdapter.teardown(exec, second)
+			tmuxMuxAdapter.teardown(exec, first)
+		})
+
+		// The rest of the CLASS, not just the separator. tmux replaces EVERY byte outside printable ASCII
+		// for a non-UTF-8 client, so a pane title carrying any non-ASCII character came back as `_`s — a
+		// corruption re-picking the separator would have left standing, and the reason `runTmux` puts `-u`
+		// on every invocation rather than only on the ones that parse a tab.
+		it('listPanes() reports a non-ASCII pane title verbatim rather than as underscores', () => {
+			const opened = { id: rawOpen() }
+			exec('tmux', ['select-pane', '-t', opened.id, '-T', 'café–ledger'])
+
+			const pane = tmuxMuxAdapter.listPanes(exec).find((p) => p.id === opened.id)
+
+			expect(pane).toBeDefined()
+			expect(pane?.label).toBe('café–ledger')
+
+			tmuxMuxAdapter.teardown(exec, opened)
+		})
+	})
+})

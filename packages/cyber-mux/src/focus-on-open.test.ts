@@ -27,9 +27,17 @@ import { zellijMuxAdapter } from './mux.zellij.ts'
 
 // ── fakes ──────────────────────────────────────────────────────────────────────────────────────
 
-/** tmux keys off `args[0]`: every call is `tmux <command> …`. rmux speaks the same language. */
+/**
+ * tmux keys off `args[0]`: every call is `tmux <command> …`. rmux speaks the same language, but as its
+ * own binary — never through `runTmux` — so only a `tmux` call carries the leading `-u` (#177);
+ * stripped before recording so `calls` stays keyed on the command itself either way.
+ */
 function tmuxExec(calls: string[][]): Exec {
-	return (_cmd, args) => {
+	return (cmd, args) => {
+		if (cmd === 'tmux') {
+			expect(args[0]).toBe('-u')
+			args = args.slice(1)
+		}
 		calls.push(args)
 		return '%9\t@1'
 	}

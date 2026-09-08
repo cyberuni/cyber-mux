@@ -35,6 +35,47 @@ export const TMUX_WORKSPACE_GROUP_OPTION = '@cm_ws'
  */
 export const TMUX_TAB_NAME_OPTION = '@cm_tab'
 
+/**
+ * `-u`, led on EVERY tmux invocation this adapter makes.
+ *
+ * tmux(1): "-u  Write UTF-8 output to the terminal even if the first environment variable of LC_ALL,
+ * LC_CTYPE, or LANG that is set does not contain \"UTF-8\" or \"UTF8\"." Without it — and a substring
+ * test on those three variables is the whole of tmux's decision — the command client is not UTF-8, and
+ * tmux SANITIZES what it prints: every byte outside printable ASCII becomes a literal `_`.
+ *
+ * That is not a cosmetic loss, it is this adapter's parser. The listing formats separate their fields
+ * with a TAB, and a tab is 0x09. Measured on 3.7c, one binary, one isolated `-L` socket, only the
+ * environment differing:
+ *
+ *     env -i PATH=… HOME=… tmux -L p list-panes -a -F '#{pane_id}<TAB>#{window_id}' | cat -A  ->  %0_@0
+ *     env -i PATH=… HOME=… LANG=C.UTF-8 tmux …                                      | cat -A  ->  %0^I@0
+ *     env -i PATH=… HOME=… tmux -u -L p list-panes …                                | cat -A  ->  %0^I@0
+ *
+ * So a caller with no locale — a systemd unit, a cron job, a container entrypoint, a non-interactive
+ * ssh session — got N panes collapsed into ONE record whose id was the whole line. Not a throw and not
+ * an empty result: a plausible wrong answer, which anything culling or reconciling on the listing then
+ * acted on (#177).
+ *
+ * Uniform rather than scoped to the `-F` calls, for two reasons. The mangling is a whole CLASS, not
+ * one separator: measured, EVERY byte below 0x20, plus 0x7f, plus every non-ASCII byte, comes back as
+ * `_` — so `#{pane_title}` and `#{pane_current_path}` lose their non-ASCII content too, and a fix that
+ * only re-picked the separator would leave that half of the bug standing. And a flag that is on some
+ * invocations and not others is a flag someone eventually forgets; one choke point cannot be bypassed
+ * by adding a call site.
+ *
+ * Chosen over pinning a locale on the child environment, which was the other candidate. `LC_ALL=C`
+ * does NOT fix it (measured: still `_` — tmux wants the string "UTF-8", not any valid locale), so a
+ * pin has to name a UTF-8 locale that the host actually has, and `C.UTF-8` is a glibc spelling that
+ * macOS does not ship. It would also mean widening `Exec` to carry an environment, which it does not
+ * do today. `-u` is tmux's own answer to exactly this question and needs neither.
+ *
+ * rmux was measured too and is NOT affected — it emits a real tab under `env -i` — so `mux.rmux.ts` is
+ * deliberately left alone. See the `177-locale-safe-tmux-output` ADR.
+ */
+function runTmux(exec: Exec, args: string[]): string | null {
+	return exec('tmux', ['-u', ...args])
+}
+
 /** tmux backend — detected via `$TMUX`. */
 export const tmuxMuxAdapter: MuxAdapter = {
 	name: 'tmux',
@@ -189,7 +230,7 @@ export const tmuxMuxAdapter: MuxAdapter = {
 		// the name survives whatever the pane goes on to run. A pane has no such flag; its title is
 		// set after the split.
 		if (window && opts.label) args.splice(1, 0, '-n', opts.label)
-		const out = exec('tmux', args)
+		const out = runTmux(exec, args)
 		if (!out) throw new Error(withReason(exec, `tmux ${args[0]} failed`))
 		const [pane, windowId] = splitOpenReport(out, args[0]!)
 		// The window this pane landed in IS its tab — tmux's Tab is its Window. For a new window that
@@ -230,13 +271,13 @@ export const tmuxMuxAdapter: MuxAdapter = {
 			// `rename-window`, because a tab is a Window on tmux — the same collapse `open` makes, where
 			// both 'workspace' and 'tab' become a window. This also pins the name against tmux's
 			// `automatic-rename`, exactly as `new-window -n` does at birth.
-			exec('tmux', ['rename-window', '-t', target.id, name])
+			runTmux(exec, ['rename-window', '-t', target.id, name])
 			return
 		}
 		// `-T` makes `select-pane` a pure title write: tmux returns as soon as it has set the title and
 		// never reaches the code that would make the pane active (verified on 3.7c), so this moves no
 		// focus despite the verb's name. That is what lets it serve a rename's read-only side effects.
-		exec('tmux', ['select-pane', '-t', target.id, '-T', name])
+		runTmux(exec, ['select-pane', '-t', target.id, '-T', name])
 	},
 
 	group(exec, target, group, name) {
@@ -244,11 +285,11 @@ export const tmuxMuxAdapter: MuxAdapter = {
 		// survives a window rename (unlike a name-encoded grouping), and tmux filters on it server-side
 		// (`list-windows -f '#{==:#{@cm_ws},<id>}'`). Set verbatim: opaque means this adapter never
 		// parses, splits, or derives the value, and never reads it off the label.
-		exec('tmux', ['set-option', '-w', '-t', target.id, TMUX_WORKSPACE_GROUP_OPTION, group])
+		runTmux(exec, ['set-option', '-w', '-t', target.id, TMUX_WORKSPACE_GROUP_OPTION, group])
 		// The space's own name, beside the group, because tmux's single `window_name` may now hold a
 		// display name composed out of it — see TMUX_TAB_NAME_OPTION. Only when the caller has one:
 		// nothing to store is not the same as an empty name, and no adapter invents one.
-		if (name !== undefined) exec('tmux', ['set-option', '-w', '-t', target.id, TMUX_TAB_NAME_OPTION, name])
+		if (name !== undefined) runTmux(exec, ['set-option', '-w', '-t', target.id, TMUX_TAB_NAME_OPTION, name])
 	},
 
 	sendText(exec, target, text) {
@@ -256,11 +297,11 @@ export const tmuxMuxAdapter: MuxAdapter = {
 		// and only falls back to characters ("if the string is not recognised as a key, it is sent as
 		// a series of characters"), so a bare `send-keys -t <p> Up` would press the arrow instead of
 		// typing the word. `-l` disables that lookup outright.
-		exec('tmux', ['send-keys', '-t', target.id, '-l', text])
+		runTmux(exec, ['send-keys', '-t', target.id, '-l', text])
 	},
 
 	sendKeys(exec, target, keys) {
-		exec('tmux', ['send-keys', '-t', target.id, ...keys.map(toTmuxKey)])
+		runTmux(exec, ['send-keys', '-t', target.id, ...keys.map(toTmuxKey)])
 	},
 
 	submit(exec, target, text) {
@@ -268,7 +309,7 @@ export const tmuxMuxAdapter: MuxAdapter = {
 		// for. `''` is the bare-flush case too — `send-keys -l ''` would be a no-op typing nothing,
 		// leaving the staged buffer unsent.
 		if (!text) {
-			exec('tmux', ['send-keys', '-t', target.id, 'Enter'])
+			runTmux(exec, ['send-keys', '-t', target.id, 'Enter'])
 			return
 		}
 		// Two calls, unavoidably: tmux has no atomic literal-text-plus-Enter primitive. `-l` applies to
@@ -276,7 +317,7 @@ export const tmuxMuxAdapter: MuxAdapter = {
 		// text rather than pressing it. The composed path is what `submit`'s outcome-not-command
 		// contract exists to permit.
 		tmuxMuxAdapter.sendText(exec, target, text)
-		exec('tmux', ['send-keys', '-t', target.id, 'Enter'])
+		runTmux(exec, ['send-keys', '-t', target.id, 'Enter'])
 	},
 
 	read(exec, target, opts?: MuxReadOptions | undefined) {
@@ -314,22 +355,22 @@ export const tmuxMuxAdapter: MuxAdapter = {
 		// `list-panes -a` first and drive the beam in order: switch-client (session), then
 		// select-window, then select-pane. Resolution happens BEFORE any switch is issued, so an
 		// unresolvable pane throws instead of a partial or false-success beam.
-		const out = exec('tmux', ['list-panes', '-a', '-F', '#{pane_id} #{session_name} #{window_id}'])
+		const out = runTmux(exec, ['list-panes', '-a', '-F', '#{pane_id} #{session_name} #{window_id}'])
 		const { sessionName, windowId } = parsePaneLocation(out, target.id)
-		exec('tmux', ['switch-client', '-t', sessionName])
-		exec('tmux', ['select-window', '-t', windowId])
-		exec('tmux', ['select-pane', '-t', target.id])
+		runTmux(exec, ['switch-client', '-t', sessionName])
+		runTmux(exec, ['select-window', '-t', windowId])
+		runTmux(exec, ['select-pane', '-t', target.id])
 	},
 
 	teardown(exec, target) {
-		exec('tmux', ['kill-pane', '-t', target.id])
+		runTmux(exec, ['kill-pane', '-t', target.id])
 	},
 
 	paneExists(exec, target) {
 		// `has-session` hits when the pane id happens to name a session; otherwise scan every pane
 		// server-wide for the id (pane ids are globally unique across sessions).
-		if (exec('tmux', ['has-session', '-t', target.id]) !== null) return true
-		return (exec('tmux', ['list-panes', '-a', '-F', '#{pane_id}']) ?? '').split('\n').includes(target.id)
+		if (runTmux(exec, ['has-session', '-t', target.id]) !== null) return true
+		return (runTmux(exec, ['list-panes', '-a', '-F', '#{pane_id}']) ?? '').split('\n').includes(target.id)
 	},
 
 	isPaneFocused(exec, target) {
@@ -337,7 +378,7 @@ export const tmuxMuxAdapter: MuxAdapter = {
 		// window, whether its window is the current one of its session, and the session's attached
 		// client count. Focused iff all three hold; unresolvable (line missing) or no output → unknown,
 		// never a false `false` — a caller can't tell "not focused" from "couldn't find the pane" here.
-		const out = exec('tmux', [
+		const out = runTmux(exec, [
 			'list-panes',
 			'-a',
 			'-F',
@@ -372,10 +413,10 @@ export const tmuxMuxAdapter: MuxAdapter = {
 	 */
 	setPaneZoom(exec, target, zoomed) {
 		if (tmuxMuxAdapter.isPaneZoomed(exec, target) === zoomed) return
-		if (zoomed && exec('tmux', ['select-pane', '-t', target.id]) === null) {
+		if (zoomed && runTmux(exec, ['select-pane', '-t', target.id]) === null) {
 			throw new Error(withReason(exec, `tmux could not select pane ${target.id}`))
 		}
-		if (exec('tmux', ['resize-pane', '-Z', '-t', target.id]) === null) {
+		if (runTmux(exec, ['resize-pane', '-Z', '-t', target.id]) === null) {
 			throw new Error(withReason(exec, `tmux could not ${zoomed ? 'zoom' : 'unzoom'} pane ${target.id}`))
 		}
 	},
@@ -397,7 +438,7 @@ export const tmuxMuxAdapter: MuxAdapter = {
 	 * still there when a client attaches.
 	 */
 	isPaneZoomed(exec, target) {
-		const out = exec('tmux', ['list-panes', '-a', '-F', '#{pane_id} #{window_zoomed_flag} #{pane_active}'])
+		const out = runTmux(exec, ['list-panes', '-a', '-F', '#{pane_id} #{window_zoomed_flag} #{pane_active}'])
 		if (!out) return undefined
 		const line = out.split('\n').find((l) => l.split(' ')[0] === target.id)
 		if (!line) return undefined
@@ -414,7 +455,7 @@ export const tmuxMuxAdapter: MuxAdapter = {
 	 * A tab can appear in neither id nor command, and the two free-text fields are separated by one.
 	 */
 	listPanes(exec): LivePane[] {
-		const out = exec('tmux', [
+		const out = runTmux(exec, [
 			'list-panes',
 			'-a',
 			'-F',
@@ -462,7 +503,7 @@ export const tmuxMuxAdapter: MuxAdapter = {
 			if (!split) throw new Error(`tmux pane ${target.id} is the only pane in its region — there is no split to resize`)
 			const flag = split.direction === 'right' ? '-x' : '-y'
 			const cells = toTmuxResizeCells(split, ratio)
-			if (exec('tmux', ['resize-pane', '-t', target.id, flag, String(cells)]) === null) {
+			if (runTmux(exec, ['resize-pane', '-t', target.id, flag, String(cells)]) === null) {
 				throw new Error(withReason(exec, `tmux could not resize pane ${target.id}`))
 			}
 		},
@@ -487,7 +528,7 @@ export const tmuxMuxAdapter: MuxAdapter = {
 			// resolves the pane target and prints the format, so nothing has to be matched out of a
 			// server-wide listing. Tab-separated — an id and a tag cannot contain one; a window NAME can,
 			// but it is last, so a name with a tab in it cannot displace anything.
-			const out = exec('tmux', [
+			const out = runTmux(exec, [
 				'display-message',
 				'-p',
 				'-t',
@@ -500,7 +541,7 @@ export const tmuxMuxAdapter: MuxAdapter = {
 			// Untagged: this window is a workspace of one. Not an error and not an empty list — nobody
 			// grouped it, and one window is exactly what that means.
 			if (!group) return [tmuxTab(exec, windowId, ownName, nameParts.join('\t'))]
-			const listed = exec('tmux', [
+			const listed = runTmux(exec, [
 				'list-windows',
 				'-a',
 				'-F',
@@ -564,7 +605,7 @@ function tmuxTab(
  * splitting a path on spaces is how a directory with one in it silently becomes the wrong pane.
  */
 function describeTmuxRegion(exec: Exec, id: string): RegionPane[] {
-	const out = exec('tmux', [
+	const out = runTmux(exec, [
 		'list-panes',
 		'-t',
 		id,
@@ -684,7 +725,7 @@ function capturePane(exec: Exec, target: MuxTarget, lines: number | 'all' | unde
 	// Verified against a real binary: a 24-row viewport read back 65 rows with it (`-S -`), 24 without.
 	if (lines === 'all') args.push('-S', '-')
 	else if (lines != null) args.push('-S', `-${lines}`)
-	return exec('tmux', args) ?? ''
+	return runTmux(exec, args) ?? ''
 }
 
 function toTmuxKey(key: string): string {
