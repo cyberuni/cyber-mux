@@ -1786,6 +1786,191 @@ Decisions (`153-remote-async` — does driving a pane on a REMOTE machine force 
   is a code change and this CR is a decision.
   ISSUE: https://github.com/cyberuni/cyber-mux/issues/153
 
+Decisions (`143-pane-relocation` — the move and break-out seam members, issue #143):
+
+- **TWO members, `movePane` and `breakPane`, not one** — DECIDED, with the issue. They take
+  different destinations (one names where to land, one names a tier) and three of the five capable
+  backends spell them as two different commands: tmux/rmux `move-pane` vs `break-pane`, wezterm
+  `split-pane --move-pane-id` vs `move-pane-to-new-tab`. herdr is the one backend that spells both as
+  `pane move`, and even there the flag sets are disjoint and mutually exclusive — its own usage
+  prints three separate lines and `--tab` cannot be sent with `--new-tab`.
+
+- **`movePane`'s destination is a PANE plus a side, NOT a tab, a workspace or a placement** — DECIDED,
+  and this is the question the issue left open ("a vague destination will haunt every adapter"). A
+  pane destination is EXACT on every backend that can be driven: tmux/rmux `move-pane -t <pane>`,
+  wezterm `split-pane --pane-id <pane> --move-pane-id`, herdr `--target-pane`. A TAB destination is
+  exact only on herdr and cmux, and on the other three it degrades to "beside whatever pane that
+  container has active" — the same "whatever this backend defaults to" trap `MuxOpenOptions.from`
+  already documents one tier up. It is also the more recoverable of the two: a caller holding a tab
+  picks a pane out of `describeRegion`/`listPanes` and gets a placement it chose, while a caller
+  holding a pane cannot recover one from a tab id without picking arbitrarily. The side is REQUIRED
+  and defaults to nothing, because the backends' own defaults disagree (wezterm `--bottom`, tmux a
+  horizontal split, herdr refuses the command without `--split`).
+
+- **`MuxMoveSide` is `'right' | 'down'` and not four-way** — DECIDED. herdr's `pane move --split`
+  takes `right|down` and nothing else, so `left`/`up` would be a vocabulary one capable backend
+  cannot honor. It is its own type rather than a reuse of `MuxPlacement` for `MuxSpaceTier`'s reason:
+  three of that type's five members are not sides.
+
+- **Both members return `OpenedPane`; `movePane` returning `void`, as the issue proposed, is a bug** —
+  DECIDED, on a measurement the issue did not have. herdr pane ids are WORKSPACE-SCOPED, so any
+  relocation across that boundary rewrites the id: live on 0.9.0, `pane move wRE:p1 --tab wRD:t1`
+  answered `wRD:p4`, and `pane move wRT:p2 --new-workspace` answered `wRV:p1`. The old id is not
+  dead — herdr keeps resolving it as an alias reporting the new one — but it is GONE from `pane list`
+  (measured), which is the failure that matters: a caller matching its handle against the listing, as
+  `reconcile`'s cull does, sees a live pane as dead. Even where the id survives (tmux, rmux, wezterm)
+  the tab always changes, so a `void` return would leave every caller holding a stale `OpenedPane.tab`.
+
+- **NOT real-everywhere — `canMovePanes` / `canBreakPanes` plus refusal by name (`move.ts`)** —
+  DECIDED, AGAINST the issue, which called `movePane` "real-everywhere on current evidence, so it
+  belongs on `MuxAdapter`". zellij 0.45.0 — the version CI pins and the adapter's declared floor —
+  has NEITHER verb. Read off the binary's own command inventory rather than a docs page: `zellij
+  action move-pane [-p <id>] [DIRECTION]` rotates a pane inside its own tab, `move-pane-backwards`
+  rotates the other way, and no verb in the whole `zellij action` inventory breaks a pane out or
+  names a destination container. The zoom member's shape (`canZoomPanes` + `PaneZoomUnsupportedError`)
+  therefore carries over intact.
+
+- **TWO capability flags rather than one `canRelocatePanes`** — DECIDED, and cmux is the whole reason.
+  It has a break-out (`break-pane` → the control socket's `pane.break`, which detaches a surface into
+  its own workspace) and nothing that puts a surface beside a NAMED pane on a NAMED side: its
+  `move-surface --surface <s> --pane <p>` moves a surface into another pane CONTAINER where it lands
+  as a tab ordered by `--before`/`--after`/`--index`, and `split-off` /
+  `drag-surface-to-split --surface <s> <left|right|up|down>` splits a surface off inside its own pane
+  and takes no destination at all. A single flag would have had to answer `false` there and discard
+  the half cmux really has. This is the one-flag-per-capability rule `canFloatPanes` and
+  `canSizeSplits` already follow.
+
+- **cmux DECLARES `canBreakPanes` on a source read, and says so** — DECIDED. Read at HEAD `ae18c88`
+  (`CLI/cmux.swift:27398`, the coordinator's `.broken` case, the app's `detachSurface` path), never
+  driven — cmux is macOS/GUI-only and issue #128 is the missing real-boundary suite. Refusing a verb
+  the source plainly carries would repeat #132's misreading in reverse; every other cmux member is
+  implemented on the same evidence, so this one is too, under the same standing caveat. Two traps are
+  handled explicitly rather than discovered later: `pane.break` with neither `--pane` nor `--surface`
+  breaks the FOCUSED surface, so `--surface` is always passed; and `--workspace` there is the SOURCE
+  context, not a destination.
+
+- **`at: 'workspace'` collapses onto `'tab'` on tmux and rmux, and `'tab'` collapses UP onto
+  `'workspace'` on cmux** — DECIDED. Both are the tier collapse `open`'s `MuxPlacement` already makes,
+  in the two directions the backends force. tmux and rmux have no workspace tier, so both tiers are a
+  new Window and the returned pane reports no `workspace`; a cmux surface IS a tab, so `pane.break`
+  is the only break it has and it always lands the surface alone in a fresh workspace. In both cases
+  the returned `OpenedPane` reports where the pane actually landed, so a caller sees the collapse
+  rather than being told a comfortable lie.
+
+- **Relocation does not steal focus where the backend can help it, and that is not an option** —
+  DECIDED, on `opensWithoutStealingFocus`'s reasoning: no caller wants the stealing behavior, so a
+  flag would be a branch every caller writes and none takes. tmux/rmux `-d` and herdr `--no-focus`
+  are always sent; wezterm has no such flag on `split-pane` or `move-pane-to-new-tab` and makes the
+  moved pane active, which is exactly what its `opensWithoutStealingFocus: false` already declares.
+
+- **Break-out idempotence is REPORTED, not normalized** — DECIDED. The backends split into two
+  families and only a live binary can say which: tmux 3.7c and rmux 0.10.0 NO-OP a break-out of a
+  pane that is already alone, answering its existing window; herdr 0.9.0 and wezterm 20240203 mint
+  another tab (`wRD:t3` became `wRD:t4`). Spending a read on every break to hide the difference would
+  cost every caller for a case few have.
+
+- **No `swapPane`, no size argument, and no CLI verb** — DECIDED. `swapPane` stays out with the
+  issue (though cmux does have `swap-pane`, correcting the issue's "cmux and zellij do not
+  obviously"). A ratio/size on the move is dropped even though herdr `--ratio`, tmux `-l` and wezterm
+  `--percent` could render one: no caller asked, and `resizePane` follows a move. No `cyber-mux`
+  subcommand, following `resizePane` and `setPaneZoom` — the members and their refusals are the unit
+  of work.
+
+- **Live coverage on all five drivable backends, plus a live row for the refusal.** tmux, rmux,
+  herdr, wezterm each gained rows that assert screen facts rather than argv — that `-h`/`--right`
+  really lands the pane to the RIGHT of the destination (reverting the mapping turns them red while
+  every mocked row stays green), that the pane it left behind survives, that wezterm's silent
+  `move-pane-to-new-tab` is a SUCCESS (a falsiness check on its empty stdout turns three rows red),
+  and that herdr's workspace break rewrites the id out of `pane list`. zellij's suite asserts the
+  INVENTORY the refusal rests on, so a zellij that ever grows one of these verbs turns that row red
+  rather than leaving a stale refusal standing.
+  ISSUE: https://github.com/cyberuni/cyber-mux/issues/143
+
+Decisions (`otty-agent-lifecycle-implemented` — issue #134, the second `AgentLifecycle` binding):
+
+- **The earlier `otty-agent-lifecycle` verdict above is OVERTURNED, and it is overturned by a page
+  its own sweep never opened.** That entry is correct about everything it measured and is left
+  standing unedited; what it missed is that `otty watch:<agent>` is not otty's only wait.
+  `otty pane wait` is, and it fits `waitForState` exactly. The corrected sweep was mechanical and is
+  repeatable: all **141** URLs in `docs.otty.sh/sitemap.xml` fetched and grepped 2026-09-08. `watch:`
+  occurs on six pages, and the earlier read covered four of them — the two it did not open are
+  `/agents/orchestration` and `/terminal-features/notifications`. `/agents/orchestration` is the one
+  that carries the answer, in a capability table: *"Block until a build, a pane, a tab or another
+  agent is idle | `otty pane wait` / `otty watch:<agent>`"*. This is the SECOND time that exact page
+  has overturned a conclusion about this file (#163's `--cwd`), which is now a pattern rather than an
+  accident: it demonstrates commands and flags `/reference/cli` omits entirely.
+
+- **DECIDED: `agentLifecycle` is PRESENT on otty, bound to `otty pane wait --pane <id>`.** The gate
+  the issue set is met by that command and not by the one the issue named. It is pane-selected with
+  the same `--pane <id|index>` every other pane verb takes; it blocks; and the state it blocks on is
+  the agent's own, not the shell's: *"It exits 0 as soon as the pane is idle. For a pane running a
+  coding agent, idle is what the agent reports — an agent owns its terminal for its whole life, so
+  'back at a shell prompt' never happens there."* (`/workflows/cli-usage`). `/agents/skills` says the
+  same in prose. So this is otty's own state derivation, not a `read()`-polling lookalike, and #94's
+  refusal rule is honored rather than bent.
+
+- **`otty watch:<agent>` is STILL not used, and the reason is unchanged.** Its positional is an agent
+  session id, its flag table has no pane selector, and the agent kind is spelled into the verb — with
+  no documented CLI read mapping a pane id to either. Recorded so a later reader does not "fix" this
+  binding into the command the issue proposed.
+
+- **`until` is refused BY NAME rather than narrowed, and it gets its own error class.** `pane wait`
+  has no `--until` and ends on `idle` alone, so `AgentWaitStatesUnsupportedError(backend, requested,
+  supported)` (`src/agent-states.ts`) is thrown before any exec for any non-empty set that is not
+  exactly `['idle']`. Narrowing to idle silently is the plausible-wrong-answer shape: the wait would
+  end, return a state, and be wrong about which question it answered. It is deliberately a DIFFERENT
+  class from `AgentLifecycleUnsupportedError` — that one means *no wait here at all* and its honest
+  fix hint is "use herdr"; this one means *this wait, not those states* and its fix hint is "narrow
+  `--until`". One class would have shipped the wrong hint on otty. An omitted or empty `until` sends
+  no flag, so otty's own default applies and the seam does not restate it, matching herdr.
+
+- **A bounded `timeoutMs` NEVER becomes `--timeout-secs 0`.** otty's flag is whole seconds and
+  `--timeout-secs 0` is its spelling for *wait forever* — which is what OMITTING `timeoutMs` already
+  means at the seam. So the conversion is `Math.max(1, Math.ceil(ms / 1000))`: rounding up costs at
+  most 999ms of extra patience, rounding down costs the caller's bound entirely, and reaching 0 turns
+  a bounded wait into an unbounded one inside a blocking command. The `Math.max` is load-bearing for
+  exactly one input (`timeoutMs: 0`) and the suite pins that input specifically — dropping the `ceil`
+  alone leaves it green, which is how the gap was found.
+
+- **Satisfied vs not survives the `Exec` seam; WHICH failure it was does not, and that is stated
+  rather than faked.** otty distinguishes satisfied (exit 0), no-reportable-state (6), no-such-pane
+  (4) and timeout (9) by exit code alone, and `Exec` is `(cmd, args) => string | null` with no code.
+  So the binding returns `idle` for non-null and throws once, naming the pane, for null — with otty's
+  own sentence appended by `withReason`. **Nothing branches on `exec.lastError`**: it is documented
+  diagnostic-only, a runner is free never to set it, and a guard keyed on it is the live no-op this
+  repo already paid for once. Widening `Exec` to carry an exit code would rewrite every call site and
+  every fake on seven adapters for one backend's diagnostics; not done here, and noted as the reason
+  the timeout/no-signal distinction is unavailable rather than merely unimplemented.
+
+- **The trap in this binding, and it is `!out`.** A satisfied `otty pane wait` prints nothing
+  documented, so the runner hands back `''` — falsy, and NOT the failure sentinel. Guarding with
+  `!out` instead of `out === null` turns every successful wait into a throw. The suite pins an
+  empty-stdout success on its own; reverting the check to `!out` reddens six rows.
+
+- **The limit that could NOT be guarded, stated because it is a real divergence from herdr.** A pane
+  with no agent answers `idle` as soon as its shell is at a prompt, where herdr's `agent wait`
+  reports `agent_not_found` and throws. Guarding needs a per-pane agent read, and the *"see every
+  window, tab and pane, and which agent sits in which — `otty pane list`"* row on
+  `/agents/orchestration` is the only claim of one anywhere: no output schema for `otty panes --json`
+  or `otty pane list` is documented on any of the 141 pages, so there is no field to check. Accepted
+  and documented at the binding rather than traded for keeping the capability absent — the wait is
+  real, and a caller reaching `waitForState` has said the pane runs an agent.
+
+- **`LivePane.agentStatus` on otty STAYS `undefined`, and this is now the case that proves the two
+  members are independent.** The snapshot read remains undocumented (the earlier entry's finding,
+  unchanged), so otty is the first backend where `agentApi.supported()` is `true` while
+  `agentApi.status()` is `undefined`. Before otty every backend answered both the same way, which is
+  why the distinction had never been exercised; a scenario now pins it.
+
+- **NOTHING here was verified against a live binary, and no comment in the delivered code claims
+  otherwise.** otty is a GUI-only app with no binary on this machine, and `live-backends` cannot
+  exercise it (#128). Every argv assertion is a mocked `Exec`. Concretely unverified: that
+  `pane wait` accepts `--timeout-secs` (only `--pane`, `--tab`, `--window` and `--timeout-secs` appear
+  in doc EXAMPLES; the command has no flag table on `/reference/cli` at all), that it prints nothing
+  on success, and that exit 0 on an agent pane means the agent reported idle rather than something
+  else. One `otty pane wait --help` on a Mac settles all three.
+  ISSUE: https://github.com/cyberuni/cyber-mux/issues/134
+
 Decisions (`177-locale-safe-tmux-output` — what makes tmux mangle its own `-F` output, and how the
 adapter stops it, issue #177):
 

@@ -505,4 +505,130 @@ describe.skipIf(!hasHerdr())('spec:cyber-mux/mux', () => {
 			expect(herdrMuxAdapter.isPaneZoomed(realExec, doomed)).toBeUndefined()
 		})
 	})
+
+	/**
+	 * The relocation rows, in their own isolated workspace for the zoom block's reason: every one of
+	 * them MOVES a real pane, so they need panes nobody else is asserting about.
+	 *
+	 * The row that matters most here cannot exist on any other backend: herdr pane ids are
+	 * workspace-scoped, so `breakPane(_, 'workspace')` hands back a pane whose id is not the one that
+	 * went in. A mocked `Exec` returns whatever envelope the test author typed, so it can only confirm
+	 * the belief that produced it — the real server is the only thing that can say the id changed.
+	 */
+	describe('herdrMuxAdapter — real herdr boundary, pane relocation', () => {
+		let cwd: string
+		let workspaceId: string | undefined
+		const bornWorkspaces: string[] = []
+
+		function freshRoot() {
+			if (!workspaceId) throw new Error('the relocation suite needs its own workspace')
+			return herdrMuxAdapter.open(realExec, { cwd, launch: 'sh', at: 'tab', within: workspaceId })
+		}
+
+		beforeAll(() => {
+			cwd = mkdtempSync(join(tmpdir(), 'cyber-mux-itest-'))
+			const root = herdrMuxAdapter.open(realExec, { cwd, launch: 'sh', at: 'workspace' })
+			workspaceId = paneLocation(root.id).workspaceId
+		})
+
+		afterAll(() => {
+			for (const id of [...bornWorkspaces, workspaceId]) {
+				if (!id) continue
+				try {
+					execFileSync('herdr', ['workspace', 'close', id], { stdio: 'ignore' })
+				} catch {
+					// already gone
+				}
+			}
+			rmSync(cwd, { recursive: true, force: true })
+		})
+
+		it('movePane() carries a live pane into another tab, keeping its id inside the same workspace', () => {
+			const home = freshRoot()
+			const traveller = herdrMuxAdapter.open(realExec, { cwd, launch: 'sh', at: 'pane:right', from: home, ratio: 0.5 })
+			const destination = freshRoot()
+
+			const moved = herdrMuxAdapter.movePane(realExec, traveller, destination, 'right')
+
+			// Same workspace, so the id survives — the contrast with the workspace break below.
+			expect(moved.id).toBe(traveller.id)
+			expect(moved.tab).toBe(destination.tab)
+			expect(moved.workspace).toBe(workspaceId)
+			expect(herdrMuxAdapter.paneExists(realExec, moved)).toBe(true)
+			// And the pane it left is still where it was.
+			expect(paneLocation(home.id).tabId).toBe(home.tab)
+		})
+
+		it.each([
+			{ side: 'right', axis: 'x' },
+			{ side: 'down', axis: 'y' },
+		] as const)('movePane(%s) really lands the pane on that side of the NAMED destination pane', ({ side, axis }) => {
+			const regions = herdrMuxAdapter.regions
+			if (!regions) throw new Error('the herdr adapter must implement regions')
+			const home = freshRoot()
+			const traveller = herdrMuxAdapter.open(realExec, { cwd, launch: 'sh', at: 'pane:right', from: home, ratio: 0.5 })
+			const destination = freshRoot()
+
+			const moved = herdrMuxAdapter.movePane(realExec, traveller, destination, side)
+
+			const region = regions.describeRegion(realExec, destination)
+			const dest = region.find((p) => p.id === destination.id)
+			const landed = region.find((p) => p.id === moved.id)
+			if (!dest || !landed) throw new Error('both panes must be in the destination region after the move')
+			expect(landed.rect[axis]).toBeGreaterThan(dest.rect[axis])
+		})
+
+		it('movePane() throws on a destination pane the real herdr cannot resolve, before moving anything', () => {
+			const home = freshRoot()
+			expect(() => herdrMuxAdapter.movePane(realExec, home, { id: 'wZZ:p99' }, 'right')).toThrow(
+				/herdr could not resolve the tab of destination pane/,
+			)
+			expect(herdrMuxAdapter.paneExists(realExec, home)).toBe(true)
+		})
+
+		it("breakPane('tab') gives the pane its own tab in the same workspace, id intact", () => {
+			const home = freshRoot()
+			const traveller = herdrMuxAdapter.open(realExec, { cwd, launch: 'sh', at: 'pane:right', from: home, ratio: 0.5 })
+
+			const broken = herdrMuxAdapter.breakPane(realExec, traveller, 'tab')
+
+			expect(broken.id).toBe(traveller.id)
+			expect(broken.tab).not.toBe(home.tab)
+			expect(broken.workspace).toBe(workspaceId)
+			expect(herdrMuxAdapter.paneExists(realExec, broken)).toBe(true)
+		})
+
+		/**
+		 * THE row this member's `OpenedPane` return exists for, and one only a live server can produce.
+		 *
+		 * Note what is asserted and what is NOT: the old id keeps RESOLVING afterwards — herdr answers
+		 * `pane get <old>` with the new pane — so a "the handle is dead" assertion would be false. What
+		 * actually breaks is the listing: the old id is gone from `pane list`, so a caller matching its
+		 * handle against `listPanes` (which is what `reconcile`'s cull does) sees a live pane as dead.
+		 */
+		it("breakPane('workspace') REWRITES the pane id, and the old one vanishes from the listing", () => {
+			const home = freshRoot()
+			const traveller = herdrMuxAdapter.open(realExec, { cwd, launch: 'sh', at: 'pane:right', from: home, ratio: 0.5 })
+
+			const broken = herdrMuxAdapter.breakPane(realExec, traveller, 'workspace')
+			if (broken.workspace) bornWorkspaces.push(broken.workspace)
+
+			expect(broken.workspace).not.toBe(workspaceId)
+			expect(broken.id).not.toBe(traveller.id)
+			expect(herdrMuxAdapter.paneExists(realExec, broken)).toBe(true)
+			const ids = herdrMuxAdapter.listPanes(realExec).map((p) => p.id)
+			expect(ids).toContain(broken.id)
+			expect(ids).not.toContain(traveller.id)
+		})
+
+		/** herdr is NOT in tmux's family: a break-out of a lone pane mints another tab rather than no-oping. */
+		it("breakPane('tab') on a pane that is already alone still mints a new tab", () => {
+			const alone = freshRoot()
+
+			const broken = herdrMuxAdapter.breakPane(realExec, alone, 'tab')
+
+			expect(broken.id).toBe(alone.id)
+			expect(broken.tab).not.toBe(alone.tab)
+		})
+	})
 })

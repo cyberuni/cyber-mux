@@ -48,6 +48,9 @@ describe('spec:cyber-mux/library — published surface', () => {
 			expect(typeof agent.deriveAgentWait).toBe('function')
 			expect(typeof agent.agentApi).toBe('function')
 			expect(typeof agent.AgentLifecycleUnsupportedError).toBe('function')
+			expect(typeof agent.AgentWaitStatesUnsupportedError).toBe('function')
+			expect(typeof agent.agentWaitStatesSatisfiable).toBe('function')
+			expect(typeof agent.refuseAgentWaitStates).toBe('function')
 			// The refusal error is real and names the backend it refused.
 			expect(new agent.AgentLifecycleUnsupportedError('tmux').backend).toBe('tmux')
 		})
@@ -65,6 +68,10 @@ describe('spec:cyber-mux/library — published surface', () => {
 				'DEFAULT_WAIT_POLL_MS',
 				'FULL_SCROLLBACK_LINES',
 				'FloatingPanesUnsupportedError',
+				// The break-out and move refusals, beside the float and zoom ones and for their reason: the
+				// verbs they refuse are core pane control, on the surface everybody gets.
+				'PaneBreakUnsupportedError',
+				'PaneMoveUnsupportedError',
 				'PaneResizeUnsupportedError',
 				'PaneZoomUnsupportedError',
 				'RMUX_TAB_NAME_OPTION',
@@ -73,7 +80,11 @@ describe('spec:cyber-mux/library — published surface', () => {
 				'TMUX_WORKSPACE_GROUP_OPTION',
 				'assertWaitPattern',
 				'callerPane',
+				'canBreakPanes',
 				'canFloatPanes',
+				// `canMovePanes` and `canBreakPanes` are TWO reads rather than one, because cmux has exactly
+				// one of the two capabilities — see `move.ts`.
+				'canMovePanes',
 				// The zoom declaration read, beside `canFloatPanes` and for its reason: a caller asks BEFORE
 				// zooming through one spelling rather than reaching into an optional member itself.
 				'canZoomPanes',
@@ -99,6 +110,10 @@ describe('spec:cyber-mux/library — published surface', () => {
 				'refuseFloatingPane',
 				// And the zoom refusal helper, for `refuseFloatingPane`'s reason exactly: an out-of-tree adapter
 				// that cannot zoom needs the one spelling of the refusal, not a second message that can drift.
+				// The two relocation refusal helpers, for `refuseFloatingPane`'s reason: an out-of-tree adapter
+				// that cannot move or break out a pane needs the one spelling of each refusal.
+				'refusePaneBreak',
+				'refusePaneMove',
 				'refusePaneZoom',
 				'resolveMux',
 				'resolveMuxAdapter',
@@ -175,7 +190,14 @@ describe('spec:cyber-mux/library — published surface', () => {
 		it('./agent exports the agent-lifecycle orchestrator and its refusal (types carry no runtime name)', () => {
 			// Only the runtime VALUES appear in Object.keys — the AgentStatus/AgentLifecycle/AgentWaitOptions
 			// types ride the surface via `mux.ts` on the `.` barrel and produce no runtime export here.
-			expect(Object.keys(agent).sort()).toEqual(['AgentLifecycleUnsupportedError', 'agentApi', 'deriveAgentWait'])
+			expect(Object.keys(agent).sort()).toEqual([
+				'AgentLifecycleUnsupportedError',
+				'AgentWaitStatesUnsupportedError',
+				'agentApi',
+				'agentWaitStatesSatisfiable',
+				'deriveAgentWait',
+				'refuseAgentWaitStates',
+			])
 		})
 	})
 
@@ -198,6 +220,15 @@ describe('spec:cyber-mux/library — published surface', () => {
 			const commands: string[][] = []
 			// A recording fake Exec — the ONLY effect the core touches. No child process is spawned.
 			const exec: lib.Exec = (cmd, args) => {
+				// Every tmux invocation leads with `-u` — see `runTmux` in `mux.tmux.ts` and #177 for what
+				// tmux does to a TAB without it. Asserted here rather than woven into the verb assertions
+				// below, and this is the ONE place it is asserted against the BUILT bundle rather than the
+				// source: a fix that survived the source suite but got dropped by the bundler would be a
+				// silently locale-broken published package, which is exactly the shape #177 already was.
+				if (cmd === 'tmux') {
+					expect(args[0]).toBe('-u')
+					args = args.slice(1)
+				}
 				commands.push([cmd, ...args])
 				if (args[0] === 'new-window' || args[0] === 'split-window') return '%7\t@2'
 				if (args.includes('capture-pane')) return 'pane output'

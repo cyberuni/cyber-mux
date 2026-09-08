@@ -1,8 +1,8 @@
 @frozen
 Feature: cyber-mux agent — the CLI agent-lifecycle surface
   How the cyber-mux command line reaches the agent-lifecycle capability: agent status <pane> (a
-  snapshot that degrades truthfully, never refuses) and agent wait <pane> (a blocking drive of
-  herdr's native wait, refused with backend-unsupported on every backend without it). The
+  snapshot that degrades truthfully, never refuses) and agent wait <pane> (a blocking drive of the
+  backend's native wait, refused with backend-unsupported on every backend without it). The
   surface-independent capability and the deriveAgentWait refusal decision live in
   ../../agent/agent.feature; this suite owns invocation and presentation. The exit-code contract
   every refusal honors (0 ok, 1 operation failed) is AXI's, pinned once for the whole CLI in
@@ -35,9 +35,10 @@ Feature: cyber-mux agent — the CLI agent-lifecycle surface
     # tmux, wezterm, and zellij carry no agent-state feed at all — the same absent-not-false rule
     # LivePane.agentStatus follows in ../../mux/lookup/lookup.feature. Refusing here would turn a
     # caller away from a fact the backend CAN answer (which pane this is) because of a fact it can't
-    # (what its agent is doing) — the two are independent, and only the second is herdr-only.
+    # (what its agent is doing) — the two are independent. The snapshot is herdr-only; the WAIT is not
+    # (otty has one), which is why the two verbs do not cover the same backends.
 
-  # ── agent wait: drives herdr's capability, or refuses naming the backend ──
+  # ── agent wait: drives the backend's capability, or refuses naming the backend ──
   # agent wait is a refusal surface, unlike agent status: waiting has no truthful degrade, so a
   # backend without the capability is refused rather than answered with a guess.
 
@@ -48,12 +49,34 @@ Feature: cyber-mux agent — the CLI agent-lifecycle surface
     Then it prints idle
     And it exits 0
 
+  @id:cli-agent-wait-drives-otty
+  Scenario: agent wait drives the capability on otty and reports idle
+    Given an otty pane whose wait otty satisfies, printing nothing
+    When cyber-mux agent wait runs against that pane with --timeout 5000
+    Then it runs otty pane wait --pane for that pane with --timeout-secs 5
+    And it prints idle
+    And it exits 0
+    # the second backend with the capability, and a different primitive under it — otty pane wait, not
+    # herdr agent wait. The millisecond --timeout the CLI takes is otty's whole seconds here.
+
+  @id:cli-agent-wait-states-unsupported-refused
+  Scenario: agent wait refuses an --until the backend's native wait cannot end on
+    Given an otty pane and --until blocked, a state otty's wait cannot reach
+    When cyber-mux agent wait runs against that pane
+    Then it exits 1 under the code backend-unsupported
+    And the message names otty, the requested state, and idle
+    And the help line says to pass --until idle or omit --until
+    # a DIFFERENT refusal from the one below, kept separate so the fix hint is the real one: narrow
+    # --until, not "go run it on herdr". The invocation is well-formed and every value is a legal
+    # AgentStatus — what is missing is the backend's ability to END a wait there, so it is exit 1
+    # (operation failed), not exit 2 (usage).
+
   @id:cli-agent-wait-unsupported-refused
   Scenario Outline: agent wait refuses with backend-unsupported on a backend with no agent-lifecycle capability
     Given a <backend> pane
     When cyber-mux agent wait runs against that pane
     Then it exits 1 under the code backend-unsupported
-    And the help line names the herdr-only constraint
+    And the help line names the backends that have a native agent wait
     # the CLI's rendering of the library's AgentLifecycleUnsupportedError, the exact mirror of how
     # template save surfaces CaptureUnsupportedError as its own backend-unsupported (exit 1, naming
     # the backend, a fix hint rather than the raw error)

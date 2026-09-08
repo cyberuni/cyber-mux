@@ -94,6 +94,12 @@ function fakeAdapter(opts: { canSizeSplits?: boolean; failOnOpen?: number; works
 		},
 		// `template apply` opens and names panes; it zooms none, so these exist only to satisfy the
 		// contract and throw if the walk ever reaches for them.
+		movePane: () => {
+			throw new Error('template apply moves no pane')
+		},
+		breakPane: () => {
+			throw new Error('template apply breaks out no pane')
+		},
 		setPaneZoom: () => {
 			throw new Error('template apply zooms no pane')
 		},

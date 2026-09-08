@@ -69,8 +69,8 @@ the tiers collapse, is [`mux/`](./mux/README.md)'s behavior.
 | Term | Meaning |
 |---|---|
 | **`AgentStatus`** | the per-pane agent state herdr's feed reports: `idle \| working \| blocked \| done \| unknown`. Read from a pane's snapshot (`LivePane.agentStatus`) or as the state a wait reached. |
-| **`AgentLifecycle`** | the optional `waitForState` capability that blocks until a pane's agent reaches one of a requested set of `AgentStatus` values (or times out) — herdr's `agent wait`, normalized across the seam. Absent, never emulated, on a backend with no equivalent primitive. |
-| **refuse, not emulate** | the stance this capability takes on tmux, wezterm, and zellij: a lookalike wait built by polling `read()` output would silently disagree with herdr's own state derivation, so an absent `AgentLifecycle` is a named refusal (`AgentLifecycleUnsupportedError`) rather than a guess. |
+| **`AgentLifecycle`** | the optional `waitForState` capability that blocks until a pane's agent reaches one of a requested set of `AgentStatus` values (or times out) — herdr's `agent wait` and otty's `pane wait`, normalized across the seam. Absent, never emulated, on a backend with no equivalent primitive. The two bindings differ in reach, so `until` is a request: a backend whose native wait cannot name every requested state refuses by name (`AgentWaitStatesUnsupportedError`) rather than narrowing it. |
+| **refuse, not emulate** | the stance this capability takes on tmux, rmux, wezterm, zellij, and cmux: a lookalike wait built by polling `read()` output would silently disagree with the backend's own state derivation, so an absent `AgentLifecycle` is a named refusal (`AgentLifecycleUnsupportedError`) rather than a guess. |
 
 ## The output contract
 

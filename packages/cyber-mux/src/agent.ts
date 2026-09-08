@@ -11,14 +11,23 @@ import type { AgentStatus, AgentWaitOptions, MuxAdapter, MuxTarget } from './mux
  * engine is: a capability nobody has to import to drive a pane is not on the surface everybody gets.
  */
 
+export {
+	AgentWaitStatesUnsupportedError,
+	agentWaitStatesSatisfiable,
+	refuseAgentWaitStates,
+} from './agent-states.ts'
 export type { AgentLifecycle, AgentStatus, AgentWaitOptions } from './mux.ts'
 
 /**
- * An agent-lifecycle wait asked of a backend that has no native agent-state primitive (`agent wait`
- * on tmux, wezterm or zellij). An absent `agentLifecycle` seam member is a REFUSAL, never a guess: a
- * wait built from `read()` polling would silently disagree with herdr's own state derivation on the
- * same question, and a wait has no truthful degrade the way a snapshot does — so a backend that cannot
- * answer is refused rather than emulated.
+ * An agent-lifecycle wait asked of a backend that has no native agent-state primitive (`agent wait` on
+ * tmux, rmux, wezterm, zellij or cmux). An absent `agentLifecycle` seam member is a REFUSAL, never a
+ * guess: a wait built from `read()` polling would silently disagree with the backend's own state
+ * derivation on the same question, and a wait has no truthful degrade the way a snapshot does — so a
+ * backend that cannot answer is refused rather than emulated.
+ *
+ * Distinct from `AgentWaitStatesUnsupportedError` (`agent-states.ts`), which a backend that HAS the
+ * wait throws when its vocabulary is narrower than the `until` it was handed. This one says *no wait
+ * here*; that one says *this wait, not those states*.
  *
  * PORTABLE and exit-code-free by design, the exact mirror of `CaptureUnsupportedError`. The DECISION
  * to refuse is the library's and lives in `deriveAgentWait`, the one place that sees the adapter — how
@@ -67,14 +76,22 @@ export function deriveAgentWait(
  * stays specified once and enforced once, with no second refusal path here that could drift from it.
  */
 export interface AgentApi {
-	/** Whether this backend reports agent-lifecycle state at all (herdr yes; tmux/wezterm/zellij no). */
+	/** Whether this backend can WAIT on agent-lifecycle state (herdr and otty yes; the rest no). */
 	supported(): boolean
-	/** A pane's current agent state, or `undefined` when the backend has no feed (absent-not-false). */
+	/**
+	 * A pane's current agent state, or `undefined` when the backend has no feed (absent-not-false).
+	 *
+	 * Deliberately NOT the question `supported()` answers, and otty is the backend that proves the two
+	 * are independent: otty can BLOCK on its own agent state but exposes no documented CLI read of it,
+	 * so `supported()` is `true` there while this stays `undefined`. Until otty they happened to agree
+	 * on every backend.
+	 */
 	status(target: MuxTarget): AgentStatus | undefined
 	/**
 	 * Block until the pane's agent reaches one of `opts.until` (or the backend's default set); throws
 	 * `AgentLifecycleUnsupportedError` naming the backend on one without the capability, via
-	 * `deriveAgentWait`. A bare `wait(target)` takes herdr's own defaults (`opts ?? {}`).
+	 * `deriveAgentWait`, or `AgentWaitStatesUnsupportedError` on one whose native wait cannot name every
+	 * requested state. A bare `wait(target)` takes the backend's own defaults (`opts ?? {}`).
 	 */
 	wait(target: MuxTarget, opts?: AgentWaitOptions | undefined): AgentStatus
 }

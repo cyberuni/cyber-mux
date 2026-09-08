@@ -513,6 +513,70 @@ describe.skipIf(!hasRmux())('spec:cyber-mux/mux', () => {
 			expect(rmuxMuxAdapter.isPaneZoomed(exec, opened)).toBeUndefined()
 		})
 
+		/**
+		 * The relocation rows. rmux reimplements tmux's command language, so the argv is the same — which
+		 * is exactly why these run against the real binary: the argv resembling tmux's proves nothing
+		 * about what rmux does with it. Every assertion below is a screen fact rmux reported.
+		 */
+		it('movePane() carries a live pane into the destination’s window and leaves its sibling behind', () => {
+			const home = rmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
+			const traveller = rmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'pane:right', from: home, ratio: 0.5 })
+			const destination = rmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
+
+			const moved = rmuxMuxAdapter.movePane(exec, traveller, destination, 'right')
+
+			expect(moved.id).toBe(traveller.id)
+			expect(moved.tab).toBe(destination.tab)
+			expect(rmuxMuxAdapter.paneExists(exec, moved)).toBe(true)
+			expect(rmuxMuxAdapter.listPanes(exec).some((p) => p.id === home.id)).toBe(true)
+		})
+
+		it.each([
+			{ side: 'right', axis: 'x' },
+			{ side: 'down', axis: 'y' },
+		] as const)('movePane(%s) really lands the pane on that side of the destination', ({ side, axis }) => {
+			const regions = rmuxMuxAdapter.regions
+			if (!regions) throw new Error('the rmux adapter must implement regions')
+			const home = rmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
+			const traveller = rmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'pane:right', from: home, ratio: 0.5 })
+			const destination = rmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
+
+			const moved = rmuxMuxAdapter.movePane(exec, traveller, destination, side)
+
+			const region = regions.describeRegion(exec, destination)
+			const dest = region.find((p) => p.id === destination.id)
+			const landed = region.find((p) => p.id === moved.id)
+			if (!dest || !landed) throw new Error('both panes must be in the destination region after the move')
+			expect(landed.rect[axis]).toBeGreaterThan(dest.rect[axis])
+		})
+
+		it('movePane() throws on a destination the real rmux cannot resolve', () => {
+			const home = rmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
+			expect(() => rmuxMuxAdapter.movePane(exec, home, { id: '%999' }, 'right')).toThrow(/rmux could not move pane/)
+		})
+
+		it('breakPane() gives a split pane its own window and leaves its sibling alone in the old one', () => {
+			const home = rmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
+			const traveller = rmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'pane:right', from: home, ratio: 0.5 })
+
+			const broken = rmuxMuxAdapter.breakPane(exec, traveller, 'tab')
+
+			expect(broken.id).toBe(traveller.id)
+			expect(broken.tab).not.toBe(traveller.tab)
+			expect(broken.workspace).toBeUndefined()
+			expect(rmuxMuxAdapter.paneExists(exec, broken)).toBe(true)
+			expect(rmuxMuxAdapter.regions!.describeRegion(exec, home).map((p) => p.id)).toEqual([home.id])
+		})
+
+		/** rmux is in tmux's family here, not herdr's — measured on 0.10.0, not inherited. */
+		it('breakPane() on a pane that is already alone answers its existing window, changing nothing', () => {
+			const alone = rmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
+
+			const broken = rmuxMuxAdapter.breakPane(exec, alone, 'tab')
+
+			expect(broken).toEqual({ id: alone.id, tab: alone.tab })
+		})
+
 		it('resizePane() throws on a region rmux reports as a single pane', () => {
 			const regions = rmuxMuxAdapter.regions
 			if (!regions) throw new Error('the rmux adapter must implement regions')

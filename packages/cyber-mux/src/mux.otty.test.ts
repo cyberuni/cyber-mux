@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { AgentWaitStatesUnsupportedError } from './agent-states.ts'
 import type { Exec } from './exec.ts'
 import { createOttyAdapter, ottyMuxAdapter } from './mux.otty.ts'
 
@@ -456,6 +457,112 @@ describe('spec:cyber-mux/mux/lookup', () => {
 			const panes = ottyMuxAdapter.listPanes(fakeExec([], { panes: LIST_PANES_RESPONSE }))
 			expect(panes.length).toBeGreaterThan(0)
 			for (const pane of panes) expect(pane.floating).toBe(false)
+		})
+	})
+})
+
+describe('spec:cyber-mux/agent', () => {
+	describe('ottyMuxAdapter agentLifecycle (mocked exec — otty is a GUI app, not installed here)', () => {
+		/** The capability object, asserted present before anything reads through it. */
+		const agentLifecycle = (() => {
+			const capability = ottyMuxAdapter.agentLifecycle
+			if (!capability) throw new Error('otty must declare agentLifecycle')
+			return capability
+		})()
+
+		it('agent-wait-otty-builds-command', () => {
+			// `otty pane wait --pane <id>` — the PANE-selected native wait, not `otty watch:<agent> <id>`,
+			// whose positional is an agent session id no documented pane read can produce.
+			const calls: string[][] = []
+			const reached = agentLifecycle.waitForState(fakeExec(calls, { 'pane wait': '' }), { id: 'pane:7' }, {})
+			expect(calls[0]).toEqual(['pane', 'wait', '--pane', 'pane:7'])
+			expect(reached).toBe('idle')
+		})
+
+		it('agent-wait-otty-succeeds-on-empty-stdout', () => {
+			// The bug this exists to catch: a satisfied `otty pane wait` prints nothing documented, so the
+			// runner hands back `''`. Guarding with `!out` instead of `out === null` turns every successful
+			// wait into a throw — revert to `!out` and this goes red while the argv test above stays green.
+			const exec: Exec = () => ''
+			expect(agentLifecycle.waitForState(exec, { id: 'pane:7' }, {})).toBe('idle')
+		})
+
+		it('agent-wait-otty-timeout-rounds-up-to-whole-seconds', () => {
+			// otty's flag is `--timeout-secs`. 1500ms is 1.5s, which has no spelling — it rounds UP, never
+			// down, because `--timeout-secs 1` would give up before the caller's bound.
+			const calls: string[][] = []
+			agentLifecycle.waitForState(fakeExec(calls, { 'pane wait': '' }), { id: 'pane:7' }, { timeoutMs: 1500 })
+			expect(calls[0]).toEqual(['pane', 'wait', '--pane', 'pane:7', '--timeout-secs', '2'])
+		})
+
+		it('agent-wait-otty-zero-timeout-never-unbounds-the-wait', () => {
+			// The silent-unbounding guard, and the ONE input that exercises it: `--timeout-secs 0` is otty's
+			// spelling for WAIT FOREVER, which is what OMITTING timeoutMs already means at the seam — so a
+			// caller who passed a bound must never get 0. Drop the `Math.max(1, …)` and this goes red with a
+			// wait that blocks forever. (Every positive sub-second value is already floored by the ceil.)
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'pane wait': '' })
+			agentLifecycle.waitForState(exec, { id: 'pane:7' }, { timeoutMs: 0 })
+			agentLifecycle.waitForState(exec, { id: 'pane:7' }, { timeoutMs: 200 })
+			expect(calls[0]).toEqual(['pane', 'wait', '--pane', 'pane:7', '--timeout-secs', '1'])
+			expect(calls[1]).toEqual(['pane', 'wait', '--pane', 'pane:7', '--timeout-secs', '1'])
+		})
+
+		it('agent-wait-otty-timeout-omitted-indefinite', () => {
+			// No timeoutMs — no `--timeout-secs`, so otty's own indefinite wait applies rather than a
+			// bound cyber-mux invented.
+			const calls: string[][] = []
+			agentLifecycle.waitForState(fakeExec(calls, { 'pane wait': '' }), { id: 'pane:7' }, {})
+			expect(calls[0]).not.toContain('--timeout-secs')
+		})
+
+		it('agent-wait-otty-until-idle-and-omitted-both-send-no-flag', () => {
+			// `otty pane wait` has no `--until`. An omitted set takes otty's own default (idle, the only
+			// state it has) and an explicit `['idle']` asks for exactly that — neither adds a flag.
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'pane wait': '' })
+			agentLifecycle.waitForState(exec, { id: 'pane:7' }, {})
+			agentLifecycle.waitForState(exec, { id: 'pane:7' }, { until: [] })
+			agentLifecycle.waitForState(exec, { id: 'pane:7' }, { until: ['idle'] })
+			for (const call of calls) expect(call).toEqual(['pane', 'wait', '--pane', 'pane:7'])
+		})
+
+		it('agent-wait-otty-refuses-unreachable-until', () => {
+			// Refused BY NAME rather than narrowed to idle: a wait that ends on a state the caller did not
+			// ask for is the plausible-wrong-answer shape, not a degrade. Refused BEFORE any exec.
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'pane wait': '' })
+			expect(() => agentLifecycle.waitForState(exec, { id: 'pane:7' }, { until: ['blocked'] })).toThrow(
+				AgentWaitStatesUnsupportedError,
+			)
+			// A set that CONTAINS idle is refused too — otty cannot end on the other member either.
+			expect(() => agentLifecycle.waitForState(exec, { id: 'pane:7' }, { until: ['idle', 'done'] })).toThrow(
+				/otty can only end an agent wait on idle/,
+			)
+			expect(calls).toEqual([])
+		})
+
+		it('agent-wait-otty-throws-when-the-wait-does-not-land', () => {
+			// otty tells satisfied (exit 0) from no-reportable-state (6), no-such-pane (4) and timeout (9)
+			// by EXIT CODE, which `Exec` does not carry — so the three fold into one throw naming the pane,
+			// never into a returned status nobody reached.
+			const exec: Exec = () => null
+			expect(() => agentLifecycle.waitForState(exec, { id: 'pane:7' }, {})).toThrow(/otty pane wait/)
+			expect(() => agentLifecycle.waitForState(exec, { id: 'pane:7' }, {})).toThrow(/pane:7/)
+			// The exit-code detail is lost; otty's own sentence is not. `withReason` appends whatever the
+			// runner captured — a diagnostic only, never branched on (a guard keyed on `lastError` is a
+			// live no-op against a runner that never sets it).
+			const withWords: Exec = Object.assign(() => null, { lastError: 'timed out; still busy: pane:7' })
+			expect(() => agentLifecycle.waitForState(withWords, { id: 'pane:7' }, {})).toThrow(/still busy/)
+		})
+
+		it('agent-status-otty-stays-undefined', () => {
+			// The wait and the SNAPSHOT are independent members, and otty is where they part: it can block
+			// on its own agent state and exposes no documented CLI read of it, so every listed pane still
+			// reports no agentStatus. Never a false `unknown`.
+			const panes = ottyMuxAdapter.listPanes(fakeExec([], { panes: LIST_PANES_RESPONSE }))
+			expect(panes.length).toBeGreaterThan(0)
+			for (const pane of panes) expect(pane.agentStatus).toBeUndefined()
 		})
 	})
 })

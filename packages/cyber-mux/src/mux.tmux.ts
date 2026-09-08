@@ -116,6 +116,19 @@ export const tmuxMuxAdapter: MuxAdapter = {
 	canZoomPanes: true,
 
 	/**
+	 * `true` for both, against two commands tmux has had for as long as it has had windows. Verified
+	 * live on 3.7c in a throwaway server: `move-pane -d -h -s %2 -t %1` carried %2 out of window @0
+	 * and left it at `l=101` in @1 — to the RIGHT of %1, which is what makes `-h` the `'right'` side —
+	 * and `break-pane -d -s %1 -P -F` answered `@2 %1` with %1 gone from @0.
+	 *
+	 * Neither verb has the ACTIVE-pane trap `setPaneZoom` had to work around: `-s` is honored as
+	 * given. Measured, not assumed — with %0 active, `move-pane -s %1` moved %1 and left %0 where it
+	 * was, and `break-pane -s %1` broke out %1 rather than the active pane.
+	 */
+	canMovePanes: true,
+	canBreakPanes: true,
+
+	/**
 	 * Every route passes `-d`, so no open moves the attached client. tmux is the backend where this
 	 * cost the most to make true: `-d` was already on `new-window`, but `split-window` and `new-pane`
 	 * were issuing it nowhere, and both ACTIVATE what they create. Measured on 3.7c rather than read
@@ -447,6 +460,53 @@ export const tmuxMuxAdapter: MuxAdapter = {
 	},
 
 	/**
+	 * `move-pane -s <src> -t <dst>`, with `-h`/`-v` choosing the side. Measured on 3.7c: `-h` lands the
+	 * moved pane to the RIGHT of the destination (`l=101` beside a destination at `l=0 w=100`) and
+	 * `-v` lands it BELOW, which is the mapping this member's `'right'`/`'down'` takes.
+	 *
+	 * `-d` is not decoration: without it tmux SELECTS the destination window and makes the moved pane
+	 * active, dragging an attached client to a window the caller never asked to look at (measured —
+	 * a bare `move-pane` left the client on @1 with %1 active there). With it the client stays put and
+	 * the destination's own active pane is untouched.
+	 *
+	 * The re-read afterwards is what turns tmux's `void` command into the seam's `OpenedPane`.
+	 * `move-pane` has no `-P`/`-F` at all — unlike `break-pane` below — so the window the pane landed
+	 * in has to be asked for, and asking doubles as the confirmation that the pane survived the move.
+	 * No `workspace`: tmux has no such tier, and `open` reports none either.
+	 */
+	movePane(exec, target, destination, side) {
+		if (
+			runTmux(exec, ['move-pane', '-d', side === 'down' ? '-v' : '-h', '-s', target.id, '-t', destination.id]) === null
+		) {
+			throw new Error(withReason(exec, `tmux could not move pane ${target.id} to ${destination.id}`))
+		}
+		return tmuxPaneLocation(exec, target.id, 'move')
+	},
+
+	/**
+	 * `break-pane -s <src> -P -F`, which reports the pane and its NEW window in the same call — so
+	 * unlike `movePane` this needs no second read. Driven on 3.7c: with %0 active, `break-pane -d -s
+	 * %1` answered `@2 %1` and left %0 alone in @0.
+	 *
+	 * `at` is ignored, and that is the tier collapse `open` already makes rather than a member
+	 * ignoring its argument: tmux has no workspace tier, so `'tab'` and `'workspace'` are both a new
+	 * Window here, exactly as `MuxPlacement`'s two space placements both are. The returned
+	 * `OpenedPane` carries no `workspace`, which is how a caller sees the collapse rather than being
+	 * told a false one.
+	 *
+	 * `-d` for `movePane`'s reason. Breaking out a pane that is already alone in its window is a
+	 * no-op that reports its existing window (measured on 3.7c) — the seam declares that rather than
+	 * spending a read to normalize it.
+	 */
+	breakPane(exec, target, _at) {
+		const out = runTmux(exec, ['break-pane', '-d', '-s', target.id, '-P', '-F', '#{pane_id} #{window_id}'])
+		if (!out) throw new Error(withReason(exec, `tmux could not break out pane ${target.id}`))
+		const [pane, window] = out.trim().split(' ')
+		if (!pane || !window) throw new Error(`tmux break-pane did not report the pane and window of ${target.id}`)
+		return { id: pane, tab: window }
+	},
+
+	/**
 	 * Tab-separated, not space — the same rule `describeTmuxRegion` follows, and for the same reason:
 	 * `pane_current_path` and `pane_title` can both contain spaces. The old space-separated format
 	 * recovered the cwd by rejoining everything after the command, which works only while the cwd is
@@ -663,6 +723,27 @@ function splitOpenReport(out: string, command: string): [string, string] {
 	const [pane, windowId] = out.split('\t')
 	if (!pane || !windowId) throw new Error(`tmux ${command} did not report the new pane's id and window id`)
 	return [pane, windowId]
+}
+
+/**
+ * Where a pane lives NOW, as the `OpenedPane` a relocation has to answer with — the read `move-pane`
+ * cannot give, because it has no `-P`/`-F` to report through.
+ *
+ * Server-wide `list-panes -a` rather than `display-message -p -t <pane>`, for `isPaneZoomed`'s
+ * reason: display-message answers a pane that no longer exists with a blank line and exit code 0, so
+ * a move that silently lost its pane would read as a successful one. A missing LINE is unambiguous,
+ * and here it means the relocation did not land — which throws rather than reporting a false success.
+ *
+ * No `workspace` on the result: tmux has no such tier, so a relocation reports none exactly as an
+ * `open` does.
+ */
+function tmuxPaneLocation(exec: Exec, id: string, verb: string): OpenedPane {
+	const out = runTmux(exec, ['list-panes', '-a', '-F', '#{pane_id} #{window_id}'])
+	const line = (out ?? '').split('\n').find((l) => l.split(' ')[0] === id)
+	if (!line) throw new Error(`tmux could not resolve pane ${id} after the ${verb}`)
+	const [, windowId] = line.split(' ')
+	if (!windowId) throw new Error(`tmux did not report a window for pane ${id} after the ${verb}`)
+	return { id, tab: windowId }
 }
 
 /**
