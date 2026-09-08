@@ -35,7 +35,7 @@ of a pane that has gone away is never mistaken for a label.
 ## Ambiguity and not-found
 
 - **Two or more live panes share a label** the locator matches: this is reported as an ambiguity
-  error (exit 1) naming every candidate pane (id, label, cwd) so you can pick the right one — cyber-mux
+  error (exit 2) naming every candidate pane (id, label, cwd) so you can pick the right one — cyber-mux
   never guesses (not "most recent", not "focused").
 - **The locator matches neither an id nor a label:** it is handed to the backend as-is and takes
   that command's own not-found path (typically `pane-not-found`, exit 1) — the same outcome as

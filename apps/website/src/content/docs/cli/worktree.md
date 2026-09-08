@@ -72,18 +72,59 @@ cyber-mux worktree add --branch feat/x --at workspace --launch "claude"
 cyber-mux worktree add --branch feat/x --path ~/code/my-app.worktrees/feat-x --base origin/main
 ```
 
+## `cyber-mux worktree provision`
+
+Get a worktree on the branch you name, reusing a free one before creating another. Prune removes
+every disposable worktree; provision **recycles** one. Both ask the same question through the same
+predicate, so they can never disagree about which worktrees are free — it is the gate `worktree
+list` marks `(removable)` with.
+
+**Usage**
+
+```bash
+cyber-mux worktree provision --branch <branch> [--base <ref>] [--path <path>]
+```
+
+`--base` is the start point for the branch, defaulting to the resolved default branch and then
+`HEAD`. `--path` is where a fresh checkout goes when nothing is free to reuse; by default a sibling
+of the primary checkout.
+
+A recycled checkout is reset to a **pristine tree**: a fresh branch at `base`, then `reset --hard`,
+then `clean -fdx`. The `merged` clause in the gate has already proved the old branch's work landed,
+so repointing it destroys nothing the trunk does not hold — the same safety prune leans on to delete
+the checkout outright, spent here on reusing it instead. The primary checkout is filtered out before
+the gate runs and can never be handed back.
+
+The output reports which of the two happened, so a caller never has to infer it:
+
+```
+action        reused
+root          ~/code/my-app.worktrees/search
+branch        feat/next
+reused-from   feat/search
+```
+
+`--format json` carries `action` (`reused` | `created`), `root`, `branch`, and `reused` — the
+recycled entry in full, including its prior branch and workspace, or `null` on a fresh checkout.
+
+**Example**
+
+```bash
+cyber-mux worktree provision --branch feat/next --base origin/main
+```
+
 ## `cyber-mux worktree open`
 
 Open an existing worktree, grouping it with its repo where the backend can bind. This is the remedy
 for a checkout made by a bare `worktree add` — add now, group later. Same flags as `worktree add`
-minus `--branch`/`--path`/`--base` (the worktree already exists); prints the same `root`, `branch`,
+minus `--branch`/`--path`/`--base`/`--template` (the worktree already exists); prints the same `root`, `branch`,
 `pane`, `workspace` shape.
 
 **Usage**
 
 ```bash
-cyber-mux worktree open <path> [--launch <cmd>] [--template <name>] \
-  [--at <placement>] [--env <KEY=VALUE>...] [--label <name>]
+cyber-mux worktree open <path> [--launch <cmd>] [--at <placement>] \
+  [--env <KEY=VALUE>...] [--label <name>]
 ```
 
 **Example**
@@ -112,8 +153,8 @@ Markers ride on the column they are about, so no one-bit fact spends a column of
 | `(gone)` | `root` | the checkout no longer exists on disk; git can prune it |
 
 A `root` under your home directory is also shortened to `~/…`. Every marker and the shortening are
-**table-only**: `--format json` carries the raw `linked`, `prunable`, `merged`, and `dirty` booleans
-and the absolute `root`, unmarked.
+**table-only**: `--format json` carries the raw `linked`, `prunable`, `merged`, and `dirty` booleans,
+`mergedSignal` (which of the four signals proved it landed), and the absolute `root`, unmarked.
 
 ### `(removable)` — is this worktree still needed?
 
@@ -129,9 +170,12 @@ checked out in the primary checkout. `main` is never hardcoded.
 
 Two things worth knowing:
 
-- A **squash** or rebase merge rewrites the commits, so the original branch tip is no longer an
-  ancestor and the worktree is *not* marked, even though its work landed. The signal errs toward
-  "still needed" on purpose — a missed marker costs you one manual check, a wrong one costs you work.
+- `merged` is established by four independent signals, any one of which is enough: **ancestry**, a
+  **gone upstream** (the remote branch was deleted after its PR landed), a **squash patch** match, and
+  an opt-in **forge** check. A squash or rebase merge rewrites the commits, so ancestry alone would
+  miss it; the patch heuristic catches a clean squash, and one that was conflict-resolved or
+  hand-edited still reads `false`. The signal errs toward "still needed" on purpose — a missed marker
+  costs you one manual check, a wrong one costs you work.
 - The marker is **advisory**. `worktree list` reports; it never removes, and nothing consults `(removable)`
   before a `worktree remove`. The removal gates are unchanged.
 
@@ -202,4 +246,35 @@ cyber-mux worktree remove ~/code/my-app.worktrees/feat-x
 ```bash
 # Discard uncommitted changes in the checkout too
 cyber-mux worktree remove ~/code/my-app.worktrees/feat-x --force
+```
+
+## `cyber-mux worktree prune`
+
+Remove every disposable worktree in one call — the same `(removable)` gate `worktree list` reports,
+applied. No new plumbing: prune composes the listing, the gate, and `worktree remove`, so it can
+never disagree with what the listing promised.
+
+**Usage**
+
+```bash
+cyber-mux worktree prune [--force]
+```
+
+**The bare form previews and removes nothing.** It prints the candidates under a `would remove`
+column and tells you the command that applies them; `--force` does the removal. Everything it
+declines is listed with the reason — open in a workspace, uncommitted changes, branch not landed,
+checkout already gone — so a skip is never silent.
+
+The primary checkout is not a candidate, not a skip, just absent.
+
+**Examples**
+
+```bash
+# Preview
+cyber-mux worktree prune
+```
+
+```bash
+# Apply
+cyber-mux worktree prune --force
 ```
