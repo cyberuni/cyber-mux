@@ -6,7 +6,8 @@ concept: [cyber-mux, conformance]
 # conformance — verifying one adapter against its real multiplexer
 
 > **A maintainer tool, not a shipped surface.** This node owns `scripts/test-adapter.ts` and its
-> `test:adapter` package script — run by hand on a machine that has a given multiplexer installed.
+> `test:adapter` package script — run by hand on a machine that has a given multiplexer installed,
+> and run by `live-backends` in its `--report=<file>` form to decide what that job's green means.
 > It is excluded from the published package and has no `cyber-mux <verb>` counterpart, so it gets no
 > mirror node under [`cli/`](../cli/README.md). It is nonetheless **behavioral**: its discovery,
 > outcome resolution, and exit codes are a contract, and this suite is what holds them.
@@ -117,8 +118,9 @@ from a tmux-only box; only the *exit status* is scoped to what this machine coul
   node specifies the runner that would drive it and presumes nothing about its shape.
 - **Filling the cmux and otty gaps.** This node **reports** a missing suite. Writing one is the work
   that report exists to prompt.
-- **Replacing `pnpm test:integration`.** The run-everything entry point stays. This is selection and
-  honest reporting layered over the same suites and the same
+- **Replacing `pnpm test:integration`.** The run-everything entry point stays — in CI too, where
+  `--report=<file>` reads what it produced rather than re-running it. This is selection and honest
+  reporting layered over the same suites and the same
   [`vitest.integration.config.ts`](../../../vitest.integration.config.ts).
 - **Being a shipped verb.** The suites it drives are not in the published package, so a
   `cyber-mux <verb>` counterpart would point at files a consumer does not have.
@@ -131,7 +133,7 @@ from a tmux-only box; only the *exit status* is scoped to what this machine coul
 
 ## Use Cases
 
-Three entry points, all on `scripts/test-adapter.ts` (surfaced as the `test:adapter` package
+Four entry points, all on `scripts/test-adapter.ts` (surfaced as the `test:adapter` package
 script). Usage errors are branches within these, not separate entry points.
 
 - **`test-adapter` — the listing form (no adapter, no flags).** *Trigger:* a maintainer wants to know
@@ -157,6 +159,29 @@ script). Usage errors are branches within these, not separate entry points.
   installed adapters, call each one's suites, fold the exits. It adds no verification logic of its
   own, which is why it is verified only against the real boundary (below).
 
+- **`test-adapter --report=<file>` — verify every adapter against a run that already happened.**
+  *Trigger:* a run of `pnpm test:integration` has just written a JSON report and its exit code is not
+  enough. *Inputs:* the report's path. *Outcome:* identical to `--all` — every adapter resolved and
+  reported on its own line, a summary, and a non-zero exit on any `gap`, `no-coverage` or `fail` —
+  except that the counts are folded out of the report instead of spawning vitest per adapter. A
+  report that cannot be read is an error, never a pass; `--report` with no file is a usage error,
+  exit 2. This is the form `live-backends` runs, and the value stays attached to the flag because a
+  bare positional here is an adapter name.
+
+  **Why CI runs this and not `--all`.** `--all` is the right shape for a maintainer selecting
+  adapters and the wrong one for this job, on two counts that have nothing to do with taste. It
+  spawns one vitest process per adapter, serializing suites that `pnpm test:integration` runs in
+  parallel in one; and it derives its targets from `src/`, so
+  [`scripts/test-adapter.integration.test.ts`](../../../scripts/test-adapter.integration.test.ts) —
+  the runner's own real-boundary suite, belonging to no adapter — would stop running in CI
+  altogether. `--report=<file>` costs one file read on top of the run the job already does, and
+  covers strictly more. Measured on the job itself, both numbers are in PR #150.
+
+  **What it demands, and of whom.** Coverage is demanded only for an adapter whose binary is
+  actually on this machine — the same `installed` gate every other form uses, and the reason this
+  can be required in CI without changing what a developer sees. `pnpm test:integration` is
+  untouched; a machine without zellij still skips it, silently and correctly.
+
 ### Running from inside a multiplexer is refused
 
 A suite-running invocation is **refused outright when this shell is itself inside any multiplexer**,
@@ -175,6 +200,9 @@ Two consequences worth stating:
 
 - **The listing form is exempt**, because it runs no suite and so carries none of the risk. It stays
   available from anywhere, which is how a caller discovers what a plain shell would be able to verify.
+- **`--report=<file>` is exempt** for the same reason: it reads a run that already happened, drives
+  no multiplexer, and endangers no pane. Refusing it would only stop a maintainer inside tmux from
+  reading a file.
 - **For cmux and otty this is the only way anyway.** Both are GUI applications whose CLIs are
   *clients* — `cmux` and `otty` each talk to an app that must already be running. There is no
   "inside" from which to drive them; you run from a separate terminal while the app is up. `wezterm`
@@ -209,7 +237,7 @@ graph TD
   I -->|"no"| S["O1: skip — vitest never invoked, exit 0"]
   I -->|"yes"| Q{"O2: does this adapter have any suite"}
   Q -->|"none"| G["O2: gap — exit 1"]
-  Q -->|"one or more"| RUN["R1: vitest run, integration config, exactly this adapter's suite files"]
+  Q -->|"one or more"| RUN["R1: vitest run, integration config, exactly this adapter's suite files — or, under --report, this adapter's suite files folded out of the report"]
   RUN --> C{"O3: how many tests executed"}
   C -->|"zero"| NC["O3: no-coverage — the skipped count reported, exit 1"]
   C -->|"one or more"| P{"did any fail"}
@@ -236,6 +264,11 @@ graph TD
   M -->|"L1: no adapter, no --all"| LIST["project every adapter, list the projections"]
   LIST --> L2["L2: exit 0 unconditionally — a projected gap does not fail the listing"]
   M -->|"one adapter name, or --all"| U1{"U1: is every named adapter known"}
+  M -->|"F1: --report=<file>"| RD{"F2: can the report be read"}
+  RD -->|"no"| RERR["F2: exit 1 — a report that cannot be read is never a pass"]
+  RD -->|"yes"| FOLD["F1: fold the report per adapter, then resolve as --all does"]
+  FOLD --> ALL
+  M -->|"F3: --report with no file"| RUSAGE["F3: exit 2 — the form it needs is named"]
   U1 -->|"no"| UNKNOWN["U1: exit 2 — a mistyped name is wrong however it was invoked"]
   U1 -->|"yes"| G{"G1: is this shell inside any multiplexer"}
   G -->|"yes"| REFUSE["G1: refuse — name the mux, run no suite, exit 1"]
@@ -296,6 +329,26 @@ the shared discovery sub-graph both other entry points enter; the rest are group
 | O5 a test failed → fail | a tmux suite reporting a failing test | `an installed multiplexer whose suite fails is reported as a failure and exits 1` |
 | U1 an unknown name is a usage error | the name `screen` | `an unknown adapter name exits 2 and names the adapters that are known` |
 
+### `test-adapter --report=<file>` — verify against a run that already happened
+
+The counts arrive from a file rather than a spawn, so these are verified over the injected seam like
+every other outcome row — the report shape is data, and folding it is a decision, not a composition.
+The two rows that matter most are the two `--all`'s real-boundary suite cannot reach: a
+`no-coverage` adapter **alongside passing neighbors** (nothing here has to be driven live, so the
+masking half is provable), and the local guarantee that an uninstalled adapter is still only a skip.
+
+| Edge | Path (Given) | Scenario |
+|---|---|---|
+| F1 a whole-run report folds to one adapter's counts | a report covering herdr's two suites and tmux's one | `a whole-run report folds down to one adapter's counts` |
+| F1 suites match by file name, not by path | a report naming a suite by a Windows absolute path | `a report written on another platform still matches its suites` |
+| F1 every installed adapter executed → pass, no vitest spawned | four installed adapters, all executing | `every installed adapter executed something, so the report passes` |
+| O3 through the report — the skipped adapter is named, unmasked | zellij collecting 13 and executing none, beside passing neighbors | `an adapter that skipped every test is named, and its passing neighbors do not mask it` |
+| O3 a suite the run never reached | wezterm installed, its suite absent from the report | `an installed adapter whose suite the run never reached is no coverage` |
+| O1 the local guarantee — absent binary stays a skip | zellij and wezterm absent from PATH | `an adapter this machine does not have is skipped, and the report still passes` |
+| G1 exempt from the refusal — it runs nothing | a shell inside herdr | `reading a report works from inside a multiplexer` |
+| F3 `--report` with no file is a usage error | `--report=` and nothing after it | `--report with no file names the form it needs` |
+| F2 an unreadable report is an error, never a pass | a file that cannot be read | `a report that cannot be read is an error, never a pass` |
+
 ### `test-adapter --all` — verify every installed adapter
 
 These three are verified **only against the real boundary**, in
@@ -322,11 +375,13 @@ the contract. It now reads the suiteless adapter out of the runner's own listing
 moves the fixture instead of breaking it.
 
 It is opt-in from `pnpm test` — but **not** unrun in CI: `pull-request.yml`'s `live-backends` job
-installs tmux, herdr, wezterm, and zellij and runs `pnpm cm test:integration`, so these three
-scenarios are exercised on every pull request. That job is no longer `continue-on-error` — it blocks
-the run like any other required job, so a false green here is no longer merely reported, it is
-trusted; the constructed worlds above are what make this suite's own result independent of which
-multiplexers that runner happens to have.
+installs tmux, herdr, wezterm, zellij and rmux and runs `pnpm cm test:integration`, so these three
+scenarios are exercised on every pull request. That is also why that job runs `--report=<file>`
+rather than `--all`: this file belongs to no adapter, so `--all`, which derives its targets from
+`src/`, would stop running it there. That job is no longer `continue-on-error` — it blocks the run
+like any other required job, so a false green here is no longer merely reported, it is trusted; the
+constructed worlds above are what make this suite's own result independent of which multiplexers
+that runner happens to have.
 
 One consequence stays and is stated: the `no-coverage` and `fail` rows carry **no passing partner
 adapter**, so they prove their outcome reaches the exit code but not that a passing neighbor fails to

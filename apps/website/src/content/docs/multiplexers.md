@@ -131,9 +131,18 @@ defensively.
 ## WezTerm (alpha)
 
 Driven via `wezterm cli` (`spawn`, `split-pane`, `list --format json`, `send-text`, `activate-pane`,
-…) against [WezTerm](https://wezterm.org)'s built-in multiplexer. Built from `wezterm cli
---help`/the CLI reference rather than empirically — no live WezTerm GUI was available to verify
-against — so its gaps are real, spec'd limitations rather than forced parity:
+…) against [WezTerm](https://wezterm.org)'s built-in multiplexer.
+
+**Verified against WezTerm `20240203-110809-5046fc22`** — the newest stable release, and the build
+CI's `live-backends` job pins. WezTerm has shipped no stable release since 2024-02-03, so that pin
+is the ceiling rather than a lag. On every PR that job runs `mux.wezterm.integration.test.ts`
+against a real headless `wezterm-mux-server`: opening at `pane:*` and at `workspace`, reading the
+pane and its cwd back out of `list --format json`, running a command in it and capturing the
+output, tearing it down, and the two refusals this backend answers by name (`--at pane:float`, and
+`rename` at the pane tier). Two things it does **not** cover, which therefore still rest on
+`wezterm cli --help` and the CLI reference: the focus answer, and `--percent` split sizing. And note
+what it drives — a headless mux server, not the GUI a real caller sits in. The gaps below are real,
+spec'd limitations rather than forced parity:
 
 - **A genuine fourth placement level.** WezTerm's native tiers are Workspace › Window › Tab › Pane.
   `--at workspace` maps to a real WezTerm **Window** spawned into a fresh (or caller-named)
@@ -167,9 +176,17 @@ Driven via `zellij action` (`new-pane`, `new-tab`, `write-chars`, `send-keys`, `
 [Zellij](https://zellij.dev)'s built-in multiplexer. Requires Zellij ≥ 0.45.0. Two releases set that floor:
 0.44 added per-pane CLI addressing, without which no faithful adapter is possible, and 0.45.0 added
 `--no-focus`, which every open that has no split target to choose now passes. On an older binary
-that flag is an unknown argument, so the open fails loudly rather than silently stealing focus. Built from the Zellij docs and CHANGELOG rather than empirically — no
-live Zellij binary was available to verify against — so, like WezTerm, its gaps are real, spec'd
-limitations rather than forced parity:
+that flag is an unknown argument, so the open fails loudly rather than silently stealing focus.
+
+**Verified against Zellij 0.45.0** — the version CI's `live-backends` job pins, which is the same
+0.45.0 the adapter declares as its floor, so the suite runs *at* the floor rather than above it. On
+every PR that job runs `mux.zellij.integration.test.ts` against a real headless Zellij: opens at
+`tab`, `workspace`, `pane:right` and `pane:float`; both focus paths (the `--no-focus` open, and the
+focus-and-restore round trip a named `from` forces); `list-panes --json` telling a float from a
+tiled pane and reporting a pane's id and cwd; `rename`; `focus`/`isPaneFocused`; run-and-capture and
+its `lines` trim; and teardown. Not covered, because the adapter does not implement them: pane
+geometry and `resizePane`, both refused by name below. The gaps below are real, spec'd limitations
+rather than forced parity:
 
 - **Has a real session tier, but a placement can't reach it.** Zellij's workspace-equivalent is a
   session, and pane ids are session-scoped — cyber-mux's pane target carries no session, so it can
@@ -195,9 +212,12 @@ limitations rather than forced parity:
   where it started. On Zellij < 0.45.0 the open fails loudly with Zellij's own unknown-argument error
   rather than silently stealing focus. Both mechanisms are asserted against a real Zellij 0.45.0 in
   CI's live-backends job.
-- **Cannot size a split.** Zellij's tiled splits are always even; sizing a pane requires a floating
-  pane, which cyber-mux does not use. A requested `ratio` is dropped and the caller gets Zellij's own
-  even split, the same degrade path as a backend with no `canSizeSplits`.
+- **Cannot size a split.** Zellij's tiled splits are always even: `new-pane`'s size flags
+  (`-x`/`-y`/`--width`/`--height`) all require `--floating`, so a tiled split has no flag to honor a
+  ratio with. cyber-mux *does* drive floats — `--at pane:float` is `new-pane --floating` and
+  `canFloatPanes` is `true` — but a float takes no share of a split whose fraction it could be. So
+  `ratio` is dropped on both paths, and a tiled caller gets Zellij's own even split, the same degrade
+  path as a backend with no `canSizeSplits`.
 - **No region introspection yet.** Pane geometry is deliberately not implemented (a follow-up), so
   `template save` refuses on Zellij by naming the backend, the same as WezTerm. Zellij *does* have
   `zellij action resize`, but it takes a direction and no amount — a nudge of a size it never states —
@@ -214,9 +234,13 @@ unreadable focus state — is reported as *unknown*, never a false negative.
 
 Driven via `cmux` CLI (`new-pane`, `new-surface`, `new-workspace`, `send`, `send-key`, `read-screen`,
 `focus-panel`, `close-surface`, `list-panes`, …) against [cmux](https://cmux.com), a Ghostty-based
-macOS terminal built for AI coding agents. Built from the cmux docs and CLI reference rather than
-empirically — no live cmux GUI was available to verify against — so, like WezTerm and Zellij, its
-gaps are real, spec'd limitations rather than forced parity:
+macOS terminal built for AI coding agents.
+
+**Not verified against a live binary as of 2026-09-06** — built from the cmux docs and CLI
+reference. cmux is a macOS GUI app, so CI's Linux `live-backends` runner has none to drive: there is
+no cmux row in that job and no `mux.cmux.integration.test.ts`. Unlike the WezTerm and Zellij sections
+above, nothing here names a version it was driven against. Its gaps are still real, spec'd
+limitations rather than forced parity, but they are docs claims awaiting a real boundary:
 
 - **Has a real workspace tier.** cmux's hierarchy is Window → Workspace → Pane → Surface, where a
   **Surface** is the terminal unit (a tab within a pane). `--at workspace` maps to a new workspace;
@@ -238,8 +262,12 @@ gaps are real, spec'd limitations rather than forced parity:
 
 Driven via `otty` CLI (`pane split`, `pane send-keys`, `pane capture`, `pane focus`, `pane close`,
 `tab new`, `open`, `panes`, …) against [otty](https://otty.sh), a native terminal-centric workspace
-app built for AI coding agents. Built from the otty docs rather than empirically — no live otty GUI
-was available to verify against:
+app built for AI coding agents.
+
+**Not verified against a live binary as of 2026-09-06** — built from the otty docs. Like cmux, otty
+is a desktop GUI app (macOS/Windows), so CI's Linux `live-backends` runner has none to drive: there
+is no otty row in that job and no `mux.otty.integration.test.ts`, and nothing here names a version it
+was driven against:
 
 - **Has a real workspace tier.** otty's hierarchy is Windows > Tabs > Splits > Panes. `--at workspace`
   maps to a new window (`otty open`, which always opens one — it takes no `--new-window`, and names
