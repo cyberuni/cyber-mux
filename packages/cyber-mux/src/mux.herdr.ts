@@ -919,25 +919,21 @@ function herdrWorktreeCapability(): WorktreeWorkspaceCapability {
 				return
 			}
 			if (exec('herdr', ['workspace', 'close', workspace, '--group']) !== null) return
-			// Pre-0.9.0 herdr has no `--group` and rejects it CLIENT-side, at argument parsing, with its
-			// usage line on stderr — before the request ever reaches the server, so nothing was closed.
-			// That is a version signal, not a failure: on those releases the bare verb already cascades,
-			// so retrying it is what keeps the same observable behavior on 0.8.2 and 0.9.0 alike. The
-			// guard is deliberately narrow — a server-side refusal answers JSON (`{"error":{"code":…}}`),
-			// never a usage line, so a real failure is never retried into a NON-cascading close.
-			if (rejectedUnknownFlag(exec)) exec('herdr', ['workspace', 'close', workspace])
+			// Pre-0.9.0 herdr has no `--group` and rejects it CLIENT-side, at argument parsing (`usage:
+			// herdr workspace close <workspace_id>`, exit 2 — measured on 0.8.0), before the request ever
+			// reaches the server. Nothing was closed, and on those releases the bare verb already
+			// cascades, so retrying it is what keeps one observable behavior across 0.8.x and 0.9.0.
+			//
+			// The retry keys on `null` — `Exec`'s ONE failure sentinel — and deliberately not on the
+			// usage text via `lastError`. `lastError` is documented as a diagnostic that a runner may
+			// never set (the live-herdr integration suite's runner discards stderr entirely), so
+			// branching on it makes the adapter work against some `Exec` implementations and silently
+			// not others. Retrying unconditionally costs nothing: every OTHER way this call fails —
+			// `workspace_not_found`, `server_not_running` — fails the bare verb identically, so the
+			// retry changes the outcome in exactly the one case it exists for.
+			exec('herdr', ['workspace', 'close', workspace])
 		},
 	}
-}
-
-/**
- * Whether the last `Exec` failure was herdr rejecting a flag it does not know — its argument parser
- * answers the bare usage line on stderr and exits without contacting the server, which is what
- * distinguishes "this herdr is too old for that flag" from "the server refused the operation".
- * Every server-side refusal is a JSON error envelope instead.
- */
-function rejectedUnknownFlag(exec: Exec): boolean {
-	return exec.lastError?.startsWith('usage:') === true
 }
 
 /**
