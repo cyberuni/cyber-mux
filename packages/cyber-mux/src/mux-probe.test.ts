@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Exec } from './exec.ts'
-import { currentPane, probeMultiplexer } from './mux-probe.ts'
+import { currentPane, type PaneMux, probeMultiplexer } from './mux-probe.ts'
 
 /** Builds a fake `ps -o ppid=,comm= -p <pid>` chain: pid -> [ppid, comm]. */
 function psChain(chain: Record<number, [number, string]>): Exec {
@@ -295,6 +295,67 @@ describe('spec:cyber-mux/mux/detection', () => {
 
 		it('returns undefined when the session is in no pane-carrying multiplexer', () => {
 			expect(currentPane({})).toBeUndefined()
+		})
+	})
+	// #169: `paneFor` carried a hand-written list of the muxes that have a `PANE_ENV` row, and `otty`
+	// was missing from it — so an otty session reached through the ancestry route reported NO pane
+	// while `$OTTY_PANE_ID` sat in its env, readable. These rows are driven off one table keyed by
+	// `PaneMux`, so the suite cannot drift the way the code did: adding a backend to `Mux` makes it a
+	// `PaneMux`, and this table stops compiling until the new mux gets a row here too.
+	describe('every pane-carrying mux reports its pane — on BOTH read paths', () => {
+		const PANE_CARRYING: Record<PaneMux, { paneVar: string; pane: string; hint: Record<string, string> }> = {
+			// `hint` is the separate "inside this mux" flag `discoverByAncestry` falls back to. wezterm
+			// and otty have none — their pane var IS the hint — so their hint is empty.
+			tmux: { paneVar: 'TMUX_PANE', pane: '%7', hint: { TMUX: '/tmp/tmux-1000/default,123,0' } },
+			rmux: { paneVar: 'RMUX_PANE', pane: '%4', hint: { RMUX: '/tmp/rmux-1000/sock,123,0' } },
+			herdr: { paneVar: 'HERDR_PANE_ID', pane: 'w3:p4', hint: { HERDR_ENV: '/tmp/herdr.sock' } },
+			wezterm: { paneVar: 'WEZTERM_PANE', pane: '9', hint: {} },
+			zellij: { paneVar: 'ZELLIJ_PANE_ID', pane: 'terminal_3', hint: { ZELLIJ: '0' } },
+			cmux: { paneVar: 'CMUX_SURFACE_ID', pane: 'surface:7', hint: { CMUX_WORKSPACE_ID: 'workspace:1' } },
+			otty: { paneVar: 'OTTY_PANE_ID', pane: 'pane-2', hint: {} },
+		}
+		const rows = Object.entries(PANE_CARRYING) as [PaneMux, (typeof PANE_CARRYING)[PaneMux]][]
+
+		it.each(rows)('probeMultiplexer attaches the %s pane on the ancestry route', (mux, row) => {
+			const noPs: Exec = () => null // ps unavailable — forces the hint fallback, the buggy route
+			expect(probeMultiplexer(noPs, { ...row.hint, [row.paneVar]: row.pane })).toEqual({
+				mux,
+				pane: row.pane,
+				via: 'ancestry',
+			})
+		})
+
+		it.each(rows)('currentPane reads the %s pane from its own env var', (mux, row) => {
+			expect(currentPane({ [row.paneVar]: row.pane })).toEqual({ mux, pane: row.pane })
+		})
+
+		it.each(rows)('the $CYBER_MUX fast-path tags a %s pane', (mux, row) => {
+			const noExec: Exec = () => null
+			expect(probeMultiplexer(noExec, { CYBER_MUX: mux, CYBER_MUX_PANE: row.pane })).toEqual({
+				mux,
+				pane: row.pane,
+				via: 'env',
+			})
+			expect(currentPane({ CYBER_MUX: mux, CYBER_MUX_PANE: row.pane })).toEqual({ mux, pane: row.pane })
+		})
+
+		// The other half of the guard: making membership a `PANE_ENV` lookup must not start inventing a
+		// pane for the two muxes that genuinely carry none. `screen` is detected by ancestry, so this
+		// drives the same `paneFor` call with every pane var in the environment at once.
+		it('still OMITS pane for screen, even with every pane var set', () => {
+			const pid = process.pid
+			const exec = psChain({ [pid]: [1, 'screen'] })
+			const env = Object.fromEntries(rows.map(([, row]) => [row.paneVar, row.pane]))
+			const probe = probeMultiplexer(exec, env)
+			expect(probe).toEqual({ mux: 'screen', via: 'ancestry' })
+			expect(Object.hasOwn(probe, 'pane')).toBe(false)
+		})
+
+		it('still OMITS pane for none', () => {
+			const noPs: Exec = () => null
+			const probe = probeMultiplexer(noPs, {})
+			expect(probe).toEqual({ mux: 'none', via: 'ancestry' })
+			expect(Object.hasOwn(probe, 'pane')).toBe(false)
 		})
 	})
 })

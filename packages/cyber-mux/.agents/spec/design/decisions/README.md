@@ -1444,6 +1444,62 @@ Decisions (`tuios-regating-2026-09` — #145 re-measured against source, and par
   forward.
   ISSUE: https://github.com/cyberuni/cyber-mux/issues/145
 
+Decisions (`163-otty-cwd` — the `--cwd` the otty adapter passes on `tab new` and `pane split`,
+issue #163):
+
+- **`--cwd` on `pane split` is REAL, and #163's premise is wrong about it.** #163 (and the
+  `144-otty-size-title` entry above, which first observed it) concluded that "no page of the reference
+  mentions `--cwd` at all" made the flag a #156-class fabrication on both routes. The reference is not
+  the whole corpus. otty's own **`/agents/orchestration`**, under *"Doing it yourself — the skill is a
+  wrapper around commands you can run by hand"*, gives verbatim:
+  `otty pane split --direction right --cwd "$PWD" --no-focus --json`. First-party, hand-runnable, in
+  exactly the shape this adapter sends. So the split route KEEPS `--cwd`.
+
+- **The measurement that settles what the reference is worth here.** All 141 URLs in
+  `docs.otty.sh/sitemap.xml` were fetched and grepped on 2026-09-08 (VitePress SSRs its content, so
+  the raw HTML carries the prose — no SPA truncation, verified by reading each page's real footer).
+  `--cwd` occurs on **exactly one** of the 141 pages, and `--no-focus` on exactly the same one. Both
+  are absent from `/reference/cli`, which the orchestration page nevertheless calls the place with
+  "every flag and exit code". And the reference's `window / tab / pane` section is the least detailed
+  on the page — prose plus four example lines, with **no flag table at all**, unlike `open`,
+  `view`/`edit`, `font list`, `export`, `watch`. It enumerates nothing about this command family, so
+  its silence is worth nothing about this command family. That is the #132 lesson landing a third
+  time (after cmux's 27-of-162 docs page and tuios's self-described-partial protocol doc), and the
+  first time it has overturned a claim in THIS log rather than in an issue.
+
+- **`tab new` gets no such rescue, and the fix is chosen to be correct under BOTH readings.** Nothing
+  on any of the 141 pages puts a working directory on `tab new` — its only documented flags are
+  `--command` and `--title` — and no third-party source, changelog entry, or published source exists
+  to settle it (otty is closed-source; `github.com/otty-shell/otty` is a DIFFERENT project and is not
+  evidence). The flag is therefore neither evidenced nor disproven, and the two readings have very
+  unequal costs: if `--cwd` exists, sending it and sending a `cd` both work; if it does not, sending
+  it fails **every** `--at tab` open at otty's argument parser while a `cd` still works. So the tab
+  route drops the flag and carries the directory as a `cd` on the command line — the shape
+  `mux.cmux.ts` landed for the same wall in #132, with the env prefix INSIDE the `&&` for the same
+  reason (`env K=V cd '/x' && cmd` sets the variables on `cd`). Accepted cost: a shell-level cd lands
+  in the tab's shell history and means nothing in a non-shell pane.
+  **RECHECK TRIGGER:** anyone with a Mac running `otty tab new --help`. If `--cwd` is there, the tab
+  route should go back to the native flag; nothing else in this entry changes.
+
+- **The degenerate case the brief predicted does not arise.** A `cd` needs no command to ride, unlike
+  the env prefix — so a tab opened with a `cwd` and no `launch` still lands in the right directory,
+  with the `cd` sent alone. `mux.cmux.ts` already does this (its stderr warning is for **env**, which
+  genuinely has nowhere to go without a command, not for cwd). No new warning was added.
+
+- **`pane split --no-focus` is real too, and is deliberately NOT acted on here.** The same
+  orchestration line demonstrates it, and `opensWithoutStealingFocus: false` on otty gives "no
+  suppress-focus flag is documented on `pane split`, `tab new`, or `open`" as half its reason — which
+  is now measurably false for `pane split`. The declaration itself does not move: it is one
+  adapter-wide bit, `tab new` and `open` still have nothing, and `from` is honored by focusing the
+  target first. Passing `--no-focus` is a behavior change on a different seam member (#133 set that
+  declaration), so the comment is corrected in place and the capability is left for its own unit of
+  work.
+
+- **Not verified against a live binary.** otty is a macOS/Windows GUI app absent from this Linux
+  machine, so every claim here is read off otty's published docs and nothing was probed. Coverage is
+  mocked-`Exec` argv assertions in `mux.otty.test.ts`; #128 tracks the missing real-boundary suite.
+  ISSUE: https://github.com/cyberuni/cyber-mux/issues/163
+
 Decisions (`142-pane-zoom` — the zoom seam member, issue #142):
 
 - **The issue's open question is settled the other way round: wezterm HAS zoom and cmux has none.**
@@ -1517,6 +1573,13 @@ Decisions (`142-pane-zoom` — the zoom seam member, issue #142):
     and guessing a flag would ship the same silent-success failure cmux's `resize-pane -Z` shim
     already is (`-Z` is not in that verb's `boolFlags`, an unknown short flag lands in `positional`,
     and the dispatch has no final `else`, so it resolves the pane, does nothing, and exits 0).
+    **`163-otty-cwd`'s lesson was applied rather than ignored:** that entry, landed on `main` while
+    this one was being written, showed the reference is not the whole corpus — `/agents/orchestration`
+    demonstrates `--cwd` and `--no-focus` on `pane split`, which `/reference/cli` omits. That page was
+    therefore checked for this member too and mentions zoom nowhere; the `otty pane …` commands it
+    runs by hand are `list`, `split`, `run`, `exec`, `capture`, `wait`, `close`. `/workflows/cli-usage`,
+    `/user-interface/window-tab-split`, `/user-interface/command-palette`, `/changelog` and `llms.txt`
+    carry nothing either. The refusal rests on a corpus search, not on the reference alone.
     **RECHECK TRIGGER:** `otty pane zoom --help` on a machine with otty (#128). An absolute on/off
     makes this a two-line implementation; a bare toggle keeps the refusal until `otty panes --json`
     is shown to carry a zoom field.
