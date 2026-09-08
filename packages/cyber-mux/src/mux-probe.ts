@@ -2,8 +2,17 @@ import type { Exec } from './exec.ts'
 
 type Mux = 'tmux' | 'rmux' | 'herdr' | 'wezterm' | 'zellij' | 'cmux' | 'otty' | 'screen' | 'none'
 
-/** A multiplexer that carries a per-pane env var, so a session can key its own identity from it. */
-export type PaneMux = 'tmux' | 'rmux' | 'herdr' | 'wezterm' | 'zellij' | 'cmux' | 'otty'
+/**
+ * A multiplexer that carries a per-pane env var, so a session can key its own identity from it.
+ *
+ * Derived from `Mux` by SUBTRACTING the two that genuinely carry no pane, rather than re-listing the
+ * ones that do. That direction is the point: adding a backend to `Mux` makes it a `PaneMux` by
+ * default, which makes `PANE_ENV` below fail to typecheck until the new mux gets a row — so a
+ * pane-carrying backend cannot be forgotten, and a pane-LESS one has to be excluded here on purpose.
+ * The re-listing direction is what let `otty` be present in `PANE_ENV` and absent from the read that
+ * consumes it (#169).
+ */
+export type PaneMux = Exclude<Mux, 'screen' | 'none'>
 
 export interface MuxProbe {
 	mux: Mux
@@ -40,7 +49,9 @@ function isKnownMux(v: string | undefined): v is Mux {
  * fast-path extension `$TMUX_PANE`/`$HERDR_PANE_ID` already get; Zellij exports `$ZELLIJ_PANE_ID` in
  * every terminal pane (its own `terminal_N`/bare-`N` id) — per the issue that requested this backend
  * (#46); cmux exports `$CMUX_SURFACE_ID` in every terminal (its surface ref, e.g. `surface:7`) — per
- * the issue that requested this backend (#48). screen carries no per-pane env var. Both the ancestry
+ * the issue that requested this backend (#48); otty exports `$OTTY_PANE_ID` in every pane, which is
+ * also its only "inside otty" signal, so it doubles as the ancestry fallback's hint the way
+ * `$WEZTERM_PANE` does. screen carries no per-pane env var. Both the ancestry
  * probe and the `currentPane` self-identity helper read the pane through this table so the two never
  * diverge on which env var a given mux uses.
  *
@@ -169,11 +180,23 @@ const MUX_COMM: readonly { re: RegExp; mux: Mux }[] = [
 	{ re: /^screen(:|$)/, mux: 'screen' },
 ]
 
-/** The per-pane env var for a mux, via the shared `PANE_ENV` table; undefined for screen/none. */
+/** Narrows a `Mux` to a `PaneMux` by ASKING `PANE_ENV`, so membership has exactly one definition. */
+function isPaneMux(mux: Mux): mux is PaneMux {
+	return Object.hasOwn(PANE_ENV, mux)
+}
+
+/**
+ * The per-pane env var for a mux, via the shared `PANE_ENV` table; undefined for screen/none.
+ *
+ * The guard is "does `PANE_ENV` have a row for this mux?", NOT a second hand-written list of the
+ * muxes that have one. The hand-written list is what #169 was: `otty` had a `PANE_ENV` row and a
+ * `discoverByAncestry` hint, but was missing from the list here, so an ancestry-discovered otty
+ * session reported no pane while `$OTTY_PANE_ID` sat in its env, readable. `screen` and `none` still
+ * answer undefined — now because they are genuinely absent from the table, which is the same reason
+ * they were meant to answer undefined before.
+ */
 function paneFor(mux: Mux, env: NodeJS.ProcessEnv): string | undefined {
-	return mux === 'tmux' || mux === 'rmux' || mux === 'herdr' || mux === 'wezterm' || mux === 'zellij' || mux === 'cmux'
-		? PANE_ENV[mux](env)
-		: undefined
+	return isPaneMux(mux) ? PANE_ENV[mux](env) : undefined
 }
 
 /**
