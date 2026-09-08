@@ -971,6 +971,125 @@ Decisions (`135-pane-resize` — the resize seam member, issue #135):
   machine has neither binary. Nothing in either adapter changed — both simply continue to omit
   `regions` — so no untested command shape was written on the strength of those docs.
 
+Decisions (`128-cmux-otty-isolation` — can either GUI app give a suite a throwaway instance, issue #128):
+
+- **The isolation question #128 puts first is answered: cmux YES but only from a source-built tagged
+  app, otty NO.** Read 2026-09-06 from published references only. **Nothing here was probed.** This
+  machine is WSL2 Linux (`Linux zeta 6.18.33.2-microsoft-standard-WSL2`) and `command -v cmux otty`
+  finds neither, which is not an accident of this box: cmux is *"a lightweight, native macOS terminal
+  built on Ghostty"* with *"Requirements: macOS 14.0 or later"* (cmux.com/docs/getting-started), and
+  otty ships macOS only — its install page lists *"Windows — Status: In development"* and *"Linux —
+  Status: In development"* against *"macOS — Requirements: macOS 14 (Sonoma) or later"*
+  (docs.otty.sh/getting-started/installation). Sources and their versions: cmux.com/docs/api and
+  cmux.com/docs/getting-started (undated, no version stamp; latest release tag `v0.64.22`), plus
+  `manaflow-ai/cmux` at `7d78b6e` (2026-09-07) for `docs/cli-contract.md`,
+  `skills/cmux-workspace/references/commands.md`, `skills/cmux-dev-workflow/references/tagged-builds.md`
+  and `scripts/launch-tagged-automation.sh`; docs.otty.sh `/reference/cli`, `/workflows/cli-usage`,
+  `/reference/configuration` and `/getting-started/installation` (undated, no version stamp — the
+  newest version the text names is *"Otty 1.3.0 and earlier"*).
+
+- **cmux, gate 1 (a flag or env var that targets a SEPARATE instance): CLEARED, and further than the
+  public docs suggest.** The public CLI options table lists `--socket PATH` — *"Custom socket path"* —
+  over sockets that are per BUILD, not per instance: *"Release `/tmp/cmux.sock`"*, *"Debug
+  `/tmp/cmux-debug.sock`"*, *"Tagged debug build `/tmp/cmux-debug-<tag>.sock`"*, *"Override with the
+  `CMUX_SOCKET_PATH` environment variable"* (cmux.com/docs/api). Read alone that is a *client-side*
+  override — it picks among instances that already run and cannot create one. The repo settles the
+  server side: `scripts/launch-tagged-automation.sh` launches an app with
+  `CMUX_SOCKET_MODE=${MODE} CMUX_SOCKET_PATH=${SOCK} CMUXD_UNIX_PATH=${DSOCK}
+  CMUX_DISABLE_SESSION_RESTORE=1 … open -g "$APP"`, having first unset the ambient
+  `CMUX_SOCKET_PATH`/`CMUX_WORKSPACE_ID`/`CMUX_SURFACE_ID`/… of the calling terminal. So the app DOES
+  honor `CMUX_SOCKET_PATH` at launch, session restore can be suppressed so the instance comes up empty,
+  and `open -g` opens it in the background rather than in front of the operator. `tagged-builds.md` is
+  explicit about what that buys: *"Tagged builds isolate app name, bundle ID, debug socket, and
+  DerivedData path so multiple agents and the user's normal app do not collide."*
+  **The catch, and it is the whole catch:** that script resolves `$HOME/Library/Developer/Xcode/
+  DerivedData/cmux-<tag>/Build/Products/Debug/cmux DEV <tag>.app` and exits with *"error: tagged app
+  not found"* otherwise. The isolated instance is a DEV BUILD — macOS plus Xcode plus a clone of the
+  app's source, built with `./scripts/reload.sh --tag <tag> --launch`. Whether the shipped `.dmg`
+  release can be launched a second time under a custom `CMUX_SOCKET_PATH` (its bundle ID is fixed, and
+  macOS single-instance semantics are what the tagged build's distinct `com.cmuxterm.app.debug.<tag>`
+  id exists to sidestep) is NOT answered anywhere read, and must be probed before anyone relies on it.
+
+- **cmux, gate 2 (create and tear down a workspace): CLEARED on paper.** `cmux new-workspace` —
+  *"Create a new workspace."* — and `cmux close-workspace --workspace <id>` — *"Close a workspace."* —
+  are a matched pair, and `new-workspace` takes `--name`, `--cwd`, `--command` and `--layout`
+  (`commands.md`), which is everything a fixture needs. Against the operator's LIVE app this is still
+  not isolation: the workspace appears in their sidebar, and whether `new-workspace` also focuses it
+  is undocumented (`select-workspace` exists as a separate verb, which hints not, and a hint is not a
+  fact). Against a tagged instance it is isolation, and the instance is the throwaway anyway.
+
+- **cmux, gate 3 (what the suite skips ON): a probe exists, but the obvious one is ambiguous.**
+  `cmux ping` is *"Check if cmux is running and responsive."* (cmux.com/docs/api) / *"Check socket
+  connectivity."* (`docs/cli-contract.md`). Its exit code when no app is running is documented
+  nowhere; the CLI contract only guarantees `--help`/`--version` *"without connecting to the cmux
+  socket"*. Worse for a test runner, a failing `ping` does not mean "not installed": the default
+  access mode is *"cmux processes only — Only processes spawned inside cmux terminals can connect"*,
+  and a `vitest` process is not one of those, so a suite run from an ordinary shell is refused even
+  with the app up unless the operator sets `CMUX_SOCKET_MODE=allowAll` (*"Environment override only"*)
+  or the tagged launcher's `CMUX_SOCKET_MODE=automation` — a fourth mode that appears in
+  `launch-tagged-automation.sh` and in NO public docs table. `cmux capabilities` — *"List available
+  socket methods and current access mode"* — is the read that separates "not reachable" from "not
+  permitted", and a suite that skips on `ping` alone will silently report the second as the first.
+  There is also a socket password (`--password <value>`, `CMUX_SOCKET_PASSWORD`) in
+  `docs/cli-contract.md` that the public docs never mention; whether it is required in any mode is
+  unanswered.
+
+- **cmux, gate 4 (anything headless): FAILS.** The CLI is a client of a Swift/AppKit GUI app; nothing
+  in either docs set or the repo offers a `wezterm-mux-server` equivalent. The nearest things are not
+  it: `cmux local-tmux` drives *a real tmux server* (already cyber-mux's own backend, not cmux), and
+  `cmux vm …` drives cloud machines through the app. A human, or at least a logged-in macOS GUI
+  session, must have cmux on screen.
+
+- **otty, gate 1: FAILS.** `--socket <path>` exists — *"Override the runtime control socket path"*,
+  default `auto` (docs.otty.sh/reference/cli) — but it is documented only as a client-side override,
+  and nothing published says an app can be launched bound to a chosen socket. otty is closed source,
+  so unlike cmux there is no launcher script to settle the server side. The configuration reference
+  has no socket key at all, and no instance, profile, or tag concept anywhere. `--config-file <path>`
+  overrides the config file, which is not the same lever.
+- **otty, gate 2: FAILS, and the create verb is actively hostile to a test.** `otty open` is the only
+  create-a-container verb, and *"Starts the app if it isn't already running"* (`/workflows/cli-usage`)
+  — a suite that calls it on a machine where otty is closed POPS A GUI WINDOW on the operator's
+  screen. `otty <no subcommand>` is worse: *"Running `otty` with no subcommand (or starting with
+  `-e`) launches the GUI"*. Windows and tabs can be closed again (`window`/`tab` carry `close`), but
+  they are windows of the operator's one app.
+- **otty, gate 3: NO probe is documented.** There is no `ping`, and no reachability verb. `otty
+  --version` answers without the app (the CLI *"ships inside the app"* but runs standalone), so it
+  proves installation, not reachability — exactly the distinction the skip needs. The documented exit
+  codes are about other things: `4` *"No pane/tab matched selector"*, and on `watch:` `4`/`6`/`9`.
+  What a UI verb such as `otty panes --json` does when the app is not running is undocumented, bounded
+  only by `--timeout <ms>` (default `3000`, *"IPC timeout when talking to the running app"*). The
+  probe has to be discovered on a Mac with otty; it cannot be read off the reference.
+- **otty, gate 4: FAILS twice over.** Not merely GUI-only, but gated on two settings a test cannot
+  set for itself: the drive-a-pane commands are *"off by default: turn on Settings → Advanced → IPC
+  Allow Send Keys first"*, and *"they're also refused on a pane that's in an SSH or `sudo` session
+  unless you additionally enable IPC Allow Sensitive Sessions"* (`/workflows/cli-usage`). The
+  configuration reference confirms both as config keys defaulting to `false` (`ipc-allow-send-keys`,
+  `ipc-allow-sensitive-sessions`). `otty config set … --transient` (*"running app only, don't
+  persist"*) could flip the first without editing the operator's file, but that is a suite reaching
+  into the live app's settings to permit itself, and it is untested speculation until someone runs it.
+
+- **NO suite files were written, for either adapter — DECIDED.** #117's and #132's histories point
+  the same way: a suite authored against a reference and never executed asserts what we believe the
+  CLI does, which is the exact defect a real-boundary suite exists to close. Every `expect` in
+  `mux.cmux.integration.test.ts` would have been written blind against a macOS-only GUI app that
+  cannot be installed here. `scripts/test-adapter.ts` makes the cost concrete rather than merely
+  stylistic: an always-skipping suite executes zero tests, and the runner classes that as
+  `no-coverage`, which sits in `BAD` alongside `gap`. So the file would trade one honest bad outcome
+  for a different bad outcome, while adding unverified assertions. `gap` remains the truthful report
+  until someone on a Mac can run something.
+
+- **#128 SHOULD BE SPLIT per adapter — RECOMMENDED.** The issue itself flagged the split as
+  conditional on the isolation answers differing, and they differ in kind, not degree. cmux is
+  *unblocked but expensive*: a real isolated instance exists, the reachability probe exists, the
+  create/tear-down pair exists, and the remaining work is one operator on macOS with Xcode building a
+  tagged app and running the commands to find out what they actually print. otty is *blocked on facts
+  nobody has*: no isolated instance, no reachability probe, a create verb that launches the GUI, and
+  two GUI-only permission toggles in front of the verbs a suite would drive. Their next steps do not
+  overlap and their preconditions are different machines' worth of setup. The otty half should also
+  record what it is really waiting on — a documented "is the app running" read, and a way to bind an
+  instance to a socket — because both are questions for the vendor rather than work this repo can
+  finish alone.
+
 Decisions (`backend-survey-2026-09` — feasibility verdicts for multiplexers not yet driven):
 
 - **`directvt/vtm` — VERDICT: undrivable.** 3,357 stars, probed 2026-09-07 against `doc/settings.md`

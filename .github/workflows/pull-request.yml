@@ -16,6 +16,10 @@ jobs:
   # re-derivation. Runs outside any multiplexer pane, which is what unlocks the placements the
   # suite gates away from a caller's own session.
   #
+  # Its green is only as good as what it executed, which is why the run step is followed by a step
+  # that reads the executed count out of vitest's own report rather than trusting its exit code —
+  # see issue #127 and the step's comment below.
+  #
   # BLOCKING. It was `continue-on-error: true` while herdr-with-no-attached-client was unproven here,
   # and that flag outlived its reason: because the job could not fail the run, a red real-boundary
   # suite reported as a green run, and a false green landed on PR #114. The last thing keeping the
@@ -166,8 +170,28 @@ jobs:
       # The CLI-level tests drive `bin/cyber-mux.mjs`, which loads `dist/cli.mjs` — they need a build.
       - run: pnpm build
 
+      # `--reporter=json` ALONGSIDE the default one, not instead of it: the default reporter is what
+      # makes this step's log readable, and the JSON report is what the next step reads. When several
+      # reporters are named, `--outputFile.json=` is how vitest routes just that one to a file.
       - name: Run the real-boundary suite
-        run: pnpm cm test:integration
+        run: >-
+          pnpm cm test:integration
+          --reporter=default --reporter=json
+          --outputFile.json="${RUNNER_TEMP}/integration-report.json"
+
+      # The step above passes on its EXIT CODE, and vitest exits 0 — reporting `success: true` — for a
+      # suite whose every test skipped itself. That is not hypothetical here: issue #125 reproduced a
+      # run on this job's own shape that came back `13 skipped`, green, on a box with zellij installed
+      # and on PATH, because `zellij --version` failed to spawn under load. Since #124 dropped
+      # `continue-on-error`, a green here is a gate people are required to trust.
+      #
+      # So this step reads the EXECUTED COUNT out of the report the run just wrote, per adapter, and
+      # fails naming any adapter that is installed on this runner, has a real-boundary suite, and
+      # executed nothing. It demands coverage only for what this job installed — an adapter whose
+      # binary is absent (cmux and otty, whose CLIs are clients of a GUI app) is skipped, exactly as
+      # it is on a developer's machine. Nothing about `pnpm cm test:integration` changes locally.
+      - name: Demand the coverage this job installed
+        run: pnpm cm test:adapter --report="${RUNNER_TEMP}/integration-report.json"
 
       # Diagnostics only — must never be the thing that reports the job as broken. An earlier step
       # can fail before the server was ever started, in which case there is simply no log to show.

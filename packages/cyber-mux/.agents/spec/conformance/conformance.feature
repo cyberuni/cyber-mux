@@ -6,7 +6,9 @@ Feature: conformance — verifying one adapter against its real multiplexer
   adapter nor tell a skip apart from a pass — and a fully-skipped suite exits 0 reporting success,
   so a green run can mean nothing was verified. CI's live-backends job installs four multiplexers
   and runs those suites on every PR; that makes the skip-versus-pass question more load-bearing,
-  not less, since a false green there is now a green people are asked to trust.
+  not less, since a false green there is now a green people are asked to trust. That job asks the
+  question through --report=<file>: it keeps its single `pnpm cm test:integration` process and hands
+  the JSON report here, so the executed-count rule below is what its green now means.
 
   # ── Discovery (shared sub-graph) ──
   # Neither the adapter set nor the suite set is written down in the runner. A hand-maintained table
@@ -270,9 +272,98 @@ Feature: conformance — verifying one adapter against its real multiplexer
 
   @id:conformance-unknown-flag-is-usage-error
   Scenario: an unrecognized flag exits 2, naming the flag and listing the valid ones
-    Given the runner's one valid flag is --all
+    Given the runner's valid flags are --all and --report=<file>
     When the runner is invoked with the flag --everything
     Then it names --everything as unrecognized
-    And it lists --all as the valid flag
+    And it lists the valid flags
     And it exits 2
     # the caller self-corrects in one turn rather than spending a round trip on --help
+
+  # ── test-adapter --report=<file> — the same rule, over a run that already happened ──
+  # The shape CI runs. --all spawns one vitest per adapter, which is what a maintainer selecting an
+  # adapter wants and what CI does not: it serializes suites that run in parallel in one process, and
+  # it never runs scripts/test-adapter.integration.test.ts, which belongs to no adapter. So
+  # live-backends keeps its single `pnpm cm test:integration` and asserts on the report it wrote.
+  # Nothing about coverage is redefined here — the counts arrive from a file instead of a spawn, and
+  # the outcome rules above decide unchanged.
+
+  @id:conformance-report-folds-a-run-per-adapter
+  Scenario: a whole-run report folds down to one adapter's counts
+    Given a report covering herdr's two suites and tmux's one
+    And herdr's suites carry 2 passed, 1 failed and 1 skipped between them
+    When the runner folds that report for herdr
+    Then herdr's counts are 4 collected, 2 passed, 1 failed and 1 skipped
+    And tmux's tests are not counted among them
+    # an adapter's suites are matched by file name, which is the only thing the two sides share
+
+  @id:conformance-report-matches-a-suite-on-any-separator
+  Scenario: a report written on another platform still matches its suites
+    Given a report naming mux.tmux.integration.test.ts by a Windows absolute path
+    When the runner folds that report for tmux
+    Then the test in that file is counted
+    # the report carries whatever absolute path produced it; the suite set carries bare file names
+
+  @id:conformance-report-passes-when-every-installed-adapter-executed
+  Scenario: every installed adapter executed something, so the report passes
+    Given tmux, herdr, wezterm and zellij are on PATH, each with a suite
+    And the report shows every one of those suites executing tests
+    When the runner is invoked with --report=<file>
+    Then each adapter is reported as pass with its executed count
+    And no vitest invocation is made
+    And it exits 0
+    # the counts come from the file, so the suites are not run a second time
+
+  @id:conformance-report-no-coverage-names-the-adapter-that-executed-nothing
+  Scenario: an adapter that skipped every test is named, and its passing neighbors do not mask it
+    Given tmux, herdr, wezterm and zellij are on PATH, each with a suite
+    And the report shows zellij's suite collecting 13 tests and executing none
+    And the report shows every other suite executing tests
+    When the runner is invoked with --report=<file>
+    Then the outcome reported for zellij is no-coverage, carrying the skipped count 13
+    And tmux is still reported as pass
+    And it exits 1
+    # issue #125's measured run, exactly: zellij installed and on PATH, its suite fully skipped
+    # because `zellij --version` failed to spawn under load, and vitest exiting 0 reporting success
+
+  @id:conformance-report-untouched-suite-is-no-coverage
+  Scenario: an installed adapter whose suite the run never reached is no coverage
+    Given wezterm is on PATH with a suite
+    And the report carries no executed test for that suite
+    When the runner is invoked with --report=<file>
+    Then the outcome reported for wezterm is no-coverage
+    And it exits 1
+    # a suite the run never touched verified exactly as much as one whose every test skipped itself
+
+  @id:conformance-report-leaves-an-uninstalled-adapter-alone
+  Scenario: an adapter this machine does not have is skipped, and the report still passes
+    Given tmux and herdr are on PATH and executed their suites
+    And zellij and wezterm are absent from PATH
+    When the runner is invoked with --report=<file>
+    Then zellij and wezterm are reported as skip
+    And it exits 0
+    # the local guarantee this mode is bounded by: only a machine that HAS the binary is asked to
+    # have covered it, so a developer without zellij still skips, silently and correctly
+
+  @id:conformance-report-is-exempt-from-the-refusal
+  Scenario: reading a report works from inside a multiplexer
+    Given this shell is inside herdr
+    When the runner is invoked with --report=<file>
+    Then it does not refuse
+    And no vitest invocation is made
+    # it reads a run that already happened, so it drives no multiplexer and endangers no pane
+
+  @id:conformance-report-without-a-file-is-a-usage-error
+  Scenario: --report with no file names the form it needs
+    When the runner is invoked with --report= and no file
+    Then it reports that --report needs the file to read
+    And no report is read
+    And it exits 2
+    # the value stays attached to the flag because a bare positional here is an adapter name
+
+  @id:conformance-unreadable-report-is-an-error-not-a-pass
+  Scenario: a report that cannot be read is an error, never a pass
+    Given the file --report names cannot be read
+    When the runner is invoked with --report=<file>
+    Then it reports that it cannot read the report, and why
+    And it exits 1
+    # the same "nothing was verified" this tool exists to refuse, arriving one step earlier
