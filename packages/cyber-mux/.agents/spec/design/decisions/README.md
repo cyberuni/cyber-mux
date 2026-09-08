@@ -1249,3 +1249,66 @@ issue #144):
   `-h/--help`) carries no working-directory flag either, and `/workflows/cli-usage` handles directories
   through `otty open [path]`'s POSITIONAL argument — which the workspace tier already uses, and which
   is why that tier is unaffected.
+Decisions (`worktree-landed-signals` — issue #151, squash-merge detection in worktree disposability):
+
+- **Layer the landed signals, never replace the ancestry one** — DECIDED. `git branch --merged` is
+  structurally blind to a squash merge: the squash commit on the target is a rewritten tip with no
+  ancestry link back to the branch. Verified against real git in `worktree.integration.test.ts`, which
+  builds a scratch repo that genuinely squash-merges and asserts `--merged` still omits the branch.
+  cyber-mux itself merges with merge commits only, so its own history could never be the fixture.
+  Three layers are ADDED in cost order — `upstream-gone` (`%(upstream:track)` is `[gone]`, one batched
+  read, offline, correct for squash/rebase/merge alike), `squash-patch` (`commit-tree <branch>^{tree}
+  -p <merge-base>` then `git cherry`, three calls per unresolved branch, offline), and `forge` (the
+  forge's word on a merged PR, opt-in only). The ancestry answer keeps its meaning and its place at
+  the front; nothing about merge-commit or fast-forward repos changes.
+  - **Alternative rejected:** *replace `--merged` with the patch-id probe*. It answers the same
+    question more expensively for the overwhelmingly common case, and it is a heuristic where
+    ancestry is a proof — a strictly worse first layer.
+
+- **Every layer after the first is POSITIVE-ONLY, so the composite is a monotone OR** — DECIDED. Only
+  layer 1 may report a `false`; a later layer either says "landed" or declines to speak. Two layers
+  therefore cannot contradict each other, and the only disagreement that can arise is between a
+  landed signal and a GUARD — dirty, occupied, stale, primary — where the guard always wins
+  (`isWorktreeRemovable` is unchanged). The consequence is deliberate: a squash that was
+  conflict-resolved or hand-edited produces a different patch, does not match, and degrades to "not
+  reusable" rather than to a false positive. Covered live by the hand-edited-squash and
+  work-continued-after-landing scenarios.
+  - **Alternative rejected:** *require two layers to agree before clearing a branch*. It sounds
+    conservative and is not: `squash-patch` is the only layer that can corroborate `upstream-gone`,
+    and it fails on exactly the conflict-resolved squashes `upstream-gone` exists to catch — so the
+    rule would have deleted the layer's entire contribution while adding three git calls per branch.
+
+- **The blast radius of a wrong positive is a CHECKOUT, never committed work** — RECORDED, because it
+  is why layering is safe to do at all. Neither `removeWorktreeSafely` nor `provisionWorktree` deletes
+  the branch ref: prune removes the checkout, provision repoints it to a fresh branch at `base`. The
+  old branch still names its commits either way, asserted live in the provision scenario. The only
+  thing a wrong answer can destroy is UNCOMMITTED work, which the `dirty` guard already refuses.
+
+- **The listing reads the gone-upstream state, it never refreshes it** — DECIDED: no `git fetch
+  --prune` is run on the caller's behalf. A listing is a report, and a report must not reach for the
+  network, block on it, or move the repo's refs as a side effect. The signal is exactly as fresh as
+  the caller's last fetch, which for a pool driver means fetching on its own schedule.
+
+- **`mergedSignal` is reported, not kept private** — DECIDED. The layers do not carry equal authority
+  — `ancestor` is git's proof, `squash-patch` a patch-id heuristic, `upstream-gone` the forge's word —
+  so a caller auditing a reclaim needs to see which one spoke. It is a plain field on `WorktreeEntry`
+  alongside `merged`, absent for a negative or undeterminable verdict.
+
+- **The forge layer enters as an INJECTED probe, not a built-in** — DECIDED: `signals.forge` is a
+  `(branch) => boolean | undefined` seam, asked only about branches the offline layers left
+  unresolved, and every one of its failure modes (no `gh`, no auth, no network, no origin, a
+  local-only branch) collapses to `undefined` rather than `false`. `ghForgeMergedProbe` ships as an
+  opt-in implementation and resolves `--repo` from the `origin` remote rather than from the process
+  cwd, because `Exec` runs commands without one. Not wired into any CLI verb by this change — the
+  `cyber-mux worktree` flag that would expose it is a separate unit of work.
+
+- **The squash probe carries its OWN git identity** — DECIDED, after the live-backends job caught what
+  a developer machine structurally cannot. `git commit-tree` refuses with `fatal: empty ident name`
+  when neither the environment nor git's config names an author, which is the state of any machine
+  that has never configured git — a CI runner, a fresh container. Left to the ambient identity the
+  whole `squash-patch` layer goes silently dark there and every squash-merged worktree reads unlanded
+  again, i.e. exactly the bug this work exists to fix, reappearing only off the author's laptop. The
+  probe therefore passes `-c user.name` / `-c user.email` inline; the object is a throwaway that
+  should not carry the caller's name in any case. The integration suite now drives the library through
+  an `Exec` with every ambient identity STRIPPED, so the layer can never again pass for a reason that
+  lives in the developer's global gitconfig rather than in the code.

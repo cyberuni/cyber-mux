@@ -127,6 +127,7 @@ describe('spec:cyber-mux/library — published surface', () => {
 			expect(Object.keys(wt).sort()).toEqual([
 				'WorktreeGitError',
 				'assertDistinctFromPrimary',
+				'ghForgeMergedProbe',
 				'gitWorktreeAdapter',
 				'isWorktreeRemovable',
 				'listWorktreesFromGit',
