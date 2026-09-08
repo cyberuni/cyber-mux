@@ -1371,3 +1371,75 @@ Decisions (`132-cmux-broken-members` — six `MuxAdapter` members that could not
   `opensWithoutStealingFocus: false` this adapter declares and the "cmux's CLI offers no way to
   suppress the focus move" the website says. Flipping that flips real behavior for every caller, so it
   wants its own issue and a live check, not a docs edit.
+
+Decisions (`tuios-regating-2026-09` — #145 re-measured against source, and parked):
+
+- **`Gaurav-Gosain/tuios` — VERDICT: blocked-upstream. No RELEASE clears the gates; `main` does.**
+  Re-probed 2026-09-08 against two trees: the `v0.7.0` release tarball
+  (`archive/refs/tags/v0.7.0.tar.gz` — the exact artifact Homebrew's stable formula builds) and
+  `main` at commit `6c5cc80` (2026-09-07). Note the owner spelling: **`Gaurav-Gosain`**, not
+  `Gaurav-Gosani` as #145 and its dispatch brief both wrote — the misspelled path 404s.
+  This entry CORRECTS #145's verdict, which gated `main`'s docs while the world can only install
+  `v0.7.0`. Recorded rather than edited in place; this log is append-only.
+
+  **The release/protocol gap.** Newest release `v0.7.0` published **2026-03-28**;
+  `docs/protocol.md` was first added **2026-07-18**, four months later. Every file implementing the
+  verb protocol #145 gates on — `internal/session/verb_protocol.go`, `verb_handlers.go`,
+  `verb_layout.go`, `verb_hints.go`, `verb_mailbox.go`, `daemon_command.go`, `session_ops.go` —
+  exists only on `main`. At `v0.7.0`, `internal/session/` holds the attach transport
+  (`daemon.go`, `codec.go`, `protocol.go`) and no dispatcher, and `internal/server/` is three files
+  (`ssh.go`, `session_picker.go`, `server_test.go`).
+
+  **Gated against `v0.7.0`, which is what a user gets.** Its CLI is 30 cobra subcommands, of which
+  the machine-drivable part is `list-windows`, `get-window`, `session-info`, `send-keys`,
+  `run-command <TapeCommand>`, `new`, `attach`, `kill-session`. Absent: `new-window`,
+  `split-window`, `capture-pane`, `send-text`, `wait-for`, `verbRegistry`.
+  Gate 1 (per-pane identity) **CLEARED**: `list-windows --json` reports window ids, and a spawned
+  window carries `TUIOS_WINDOW_ID` (`internal/terminal/window.go:343`).
+  Gate 2 (id at birth) **FAILED**: `run-command NewWindow` is fire-and-forget — it prints
+  `Command sent (request ID: %s)` (`cmd/tuios/remote_commands.go:322`), a *request* id, not a
+  window id. #145's gate-2 quote (`{"type":"window_created","window_id":"9a3c..."}`) is `main`-only.
+  Gate 3 (enumeration) **CLEARED**: `list-windows --json`.
+
+  **The blocker is below the gates, which is why this is not a degrade.** `v0.7.0` has **no read
+  primitive at all** — no `capture-pane`, no `screenshot`, and the window payloads in
+  `internal/session/protocol.go` carry `id`, `title`, `pty_id` and geometry, nothing textual.
+  `MuxAdapter.read` is a REQUIRED member and `waitForOutput` is required and built on it via
+  `pollForOutput`, so on stable both are unimplementable. There is no adapter to write, faithful or
+  otherwise. The snapshot-before/diff-after recovery that rescues a silent create (`mux.zellij.ts`)
+  does not reach this: it recovers an id, not a screen.
+
+  **#145's headline limitation is exactly backwards.** It concluded "placement is not
+  caller-controlled … `pane:right` and `pane:down` have nothing to drive", and the dispatch brief
+  instructed the pod to refuse both by name. That is TRUE of `v0.7.0` — whose only split is
+  `run-command Split horizontal|vertical`, acting on the FOCUSED window with no target — and FALSE
+  of `main`, where `split-window` (`internal/session/verb_protocol.go:377-392`) takes a target
+  `window` AND a required `direction` (`horizontal`/`vertical`). The error's source is
+  methodological and worth naming: `docs/protocol.md` self-describes as "deliberately partial", and
+  it is — `verbRegistry` (`verb_protocol.go:176`) holds **50** verbs against the doc's 35, and
+  `split-window` is among the 15 it omits. Gating on a doc that says it is incomplete produced a
+  confident refusal of a capability the backend has.
+
+  **Other `main`-only corrections held for the re-file**, so they are not rediscovered: there is no
+  `rename-window` verb (renaming rides `set-window`'s `name` param, `:429`); `wait-for` registers a
+  sixth condition, `agent-message`, documented nowhere; self-identity is `TUIOS_ENV=1` plus
+  `TUIOS_WINDOW_ID`/`TUIOS_PANE_ID`/`TUIOS_SESSION`/`TUIOS_SOCKET`
+  (`internal/session/session.go:1600-1636`); and the socket path has no flag or env override —
+  `$XDG_RUNTIME_DIR/tuios/tuios.sock`, else `/tmp/tuios-<uid>/tuios.sock`
+  (`internal/session/manager_unix.go:12-29`), which constrains how a probe isolates scratch sessions
+  from a user's own.
+
+  **Why parked rather than shipped against `main`.** The `mux.zellij.ts` precedent looks like a
+  licence to declare a floor and move on, and it is not: zellij's 0.45.0 floor is a RELEASED version
+  a caller can install. A tuios floor would be an unreleased commit on a third party's default
+  branch — `brew install tuios` yields `v0.7.0`, on which every verb the adapter drives fails. An
+  honest refusal beats a backend that only works for whoever built it from source. `live-backends`
+  compounds it: that job pins released binaries deliberately ("a herdr release should never silently
+  change what this suite runs against"), so a tuios row would pin a third-party SHA and add a Go
+  toolchain plus a module fetch to a BLOCKING job.
+
+  **RECHECK TRIGGER:** tuios cuts a release containing `internal/session/verb_protocol.go`. Re-gate
+  against that release — not against `main` — and re-file. Nothing else about the candidate needs
+  re-establishing: `main`'s verb surface clears all three gates, and the corrections above carry
+  forward.
+  ISSUE: https://github.com/cyberuni/cyber-mux/issues/145
