@@ -11,6 +11,12 @@
  * suite reports green in a job that is now blocking. cmux and otty stay out of reach there — their
  * CLIs are clients of a GUI app — so verifying them stays local, per platform, per adapter.
  *
+ * Two ways in, one definition of coverage. `--all` spawns vitest per adapter, which is the shape a
+ * maintainer wants when selecting; `--report=<file>` reads the JSON report a single
+ * `pnpm test:integration` already wrote, which is the shape CI wants — it keeps one vitest process
+ * (and with it the `scripts/` suite, which no adapter owns), and costs a file read. `live-backends`
+ * runs the second, so the executed-count rule below is what that job's green now means.
+ *
  * A maintainer tool — `scripts/` is absent from package.json `files`, so none of this ships.
  *
  * Everything the runner learns about the world arrives through `RunnerDeps`, so the whole decision
@@ -57,6 +63,23 @@ export interface RunnerDeps {
 	runSuites(name: string, suites: readonly string[]): SuiteReport
 	/** The multiplexer this shell is itself inside, if any. */
 	insideMux(): PaneMux | undefined
+	/** Parse the vitest JSON report at this path. Throws when it is unreadable or not JSON. */
+	readReport(path: string): VitestReport
+}
+
+/**
+ * The slice of vitest's JSON report this reads — one entry per suite FILE, each carrying one entry
+ * per test with its status. Every field is optional because the report is another process's
+ * artifact: a shape that carries no file, or a file that carries no test, is a report that executed
+ * nothing, which is a finding this tool already has a name for rather than a crash.
+ */
+export interface VitestReport {
+	readonly testResults?:
+		| readonly {
+				readonly name?: string | undefined
+				readonly assertionResults?: readonly { readonly status?: string | undefined }[] | undefined
+		  }[]
+		| undefined
 }
 
 export interface Reported {
@@ -71,6 +94,14 @@ const ERR = 1
 const USAGE = 2
 
 const VALID_FLAGS = ['--all']
+
+/**
+ * `--report=<file>` — verify against a vitest JSON report this process did not produce, rather than
+ * spawning vitest per adapter. Written `--report=<file>` and not `--report <file>` because a bare
+ * positional here is an adapter name; keeping the value attached is what stops a path from being
+ * read as one.
+ */
+const REPORT_FLAG = /^--report=(.*)$/
 
 /** Outcomes that mean this machine could have verified something and it did not come out clean. */
 const BAD: readonly Outcome[] = ['gap', 'no-coverage', 'fail']
@@ -122,6 +153,46 @@ export function outcomeOf(report: SuiteReport): Outcome {
 	return report.failed > 0 ? 'fail' : 'pass'
 }
 
+/**
+ * Fold a whole-run vitest report down to one adapter's counts, by suite file name.
+ *
+ * This is what lets the executed-count rule above be applied to a report the runner did not produce
+ * — `pnpm test:integration`'s, from a single vitest process covering every adapter at once. The
+ * match is on the file name because that is all the two sides share: the report names absolute
+ * paths, `suites` names bare file names, and both separators appear across the platforms this tool
+ * runs on.
+ *
+ * A suite the report never mentions folds to all-zero, and `outcomeOf` calls that `no-coverage` —
+ * which is right and is not an accident: an installed adapter whose suite the run never touched
+ * verified exactly as much as one whose every test skipped itself.
+ */
+export function reportFor(report: VitestReport, suites: readonly string[]): SuiteReport {
+	let collected = 0
+	let passed = 0
+	let failed = 0
+	for (const file of report.testResults ?? []) {
+		const path = (file.name ?? '').replace(/\\/g, '/')
+		if (!suites.some((suite) => path === suite || path.endsWith(`/${suite}`))) continue
+		for (const test of file.assertionResults ?? []) {
+			collected++
+			if (test.status === 'passed') passed++
+			else if (test.status === 'failed') failed++
+		}
+	}
+	// Anything neither passed nor failed did not execute, whatever vitest chose to call it.
+	return { collected, passed, failed, skipped: collected - passed - failed }
+}
+
+/**
+ * The same runner, sourcing its counts from an already-written report instead of spawning vitest.
+ * Only `runSuites` moves: which adapters are installed, which have suites, and what an outcome
+ * means all stay exactly as they are, which is what keeps the two modes from drifting into two
+ * different definitions of coverage.
+ */
+export function reportDeps(deps: RunnerDeps, report: VitestReport): RunnerDeps {
+	return { ...deps, runSuites: (_name, suites) => reportFor(report, suites) }
+}
+
 export function verify(adapter: Adapter, deps: RunnerDeps): Reported {
 	if (!adapter.installed) return { adapter, outcome: 'skip' }
 	if (adapter.suites.length === 0) return { adapter, outcome: 'gap' }
@@ -156,10 +227,18 @@ export function main(argv: readonly string[], deps: RunnerDeps, out: (line: stri
 	const flags = argv.filter((arg) => arg.startsWith('-'))
 	const names = argv.filter((arg) => !arg.startsWith('-'))
 
-	const unknownFlag = flags.find((flag) => !VALID_FLAGS.includes(flag))
+	const reportFlag = flags.find((flag) => REPORT_FLAG.test(flag))
+	const reportPath = reportFlag ? (REPORT_FLAG.exec(reportFlag)?.[1] ?? '') : undefined
+
+	const unknownFlag = flags.filter((flag) => flag !== reportFlag).find((flag) => !VALID_FLAGS.includes(flag))
 	if (unknownFlag) {
 		out(`unrecognized flag: ${unknownFlag}`)
-		out(`valid flags: ${VALID_FLAGS.join(', ')}`)
+		out(`valid flags: ${[...VALID_FLAGS, '--report=<file>'].join(', ')}`)
+		return USAGE
+	}
+
+	if (reportPath === '') {
+		out('--report needs the file to read: --report=<file>')
 		return USAGE
 	}
 
@@ -178,7 +257,9 @@ export function main(argv: readonly string[], deps: RunnerDeps, out: (line: stri
 	}
 
 	const width = Math.max(...known.map((n) => n.length))
-	const all = flags.includes('--all')
+	// A report covers every adapter at once, so reading one with no adapter named IS the --all shape:
+	// the listing form would otherwise swallow the invocation and report nothing about the run.
+	const all = flags.includes('--all') || (reportPath !== undefined && names.length === 0)
 
 	// The listing form: runs nothing, so it reports projections and never a run outcome. Its exit is
 	// unconditional — a projected gap is a state of affairs it reports, not a verdict it passes.
@@ -196,8 +277,10 @@ export function main(argv: readonly string[], deps: RunnerDeps, out: (line: stri
 	// inside herdr, `pane split --current` splits THIS pane and `focus()` yanks THIS focus. The rule
 	// is deliberately blunt rather than per-adapter: a manual verification tool is run from a plain
 	// shell, and "which cross-adapter combinations happen to be safe" is not a judgment worth
-	// encoding. The listing above is exempt because it runs nothing.
-	const inside = deps.insideMux()
+	// encoding. The listing above is exempt because it runs nothing, and so is `--report`, which reads
+	// a run that already happened — refusing it would only stop a maintainer inside tmux from reading
+	// a file.
+	const inside = reportPath === undefined ? deps.insideMux() : undefined
 	if (inside) {
 		out(`refusing to run: this shell is inside ${inside}`)
 		out('the real-boundary suites drive live multiplexers, and some verbs resolve against the')
@@ -205,8 +288,19 @@ export function main(argv: readonly string[], deps: RunnerDeps, out: (line: stri
 		return ERR
 	}
 
+	let runDeps = deps
+	if (reportPath !== undefined) {
+		try {
+			runDeps = reportDeps(deps, deps.readReport(reportPath))
+		} catch (error) {
+			out(`cannot read the vitest report at ${reportPath}: ${error instanceof Error ? error.message : String(error)}`)
+			return ERR
+		}
+		out(`report — ${reportPath}`)
+	}
+
 	const targets = all ? adapters : adapters.filter((a) => names.includes(a.name))
-	const results = targets.map((adapter) => verify(adapter, deps))
+	const results = targets.map((adapter) => verify(adapter, runDeps))
 
 	for (const result of results) {
 		out(`${pad(result.adapter.name, width)}  ${describe(result)}`)
@@ -293,6 +387,7 @@ export const realDeps: RunnerDeps = {
 	// The same per-pane env contract detection itself uses (src/mux-probe.ts), not a second copy of
 	// it — a new backend teaches this guard about itself by landing its adapter.
 	insideMux: () => currentPane(process.env)?.mux,
+	readReport: (path) => JSON.parse(readFileSync(path, 'utf8')) as VitestReport,
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
