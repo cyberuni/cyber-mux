@@ -87,7 +87,7 @@ function fakeAdapter(opts: { canSizeSplits?: boolean; failOnOpen?: number; works
 	let n = 0
 	const adapter: MuxAdapter = {
 		name: 'fake',
-		opensWithoutStealingFocus: true,
+		focusOnOpen: 'preserved',
 		...(opts.canSizeSplits === false ? {} : { canSizeSplits: true }),
 		rename: () => {
 			calls.log.push('rename')

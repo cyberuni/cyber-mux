@@ -107,7 +107,12 @@ export const rmuxMuxAdapter: MuxAdapter = {
 	canMovePanes: true,
 	canBreakPanes: true,
 
-	opensWithoutStealingFocus: true,
+	/**
+	 * `'preserved'`, not merely "restored": every creating route passes `-d`, and `-t` names the pane
+	 * to split directly, so nothing has to VISIT a pane to choose a target. Nothing moves at any
+	 * instant — the strongest of the three values, and the same one tmux earns for the same reason.
+	 */
+	focusOnOpen: 'preserved',
 
 	open(exec, opts) {
 		// rmux has tmux's tiers, so it has tmux's collapse: no Workspace level, and "window" is its

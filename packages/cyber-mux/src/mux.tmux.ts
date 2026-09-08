@@ -139,7 +139,7 @@ export const tmuxMuxAdapter: MuxAdapter = {
 	 * There is no focus move to undo on top of that, unlike zellij: `-t` targets the pane to split
 	 * directly, so tmux never has to VISIT a pane to choose it.
 	 */
-	opensWithoutStealingFocus: true,
+	focusOnOpen: 'preserved',
 
 	open(exec, opts) {
 		// tmux has fewer tiers than herdr: no Workspace level, and "window" is its name for the Tab
@@ -220,7 +220,7 @@ export const tmuxMuxAdapter: MuxAdapter = {
 			// switches the attached client to the new window, stealing the caller's focus. The returned
 			// pane id and subsequent `send-keys -t` still target the new pane. This was the adapter's
 			// only `-d` for a long time; it is now on all three routes, which is what lets this backend
-			// declare `opensWithoutStealingFocus`.
+			// declare `focusOnOpen`.
 			args = ['new-window', '-d', ...env, '-c', opts.cwd, '-P', '-F', format]
 		} else {
 			// `-t` whenever the caller names a pane. Without it tmux does NOT split the calling pane — it

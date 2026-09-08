@@ -145,8 +145,11 @@ const pane = mux.open({
 ## Inspecting and tearing down
 
 - **`mux.paneExists(target, deps?)`** → `boolean` — whether the pane is still live.
-- **`mux.isPaneFocused(target, deps?)`** → `boolean | undefined` — read-only focus probe; `undefined`
-  means the backend cannot answer (callers fail open).
+- **`mux.isPaneFocused(target, deps?)`** → `boolean | undefined` — read-only focus probe, three-valued
+  on every backend: `true` positively focused, `false` positively not, `undefined` the backend could
+  not answer (callers fail open). `undefined` is never a stand-in for `false` — an unresolvable pane,
+  a listing that carries no focus field, and a session with no client attached all report it, because
+  a confident "not focused" read out of a silence is a plain wrong answer rather than a cautious one.
 - **`mux.listPanes(deps?)`** → `LivePane[]` — enumerate every live pane the backend can see.
 - **`mux.teardown(target, deps?)`** — close the pane.
 
@@ -164,11 +167,18 @@ use. Both are reached bound, the same way as the rest of the session (methods ta
 
 - **`mux.canSizeSplits?`** — whether the backend honors `ratio`; `false`/absent means a requested
   ratio degrades to the backend's own even split.
-- **`mux.opensWithoutStealingFocus`** — whether `open()` leaves the caller's focus where it was.
-  Unlike the two flags above this one is **required**, so every adapter answers it: `true` on tmux,
-  herdr, and Zellij (0.45+), `false` on WezTerm, cmux, and otty, whose CLIs offer no way to suppress
-  the focus move. `false` is a degrade, not a refusal — the open still returns the pane you asked
-  for, it just moves the user to it.
+- **`mux.focusOnOpen`** → `'preserved' | 'restored' | 'stolen'` — what `open()` does to the caller's
+  focus. Unlike the two flags above this one is **required**, so every adapter answers it.
+  `'preserved'` (tmux, rmux, herdr) means nothing moves at any instant, on any route. `'restored'`
+  (WezTerm, Zellij 0.45+, cmux, otty) means a focus move happens and is deterministically undone
+  before `open()` returns — the caller ends where they started, though a human watching may see a
+  flicker. `'stolen'` means the move stands; no backend declares it today. It replaced the boolean
+  `opensWithoutStealingFocus`, which had to call a restore either "no theft" or "theft" and chose the
+  first, so Zellij's visible round trip declared the same value as tmux's `-d`.
+
+  The declaration covers **every** route `open()` can take, including the focus move an adapter makes
+  to choose a split target: a backend whose `new-pane` has no target flag honors `from` by focusing
+  that pane first, and that counts. An adapter declares the weakest value any of its routes earns.
 
 ## The raw seam
 

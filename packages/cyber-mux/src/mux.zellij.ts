@@ -18,7 +18,7 @@ import { pollForOutput } from './wait-output.ts'
  * mis-targeting the focused pane.
  *
  * The floor moved from 0.44.1 to **0.45.0** (2026-08-20) for `--no-focus`, which is what lets this
- * backend answer `opensWithoutStealingFocus` at all. Raising it rather than keeping the old
+ * backend answer `focusOnOpen` at all. Raising it rather than keeping the old
  * focus-stealing path as a fallback, for four reasons that compound:
  *
  * - The seam member is a **static declaration**, like `canSizeSplits` and `canFloatPanes` — there is
@@ -100,7 +100,7 @@ import { pollForOutput } from './wait-output.ts'
  *   only flag is `--tab-id`. So `from` — which pane a `pane:*` split lands beside — is honored by
  *   FOCUSING that pane first, the sole way to choose the split target. That is still a real focus
  *   move; what changed in 0.45.0 is that it is now UNDONE, not that it stopped happening. See
- *   `opensWithoutStealingFocus`, and `open` for why `--no-focus` cannot be the answer on that path —
+ *   `focusOnOpen`, and `open` for why `--no-focus` cannot be the answer on that path —
  *   it re-anchors the split on the ISSUING pane and would make the focus move pointless and the target
  *   wrong.
  * - **No pane geometry adapter.** `list-panes --json` does report `pane_x`/`pane_y`, so `regions`
@@ -161,7 +161,7 @@ export function createZellijAdapter(deps: { session?: string | undefined }): Mux
 		/**
 		 * `true` — `zellij action toggle-fullscreen -p <pane-id>`, zellij's name for the same thing.
 		 * Verified live on 0.45.0 (the version CI pins) rather than read out of the source, which is what
-		 * `canFloatPanes` and `opensWithoutStealingFocus` above had to settle for: driving it against a
+		 * `canFloatPanes` and `focusOnOpen` above had to settle for: driving it against a
 		 * three-terminal-pane tab flipped that pane's `is_fullscreen` in `list-panes --json` and back.
 		 *
 		 * Declared despite the verb being a TOGGLE, because zellij also REPORTS the state the toggle has
@@ -187,7 +187,19 @@ export function createZellijAdapter(deps: { session?: string | undefined }): Mux
 		// declares is 0.45.0 and the pin in `pull-request.yml` is the same, so this claim covers
 		// exactly the binary the live suite drives and nothing newer.
 
-		opensWithoutStealingFocus: true,
+		/**
+		 * `'restored'`, and the change from the old boolean `true` is a correction rather than a
+		 * downgrade. Both of this backend's routes end with focus where they found it, but only one of
+		 * them never moves it: with no `from`, `new-pane --no-focus` means nothing moves at any instant;
+		 * with a `from`, the anchor pane is FOCUSED first (zellij's `new-pane` has no split-target
+		 * flag), the pane is opened, and `focus-pane-id` puts the client back.
+		 *
+		 * The boolean had one value for both and so declared the same thing tmux declares, which is not
+		 * what a human watching sees. `'restored'` says the visible truth: a flicker, then home.
+		 * `'preserved'` would be the claim that no instant of this open shows the user somewhere else,
+		 * and on the `from` path that is false.
+		 */
+		focusOnOpen: 'restored',
 
 		open(exec, opts) {
 			const at = opts.at ?? 'tab'

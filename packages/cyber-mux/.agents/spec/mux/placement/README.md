@@ -291,9 +291,12 @@ graph TD
   WS -->|"tmux"| WT["a visible window in the current session"]
   WS -->|"herdr"| WH["a new workspace, bound to no repo"]
   WS -->|"wezterm"| WW["a new window in a freshly named workspace"]
-  TAB --> BG["opened without stealing focus"]
+  TAB --> BG{"what the open does to focus"}
+  BG -->|"preserved: tmux, rmux, herdr"| BGP["nothing moves at any instant"]
+  BG -->|"restored: zellij, wezterm, cmux, otty"| BGR["a move, then the caller is put back before open returns"]
   SPLIT --> LAUNCH
-  BG --> LAUNCH
+  BGP --> LAUNCH
+  BGR --> LAUNCH
   WT --> LAUNCH
   WH --> LAUNCH
   WW --> LAUNCH{"launch command"}
@@ -383,6 +386,9 @@ Every scenario in [`placement.feature`](./placement.feature), one row each, grou
 | `at=workspace` → the backend's own visible space | wezterm | `wezterm --at workspace spawns a new window into a freshly named workspace` |
 | `at=tab` → the backend's native tab, never a split | each of the three adapters | `--at tab opens a new tab in the current window, never a split pane` |
 | tab opened → focus not stolen | any backend, `--at tab` | `the tab placement opens in the background without stealing focus` |
+| the focus-on-open declaration | each of the seven adapters | `every backend declares what an open does to the caller's focus` |
+| a focus move is undone, never guessed | a backend that must focus a pane to open beside it | `a restoring open puts the caller back on the pane they were on, and only that pane` |
+| a refusal costs no focus read | a backend refusing the requested placement | `a placement a backend refuses is refused before the focus read` |
 | placement omitted → the adapter's own `at ?? 'tab'` default | open() with `at` undefined | `an omitted placement falls back to tab — the adapter's own default, not the CLI's` |
 
 ### pane:float — real on some backends, refused on the rest

@@ -117,10 +117,15 @@ describe('spec:cyber-mux/library — published surface', () => {
 				'refusePaneZoom',
 				'resolveMux',
 				'resolveMuxAdapter',
+				// The two halves of the `focusOnOpen: 'restored'` behavior, public for the same reason
+				// `refusePaneZoom` is: an out-of-tree adapter declaring that value has to realize it, and
+				// four in-tree adapters already share this exact spelling rather than four of their own.
+				'restoringFocus',
 				// rmux's option constants and adapter ride the barrel exactly as tmux's do — the two
 				// backends have the same shape, and an out-of-tree caller that reaches for one has the same
 				// reason to reach for the other.
 				'rmuxMuxAdapter',
+				'soleFocusedPane',
 				'tmuxMuxAdapter',
 				'weztermMuxAdapter',
 				'withReason',

@@ -69,6 +69,47 @@ Feature: mux placement — where a new pane opens, and what open reports back
     When open runs
     Then the new tab is opened without moving input focus off the caller's session
 
+  @id:placement-focus-on-open-declared
+  Scenario Outline: every backend declares what an open does to the caller's focus
+    Given the <backend> adapter
+    When a caller reads its focus-on-open declaration
+    Then it reports <value>
+    And no backend reports that focus moves and stays moved
+
+    Examples:
+      | backend | value     |
+      | tmux    | preserved |
+      | rmux    | preserved |
+      | herdr   | preserved |
+      | zellij  | restored  |
+      | wezterm | restored  |
+      | cmux    | restored  |
+      | otty    | restored  |
+    # Three values, not a boolean: `preserved` is "nothing moves at any instant, on any route",
+    # `restored` is "a move happens and is deterministically undone before open returns", `stolen` is
+    # "the move stands". The boolean this replaced had to call a restore one or the other and called it
+    # no-theft, so zellij's visible round trip declared the same value as tmux's `-d`. An adapter
+    # declares the WEAKEST value any of its routes earns.
+
+  @id:placement-focus-restored-not-guessed
+  Scenario: a restoring open puts the caller back on the pane they were on, and only that pane
+    Given a backend that must focus a pane in order to open beside it
+    When open runs
+    Then the pane the caller was focused on is read before anything moves
+    And that pane is focused again before open returns, even when the open fails
+    And no focus verb is issued at all when nothing reported being focused
+    # The restore is skipped rather than guessed. A restore aimed at a pane picked by heuristic is a
+    # focus move INVENTED by the restore, which is worse than the theft it exists to undo — it moves a
+    # caller who was never moved.
+
+  @id:placement-refusal-costs-no-focus-read
+  Scenario: a placement a backend refuses is refused before the focus read
+    Given a backend that refuses the requested placement by name
+    When open runs
+    Then it refuses without issuing any command at all
+    # The focus read is the first command a restoring open would issue. A refusal has nothing to
+    # restore, so buying it one command back would break the seam-wide "a refusal costs no exec" rule.
+
   @id:placement-omitted-defaults-to-tab
   Scenario: an omitted placement falls back to tab — the adapter's own default, not the CLI's
     Given the open contract is invoked with no placement — at is undefined
