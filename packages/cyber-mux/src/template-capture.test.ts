@@ -382,7 +382,13 @@ describe('spec:cyber-mux/template/capture', () => {
 			// neither the workspace nor the tab's name is ever recovered from it.
 			const calls: string[][] = []
 			const exec: Exec = (_cmd, args) => {
-				calls.push(args)
+				// Every tmux invocation this adapter makes leads with `-u` — see `runTmux` in
+				// `mux.tmux.ts`, and #177 for what tmux does to a TAB without it. Stripped before
+				// recording so `calls` and the argv assertions below stay about the query itself.
+				expect(args[0]).toBe('-u')
+				const verb = args.slice(1)
+				calls.push(verb)
+				args = verb
 				if (args[0] === 'display-message') return '@4\tws-7\tmain\tacme - beta - main'
 				if (args[0] === 'list-windows') return '@4\tmain\tacme - beta - main'
 				if (args[0] === 'list-panes') return '%0\t0\t0\t200\t50\t/repo\tzeta\tzeta'

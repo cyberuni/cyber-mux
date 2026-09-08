@@ -5,8 +5,14 @@ import type { MuxPlacement, MuxSpaceTier } from './mux.ts'
 
 function fakeExec(calls: string[][], responses: Record<string, string | null> = {}): Exec {
 	return (_cmd, args) => {
-		calls.push(args)
-		return responses[args[0]!] ?? null
+		// Every tmux invocation this adapter makes leads with `-u` — see `runTmux` in `mux.tmux.ts`, and
+		// #177 for what tmux does to a TAB without it. Asserted HERE rather than spelled into each row's
+		// expected argv: this pins the flag on EVERY recorded call, not just the rows that happen to
+		// assert a full argv, and it leaves those rows about the command they are actually about.
+		expect(args[0]).toBe('-u')
+		const verb = args.slice(1)
+		calls.push(verb)
+		return responses[verb[0]!] ?? null
 	}
 }
 
@@ -857,8 +863,12 @@ describe('spec:cyber-mux/mux/driving', () => {
 		// `-S -51` reaches one row further into the history than the `-S -50` window — a longer capture is
 		// exactly the rows the window dropped.
 		const exec: Exec = (_cmd, args) => {
-			calls.push(args)
-			return args.at(-1) === '-51' ? 'older\nline1\nline2' : 'line1\nline2'
+			// See the `fakeExec` comment above: every call leads with `-u` (#177); strip it before
+			// recording so this row's expected argv stays about `capture-pane`, not the flag.
+			expect(args[0]).toBe('-u')
+			const verb = args.slice(1)
+			calls.push(verb)
+			return verb.at(-1) === '-51' ? 'older\nline1\nline2' : 'line1\nline2'
 		}
 		expect(tmuxMuxAdapter.read(exec, { id: '%3' }, { lines: 50, truncation: true })).toEqual({
 			text: 'line1\nline2',

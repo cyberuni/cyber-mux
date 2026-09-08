@@ -20,11 +20,19 @@ import { createZellijAdapter, zellijMuxAdapter } from './mux.zellij.ts'
  * which is exactly the part a live binary would confirm.
  */
 
-/** tmux replies keyed by the command name (args[0]). */
+/**
+ * tmux replies keyed by the command name (args[0]).
+ *
+ * Every tmux invocation this adapter makes leads with `-u` — see `runTmux` in `mux.tmux.ts`, and #177
+ * for what tmux does to a TAB without it. Asserted HERE, once, rather than spelled into each row's
+ * expected argv: it pins the flag on every recorded call and leaves those rows about the verb.
+ */
 function fakeTmuxExec(calls: string[][], responses: Record<string, string | null> = {}): Exec {
 	return (_cmd, args) => {
-		calls.push(args)
-		return responses[args[0]!] ?? null
+		expect(args[0]).toBe('-u')
+		const verb = args.slice(1)
+		calls.push(verb)
+		return responses[verb[0]!] ?? null
 	}
 }
 

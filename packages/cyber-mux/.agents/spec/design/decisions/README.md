@@ -2122,3 +2122,74 @@ Decisions (`limux-adapter` — #157, whether to adapt `am-will/limux`):
   - Note that **NONE of these is `group`**, which has no path in sight; if the other three land, the
     remaining question is whether limux's own workspace tier can carry grouping the way herdr's does.
   ISSUE: https://github.com/cyberuni/cyber-mux/issues/157
+
+Decisions (`177-locale-safe-tmux-output` — what makes tmux mangle its own `-F` output, and how the
+adapter stops it, issue #177):
+
+- **The corruption is a whole BYTE CLASS, not a separator.** MEASURED on tmux 3.7c, one binary, one
+  isolated `-L` socket, only the environment differing. For a client tmux does not consider UTF-8,
+  every byte outside printable ASCII (0x20–0x7e) comes back as a literal `_`: 0x01, 0x07, 0x08, TAB,
+  LF, 0x0b, 0x0c, CR, ESC, 0x1d, 0x1e, 0x1f, 0x7f, and every non-ASCII byte (U+00A0 and U+2022 both
+  tested) — all `_`; `|` and `:` pass through untouched. So #177's TAB is one instance and NO control
+  character is a usable separator. It also means the corruption is not confined to the parse:
+  `#{pane_title}`, `#{pane_current_path}` and `#{session_name}` lose their non-ASCII content in every
+  format, space-separated ones included, which is what makes a re-picked separator a half fix.
+
+- **DECIDED: `-u` on every tmux invocation, through one helper.** `runTmux` in `mux.tmux.ts` is the
+  single choke point; all 26 call sites go through it. tmux(1) documents `-u` as exactly this: *"Write
+  UTF-8 output to the terminal even if the first environment variable of LC_ALL, LC_CTYPE, or LANG
+  that is set does not contain \"UTF-8\" or \"UTF8\"."* Applied uniformly rather than to the `-F` calls
+  only — the class above is wider than the parse, and a flag carried by some call sites and not others
+  is a flag the next call site forgets. Verified live: `send-keys -l` round-trips `café•` identically
+  with and without it, and `capture-pane -p` was never sanitized, so uniformity costs nothing.
+
+- **REJECTED: pinning a locale on the child environment.** It was the other candidate and it is worse
+  on two measured counts. `LC_ALL=C` does **not** fix it — still `_` — because tmux's test is a
+  substring match for "UTF-8"/"UTF8", not "is this a valid locale", so a pin has to name a UTF-8
+  locale the host actually has, and `C.UTF-8` is a glibc spelling macOS does not ship. It would also
+  need `Exec` widened to carry an environment, which the seam does not do. The argument that a pin
+  would leak into panes the adapter creates was **checked and is FALSE** — measured: a pane created by
+  a `LANG=C.UTF-8` client has no `LANG`, because the pane inherits the SERVER's environment, not the
+  client's. Recorded because it is the intuitive objection and it does not hold.
+
+- **rmux is NOT affected — this corrects the #153 entry above.** That entry recorded the finding as
+  "locale-sensitive on tmux and rmux", inferred from rmux reimplementing tmux's `#{…}` vocabulary
+  under the same names. Measured on a live rmux 0.10.0 under `env -i`, the same format returns a real
+  TAB, and a multi-line format returns real newlines where tmux returns `_`. `mux.rmux.ts` is
+  therefore left alone. rmux accepts `-u` (it is in its usage string) but has nothing to fix, and
+  adding a no-op flag to a second adapter would suggest a shared defect that measurement says is not
+  there.
+
+- **`$TMUX` in the caller's environment suppresses the bug entirely, and that bounds its blast
+  radius.** MEASURED, and it is not in the issue: with no locale at all but `$TMUX` set, `list-panes
+  -a -F '#{pane_id}<TAB>#{window_id}'` still returns a real tab — a command client inside a session
+  takes the containing client's UTF-8 state instead of reading the environment. So a caller running
+  **inside a pane was never affected**; what was affected is a caller with neither a locale nor
+  `$TMUX`, which is the systemd unit / cron job / container entrypoint / non-interactive ssh case
+  reaching this adapter through the `CYBER_MUX=tmux` override or process ancestry. The issue's
+  severity is right and its reachability list is right; this is the missing precondition.
+
+- **Why `live-backends` never went red, and what the regression test had to do about it.** The job
+  inherits the runner's environment, which carries a `LANG`, and the existing tmux integration block
+  sets `$TMUX` on purpose so target-less commands resolve — either one alone is enough to hide this.
+  So `mux.tmux.integration.test.ts` gained a SECOND real-tmux block whose child environment is built
+  from nothing but `PATH` and `HOME`, on its own socket and its own server. Its first row asserts that
+  environment rather than describing it, so a fixture that quietly regrew a `LANG` fails loudly
+  instead of turning the block into a test of nothing. The rows that are about `listPanes` create
+  their panes with a separator-free `-F '#{pane_id}'` call rather than through `open`, so that
+  reverting the fix turns each row red on ITS OWN claim instead of on `open`'s parse. Reverting `-u`
+  was run: all three rows go red, and the listing row fails with the issue's exact shape
+  (`%0_zsh_/tmp/…`).
+
+- **The mocked unit fakes assert the flag rather than spelling it into every expected argv.** Each
+  fake `Exec` that serves tmux checks `args[0] === '-u'` and strips it before recording, so the flag
+  is pinned on EVERY recorded call — not only on the rows that assert a full argv — and the ~240
+  existing rows stay about the command they are about. This is the one place a mocked test is load
+  bearing here, and it is load bearing for argv shape only; the behavior it protects is proven at the
+  real boundary above.
+
+- **Untested, and stated as such:** only tmux 3.7c and rmux 0.10.0 were driven. `-u` is long-standing
+  in tmux and takes no argument, so an older tmux is expected to accept it, but that expectation was
+  not measured against an older binary.
+
+ISSUE: https://github.com/cyberuni/cyber-mux/issues/177

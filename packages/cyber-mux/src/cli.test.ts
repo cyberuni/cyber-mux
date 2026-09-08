@@ -16,9 +16,20 @@ function run(program: Command, args: string[]) {
 	return program.parseAsync(args, { from: 'user' })
 }
 
-/** Records every call; tmux replies are keyed by the command name (args[0]). */
+/**
+ * Records every call; tmux replies are keyed by the command name (args[0]).
+ *
+ * Also serves as the WHOLE program's exec, so it sees the ancestry walk's `ps` calls too — the `-u`
+ * strip below is gated on `cmd === 'tmux'` for that reason, not because this fake answers another
+ * backend's protocol. Every tmux invocation this adapter makes leads with `-u` — see `runTmux` in
+ * `mux.tmux.ts`, and #177 for what tmux does to a TAB without it.
+ */
 function fakeTmuxExec(calls: string[][], responses: Record<string, string | null> = {}): Exec {
-	return (_cmd, args) => {
+	return (cmd, args) => {
+		if (cmd === 'tmux') {
+			expect(args[0]).toBe('-u')
+			args = args.slice(1)
+		}
 		calls.push(args)
 		return responses[args[0]!] ?? null
 	}
@@ -580,6 +591,12 @@ describe('spec:cyber-mux/cli/worktree', () => {
 	/** git (rev-parse only), tmux (keyed by verb), herdr (keyed by first two args) on one fake. */
 	function envExec(calls: string[][], responses: Record<string, string | null> = {}): Exec {
 		return (cmd, args) => {
+			// Every tmux call this exec serves leads with `-u` (see `runTmux` in mux.tmux.ts, #177); strip
+			// it before recording so `calls` and the verb-keyed lookup below stay about the command itself.
+			if (cmd === 'tmux') {
+				expect(args[0]).toBe('-u')
+				args = args.slice(1)
+			}
 			calls.push([cmd, ...args])
 			if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
 			if (cmd === 'tmux') return responses[args[0]!] ?? null
@@ -1151,6 +1168,13 @@ describe('cyber-mux/mux — cli-driven library surface', () => {
 			function repoExec(calls: string[][], responses: Record<string, string> = {}): Exec {
 				let n = 0
 				return (cmd, args) => {
+					// Every tmux call this exec serves leads with `-u` (see `runTmux` in mux.tmux.ts, #177);
+					// strip it before recording so `calls` and the verb-keyed branches below stay about the
+					// command itself.
+					if (cmd === 'tmux') {
+						expect(args[0]).toBe('-u')
+						args = args.slice(1)
+					}
 					calls.push([cmd, ...args])
 					if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
 					if (cmd === 'tmux') {
@@ -1901,7 +1925,15 @@ describe('cyber-mux/mux — cli-driven library surface', () => {
 			 * pane nobody named, not a stand-in for absence.
 			 */
 			function paneServer(calls: string[][], panes: FakePane[], responses: Record<string, string | null> = {}): Exec {
-				return (_cmd, args) => {
+				return (cmd, args) => {
+					// Every tmux invocation this adapter makes leads with `-u` — see `runTmux` in
+					// `mux.tmux.ts`, and #177 for what tmux does to a TAB without it. Stripped before
+					// recording so `calls` and every positional/`-F` lookup below stay about the verb — but
+					// gated on `cmd === 'tmux'`, since this fake also answers the odd git rev-parse call.
+					if (cmd === 'tmux') {
+						expect(args[0]).toBe('-u')
+						args = args.slice(1)
+					}
 					calls.push(args)
 					if (args[0] === 'list-panes' && args[1] === '-a') {
 						const fmt = args[args.indexOf('-F') + 1]
@@ -2132,6 +2164,12 @@ describe('cyber-mux/template — cli-driven library surface', () => {
 		const paneWindow = new Map<string, string>()
 		let n = 0
 		const exec: Exec = (cmd, args) => {
+			// Every tmux call this exec serves leads with `-u` (see `runTmux` in mux.tmux.ts, #177); strip
+			// it before recording so `calls` and every positional arg lookup below stay about the command.
+			if (cmd === 'tmux') {
+				expect(args[0]).toBe('-u')
+				args = args.slice(1)
+			}
 			calls.push([cmd, ...args])
 			if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
 			const [verb] = args
@@ -2298,6 +2336,12 @@ describe('cyber-mux/template — cli-driven library surface', () => {
 		 */
 		function saveExec(calls: string[][], panes?: string): Exec {
 			return (cmd, args) => {
+				// Every tmux call this exec serves leads with `-u` (see `runTmux` in mux.tmux.ts, #177);
+				// strip it before recording so `calls` and the verb check below stay about the command.
+				if (cmd === 'tmux') {
+					expect(args[0]).toBe('-u')
+					args = args.slice(1)
+				}
 				calls.push([cmd, ...args])
 				if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
 				if (args[0] === 'list-panes') {
@@ -2537,6 +2581,12 @@ describe('cyber-mux/template — cli-driven library surface', () => {
 		 */
 		function untaggedTmuxExec(calls: string[][]): Exec {
 			return (cmd, args) => {
+				// Every tmux call this exec serves leads with `-u` (see `runTmux` in mux.tmux.ts, #177);
+				// strip it before recording so `calls` and the verb checks below stay about the command.
+				if (cmd === 'tmux') {
+					expect(args[0]).toBe('-u')
+					args = args.slice(1)
+				}
 				calls.push([cmd, ...args])
 				if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
 				// The tag field comes back EMPTY — tmux prints an unset user option as nothing at all.
@@ -2740,6 +2790,12 @@ describe('spec:cyber-mux/cli/placement', () => {
 	/** git (rev-parse only), tmux (keyed by verb), herdr (keyed by first two args) on one fake. */
 	function envExec(calls: string[][], responses: Record<string, string | null> = {}): Exec {
 		return (cmd, args) => {
+			// Every tmux call this exec serves leads with `-u` (see `runTmux` in mux.tmux.ts, #177); strip
+			// it before recording so `calls` and the verb-keyed lookup below stay about the command itself.
+			if (cmd === 'tmux') {
+				expect(args[0]).toBe('-u')
+				args = args.slice(1)
+			}
 			calls.push([cmd, ...args])
 			if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
 			if (cmd === 'tmux') return responses[args[0]!] ?? null
@@ -3000,6 +3056,12 @@ describe('spec:cyber-mux/cli/lookup', () => {
 	function repoExec(calls: string[][], responses: Record<string, string> = {}): Exec {
 		let n = 0
 		return (cmd, args) => {
+			// Every tmux call this exec serves leads with `-u` (see `runTmux` in mux.tmux.ts, #177); strip
+			// it before recording so `calls` and the verb-keyed branches below stay about the command.
+			if (cmd === 'tmux') {
+				expect(args[0]).toBe('-u')
+				args = args.slice(1)
+			}
 			calls.push([cmd, ...args])
 			if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
 			if (cmd === 'tmux') {
@@ -3035,6 +3097,12 @@ describe('spec:cyber-mux/cli/lookup', () => {
 		// A 4-pane comb: the region, then three splits. The THIRD split is refused.
 		let splits = 0
 		const exec: Exec = (cmd, args) => {
+			// Every tmux call this exec serves leads with `-u` (see `runTmux` in mux.tmux.ts, #177); strip
+			// it before recording so `calls` and the verb check below stay about the command itself.
+			if (cmd === 'tmux') {
+				expect(args[0]).toBe('-u')
+				args = args.slice(1)
+			}
 			calls.push([cmd, ...args])
 			if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
 			if (args[0] === 'new-window') return '%0\t@0'
@@ -3069,7 +3137,15 @@ describe('spec:cyber-mux/cli/lookup', () => {
 	}
 
 	function paneServer(calls: string[][], panes: FakePane[], responses: Record<string, string | null> = {}): Exec {
-		return (_cmd, args) => {
+		return (cmd, args) => {
+			// Every tmux invocation this adapter makes leads with `-u` — see `runTmux` in `mux.tmux.ts`,
+			// and #177 for what tmux does to a TAB without it. Stripped before recording so `calls` and
+			// every positional/`-F` lookup below stay about the verb — but gated on `cmd === 'tmux'`,
+			// since this fake also answers the odd git rev-parse call.
+			if (cmd === 'tmux') {
+				expect(args[0]).toBe('-u')
+				args = args.slice(1)
+			}
 			calls.push(args)
 			if (args[0] === 'list-panes' && args[1] === '-a') {
 				const fmt = args[args.indexOf('-F') + 1]
@@ -3258,7 +3334,11 @@ describe('spec:cyber-mux/cli/lookup', () => {
 	/** A tmux whose list-panes reports `panes`, but whose every other command THROWS a backend diagnostic. */
 	function throwingExec(panes: string, diagnostic: string): Exec {
 		return (_cmd, args) => {
-			if (args[0] === 'list-panes') return panes
+			// Every tmux call this exec serves leads with `-u` (see `runTmux` in mux.tmux.ts, #177); strip
+			// it before checking the verb.
+			expect(args[0]).toBe('-u')
+			const verb = args.slice(1)
+			if (verb[0] === 'list-panes') return panes
 			throw new Error(diagnostic)
 		}
 	}
@@ -3466,7 +3546,11 @@ describe('spec:cyber-mux/cli/lookup', () => {
 		})
 		const stderr = captureStderr()
 		const exec: Exec = (cmd, args) => {
-			if (args[0] === 'capture-pane') return args.at(-1) === '-1' ? 'OLDER\nHELLO' : 'HELLO'
+			// `-u` leads every tmux call (see paneServer's own comment, #177); this wrapper inspects args
+			// itself before delegating, so it strips the flag too rather than letting it leak into `-1`.
+			expect(args[0]).toBe('-u')
+			const verb = args.slice(1)
+			if (verb[0] === 'capture-pane') return verb.at(-1) === '-1' ? 'OLDER\nHELLO' : 'HELLO'
 			return paneServer([], [{ id: '%1', cwd: '/repo' }])(cmd, args)
 		}
 		await run(buildProgram({ env: TMUX, exec }), ['read', '%1'])
@@ -3527,7 +3611,11 @@ describe('spec:cyber-mux/cli/lookup', () => {
 	it('read --format json carries truncated and the help entry in the payload', async () => {
 		vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
 		const exec: Exec = (cmd, args) => {
-			if (args[0] === 'capture-pane') return args.at(-1) === '-6' ? 'OLDER\nHELLO' : 'HELLO'
+			// `-u` leads every tmux call (see paneServer's own comment, #177); this wrapper inspects args
+			// itself before delegating, so it strips the flag too rather than letting it leak into `-6`.
+			expect(args[0]).toBe('-u')
+			const verb = args.slice(1)
+			if (verb[0] === 'capture-pane') return verb.at(-1) === '-6' ? 'OLDER\nHELLO' : 'HELLO'
 			return paneServer([], [{ id: '%1', cwd: '/repo' }])(cmd, args)
 		}
 		const program = buildProgram({ env: TMUX, exec })
@@ -3765,6 +3853,12 @@ describe('spec:cyber-mux/cli/template/apply', () => {
 	function repoExec(calls: string[][], responses: Record<string, string> = {}): Exec {
 		let n = 0
 		return (cmd, args) => {
+			// Every tmux call this exec serves leads with `-u` (see `runTmux` in mux.tmux.ts, #177); strip
+			// it before recording so `calls` and the verb-keyed branches below stay about the command.
+			if (cmd === 'tmux') {
+				expect(args[0]).toBe('-u')
+				args = args.slice(1)
+			}
 			calls.push([cmd, ...args])
 			if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
 			if (cmd === 'tmux') {
@@ -4092,6 +4186,12 @@ describe('spec:cyber-mux/cli/template/capture', () => {
 	/** tmux, plus a region of three panes around `%1` — a live capture from tmux 3.6b. */
 	function saveExec(calls: string[][], panes?: string): Exec {
 		return (cmd, args) => {
+			// Every tmux call this exec serves leads with `-u` (see `runTmux` in mux.tmux.ts, #177); strip
+			// it before recording so `calls` and the verb check below stay about the command itself.
+			if (cmd === 'tmux') {
+				expect(args[0]).toBe('-u')
+				args = args.slice(1)
+			}
 			calls.push([cmd, ...args])
 			if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
 			if (args[0] === 'list-panes') {
@@ -4343,6 +4443,12 @@ describe('spec:cyber-mux/cli/template/capture', () => {
 	/** tmux with an unset grouping tag — a window nobody grouped, for the no-workspace-tier refusal. */
 	function untaggedTmuxExec(calls: string[][]): Exec {
 		return (cmd, args) => {
+			// Every tmux call this exec serves leads with `-u` (see `runTmux` in mux.tmux.ts, #177); strip
+			// it before recording so `calls` and the verb checks below stay about the command itself.
+			if (cmd === 'tmux') {
+				expect(args[0]).toBe('-u')
+				args = args.slice(1)
+			}
 			calls.push([cmd, ...args])
 			if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
 			if (args[0] === 'display-message') return '@1\t\tzsh'

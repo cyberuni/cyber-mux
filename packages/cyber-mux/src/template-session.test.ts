@@ -14,7 +14,13 @@ const fakeNewId = () => 'grp-0000'
 function tmuxExec(calls: string[][]): Exec {
 	let n = 0
 	return (_cmd, args) => {
-		calls.push(args)
+		// Every tmux invocation this adapter makes leads with `-u` — see `runTmux` in `mux.tmux.ts`, and
+		// #177 for what tmux does to a TAB without it. Stripped before recording so `calls` and the verb
+		// check below stay about the command itself.
+		expect(args[0]).toBe('-u')
+		const verb = args.slice(1)
+		calls.push(verb)
+		args = verb
 		if (args[0] === 'new-window' || args[0] === 'split-window') {
 			const id = n++
 			// EVERY open asks for the new window's id alongside the pane's, in one tab-separated report:
@@ -712,7 +718,13 @@ describe('spec:cyber-mux/template/apply', () => {
 			// walk left. describeWorkspace must recover the tab by the option, never by parsing the display.
 			const reads: string[][] = []
 			const exec: Exec = (_cmd, args) => {
-				reads.push(args)
+				// Every tmux invocation this adapter makes leads with `-u` — see `runTmux` in
+				// `mux.tmux.ts`, and #177 for what tmux does to a TAB without it. Stripped before
+				// recording so `reads` and the argv assertions below stay about the query itself.
+				expect(args[0]).toBe('-u')
+				const verb = args.slice(1)
+				reads.push(verb)
+				args = verb
 				if (args[0] === 'display-message') return '@0\tws-7\tmain\tacme - beta - main'
 				if (args[0] === 'list-windows') return '@0\tmain\tacme - beta - main'
 				if (args[0] === 'list-panes') return '%0\t0\t0\t200\t50\t/repo\tzeta\tzeta'

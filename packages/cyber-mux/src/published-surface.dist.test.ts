@@ -220,6 +220,15 @@ describe('spec:cyber-mux/library — published surface', () => {
 			const commands: string[][] = []
 			// A recording fake Exec — the ONLY effect the core touches. No child process is spawned.
 			const exec: lib.Exec = (cmd, args) => {
+				// Every tmux invocation leads with `-u` — see `runTmux` in `mux.tmux.ts` and #177 for what
+				// tmux does to a TAB without it. Asserted here rather than woven into the verb assertions
+				// below, and this is the ONE place it is asserted against the BUILT bundle rather than the
+				// source: a fix that survived the source suite but got dropped by the bundler would be a
+				// silently locale-broken published package, which is exactly the shape #177 already was.
+				if (cmd === 'tmux') {
+					expect(args[0]).toBe('-u')
+					args = args.slice(1)
+				}
 				commands.push([cmd, ...args])
 				if (args[0] === 'new-window' || args[0] === 'split-window') return '%7\t@2'
 				if (args.includes('capture-pane')) return 'pane output'

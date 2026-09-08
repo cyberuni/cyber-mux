@@ -36,6 +36,12 @@ const GIT_PORCELAIN = [
  */
 function fakeExec(calls: string[][], responses: Record<string, string | null> = {}): Exec {
 	return (cmd, args) => {
+		// Every tmux call this exec serves leads with `-u` (see `runTmux` in mux.tmux.ts, #177); strip it
+		// before recording so `calls` and the prefix-matched routing key below stay about the command.
+		if (cmd === 'tmux') {
+			expect(args[0]).toBe('-u')
+			args = args.slice(1)
+		}
 		calls.push([cmd, ...args])
 		const key = [cmd, ...args].join(' ')
 		for (const [prefix, out] of Object.entries(responses)) {
