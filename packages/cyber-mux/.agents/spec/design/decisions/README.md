@@ -1970,3 +1970,155 @@ Decisions (`otty-agent-lifecycle-implemented` — issue #134, the second `AgentL
   on success, and that exit 0 on an agent pane means the agent reported idle rather than something
   else. One `otty pane wait --help` on a Mac settles all three.
   ISSUE: https://github.com/cyberuni/cyber-mux/issues/134
+
+Decisions (`limux-adapter` — #157, whether to adapt `am-will/limux`):
+
+- **`am-will/limux` — VERDICT: NOT adaptable on 0.1.27. No adapter is written, and this OVERTURNS
+  the "viable" verdict recorded for it in the `backend-survey-2026-08b` entry above** (this log is
+  append-only, so the correction is recorded here rather than edited in place). The earlier verdict
+  gated limux against `rust/limux-cli/src/main.rs` at commit `7e31649` — the CLI's own `print_help()`
+  and command handlers — and every gate it reports is real *in the CLI*. The CLI is not the contract.
+  **The shipped desktop host implements 18 of the ~100 methods the CLI knows how to send**, and every
+  member this seam needs below the workspace tier is in the missing 82.
+
+- **DRIVEN LIVE, not read.** This is the first gap-scan verdict reached by running the real binary
+  rather than reading a source tree, and the second backend after rmux to be probed against one.
+  limux 0.1.27 (`limux-0.1.27-linux-x86_64.tar.gz` and the AppImage, both from the project's own
+  GitHub release, published 2026-09-04) was installed and its GTK4 host **launched under WSLg** on
+  Linux 6.18 / WSL2 on 2026-09-08. The host came up, stamped its control socket at
+  `/run/user/1000/limux/limux.sock`, and answered every probe below. The issue's caveat — *"no
+  live-binary verification on a headless machine"* — is therefore **wrong for this machine**: limux is
+  a Linux GTK4 app and WSLg hosts it. That caveat is what made limux look like the cmux/otty situation;
+  it is not. **cmux and otty remain unverifiable; limux is verifiable and it FAILED.**
+
+- **The single decisive measurement.** The host publishes its own method table, so the contract does
+  not have to be inferred from help text or source at all:
+  ```
+  limux --json --request '{"id":1,"method":"system.capabilities","params":{}}'
+  ```
+  answers, verbatim on 0.1.27: `system.ping`, `system.identify`, `system.capabilities`,
+  `workspace.current`, `workspace.list`, `workspace.create`, `workspace.select`, `workspace.rename`,
+  `workspace.close`, `pane.list`, `pane.surfaces`, `pane.create`, `surface.list`, `surface.health`,
+  `surface.read_text`, `surface.send_text`, `surface.send_key`, `notification.create`. **Eighteen.**
+  There is no `pane.close`, no `surface.close`, no `pane.focus`, no `pane.resize`, no zoom of any
+  spelling, and no `tab.*` at all. This one call is the whole verdict and the whole recheck trigger.
+
+- **Why the CLI disagrees with its own host: two independent RPC implementations.** `limux-core`
+  (`rust/limux-core/src/lib.rs`) is a ~100-method reference/simulation dispatcher that declares
+  `pane.resize`, `pane.focus`, `surface.close`, `tab.action` and the whole `browser.*` family. It is
+  **not shipped** — the release installs `libexec/limux/limux-host`, built from `limux-host-linux`,
+  whose `control_bridge.rs` carries the 18 above and whose `Cargo.toml` does not depend on
+  `limux-core`. The CLI was written against the reference vocabulary. So `limux --help` and the CLI
+  source both advertise verbs that no shipped binary can serve, and each one fails at the socket:
+  `new-surface` → `-32601 unknown method: surface.create`; `rename-tab` and `tab-action` → `-32601
+  unknown method: tab.action`; `resize-pane` → `-32601 unknown method: pane.resize`; also
+  `swap-pane`, `break-pane`, `join-pane`, `last-pane`, `clear-history`, `last/next/previous-window`
+  and every `browser` subcommand. All verified live, all exit 1. **This is lesson 2 with the polarity
+  reversed** — the usual failure is treating a docs page's SILENCE as proof of absence; here the CLI's
+  SPEECH is not proof of presence. The driven binary settled it in both directions.
+
+- **Three REQUIRED `MuxAdapter` members have no primitive and no legal degrade.** The seam's own
+  docstrings explain why each is required rather than optional, and each reason applies exactly:
+  - **`teardown`** — nothing below `workspace.close` destroys anything. Verified live: `close-pane`,
+    `kill-pane`, `close-surface` are all `unknown command`; the CLI's whole dispatch match contains
+    one close verb, `close-workspace`; the host has no `ClosePane`/`CloseSurface` variant. Pane close
+    exists **only** as the GTK keybinding `close_focused_pane` → `win.close-focused-pane`, and the
+    control bridge never invokes a `win.*` action, so `--request` cannot reach it either. An adapter
+    here could open panes and never reclaim one — not a backend, a leak.
+  - **`rename`** at BOTH its tiers. `rename-window` and `rename-workspace` are the same code path
+    sending `workspace.rename`; `rename-window` is a tmux-vocabulary alias for the workspace tier, not
+    a second tier. The only pane/tab-tier rename is `rename-tab`, which sends the unimplemented
+    `tab.action`. Verified live: surface titles stay `Terminal` after `rename-window` renames the
+    workspace instead. Per this seam, a caller that finds `rename` missing **cannot degrade** —
+    a rename is the only way to name a root space.
+  - **`group`** — limux has no per-space opaque option store of any kind (no `set-option` equivalent,
+    no user-data key on any payload builder) and no tier above the workspace. tmux's route (a window
+    option) and herdr's route (a native `workspace_id` on every record) are both absent.
+  **`movePane` and `breakPane` (#143, landed while this was probed) would likewise be LEGAL
+  refusals** — `PaneMoveUnsupportedError`/`PaneBreakUnsupportedError` with `canMovePanes` and
+  `canBreakPanes` omitted. Confirmed against the same capability table: the host has no `surface.move`
+  and no `pane.break`/`pane.join`, and the CLI's `swap-pane`, `break-pane` and `join-pane` all send
+  methods it does not implement (verified live, `-32601`). They are recorded here only so this entry
+  is current with main; they change nothing, because a refusable member is not what blocks limux.
+  `setPaneZoom`/`isPaneZoomed` would be a LEGAL refusal (`PaneZoomUnsupportedError`, the #142 shape) —
+  zoom is real in the app as `toggle_focused_pane_zoom` → `win.toggle-focused-pane-zoom` but is
+  keybinding-only and unreachable over the socket, which is precisely `isPaneZoomed`'s `undefined`
+  case. That one is fine. The three above are not, and three unrefusable members is the verdict.
+
+- **`focus` could only ever half-succeed, which is worse than refusing.** `select-workspace` works
+  (verified live: focus moved, `list-workspaces` confirmed the flip). There is no pane- or
+  surface-level focus verb at all, and `--pane`/`--surface` produce no focus side effect —
+  `control_terminal_target()` resolves the handle read-only and never calls `grab_focus`. So `focus`
+  could beam the client to the pane's WORKSPACE and stop there, reporting success while the named pane
+  sits unfocused behind a split. The seam requires the full switch chain and requires throwing rather
+  than reporting a false success; limux can do neither.
+
+- **Four silent no-ops found by driving, none of them visible in the help text.** Recorded because
+  they are the shapes this repo keeps paying for, and because a source-read adapter would have shipped
+  every one of them:
+  - **`--pane <id>` on `send` and `read-screen` is silently dropped and the command hits the FOCUSED
+    surface instead.** `run_read_screen` sends only `{workspace_id?, surface_id?}`; `--pane` is never
+    parsed, and the host defaults to focus. Measured with a control: with four panes in one workspace
+    and `pane:4` focused, `read-screen --pane pane:1|2|3|4` returned `surface:4` **all four times**;
+    after focus moved to `pane:1`, the same four calls returned `surface:1` all four times. The
+    documented `--surface` selector was run against the identical four panes in the same session and
+    returned the correct distinct surface every time. Exit 0 throughout. This is lesson 5 exactly — a
+    plausible wrong answer, not a throw — and its consequence is that an agent's prompt lands in
+    whatever pane the human happens to be looking at.
+  - **`new-pane --cwd <path>` is accepted, exits 0, and is ignored.** `build_new_pane_request` never
+    reads `--cwd` and the host's `CreatePaneRequest` has no `cwd` key. Verified live: `new-pane
+    --direction down --cwd /tmp` returned `ok: true` and the pane's cwd was `/home/unional`. (This one
+    alone would NOT have blocked an adapter — `launchFallback` (#175) is the sanctioned route, and
+    `new-workspace --cwd` *is* honored, verified live at `/tmp` and `/etc`.)
+  - **`read-screen --lines <n>` is validated then discarded.** Only `--lines 0`/non-numeric is
+    rejected; the value is never put in the params. Verified live: `--lines 3`, `--lines 4` and
+    `--lines 10` on the same surface each returned **38 rows** — the viewport height
+    `surface-health` reports for it.
+  - **`read-screen --scrollback` is never parsed at all** — it appears only inside the help string.
+    `read_viewport_text()` reads `GHOSTTY_POINT_VIEWPORT` to bottom-right; scrollback is unreachable
+    by any route. Verified live: after printing `LINE_1`..`LINE_60`, both the default read and the
+    `--scrollback` read began at `LINE_25` and returned 38 rows. **limux would be the first backend
+    this seam has met that CANNOT be asked the truncation question** — `read`'s contract says such a
+    backend reports `truncated` absent, and it notes "none of the four is in that position". limux
+    would be. Recorded so the contract's escape hatch is known to have a real occupant.
+  Also: `surface.send_text` discards `TerminalHandle::send_text`'s own success bool and inserts
+  `"ok": true` unconditionally, so `send` can swallow text against an unrealized surface and still
+  exit 0. `send-key` **does** check, and refuses an unknown key by name (`-32602 unsupported key`,
+  exit 1) rather than typing it as characters — the herdr discipline, not the tmux one, and the one
+  place limux's error handling is better than tmux's.
+
+- **What limux CAN do, recorded so the recheck is cheap rather than a re-probe from zero.** All
+  verified live on 0.1.27: pane ids are real, global across workspaces, and returned at birth
+  (`new-pane` → `pane_ref: pane:2`, `surface_ref: surface:2:<uuid>`); `list-panes`, `list-panels` and
+  `surface-health` enumerate; `--id-format refs|both|uuids` works but is a purely client-side key
+  filter, and `uuids` yields a decimal `pane_id` (`"2"`), never a UUID; a bogus target refuses
+  correctly (`not_found: terminal surface not found`, exit 1); a full send → Enter → read round trip
+  across four panes addressed by `--surface` landed and read back correctly; `surface-health` reports
+  `columns`/`rows`/`width_px`/`height_px` per terminal surface, which is SIZE but never POSITION, so
+  `regions` would be absent regardless. **The addressable unit is the SURFACE, not the pane** —
+  `surface_ref`, not `pane_ref`, is what every verb but `new-pane` honors, and the issue's Gate 1
+  quote (`new-pane [--pane <id|ref>]`) names the one verb where `--pane` means anything. Self-identity
+  is clean: a limux pane's environment carries `LIMUX_PANE_ID`, `LIMUX_SURFACE_ID`, `LIMUX_TAB_ID`,
+  `LIMUX_WORKSPACE_ID` and `LIMUX_SOCKET` (dumped live from inside a driven pane), so `mux-probe`'s
+  env fast-path and `currentPane` would both be straightforward the day the rest becomes possible.
+
+- **Why NOT a source-read adapter, given the source was read anyway.** #128 already tracks the hole
+  left by cmux and otty, and a third unverifiable adapter would deepen it. But that is the weaker
+  argument here and it is not the one being made: limux is not unverifiable. It was verified, and it
+  came back missing three required members. A limux adapter would not be under-evidenced — it would be
+  **evidenced as impossible**, which is a different and much cheaper thing to record.
+
+- **RECHECK TRIGGERS** — any one of these reopens the decision, and all are one command:
+  - **The host grows a pane-close method.** `limux --json --request
+    '{"id":1,"method":"system.capabilities","params":{}}' | grep -c 'surface.close\|pane.close'` is
+    **0** on 0.1.27. Non-zero makes `teardown` implementable, which is the single largest blocker.
+  - **The host grows `tab.action`** (same probe, `grep -c 'tab.action'` = **0** on 0.1.27). That makes
+    `rename` implementable at the surface tier, since `rename-tab` already sends it.
+  - **The host grows `pane.focus`** (same probe, **0**). That makes `focus` implementable without a
+    false success.
+  - **`limux-host-linux` gains a dependency on `limux-core`, or the control bridge learns to invoke a
+    `win.*` GTK action.** Either collapses the whole 18-vs-100 gap at once and every trigger above
+    with it — zoom, resize, close and focus all exist behind those keybindings today.
+  - Note that **NONE of these is `group`**, which has no path in sight; if the other three land, the
+    remaining question is whether limux's own workspace tier can carry grouping the way herdr's does.
+  ISSUE: https://github.com/cyberuni/cyber-mux/issues/157
