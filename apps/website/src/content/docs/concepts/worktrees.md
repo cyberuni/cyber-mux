@@ -18,10 +18,10 @@ it), tolerates a checkout already gone from disk, and refuses to discard uncommi
 ## The binding is a separate, optional fact
 
 A backend either binds a worktree to a workspace as a first-class record, or it doesn't — that
-binding, not "knows what a worktree is", is the capability in question. herdr has one; tmux, with no
-workspace tier at all, never binds; WezTerm, despite having a real Workspace tier, never binds either
-— its CLI has no `worktree` subcommand or concept of one. Zellij is the same story as WezTerm: it has
-a real session tier, but its CLI has no `worktree` subcommand either, so it never binds.
+binding, not "knows what a worktree is", is the capability in question. herdr has one; tmux and rmux, with no
+workspace tier at all, never bind; WezTerm, cmux, and otty each have a real Workspace tier and still
+never bind, because none of their CLIs has a `worktree` subcommand or any concept of one. Zellij is
+the same story: a real session tier, no `worktree` subcommand, so no binding.
 
 **git owns the worktree facts; a backend contributes only the binding.** `worktree list` reads path,
 branch, linked, prunable, merged, and dirty from git on every backend, so backends can never disagree
@@ -58,6 +58,6 @@ checkout, so no workspace is ever left pointing at a directory that no longer ex
 
 ## See also
 
-- [CLI reference — worktree](/cyber-mux/cli/worktree/) — the concrete `worktree add/open/list/remove` verbs.
+- [CLI reference — worktree](/cyber-mux/cli/worktree/) — the concrete `worktree add/provision/open/list/prune/remove` verbs.
 - [Multiplexers](/cyber-mux/multiplexers/) — how herdr's binding and tmux's, WezTerm's, and Zellij's
   absence of one are each handled.

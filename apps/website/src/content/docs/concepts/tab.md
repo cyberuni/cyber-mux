@@ -1,6 +1,6 @@
 ---
 title: Tab
-description: The tier every multiplexer has between a workspace and a pane — herdr, WezTerm, and Zellij call it a tab, tmux calls it a window.
+description: The tier every multiplexer has between a workspace and a pane — herdr, WezTerm, Zellij, and otty call it a tab, tmux and rmux call it a window, cmux calls it a surface.
 ---
 
 A **tab** is the middle tier: it holds one or more [panes](/cyber-mux/concepts/pane/) and lives
@@ -8,14 +8,14 @@ inside a [workspace](/cyber-mux/concepts/workspace/) where the backend has one. 
 tier, which only some backends have, **every multiplexer has a tab tier** — so cyber-mux can always
 report which tab a pane landed in, and never has to report it absent.
 
-## "tab" on herdr and Zellij, "window" on tmux
+## "tab" on herdr and Zellij, "window" on tmux, "surface" on cmux
 
-The tier is universal; the name is not. [herdr](/cyber-mux/multiplexers/), WezTerm, and Zellij call it
-a **tab**; tmux calls it a **window** — a tmux window *is* its tab (cyber-mux reads its id as
-`#{window_id}`). cyber-mux uses the neutral word "tab" for all of them, so the same command means the
+The tier is universal; the name is not. [herdr](/cyber-mux/multiplexers/), WezTerm, Zellij, and otty
+call it a **tab**; tmux and rmux call it a **window** — a tmux window *is* its tab (cyber-mux reads
+its id as `#{window_id}`); cmux calls it a **surface**, the terminal unit inside one of its panes. cyber-mux uses the neutral word "tab" for all of them, so the same command means the
 same thing whichever multiplexer you are inside.
 
-Because tmux has nothing above its window, its window doubles as both tiers at once: with no
+Because tmux and rmux have nothing above their window, that window doubles as both tiers at once: with no
 workspace level to sit under, `workspace` and `tab` placements **both collapse to a new window**.
 That is why [`open --at workspace`](/cyber-mux/cli/open/) and `open --at tab` behave identically on
 tmux and differently on herdr/WezTerm. Zellij's two placements also collapse to the same outcome — a
@@ -28,10 +28,10 @@ session-crossing pane target to reach it with; see [Workspace](/cyber-mux/concep
 `--at` is omitted. It adds a new tab inside the caller's current space rather than opening a separate
 one the way [`workspace`](/cyber-mux/concepts/workspace/) does.
 
-| Placement   | herdr / WezTerm | tmux         | Zellij       |
-| ----------- | --------------- | ------------ | ------------ |
-| `tab`       | a new tab       | a new window | a new tab    |
-| `workspace` | a new workspace | a new window | a new tab    |
+| Placement   | herdr / WezTerm | tmux / rmux  | Zellij       | cmux            | otty         |
+| ----------- | --------------- | ------------ | ------------ | --------------- | ------------ |
+| `tab`       | a new tab       | a new window | a new tab    | a new surface   | a new tab    |
+| `workspace` | a new workspace | a new window | a new tab    | a new workspace | a new window |
 
 Every `open`, whatever its placement, reports the `tab` its new pane landed in — a new tab reports
 itself, a created workspace reports its **root tab**, and a `pane:*` split reports the tab of the

@@ -37,8 +37,10 @@ wt.removeSafely(somePath, { primaryRoot: root })
 | method | binds + wraps |
 | --- | --- |
 | `wt.primaryRoot()` | `resolvePrimaryRoot` |
-| `wt.list(root?)` | `listWorktreesFromGit` — `root` defaults to `primaryRoot()` |
+| `wt.list(root?, signals?)` | `listWorktreesFromGit` — `root` defaults to `primaryRoot()`; `signals` tunes the merged probe |
 | `wt.add(opts)` | `gitWorktreeAdapter.add` |
+| `wt.provision(opts)` | `provisionWorktree` — reuse a free worktree or create one; `available` defaults to `isWorktreeRemovable` |
+| `wt.prune(opts?)` | `pruneWorktrees` — remove every disposable worktree; `dryRun` reports without removing |
 | `wt.removeSafely(path, opts)` | `removeWorktreeSafely` — its `fs` supplied |
 | `wt.normalizePath(path)` | `normalizeWorktreePath` |
 
@@ -63,9 +65,14 @@ cannot — a detached HEAD, the primary checkout itself, a stale entry:
 - **`branch`** — absent for a detached HEAD or bare entry.
 - **`linked`** — `false` for the primary checkout, `true` for a linked worktree.
 - **`prunable`** — git considers the checkout gone from disk.
-- **`merged`** — the branch's work has landed on the default branch. Absent when undeterminable;
-  reads `false` after a squash/rebase merge (the tip was rewritten) — the error is deliberately
-  one-directional, costing a manual check rather than lost work.
+- **`merged`** — the branch's work has landed on the default branch, established by four independent
+  positive signals: **ancestry**, an **upstream branch that is gone**, a **squash patch** match, and
+  an opt-in **forge** probe. Absent when undeterminable. A squash or rebase rewrites the tip, so
+  ancestry alone would miss it; the patch heuristic catches a clean squash, and one that was
+  conflict-resolved or hand-edited still reads `false` — the error is deliberately one-directional,
+  costing a manual check rather than lost work.
+- **`mergedSignal`** — which of the four proved it (`ancestor` | `upstream-gone` | `squash-patch` |
+  `forge`). Absent when `merged` is not `true`.
 - **`dirty`** — the checkout has uncommitted changes. A merged-but-dirty worktree is **not**
   disposable.
 - **`workspace`** — the multiplexer workspace it is open in, joined in by the caller from a backend
@@ -96,7 +103,7 @@ verbatim).
 
 ## Binding a worktree to a workspace
 
-The worktree-workspace capability — present on herdr and `undefined` on tmux, WezTerm, and Zellij — is
+The worktree-workspace capability — present on herdr and `undefined` on tmux, rmux, WezTerm, Zellij, cmux, and otty — is
 the one part a *multiplexer* owns: binding a worktree to a workspace as a first-class record the UI
 groups a repo's checkouts by. Empirically, plain `git worktree add` + `workspace create` yields **no**
 binding; only routing through herdr's own `worktree create`/`open` produces it.

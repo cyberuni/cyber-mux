@@ -1,12 +1,13 @@
 ---
 title: Workspace
-description: The top tier a multiplexer groups panes and tabs under — real on herdr, WezTerm, and Zellij, absent as a placement on tmux and Zellij, and where a git worktree binds.
+description: The top tier a multiplexer groups panes and tabs under — real on herdr, WezTerm, cmux, and otty, absent as a placement on tmux, rmux, and Zellij, and where a git worktree binds.
 ---
 
 A **workspace** is the outermost container a multiplexer groups its tabs and panes under — its "own
 visible space" a caller can switch to as a whole. It is the one tier cyber-mux treats as **optional**:
-[herdr](/cyber-mux/multiplexers/) and WezTerm have a real Workspace level, tmux does not, and Zellij
-has a real session tier that a `workspace` placement cannot reach (see below). Everything below —
+[herdr](/cyber-mux/multiplexers/), WezTerm, cmux, and otty have a real Workspace level, tmux and
+rmux do not, and Zellij has a real session tier that a `workspace` placement cannot reach (see
+below). Everything below —
 tabs and [panes](/cyber-mux/concepts/pane/) — every multiplexer has.
 
 Because the tier is optional, cyber-mux never invents it. A command that lands a pane in a workspace
@@ -22,12 +23,13 @@ separate** space and leaves the caller's own untouched.
 
 Where the tier is real *and reachable*, that is exactly what you get:
 
-| Placement   | herdr / WezTerm | tmux         | Zellij       |
-| ----------- | --------------- | ------------ | ------------ |
-| `workspace` | a new workspace | a new window | a new tab    |
-| `tab`       | a new tab       | a new window | a new tab    |
+| Placement   | herdr / WezTerm | tmux / rmux  | Zellij       | cmux            | otty         |
+| ----------- | --------------- | ------------ | ------------ | --------------- | ------------ |
+| `workspace` | a new workspace | a new window | a new tab    | a new workspace | a new window |
+| `tab`       | a new tab       | a new window | a new tab    | a new surface   | a new tab    |
 
-tmux has no level above its window, so `workspace` and `tab` **both collapse to a new window** — the
+tmux and rmux have no level above their window, so `workspace` and `tab` **both collapse to a new
+window** — the
 finest own-visible-space tmux offers. This is why an `open --at workspace` on tmux still succeeds; it
 just cannot report a `workspace`, because there is no such tier to name.
 
