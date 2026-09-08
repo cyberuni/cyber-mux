@@ -2346,3 +2346,141 @@ Decisions (`115-zellij-lossy-action` — why the zellij real-boundary suite flak
   cited above was read out of the v0.45.0 source tree; the BEHAVIOR it explains was measured.
 
 ISSUE: https://github.com/cyberuni/cyber-mux/issues/115
+
+Decisions (`190-cow-clone-provisioning` — a copy-on-write clone instead of a git worktree, issue
+#190):
+
+- **A copy-on-write filesystem clone is REJECTED as a provisioning strategy, and the seam is NOT
+  widened to admit one** — DECIDED after measuring, on this repo at
+  `61b9a6132451d49df14b8dec0bd35515acc0da7e`. The issue body was empty, so the first act was to fix
+  the question: *should `provisionWorktree` be able to produce a working copy by cloning the primary
+  checkout's bytes (btrfs/XFS `cp --reflink`, ZFS clone, APFS `clonefile`, overlayfs) instead of by
+  `git worktree add`?* The answer is no on three independent grounds, any one of which is
+  sufficient: the saving is not there, the filesystem is not there, and the clone is not a worktree —
+  it is a **doppelgänger that silently corrupts the checkout it was cloned from**.
+
+- **The saving is not there — measured, not estimated.** Warm-cache runs on `/` (ext4, `/dev/sdf`),
+  repo at 579 MiB / 32,140 files, `node_modules` 437 MiB, three runs each:
+  | provisioning path | wall | real disk (`df` delta) |
+  | --- | --- | --- |
+  | `git worktree add --detach` | 0.05 s | 4 MiB |
+  | ...then `pnpm install --frozen-lockfile` | 3.35 s | 20 MiB |
+  | **worktree total (cold, what a pod gets today)** | **3.40 s** | **24 MiB** |
+  | `cp -a --reflink=auto` of the primary (full copy) | 3.62 / 3.65 / 7.61 s | 579 MiB |
+  | `cp -al` of a WARM worktree — the **floor a reflink clone approaches** | 1.64 / 1.66 / 1.66 s | 14 MiB |
+  A reflink clone and a hardlink copy are the same shape of work — one metadata operation per file
+  over ~27,000 files — so `cp -al` is the honest stand-in for the CoW time this machine cannot
+  measure directly. **Best case, a CoW clone saves ~1.7 s and ~10 MiB per pod.** That is the entire
+  prize.
+
+- **The `node_modules` duplication angle, the strongest one on paper, is already solved by pnpm.**
+  A store file sampled in the primary carries **82 hard links**
+  (`node_modules/.pnpm/estree-util-is-identifier-name@3.0.0/.../index.js`, `stat -c %h`), and
+  `node_modules` reports 369 MiB apparent against 435 MiB on disk against a **20 MiB real `df` delta
+  for a fresh install**. Every checkout's dependency tree is already hard-linked into
+  `~/.local/share/pnpm/store/v11`. CoW would be a second content-sharing layer stacked on a
+  content-sharing layer that works.
+
+- **The provisioning-latency angle does not survive the numbers either.** `git worktree add` is
+  **0.05 s**. It is not the cost; `pnpm install` is, and a CoW clone only avoids that install by
+  inheriting a warm tree — which is state the seam **deliberately destroys**. `recycleWorktree`
+  runs `switch -c` → `reset --hard` → `clean -fdx`, and `mux/worktree` ratifies it as "a **pristine
+  tree on a fresh branch**", `clean -fdx` clearing "a warm `node_modules` included" for "a cold,
+  deterministic start". Inheriting warm state is the CoW clone's whole pitch and the reuse path's
+  stated non-goal. Adopting it would relitigate `worktree-provision`, not extend it.
+
+- **The filesystem is not there — verified on this machine, and it is the reference platform.**
+  `df -T` and `stat -f` report the repo on **ext4** (`/dev/sdf`, `Type: ext2/ext3`), Linux
+  6.18.33.2-microsoft-standard-WSL2. `cp --reflink=always` fails on it:
+  `cp: failed to clone ...: Operation not supported`, exit 1 — both under the repo and under `/tmp`,
+  which is the same device. **`--reflink=auto` returns exit 0 and silently performs a full copy**, so
+  the flag most implementations would reach for gives *no signal at all* that CoW did not happen —
+  a strategy selected on `--reflink=auto` would degrade to `cp -a` (579 MiB, 24x the disk of a
+  worktree) without ever saying so. The kernel offers `xfs` and `overlay` built in and `btrfs` as a
+  module, but the WSL2 root VHD is ext4 and cyber-mux cannot require a user to reformat it. The
+  Windows drive mount `/mnt/c` is **9p** — no reflink there under any configuration.
+
+- **What is verified vs. documented-but-unverified, stated plainly.** VERIFIED on-machine: everything
+  above — ext4, the `--reflink=always` refusal, the silent `--reflink=auto` fallback, the 9p mount,
+  every timing and every `df` delta, and every git behavior in the next bullet. UNVERIFIED, from
+  documentation only: macOS APFS `clonefile(2)` (present since 10.13, and `cp -c` exposes it, so a
+  Mac pod plausibly *would* get real CoW — this is the one platform where the primitive is broadly
+  available by default); ZFS `zfs clone` (dataset-granular, not directory-granular — it cannot clone
+  a subdirectory of a repo, which is a shape mismatch, not a tuning problem); Windows/ReFS block
+  cloning and NTFS's lack of it. No macOS or Windows machine was available to this investigation.
+  Note the shape of that split: **the one platform where CoW works is the one platform cyber-mux
+  cannot make a baseline.**
+
+- **The clone is not a worktree — this is the ground that would rule against CoW even if it were
+  free.** Both cases were run live and both are broken:
+  - **Cloning a LINKED worktree yields an index-sharing doppelgänger.** Its `.git` is a *file* reading
+    `gitdir: /home/unional/code/cyberuni/cyber-mux/.git/worktrees/legion-fe2a3f` — a pointer, which a
+    byte copy faithfully preserves. The copy therefore operates through the **original's** admin
+    directory: same HEAD, same branch, **same index**. Staging one file in the copy
+    (`git add COW-PROBE.txt`) left the original worktree reporting `AD COW-PROBE.txt` — a path staged
+    in its index that does not exist in its tree. The original was clean before and had to be
+    repaired with `git restore --staged`. Meanwhile `git worktree list` counts the copy **zero**
+    times: it is invisible to the exact porcelain that `listWorktreesFromGit` parses at
+    `worktree.ts:204`, which is cyber-mux's *only* "is this a managed workspace" oracle. A pod
+    provisioned this way would be un-listable, un-prunable, and quietly corrupting its neighbor.
+  - **Cloning the PRIMARY yields a repo that claims other repos' worktrees.** The copy gets a real
+    `.git` directory — and with it a verbatim copy of the worktree registry, so `git worktree list`
+    inside the clone reports the clone as the primary and then goes on to list **the original's
+    linked worktree paths** as its own. Those paths belong to the source repo. `git worktree remove`
+    run in the clone against one of them targets a real, live checkout of a different repository.
+
+- **The seam impact is not a widening, it is a rewrite of the disposability model.** Inspected before
+  opining. `WorktreeAdapter` (`worktree.ts:132-165`) is not a seam at all — it is a two-method
+  `const` (`gitWorktreeAdapter`) referenced by module-level identifier from `provisionWorktree`,
+  `removeWorktreeSafely`, `worktree-session.ts:102` and `cli.ts:1804`; nothing takes it as a
+  parameter. The only existing extension point is `provisionWorktree`'s `available` predicate, which
+  is a **filter, not a provisioner**. Beyond that:
+  - **Identity would have to be invented.** A workspace is identified today by `(root, branch)` read
+    from `git worktree list --porcelain`, with `normalizeWorktreePath` as the join key into the
+    backend's binding map. A CoW clone has no porcelain record and no branch of its own, so it needs
+    a marker file or a sidecar registry — a second source of truth for exactly the facts `mux/worktree`
+    ratifies as git's: "**git owns path, branch, linked, prunable, merged, and dirty on every
+    backend**", and `@id:worktree-facts-from-git-not-backend` asserts "every path, branch, linked,
+    and prunable value it returns is git's answer, not the backend's."
+  - **Teardown loses its safety argument.** `isWorktreeRemovable` requires `merged === true`, and the
+    reason a wrong positive is survivable is stated as a git fact — removal "does not delete the
+    branch REF… the old branch still names its commits, so COMMITTED work outlives a wrong answer."
+    A clone has no branch to have landed, so under the current gate it is **permanently
+    non-disposable and never reusable**, and any gate written to make it disposable would be deleting
+    a directory with no ref standing behind the work in it.
+  - **herdr's protocol rejects it by construction.** `mux.herdr.ts:998-1060` shells
+    `herdr worktree create --cwd --branch --path` and reads back `result.worktree.{path,branch}`.
+    A directory herdr does not know is a worktree hits the failure already documented at
+    `mux.herdr.ts:999-1001`: "a workspace with **no worktree record at all** — herdr does not know it
+    is a worktree and leaves it out of the repo's group."
+  - **The blast radius is published.** `cyber-mux/worktree` is a declared export subpath
+    (`package.json:31-34`) with a dist-surface test pinning its export list, and `cyberlegion` imports
+    it. `Worktree` leaks into the mux seam itself (`MuxAdapter.worktree`, `WorktreeWorkspace`,
+    `BoundWorktreeWorkspaceCapability`), five backends carry a "no git-worktree concept" note, and
+    both `mux/worktree` and `cli/worktree` are `@frozen` behavioral specs naming git **in their
+    identity**, not merely their implementation.
+
+- **The genuine difference a CoW clone offers is one the pod workflow does not want.** Honestly
+  stated: cloning the primary gives a **fully independent `.git`** — its own index, config, hooks and
+  object store — which is the one thing a linked worktree cannot give. But a pod's commits must be
+  reachable from the primary to be merged, and the shared object store is what makes that free. An
+  independent clone turns landing work into a fetch/push across two repositories. That is a repo
+  *mirroring* feature, not a worktree substitute, and git already ships the cheap forms of it
+  (`clone --shared`, `--reference`) for anyone who wants them.
+
+- **The alternative considered and rejected: offer CoW as an opt-in second strategy behind a flag.**
+  Rejected. It is not additive. It forces a non-git identity source, a non-git disposability gate,
+  and an amendment to two frozen behavioral specs whose stated contract is that git owns every
+  worktree fact — all to buy ~1.7 s and ~10 MiB per pod, on a filesystem the reference platform does
+  not have, via a primitive whose commonest invocation (`--reflink=auto`) fails silently into a
+  24x-disk full copy. A flag would also mean the seam sometimes returns a workspace that
+  `git worktree list` cannot see, which is the one invariant every gate in this module rests on.
+
+- **What would reopen this.** Not a better implementation — a different premise. Either (a) the
+  reference platform gains a CoW filesystem *by default* and `provision` gets a way to detect it that
+  cannot silently answer "yes" when it means "no"; or (b) a measured workload appears where the
+  ~1.7 s is the binding constraint — a repo one to two orders of magnitude larger, where the per-file
+  metadata cost of `git worktree add`'s checkout, not `pnpm install`, dominates. Neither holds today.
+  The numbers above are pinned to `61b9a61`; a re-ask should re-measure rather than cite them.
+
+ISSUE: https://github.com/cyberuni/cyber-mux/issues/190
