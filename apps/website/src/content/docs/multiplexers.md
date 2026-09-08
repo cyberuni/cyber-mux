@@ -302,6 +302,15 @@ was driven against:
   backends — it falls back to plain git plus `open()`.
 - **No `--env` flag on any space-creating command.** Every otty open takes the command-prefix-or-warn
   fallback.
+- **Every tier but `tab` sets a directory natively.** `otty open [path]` takes the directory as a
+  positional argument and `pane split` takes `--cwd`. Nothing otty publishes puts a working directory
+  on `tab new`, so a `--at tab` open carries it as a `cd` on the command line instead — a shell-level
+  cd, so it lands in that tab's shell history and means nothing in a non-shell pane. otty ships no
+  source, so the flag can be neither confirmed nor ruled out from the outside; the `cd` is the route
+  that is correct either way, where a `--cwd` otty does not accept would fail every `--at tab` open
+  outright. Note that `pane split --cwd` appears only in otty's
+  [orchestration guide](https://docs.otty.sh/agents/orchestration), not in its CLI reference, whose
+  window/tab/pane section lists no flags at all.
 - **Cannot name a pane.** otty scopes `rename` to windows and tabs, so `tab rename` names an
   already-open tab and a pane-tier `rename` is refused by name — a `--label` on a `--at pane:*` open
   degrades to a warning instead, exactly as on WezTerm.

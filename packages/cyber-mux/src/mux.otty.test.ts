@@ -88,7 +88,7 @@ describe('spec:cyber-mux/mux', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'tab new': NEW_TAB_RESPONSE })
 			const target = ottyMuxAdapter.open(exec, { cwd: '/unit', at: 'tab' })
-			expect(calls[0]).toEqual(['tab', 'new', '--cwd', '/unit'])
+			expect(calls[0]).toEqual(['tab', 'new'])
 			expect(target).toEqual({ id: 'pane:8', tab: 'tab:4' })
 		})
 
@@ -99,7 +99,10 @@ describe('spec:cyber-mux/mux', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'tab new': NEW_TAB_RESPONSE })
 			ottyMuxAdapter.open(exec, { cwd: '/unit', at: 'tab', label: 'build' })
-			expect(calls).toEqual([['tab', 'new', '--title', 'build', '--cwd', '/unit']])
+			expect(calls).toEqual([
+				['tab', 'new', '--title', 'build'],
+				['pane', 'send-keys', '--pane', 'pane:8', '--', "cd '/unit'", 'key:Enter'],
+			])
 		})
 
 		// `otty open` always opens a new window and documents no `--new-window` — that flag belongs to
@@ -198,6 +201,101 @@ describe('spec:cyber-mux/mux', () => {
 			const exec = fakeExec(calls, { 'pane split': NEW_PANE_RESPONSE })
 			ottyMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right' })
 			expect(calls[0]).not.toContain('--size')
+		})
+
+		// #163, and the two routes take DIFFERENT answers on purpose.
+		//
+		// `pane split --cwd` is REAL: otty's own /agents/orchestration runs
+		// `otty pane split --direction right --cwd "$PWD" --no-focus --json` by hand. #163 read
+		// /reference/cli's silence as proof the flag was fabricated, but that page carries no flag table
+		// for this command family at all and omits `--no-focus` too — measured over all 141 URLs in
+		// docs.otty.sh/sitemap.xml, `--cwd` occurs on exactly one page, that one. So the flag stays and
+		// no `cd` is sent, which is what this pins.
+		it('open() at pane:right sets cwd with the documented --cwd and sends no cd', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'pane split': NEW_PANE_RESPONSE })
+			ottyMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right' })
+			expect(calls).toEqual([['pane', 'split', '--direction', 'right', '--cwd', '/unit']])
+		})
+
+		// A launch command on the split route runs UNPREFIXED — `--cwd` already put the pane in the
+		// directory, so a `cd` here would be a second, redundant line in the pane's shell history.
+		it('open() at pane:right runs the launch command without a cd prefix', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'pane split': NEW_PANE_RESPONSE })
+			ottyMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right', launch: 'npm test' })
+			expect(calls[1]).toEqual(['pane', 'send-keys', '--pane', 'pane:7', '--', 'npm test', 'key:Enter'])
+		})
+
+		// `tab new` gets no such rescue: nothing on any of otty's 141 doc pages puts a working directory
+		// on it, and otty publishes no source to settle it. So the tab route takes the answer that is
+		// correct under BOTH readings — a `cd` works whether or not `--cwd` exists, while sending a flag
+		// otty does not take would fail every `--at tab` open outright. The `not.toContain` is the half
+		// that catches a regression back to the flag.
+		it('open() at tab carries cwd as a cd, never as a --cwd flag', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'tab new': NEW_TAB_RESPONSE })
+			ottyMuxAdapter.open(exec, { cwd: '/unit', at: 'tab' })
+			expect(calls[0]).not.toContain('--cwd')
+			expect(calls).toEqual([
+				['tab', 'new'],
+				['pane', 'send-keys', '--pane', 'pane:8', '--', "cd '/unit'", 'key:Enter'],
+			])
+		})
+
+		// The cd needs no command to ride — unlike env, which is dropped with a warning when there is
+		// none. With one, the command is chained behind it so it runs in the right directory.
+		it('open() at tab chains the launch command behind the cd', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'tab new': NEW_TAB_RESPONSE })
+			ottyMuxAdapter.open(exec, { cwd: '/unit', at: 'tab', launch: 'npm test' })
+			expect(calls[1]?.[5]).toBe("cd '/unit' && npm test")
+		})
+
+		// The ordering rule, and the only one here that is silently wrong when broken: `env K=V cd '/x'
+		// && cmd` sets the variables on `cd` and leaves `cmd` without them. The prefix belongs INSIDE
+		// the `&&`.
+		it('open() at tab puts the env prefix inside the cd chain, not ahead of it', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'tab new': NEW_TAB_RESPONSE })
+			ottyMuxAdapter.open(exec, {
+				cwd: '/unit',
+				at: 'tab',
+				launch: 'npm test',
+				env: { TOKEN: 'abc' },
+			})
+			expect(calls[1]?.[5]).toBe("cd '/unit' && env TOKEN='abc' npm test")
+		})
+
+		// env with no command to ride is dropped and announced — but the directory is not collateral:
+		// the `cd` is still sent on its own.
+		it('open() at tab still sends the cd when env is dropped for want of a command', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'tab new': NEW_TAB_RESPONSE })
+			const written = captureStderr(() => {
+				ottyMuxAdapter.open(exec, { cwd: '/unit', at: 'tab', env: { TOKEN: 'abc' } })
+			})
+			expect(written).toContain('TOKEN')
+			expect(calls[1]).toEqual(['pane', 'send-keys', '--pane', 'pane:8', '--', "cd '/unit'", 'key:Enter'])
+		})
+
+		// A directory is user data on a shell command line: a space would split it into two words and a
+		// quote would unbalance the line. Single-quoted, with the quote-escape `envFallback` already
+		// carries. This risk is new to the tab route and does not exist on the argv-passed `--cwd`.
+		it('open() at tab shell-quotes a cwd carrying a space or a quote', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'tab new': NEW_TAB_RESPONSE })
+			ottyMuxAdapter.open(exec, { cwd: "/tmp/my dir/it's", at: 'tab' })
+			expect(calls[1]?.[5]).toBe(`cd '/tmp/my dir/it'\\''s'`)
+		})
+
+		// The workspace tier is untouched by all of the above: `otty open [path]` takes the directory as
+		// a documented POSITIONAL, so it is set natively and no `cd` is sent.
+		it('open() at workspace sets cwd natively and sends no cd', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { open: NEW_WINDOW_RESPONSE })
+			ottyMuxAdapter.open(exec, { cwd: '/unit', at: 'workspace' })
+			expect(calls).toEqual([['open', '/unit']])
 		})
 
 		it('sendText() sends text to a pane', () => {

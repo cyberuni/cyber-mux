@@ -1,4 +1,4 @@
-import { envFallback } from './env-fallback.ts'
+import { envFallback, shellQuote } from './env-fallback.ts'
 import { type Exec, withReason } from './exec.ts'
 import { refuseFloatingPane } from './floating.ts'
 import type { LivePane, MuxAdapter, MuxReadOptions, OpenedPane } from './mux.ts'
@@ -32,6 +32,27 @@ import { pollForOutput } from './wait-output.ts'
  * - **No `--env` on any route.** Like wezterm/zellij/cmux, env is native at no tier, so every open
  *   rides the `envFallback` compensation (an `env K=V` prefix on the launch command, or a stderr
  *   warning when there is no command to ride).
+ * - **`--cwd` is REAL on `pane split` and unevidenced on `tab new`** (#163) — and the two halves rest
+ *   on different ground, which is the whole point of splitting them.
+ *   `/reference/cli` mentions `--cwd` nowhere, and #163 read that silence as a fabricated flag on
+ *   both routes. It is not: `/agents/orchestration` gives
+ *   `otty pane split --direction right --cwd "$PWD" --no-focus --json` as a hand-runnable command, so
+ *   the split route's `--cwd` is documented by otty itself and STAYS. That page also settles what the
+ *   reference is worth here — it demonstrates two flags (`--cwd`, `--no-focus`) the reference omits,
+ *   and the reference's window/tab/pane section is prose plus examples with no flag table at all, so
+ *   it enumerates nothing and its silence proves nothing. Measured 2026-09-08 over all 141 URLs in
+ *   `docs.otty.sh/sitemap.xml`: `--cwd` and `--no-focus` each occur on exactly ONE page, that one.
+ *   `tab new` gets no such rescue. Nothing on any of the 141 pages shows a working directory on it —
+ *   the only `tab new` with flags is `--command`/`--title` — and otty publishes no source to settle
+ *   it, so the flag is neither evidenced nor disproven. So this route takes the answer that is
+ *   CORRECT UNDER BOTH READINGS instead of betting on either: `--cwd` is dropped and the directory
+ *   rides a `cd` on the command line, which works whether or not the flag exists, where sending a
+ *   flag otty does not take fails EVERY `--at tab` open outright. That is the shape `mux.cmux.ts`
+ *   landed for the same wall (see `runLaunch`); it is a shell-level cd, so it lands in the tab's
+ *   shell history and only means anything in a shell pane. If someone with a Mac runs
+ *   `otty tab new --help` and finds `--cwd`, this route should go back to the native flag.
+ *   The WORKSPACE tier is unaffected either way: `otty open [path]` takes the directory as a
+ *   documented POSITIONAL and always did.
  * - **Split direction is a VALUE, not a flag.** `otty pane split --direction <right|left|up|down>`;
  *   `pane:right`/`pane:down` map to `right`/`down`. There is no `--bottom` in that vocabulary.
  * - **Splits CAN be sized** — `otty pane split --size` is documented as the NEW pane's share, so
@@ -74,9 +95,17 @@ export function createOttyAdapter(deps: { window?: string | undefined }): MuxAda
 		canSizeSplits: true,
 
 		/**
-		 * `false`, for cmux's two reasons exactly: no suppress-focus flag is documented on `pane split`,
-		 * `tab new`, or `open`, and `from` is honored by focusing the target pane first (`open` below),
+		 * `false`, and this is an ADAPTER-WIDE floor: the declaration is one bit covering every tier, so
+		 * it can only be `true` when no tier steals focus. `tab new` and `open` document no
+		 * suppress-focus flag, and `from` is honored by focusing the target pane first (`open` below),
 		 * so an open moves the user twice over.
+		 *
+		 * The `pane split` half of that reason is now known to be WRONG and is left standing only
+		 * because it does not move this bit: `--no-focus` IS real on `pane split` — otty's
+		 * `/agents/orchestration` runs `otty pane split --direction right --cwd "$PWD" --no-focus
+		 * --json` — and this adapter does not pass it. Found while settling #163's `--cwd`; acting on it
+		 * is a behavior change on a different seam member and belongs to its own unit of work (#133 is
+		 * where this declaration was set).
 		 *
 		 * Read off otty's documented CLI, NOT verified against a live binary — no otty on the machine
 		 * this was written on, matching the rest of this header.
@@ -112,14 +141,16 @@ export function createOttyAdapter(deps: { window?: string | undefined }): MuxAda
 				// in the creating call rather than as a second round trip through `rename`, which left a
 				// window where the tab carried otty's default name. Same fix the workspace arm above makes.
 				if (opts.label) args.push('--title', opts.label)
-				if (opts.cwd) args.push('--cwd', opts.cwd)
+				// No `--cwd` here, unlike the split arm below: nothing otty publishes puts a working
+				// directory on `tab new`, so the directory is compensated in `runLaunch` as a `cd`
+				// instead — the answer that holds whether or not the flag exists (see the header).
 				const out = exec('otty', args)
 				if (!out) throw new Error(withReason(exec, 'otty tab new failed'))
 				const parsed = parseOttyOutput(out)
 				const paneId = parsed.pane_id
 				if (!paneId) throw new Error('otty tab new did not report the pane id')
 				const opened = openedPane(paneId, parsed.tab_id, deps.window)
-				runLaunch(adapter, exec, opened, opts.env, opts.launch)
+				runLaunch(adapter, exec, opened, opts.env, opts.launch, opts.cwd)
 				return opened
 			}
 
@@ -140,6 +171,10 @@ export function createOttyAdapter(deps: { window?: string | undefined }): MuxAda
 			const direction = at === 'pane:down' ? 'down' : 'right'
 			const args = ['pane', 'split', '--direction', direction]
 			if (opts.cwd) args.push('--cwd', opts.cwd)
+			// `--cwd` STAYS on this route, and on this route only: otty's own `/agents/orchestration`
+			// runs `otty pane split --direction right --cwd "$PWD" --no-focus --json` by hand. #163 read
+			// `/reference/cli`'s silence as proof the flag was fabricated; that page documents no flags
+			// for this command family at all. See the header for the measurement.
 			if (opts.ratio != null) {
 				const { size, requested } = toOttySize(opts.ratio)
 				// A clamp is a size the caller did NOT ask for, so it is announced rather than applied
@@ -165,6 +200,7 @@ export function createOttyAdapter(deps: { window?: string | undefined }): MuxAda
 			if (opts.label) {
 				process.stderr.write(`otty cannot name a pane — "${opts.label}" was not set on pane ${opened.id}\n`)
 			}
+			// No `cwd` argument: this route set it natively with `--cwd` above.
 			runLaunch(adapter, exec, opened, opts.env, opts.launch)
 			return opened
 		},
@@ -319,12 +355,29 @@ function openedPane(paneId: string, tabId: string | undefined, window: string | 
 	return opened
 }
 
+/**
+ * Run the caller's launch command in the freshly opened space, carrying whatever the route could not
+ * set natively.
+ *
+ * `cwd` is passed by the `tab` route ALONE — the one route with no working-directory flag to send
+ * (the header says why). It rides as a `cd` on the command line, the same last-resort shape
+ * `envFallback` uses for env, and unlike env it needs no command to ride: a tab with a cwd and no
+ * launch still lands in the right directory, because the `cd` is sent alone.
+ *
+ * The other two routes pass none, and for the same reason: they already set the directory natively —
+ * `pane split --cwd`, and `otty open [path]`'s positional — so a `cd` there would push into shell
+ * history a directory the pane is already in.
+ *
+ * The env prefix goes INSIDE the `cd`'s `&&`, never outside it: `env K=V cd '/x' && cmd` would set
+ * the variables on `cd` and leave `cmd` without them. Same rule, same reason, as `mux.cmux.ts`.
+ */
 function runLaunch(
 	adapter: MuxAdapter,
 	exec: Exec,
 	target: OpenedPane,
 	env: Record<string, string> | undefined,
 	launch: string | undefined,
+	cwd?: string | undefined,
 ) {
 	const fallback = envFallback(env, launch)
 	if (fallback.kind === 'dropped') {
@@ -332,9 +385,18 @@ function runLaunch(
 			`env (${fallback.variables.join(', ')}) could not be set on this otty pane — ` +
 				'otty has no --env flag on pane split/tab new/open\n',
 		)
+		// env is lost, the directory need not be: a `cd` carries with no command to ride.
+		if (cwd) adapter.submit(exec, target, `cd ${shellQuote(cwd)}`)
 		return
 	}
-	if (fallback.command !== undefined) adapter.submit(exec, target, fallback.command)
+	const command = cwd ? cdPrefixed(cwd, fallback.command) : fallback.command
+	if (command !== undefined) adapter.submit(exec, target, command)
+}
+
+/** `cd <dir>` on its own, or chained ahead of the command that must run in that directory. */
+function cdPrefixed(cwd: string, command: string | undefined): string {
+	const cd = `cd ${shellQuote(cwd)}`
+	return command === undefined ? cd : `${cd} && ${command}`
 }
 
 /** otty's documented `--size` range on `pane split`: a whole percent, 10 through 90. */
