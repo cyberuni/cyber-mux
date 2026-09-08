@@ -186,7 +186,15 @@ describe('spec:cyber-mux/mux/worktree', () => {
 			'git -C /repo.worktrees/x status': '',
 		}
 		const GIT_ANSWER = [
-			{ root: '/repo', branch: 'main', linked: false, prunable: false, merged: true, dirty: false },
+			{
+				root: '/repo',
+				branch: 'main',
+				linked: false,
+				prunable: false,
+				merged: true,
+				mergedSignal: 'ancestor',
+				dirty: false,
+			},
 			{ root: '/repo.worktrees/x', branch: 'feat/x', linked: true, prunable: false, merged: false, dirty: false },
 		]
 
