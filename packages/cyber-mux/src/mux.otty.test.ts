@@ -42,19 +42,24 @@ const windowAdapter = createOttyAdapter({ window: 'window:1' })
 
 describe('spec:cyber-mux/mux', () => {
 	describe('ottyMuxAdapter', () => {
-		it('open() at pane:right splits with --right', () => {
+		// otty documents `pane split --direction <right|left|up|down>` — a flag taking a VALUE, not a
+		// bare `--right`. These two assert the exact argv because that is the only place a wrong flag
+		// spelling is catchable without a live otty (#128).
+		it('open() at pane:right splits with --direction right', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'pane split': NEW_PANE_RESPONSE })
 			const target = ottyMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right' })
 			expect(target).toEqual({ id: 'pane:7', tab: 'tab:3' })
-			expect(calls[0]).toEqual(['pane', 'split', '--right', '--cwd', '/unit'])
+			expect(calls[0]).toEqual(['pane', 'split', '--direction', 'right', '--cwd', '/unit'])
 		})
 
-		it('open() at pane:down splits with --bottom', () => {
+		// `down`, NOT `bottom`: `--bottom` is the `otty view`/`otty edit` spelling and is not a value in
+		// `pane split`'s direction vocabulary at all.
+		it('open() at pane:down splits with --direction down', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'pane split': NEW_PANE_RESPONSE })
 			ottyMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:down' })
-			expect(calls[0]).toEqual(['pane', 'split', '--bottom', '--cwd', '/unit'])
+			expect(calls[0]).toEqual(['pane', 'split', '--direction', 'down', '--cwd', '/unit'])
 		})
 
 		it('open() reports the ambient window when the adapter is bound to one', () => {
@@ -71,12 +76,23 @@ describe('spec:cyber-mux/mux', () => {
 			expect(target).toEqual({ id: 'pane:8', tab: 'tab:4' })
 		})
 
-		it('open() at workspace creates a new window', () => {
+		// `otty open` always opens a new window and documents no `--new-window` — that flag belongs to
+		// `otty view`/`otty edit`. Asserting the exact argv is what pins the absence.
+		it('open() at workspace creates a new window with no --new-window flag', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { open: NEW_WINDOW_RESPONSE })
 			const target = ottyMuxAdapter.open(exec, { cwd: '/unit', at: 'workspace' })
-			expect(calls[0]).toEqual(['open', '--new-window', '/unit'])
+			expect(calls[0]).toEqual(['open', '/unit'])
 			expect(target).toEqual({ id: 'pane:10', tab: 'tab:5', workspace: 'window:2' })
+		})
+
+		// `--title` names the WINDOW — the space `at: 'workspace'` opens — so `label` lands at birth in
+		// one call, instead of a follow-up rename of the tab, which is a different tier.
+		it('open() at workspace names the window at birth with --title', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { open: NEW_WINDOW_RESPONSE })
+			ottyMuxAdapter.open(exec, { cwd: '/unit', at: 'workspace', label: 'review' })
+			expect(calls).toEqual([['open', '--title', 'review', '/unit']])
 		})
 
 		it('open() with a `from` focuses that pane first', () => {
@@ -84,7 +100,7 @@ describe('spec:cyber-mux/mux', () => {
 			const exec = fakeExec(calls, { 'pane split': NEW_PANE_RESPONSE })
 			ottyMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right', from: { id: 'pane:3' } })
 			expect(calls[0]).toEqual(['pane', 'focus', '--pane', 'pane:3'])
-			expect(calls[1]).toEqual(['pane', 'split', '--right', '--cwd', '/unit'])
+			expect(calls[1]).toEqual(['pane', 'split', '--direction', 'right', '--cwd', '/unit'])
 		})
 
 		it('canSizeSplits is false', () => {
@@ -197,11 +213,35 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls[0]).toEqual(['tab', 'rename', '--tab', 'tab:1', '--title', 'my-tab'])
 		})
 
-		it('rename() at pane renames the pane', () => {
+		// otty scopes `rename` to window/tab — the reference says so twice in one sentence, and the
+		// pane-additional verb list omits it. A caller reaching this member directly is TOLD, rather than
+		// handed the false success of a command that dies at otty's argument parser.
+		it('rename() at pane refuses by name', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, {})
-			ottyMuxAdapter.rename(exec, { id: 'pane:1' }, 'pane', 'my-pane')
-			expect(calls[0]).toEqual(['pane', 'rename', '--pane', 'pane:1', '--title', 'my-pane'])
+			expect(() => ottyMuxAdapter.rename(exec, { id: 'pane:1' }, 'pane', 'my-pane')).toThrow(/otty cannot name a pane/)
+			expect(calls).toEqual([])
+		})
+
+		// The open path takes the OTHER trade: a name nobody needs to open a pane must not fail the
+		// split, so the label degrades to a warning — the same split `mux.wezterm.ts` makes.
+		it('open() at pane:right warns rather than failing when a label cannot be set', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'pane split': NEW_PANE_RESPONSE })
+			const written: string[] = []
+			const write = process.stderr.write.bind(process.stderr)
+			process.stderr.write = ((chunk: string) => {
+				written.push(String(chunk))
+				return true
+			}) as typeof process.stderr.write
+			try {
+				const target = ottyMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right', label: 'build' })
+				expect(target).toEqual({ id: 'pane:7', tab: 'tab:3' })
+			} finally {
+				process.stderr.write = write
+			}
+			expect(calls).toEqual([['pane', 'split', '--direction', 'right', '--cwd', '/unit']])
+			expect(written.join('')).toContain('otty cannot name a pane')
 		})
 
 		it('name is otty', () => {

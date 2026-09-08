@@ -10,7 +10,7 @@ import { pollForOutput } from './wait-output.ts'
  *
  * otty is a native terminal-centric workspace app with integrated multiplexing (Windows > Tabs >
  * Splits > Panes). Its hierarchy maps onto cyber-mux's placement tiers as:
- * - **Workspace** → Window (a new window, spawned via `otty open --new-window`)
+ * - **Workspace** → Window (a new window, spawned via `otty open`)
  * - **Tab** → Tab (a new tab via `otty tab new`)
  * - **Pane** → Pane (a split via `otty pane split`)
  *
@@ -25,14 +25,21 @@ import { pollForOutput } from './wait-output.ts'
  *
  * - **Pane is the terminal unit.** `OTTY_PANE_ID` is the self-identity env var and `LivePane.id`
  *   carries a pane id. `--at tab` maps to `otty tab new`; `--at pane:*` maps to `otty pane split`.
- * - **Window is the workspace tier.** `otty open --new-window` creates a genuinely separate window,
- *   reported as `OpenedPane.workspace`.
+ * - **Window is the workspace tier.** `otty open` ALWAYS creates a genuinely separate window —
+ *   there is no `--new-window` flag on it — reported as `OpenedPane.workspace`. It names the window
+ *   at birth with the documented `--title`.
  * - **No `--env` on any route.** Like wezterm/zellij/cmux, env is native at no tier, so every open
  *   rides the `envFallback` compensation (an `env K=V` prefix on the launch command, or a stderr
  *   warning when there is no command to ride).
- * - **Split direction is explicit.** `otty pane split --right|--bottom` maps `pane:right`/`pane:down`.
+ * - **Split direction is a VALUE, not a flag.** `otty pane split --direction <right|left|up|down>`;
+ *   `pane:right`/`pane:down` map to `right`/`down`. There is no `--bottom` in that vocabulary.
  * - **`send-keys` mixes text and key tokens.** `otty pane send-keys --pane <id> -- "text" key:Enter`
  *   can do both in one call. We implement `sendText` and `sendKeys` separately per the contract.
+ * - **No pane-tier `rename`.** The reference scopes the shared verbs as "show, list, new, close,
+ *   focus, rename (window/tab), move (tab)" and then enumerates what panes have *additionally* —
+ *   "split, zoom, resize, send-keys, send-text, run, exec, wait, and capture". `rename` is in
+ *   neither list for `pane`, so this adapter names a tab and REFUSES to name a pane, exactly as
+ *   `mux.wezterm.ts` does for the same reason.
  * - **No pane geometry adapter.** `otty panes --json` does not report position, so `regions` is not
  *   implementable. `template save` refuses on otty by naming the backend.
  * - **No git-worktree concept in the CLI.** No `worktree` subcommand, so — like tmux, wezterm,
@@ -59,16 +66,21 @@ export function createOttyAdapter(deps: { window?: string | undefined }): MuxAda
 			const at = opts.at ?? 'tab'
 
 			if (at === 'workspace') {
-				const args = ['open', '--new-window']
+				// `otty open [path]` ALWAYS opens a new window — the reference gives it `--command` and
+				// `--title` and nothing else. `--new-window` is a flag of the DIFFERENT `otty view`/`otty edit`
+				// family, where it selects between placements; passing it here fails at the argument parser.
+				const args = ['open']
+				// `--title` names the WINDOW, which is the space `at: 'workspace'` opens — so the label lands
+				// at birth rather than as a follow-up rename of the wrong tier (the tab).
+				if (opts.label) args.push('--title', opts.label)
 				if (opts.cwd) args.push(opts.cwd)
 				const out = exec('otty', args)
-				if (!out) throw new Error(withReason(exec, 'otty open --new-window failed'))
+				if (!out) throw new Error(withReason(exec, 'otty open failed'))
 				const parsed = parseOttyOutput(out)
-				if (!parsed.window_id) throw new Error('otty open --new-window did not report the window id')
+				if (!parsed.window_id) throw new Error('otty open did not report the window id')
 				const paneId = parsed.pane_id
-				if (!paneId) throw new Error('otty open --new-window did not report the initial pane id')
+				if (!paneId) throw new Error('otty open did not report the initial pane id')
 				const opened = openedPane(paneId, parsed.tab_id, parsed.window_id)
-				if (opts.label) adapter.rename(exec, opened, 'tab', opts.label)
 				runLaunch(adapter, exec, opened, opts.env, opts.launch)
 				return opened
 			}
@@ -98,8 +110,11 @@ export function createOttyAdapter(deps: { window?: string | undefined }): MuxAda
 			// pane:right / pane:down — a split
 			if (opts.from) adapter.focus(exec, opts.from)
 
-			const direction = at === 'pane:down' ? '--bottom' : '--right'
-			const args = ['pane', 'split', direction]
+			// `--direction <value>`, NOT a bare directional flag: the reference documents
+			// `otty pane split --direction right …` over the vocabulary `right|left|up|down`. `--bottom` is
+			// not a direction otty names at all — that spelling belongs to `otty view`/`otty edit`.
+			const direction = at === 'pane:down' ? 'down' : 'right'
+			const args = ['pane', 'split', '--direction', direction]
 			if (opts.cwd) args.push('--cwd', opts.cwd)
 			const out = exec('otty', args)
 			if (!out) throw new Error(withReason(exec, 'otty pane split failed'))
@@ -107,7 +122,12 @@ export function createOttyAdapter(deps: { window?: string | undefined }): MuxAda
 			const paneId = parsed.pane_id
 			if (!paneId) throw new Error('otty pane split did not report the pane id')
 			const opened = openedPane(paneId, parsed.tab_id, deps.window)
-			if (opts.label) adapter.rename(exec, opened, 'pane', opts.label)
+			// No pane-title primitive exists at birth or after (see `rename` below) — degrade with a warning
+			// rather than silently dropping the label or failing the whole split over a name nobody NEEDS to
+			// open the pane. Same trade `mux.wezterm.ts` makes for the same missing primitive.
+			if (opts.label) {
+				process.stderr.write(`otty cannot name a pane — "${opts.label}" was not set on pane ${opened.id}\n`)
+			}
 			runLaunch(adapter, exec, opened, opts.env, opts.launch)
 			return opened
 		},
@@ -117,7 +137,17 @@ export function createOttyAdapter(deps: { window?: string | undefined }): MuxAda
 				exec('otty', ['tab', 'rename', '--tab', target.id, '--title', name])
 				return
 			}
-			exec('otty', ['pane', 'rename', '--pane', target.id, '--title', name])
+			// otty scopes `rename` to window/tab. This is NOT an argument from the docs' silence (the #132
+			// lesson): the reference states the scope twice over in one sentence — "rename (window/tab)"
+			// for the shared verbs, then an explicit enumeration of what panes have *additionally* that
+			// does not contain it. Throwing here (rather than issuing a command that fails at otty's
+			// argument parser and is then discarded, which is what this did before) is what `open`'s
+			// pane-tier degrade-with-warning is a deliberate alternative TO: a caller reaching this method
+			// directly gets told, not a false success.
+			//
+			// Read off otty's documented CLI, NOT verified against a live binary — no otty on the machine
+			// this was written on, matching the rest of this header. #128 tracks the missing live suite.
+			throw new Error(`otty cannot name a pane (only a window or tab) — asked to rename ${target.id}`)
 		},
 
 		group() {
