@@ -1,5 +1,354 @@
 # cyber-mux
 
+## 0.7.0
+
+### Minor Changes
+
+- cd4db8e: Close the two focus gaps on the `MuxAdapter` seam (#152): `isPaneFocused` can now say "cannot
+  determine" on every backend, and `opensWithoutStealingFocus` is replaced by the three-valued
+  `focusOnOpen`.
+  
+  **`isPaneFocused` reaches its own `undefined`.** The member already returned `boolean | undefined`,
+  but six of the seven adapters could not actually produce the `undefined` for the case it exists
+  for — an unanswerable query came back as a confident `false`, which a caller cannot tell from a real
+  negative.
+  
+  - **WezTerm gains a real probe.** It used to answer a blanket `undefined` on the claim that the
+    backend has no focus primitive. It has one: `cli list-clients --format json` carries
+    `focused_pane_id`, measured on `20240203-110809-5046fc22` with a GUI client attached to a headless
+    mux server, moving with `cli activate-pane` in both directions. It deliberately does **not** read
+    `cli list --format json`'s `is_active`, which is per-tab — measured, three rows reported it `true`
+    at once across two tabs and two windows.
+  - **Zellij stops believing `is_focused`.** That flag is true on more than one record at a time (a
+    floating plugin pane and the tiled pane beneath it), so the probe could report `true` for a pane
+    the client was not on. It now reads `list-clients`, the same authority the adapter's focus restore
+    already used.
+  - **tmux and rmux** presence-check every `-F` field before comparing any: a short line left the
+    active flags `undefined`, and `undefined === '1'` is `false`.
+  - **cmux and otty** presence-check the focus field, not just the row. Both row shapes are
+    source/docs reads, so an absent field is the likeliest way they are wrong.
+  
+  **`focusOnOpen` replaces `opensWithoutStealingFocus`.** BREAKING for anyone reading that member.
+  The boolean could not express a backend that moves focus and puts it back, so it called that "no
+  theft" — which is how Zellij came to declare the same value as tmux while doing something visibly
+  different. The new member is `'preserved' | 'restored' | 'stolen'`:
+  
+  | backend | value | why |
+  | --- | --- | --- |
+  | tmux, rmux | `'preserved'` | `-d` on every route, and `-t` targets the split directly |
+  | herdr | `'preserved'` | `--no-focus` on every route, and `pane split --pane` names the anchor |
+  | Zellij | `'restored'` | its `from` path focuses the anchor, opens, and focuses back |
+  | WezTerm, cmux, otty | `'restored'` | **new** — every open now reads the focused pane first and restores it |
+  
+  No backend declares `'stolen'` today, which is #152's acceptance criterion: an open on any backend
+  either leaves focus alone or deterministically restores it. The restore is spelled once
+  (`restoringFocus`, exported from the package root alongside the `FocusOnOpen` type), reads before
+  anything moves, runs in a `finally` so a throwing open cannot leave the caller's view relocated, and
+  is skipped rather than guessed when nothing reports being focused.
+  
+  cmux's `--focus false` (#167) and otty's `pane split --no-focus` (#172) are deliberately still not
+  passed: both are unverified without a Mac, and the restore is correct whether or not those documented
+  defaults are what ships. Everything stated about cmux and otty here remains a source/docs read —
+  neither can be driven on Linux CI (#128).
+- 829e44f: herdr: `worktree.releaseWorkspace` closes the whole worktree group again
+  
+  herdr 0.9.0 put the cascade behind `workspace close --group`: a bare close of a PRIMARY workspace
+  that still has worktree workspaces open no longer errors, it just releases the primary and leaves
+  the group up. The adapter sent the bare verb, so the group silently stayed open.
+  
+  `releaseWorkspace` now takes `opts?: { group?: boolean }`, defaulting to `true` — cascading is what
+  the verb has always done, and defaulting it off would narrow it for callers who never asked for a
+  change. Pass `{ group: false }` to release only the workspace named.
+  
+  Pre-0.9.0 herdr rejects `--group` client-side, at argument parsing, without contacting the server, so
+  the adapter retries the bare verb there — which already cascades on those releases. The retry keys on
+  `Exec`'s `null` failure sentinel, so it works against every runner rather than only ones that report
+  a diagnostic reason.
+- e79f649: Implement `AgentLifecycle` on the otty backend, bound to `otty pane wait --pane <id>` — the second
+  backend with a native per-pane agent-state wait, after herdr. `cyber-mux agent wait` now drives otty
+  instead of refusing it, and `agentApi(env).supported()` is `true` there.
+  
+  otty's wait ends on `idle` and nothing else, so an `--until` naming any other state is refused by
+  name with the new `AgentWaitStatesUnsupportedError` (exported from `cyber-mux/agent`) rather than
+  narrowed to what the backend happens to support. `timeoutMs` rounds up to otty's whole-second
+  `--timeout-secs` and never to `0`, which is otty's spelling for an unbounded wait.
+  
+  `LivePane.agentStatus` on otty is unchanged and still `undefined`: otty exposes no documented CLI
+  read of per-pane agent state, so `supported()` and `status()` now answer differently on the same
+  backend.
+  
+  Everything here is read off otty's published CLI documentation; otty is a GUI-only app with no
+  binary in CI, so nothing in this change was verified against a live otty.
+- 18e3269: otty can now size a split, and names a new tab at birth.
+  
+  `otty pane split` documents a `--size` flag, so the otty adapter declares `canSizeSplits: true` and
+  renders `MuxOpenOptions.ratio` onto it. `--size` is the **new** pane's share, while `ratio` is the
+  fraction kept by the **original**, so the value is inverted — the same inversion the cmux and WezTerm
+  adapters already make, and the opposite of herdr's pass-through `--ratio`. otty's unit is a whole
+  percent over a documented **10–90** range: `ratio: 0.7` becomes `--size 30`, and a ratio that lands
+  outside the range (`0.95`, a 5% new pane) is clamped into it with a warning on stderr rather than
+  sent as a size otty rejects, which would fail the split outright.
+  
+  The previous `canSizeSplits: false` did not merely undercount otty — it gave a reason that was wrong,
+  implying otty has no sizing verb. The verb it does have that cyber-mux still cannot use is
+  `pane resize`, which counts cells; `resizePane` stays refused on otty for exactly that reason, and
+  the adapter now says which is which.
+  
+  `otty tab new` documents `--title`, so `open({ at: 'tab', label })` names the tab in the creating
+  call instead of following up with a `rename` — one round trip fewer, and no window in which the tab
+  carries otty's default name. Same fix the workspace tier already got with `otty open --title`.
+  
+  Read off otty's published CLI reference, **not verified against a live binary** — otty is a macOS-only
+  GUI app with no public source, so the coverage is mocked-`Exec` argv assertions.
+- 1a5f898: Add pane relocation to the `MuxAdapter` seam — `movePane(exec, target, destination, side)` and
+  `breakPane(exec, target, at)`. Until now every pane cyber-mux opened stayed where it was born: the
+  seam could create, read, name, resize, focus, zoom and close a pane, and never move one.
+  
+  `movePane` puts a live pane beside another one — the destination is a PANE plus a side
+  (`'right' | 'down'`), never a tab or a workspace, because that is the only destination the capable
+  backends can all name exactly. `breakPane` promotes a pane into its own tab or its own workspace.
+  Both keep the pane's process and scrollback; neither opens or tears anything down.
+  
+  Both return `OpenedPane` rather than `void`, and that is load-bearing: herdr pane ids are
+  workspace-scoped, so a relocation across that boundary rewrites the id and the old one drops out of
+  `pane list`. The return is the pane's new identity plus the tab and workspace it now lives in.
+  
+  Real on tmux, rmux, herdr and wezterm, each driven live. Refused BY NAME elsewhere:
+  `PaneMoveUnsupportedError` / `PaneBreakUnsupportedError`, never an emulation. zellij and otty refuse
+  both; cmux refuses the move and declares the break-out. `canMovePanes` and `canBreakPanes` are how a
+  caller asks before relocating — two flags rather than one, because cmux has exactly one of the two
+  capabilities.
+  
+  New exports on the `.` entry: `PaneMoveUnsupportedError`, `PaneBreakUnsupportedError`,
+  `refusePaneMove`, `refusePaneBreak`, `canMovePanes`, `canBreakPanes`, plus the `MuxMoveSide` and
+  `MuxBreakTier` types. `MuxAdapter` gains two required members, so an out-of-tree adapter must
+  implement them.
+- 237ae29: Add pane zoom to the `MuxAdapter` seam — `setPaneZoom(exec, target, zoomed)` and
+  `isPaneZoomed(exec, target)`. A zoomed pane fills its region while its siblings stay open behind it,
+  which every backend but one can do and none of them could be asked to do before.
+  
+  This is **not** `focus()`. Focus moves the client; zoom makes the pane big. A caller that has just
+  opened a worker pane and wants a human to actually read it needs the second, and only the first was
+  expressible.
+  
+  - **Absolute, never a toggle**, for `resizePane`'s reason: a blind toggle can be asked for "big" and
+    deliver "small", which is unusable by an agent. A caller that wants the toggle writes
+    `setPaneZoom(e, t, !isPaneZoomed(e, t))`.
+  - **Asking for the state a pane is already in touches the backend at all.** That is contract, not an
+    optimization: two backends spell zoom at the tab tier, where an unguarded write acts on a pane the
+    caller never named — `herdr pane zoom <p3> --off` unzooms whichever sibling was zoomed, and tmux's
+    `resize-pane -Z` on a window zoomed elsewhere just unzooms it.
+  - **Zooming moves focus to the pane** on every backend that has the verb. Declared rather than
+    compensated: undoing it would be a second visible focus move. Unzooming moves nothing.
+  - **Real on five of seven backends**, each driven against a live binary: tmux 3.7c and rmux 0.10.0
+    (`resize-pane -Z`), herdr 0.8.0/0.9.0 (`pane zoom --on|--off`), zellij 0.45.0 (`action
+    toggle-fullscreen`), and wezterm 20240203 (`cli zoom-pane --zoom|--unzoom`, the only natively
+    absolute one).
+  - **cmux and otty refuse BY NAME** with `PaneZoomUnsupportedError` rather than emulating: cmux has no
+    pane-zoom verb at any programmable layer (its tmux-compat `resize-pane -Z` parses, does nothing and
+    exits 0), and otty's documented `pane zoom` names no flags and reports no state, so an absolute set
+    cannot be rendered. `canZoomPanes` is the pre-flight declaration, `canFloatPanes`'s exact shape.
+  - `isPaneZoomed` answers `undefined` — never `false` — on those two: cmux binds pane zoom to a GUI
+    keystroke, so a `false` would be a lie about a pane the user zoomed by hand.
+  
+  New exports on the `.` entry: `PaneZoomUnsupportedError`, `refusePaneZoom`, `canZoomPanes`.
+  `MuxAdapter` gains two required members, so an out-of-tree adapter must implement them.
+- dd95e70: Detect squash-merged branches when deciding whether a worktree is disposable.
+  
+  `git branch --merged` is structurally blind to a squash merge — the squash commit on the target is a
+  rewritten tip with no ancestry link back to the branch — so a squash-merging repo under-reported every
+  reusable worktree, and a pool built on `provision` never recycled: it only ever created.
+  
+  The landed signal is now LAYERED, in cost order, with the ancestry answer kept exactly where it was:
+  
+  - `ancestor` — `git branch --merged`, git's own proof, one call for the whole repo.
+  - `upstream-gone` — the branch's remote-tracking ref has disappeared (`[gone]`), i.e. the forge merged
+    the pull request and deleted its head branch. One call for the whole repo, offline, and correct for
+    squash, rebase, and merge-commit strategies alike. Read, never refreshed: nothing here runs
+    `git fetch --prune` for you, so the signal is as fresh as your last fetch.
+  - `squash-patch` — the branch collapsed to one synthetic commit is already applied on the target
+    (`commit-tree` + `git cherry`). Offline, and matches a clean squash or rebase merge.
+  - `forge` — the forge's own word on whether a merged PR exists for the head branch. OPT-IN: pass a
+    `signals.forge` probe (`ghForgeMergedProbe` ships as one). Nothing reaches the network without it.
+  
+  Entries carry a new `mergedSignal` field naming which layer established `merged: true`, absent for a
+  negative or undeterminable verdict — the layers do not carry equal authority, and a caller auditing a
+  reclaim needs to see which one spoke.
+  
+  Every layer after the first is POSITIVE-ONLY, so the composite is a monotone OR: a squash that was
+  conflict-resolved or hand-edited does not match and degrades to "not reusable" rather than to a false
+  positive, and a landed signal never outranks a guard — a dirty, occupied, stale, or primary checkout
+  is refused however it was cleared. `isWorktreeRemovable`, `removeWorktreeSafely`, and the
+  primary/dirty/occupied gates are unchanged, as is behavior on merge-commit and fast-forward repos.
+
+### Patch Changes
+
+- 94cc2d3: Drive cmux's real verbs for the six `MuxAdapter` members that could not work on it — fabricated flags,
+  a JSON shape that is never emitted, a route that never emits JSON at all, and two verbs that do not
+  exist.
+  
+  - **`open()` at `pane:right`/`pane:down`** sent `--cwd` and `--size` to `new-pane`, which accepts
+    neither and validates no unknown flag, so both were silently ignored: the split opened in the wrong
+    directory and the ratio did nothing. Both flags are gone. **`canSizeSplits` is no longer declared** —
+    cmux has no split-size flag and `resize-pane` is cell-based, so a `ratio` now degrades to cmux's own
+    even split, zellij's answer exactly. The directory is carried instead as a `cd` on the command line
+    (a shell-level cd, so it lands in that surface's shell history), the same last-resort shape env
+    already takes.
+  - **`open()` at `workspace`** threw on every call: `new-workspace` hardcodes `honorJSONOutput: false`,
+    so `cmux --json new-workspace` prints `OK workspace:3` and never JSON. It now runs the namespaced
+    `cmux --json workspace create`, which does emit JSON — and takes `--name`, so a workspace is named at
+    birth rather than renamed afterwards.
+  - **`listPanes`, `paneExists` and `isPaneFocused`** were all dead. They read `list-panes`, which
+    reports PANES as `{"panes":[…]}`, while the parse required a top-level array of panes each holding
+    surface objects — a shape cmux never emits, so the listing was empty for every real response and the
+    three members answered "no panes", "does not exist" and "cannot tell" always. They now read
+    `list-panels` (the surface tier) with its real keys: `ref` for the id, `focused` for focus.
+    **`LivePane.cwd` is now absent on cmux**: the listing carries the directory a surface was *created*
+    with and nothing that tracks where its shell is, so reporting it would go stale at the first `cd`.
+  - **`rename()`** ran `rename-surface`/`rename-pane`, neither of which exists in cmux at all. Both seam
+    tiers now run `rename-tab --surface <id> --title <name>`; the `pane` tier retargets the surface the
+    pane is showing, because cmux has no pane rename at any layer.
+  - **`teardown()`** sent `close-surface --surface <id>` with no workspace. It now names the workspace
+    whenever the adapter is bound to one — cmux resolves an explicit `--surface` *within* a workspace,
+    falling back to `$CMUX_WORKSPACE_ID`, so the old form worked from inside cmux, refused for a library
+    caller with no cmux env, and resolved against the wrong workspace for a surface outside the caller's.
+  
+  Also fixes a grouping bug this read uncovered: `workspace.create` reports no `pane_ref`, so a workspace
+  open's tab id is a SURFACE ref, and the `group` lookup — which sent only `pane_id` against a handle
+  registry keyed by ref string rather than by kind — silently resolved it to the caller's own workspace
+  and would have grouped the wrong one. Each attempt is now verified against its own result.
+  
+  Read off cmux's own Swift source (`manaflow-ai/cmux` at `71eb616d`) — the CLI dispatch and parsers, the
+  socket payload builders, and `docs/cli-contract.md` — and **not** verified against a live binary: cmux
+  is macOS-GUI-only, and issue #128 tracks the missing real-boundary suite. `identify`-backed focus, a
+  `capabilities` pre-flight, and cmux's native workspace `--env` all replace working behavior on
+  source-only evidence and are deliberately left for someone with a Mac.
+- 08b9b39: Group cmux workspaces through its real `workspace-group` family instead of dropping the caller's
+  `workspaceGroup` silently.
+  
+  `group()` on the cmux adapter was a no-op, justified in the header by "cmux has a real workspace tier
+  that already groups every surface in it, so there is nothing for this to add". That reasoning is sound
+  for Pane → Surface and does not reach the tier the flag targets: cmux ships a first-class
+  `workspace-group` family that groups multiple top-level **workspaces** into a named, collapsible
+  sidebar section. A caller passing `workspaceGroup` on a cmux `{ at: 'workspace' }` open got nothing
+  grouped and no error saying so.
+  
+  It now routes to `workspace-group create` then `workspace-group add`. cmux mints its own group ids, so
+  the seam's opaque caller-chosen id cannot *be* the group id — it rides `--idempotency-key` (and
+  `--name`, so the sidebar section carries it too), which makes a repeat call find the existing group
+  rather than mint a second one. `add` is idempotent, so re-grouping needs no membership pre-check. Only
+  the `workspace` route groups: a `tab` or `pane:*` open lands in the workspace the caller is already in,
+  and grouping that would group a space the caller never opened.
+  
+  **Behavior change worth knowing:** cmux's `workspace-group create` always mints a brand-new *anchor*
+  workspace, so the first grouping call for a given id adds a visible workspace to the sidebar — a
+  deviation from the seam's "`group` opens nothing", accepted because the alternative was the silent drop
+  above and cmux offers no membership-only create. It does not steal focus, and later calls for the same
+  id open nothing.
+  
+  No seam member changed — `group()` / `workspaceGroup` was already the right shape; only the adapter was
+  wrong. Read off cmux's own Swift source (`manaflow-ai/cmux` at `71eb616d`), **not** verified against a
+  live binary: cmux is macOS-GUI-only, and issue #128 tracks the missing real-boundary suite.
+- b1ce2d3: `probeMultiplexer` now reports the pane for an otty session discovered through the process-ancestry
+  route. `paneFor` carried a hand-written list of the muxes with a per-pane env var and `otty` was
+  missing from it, so an ancestry-discovered otty session answered "no pane" while `$OTTY_PANE_ID` was
+  set and readable — `currentPane` self-identity silently came back empty. The `$CYBER_MUX` fast-path
+  was unaffected.
+  
+  The guard is now a `PANE_ENV` lookup rather than a second list, and `PaneMux` is derived from `Mux`
+  by subtracting the two muxes that genuinely carry no pane (`screen`, `none`) instead of re-listing
+  the ones that do — so a new backend cannot be added without either giving it a pane var or excluding
+  it on purpose. `screen` and `none` still report no pane.
+- 6a57d2f: Fix two otty argv shapes that otty's CLI does not accept, and refuse pane-tier `rename` on otty.
+  
+  `otty open` always opens a new window and documents only `--command` and `--title`; the adapter was
+  passing a `--new-window` that belongs to the different `otty view`/`otty edit` family, so every
+  `open({ at: 'workspace' })` died at otty's argument parser. It now issues a bare `otty open` and
+  names the new window at birth with the documented `--title` instead of renaming a tab afterward.
+  
+  `otty pane split` takes `--direction <right|left|up|down>`, not a bare directional flag. The adapter
+  was passing `--right` / `--bottom` — and `bottom` is not a direction otty names at all — so every
+  `pane:right` and `pane:down` split was broken too. It now passes `--direction right` / `--direction
+  down`.
+  
+  otty scopes `rename` to windows and tabs, so `rename(…, 'pane', …)` now throws a named error rather
+  than issuing a `otty pane rename` that otty rejects and this adapter discarded, and a `label` on a
+  `--at pane:*` open degrades to a stderr warning — the same trade the WezTerm adapter makes for the
+  same missing primitive.
+  
+  Read off otty's published CLI reference, NOT verified against a live binary — otty is GUI-only and
+  absent from the machine this was written on.
+- bdf7744: Stop sending `--cwd` on `otty tab new`, and keep it on `otty pane split` — where otty's own docs show
+  it.
+  
+  Issue #163 read otty's CLI reference, found no `--cwd` anywhere on it, and concluded the adapter was
+  sending a fabricated flag on both routes. Only half of that is right. otty's
+  [orchestration guide](https://docs.otty.sh/agents/orchestration) runs
+  `otty pane split --direction right --cwd "$PWD" --no-focus --json` as a command you can type by hand,
+  so the split route's `--cwd` is documented by otty itself and is unchanged. The reference's
+  `window / tab / pane` section carries no flag table at all — measured across all 141 URLs in
+  `docs.otty.sh/sitemap.xml`, `--cwd` and `--no-focus` each appear on exactly one page, and it is not
+  the reference.
+  
+  `tab new` has no such backing: nothing otty publishes puts a working directory on it, and otty ships
+  no source to settle it either way. The costs of the two readings are not symmetric — if the flag
+  exists, a `cd` works too; if it does not, `--cwd` fails **every** `--at tab` open at otty's argument
+  parser. So the tab route drops the flag and carries the directory as a `cd` on the command line, the
+  same shape cmux's `pane:*` route takes, with the env prefix inside the `&&`. It is a shell-level cd,
+  so it lands in that tab's shell history and means nothing in a non-shell pane. The `cd` needs no
+  launch command to ride, so a tab opened with a `cwd` and no `launch` still lands in the right
+  directory. The workspace tier was never affected — `otty open [path]` takes the directory as a
+  documented positional.
+  
+  Read off otty's published docs, NOT verified against a live binary — otty is a macOS/Windows GUI app
+  absent from the machine this was written on, and #128 tracks the missing real-boundary suite.
+- c973613: Fix the tmux adapter returning plausible-looking wrong answers when the calling process has no
+  locale. Every tmux invocation now leads with `-u`.
+  
+  Without a `LANG`/`LC_ALL`/`LC_CTYPE` containing "UTF-8", tmux does not consider its command client
+  UTF-8 and sanitizes what it prints: every byte outside printable ASCII becomes a literal `_`. The
+  adapter separates the fields of its `-F` formats with a TAB, so the split found no separator and a
+  listing of N panes collapsed into ONE record whose id was the whole line — `%0_zsh_/home/u_host_0`
+  rather than a pane id. It did not throw and did not return empty, so anything culling or reconciling
+  on that listing acted on a pane that does not exist.
+  
+  Reached by a caller that has neither a locale nor `$TMUX`: a systemd unit, a cron job, a container
+  entrypoint, or a non-interactive ssh session driving tmux through `CYBER_MUX=tmux`. A caller running
+  inside a pane was never affected — `$TMUX` gives the command client the containing client's UTF-8
+  state.
+  
+  - **`-u` on every invocation, not only the ones that parse a tab.** The mangling is a whole byte
+    class, measured on tmux 3.7c: every control byte, `0x7f`, and every non-ASCII byte comes back as
+    `_`. So `#{pane_title}`, `#{pane_current_path}` and `#{session_name}` lost their non-ASCII content
+    in the space-separated formats too, which re-picking the separator would not have fixed.
+  - **rmux is unaffected and unchanged.** Measured on a live rmux 0.10.0 under `env -i`: it emits a
+    real tab. The earlier note that it shared the defect was an inference from the shared `#{…}`
+    vocabulary, not a measurement.
+  - **The regression test drives the real tmux with the environment stripped** — `PATH` and `HOME` and
+    nothing else, on its own socket — because the integration suite inherits a locale, which is why
+    this survived every release.
+  
+  No API change.
+- a30d58c: zellij: complete a `zellij action` that its own pre-flight dropped, and confirm a focus landed before
+  anything is built on it
+  
+  `zellij action` resolves the session list before it honors `--session`, probing every socket and
+  requiring a `ConnStatus` reply; against a busy server that probe loses a live session, and the command
+  exits 1 with `There is no active session!` — or exits 0 printing nothing — having done nothing at all.
+  Measured on a live 0.45.0 under CPU contention: 2 bad answers in 600 `list-clients` calls, both
+  correct on an immediate re-ask.
+  
+  Three real consequences are fixed. `open({ from })` no longer skips its focus restore when the
+  `list-clients` read behind it came back empty — a lost answer used to read as "no client is attached",
+  which left the caller's client on the pane the open had just created. `setPaneZoom` now confirms the
+  client actually reached the pane before toggling fullscreen, because `toggle-fullscreen -p <id>` on a
+  pane the client is not on, in a tab that already has a fullscreen pane, leaves fullscreen and reports
+  success. And a `rename`, `focus`, `teardown`, `send` or `read` that never reached the server is
+  re-issued rather than silently lost.
+  
+  `new-pane` and `new-tab` are deliberately unchanged: they create, so they keep failing loudly by name
+  rather than risking a stray pane.
+
 ## 0.6.0
 
 ### Minor Changes
