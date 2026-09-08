@@ -386,13 +386,23 @@ export function createZellijAdapter(deps: { session?: string | undefined }): Mux
 		},
 
 		isPaneFocused(exec, target) {
-			// `list-panes --json` carries `is_focused` per pane — a real focus primitive, unlike wezterm's
-			// always-`unknown`. Unresolvable (no matching record) answers `undefined`, never a false
-			// `false`: a caller cannot tell "not focused" from "pane gone" here, and fails OPEN on
-			// `undefined`.
+			// `list-clients`, NOT `list-panes --json`'s `is_focused` — the same correctness fix `open`'s
+			// restore already made, applied to the read that ANSWERS the question. `is_focused` is true on
+			// MORE THAN ONE record at a time (a live session marks both the floating plugin pane and the
+			// tiled pane beneath it), so it reports "focused within its layer" and this member was
+			// answering a confident `true` for a pane the client was not on — the plausible wrong answer,
+			// not a throw. `list-clients` names the client's pane directly and can only name one.
+			//
+			// The pane listing is still consulted first, and only to tell "not focused" from "pane gone":
+			// a pane no listing carries is a query that could not be answered, and answers `undefined`.
 			const found = listZellijPanes(exec).find((p) => samePane(p.id, target.id))
 			if (!found) return undefined
-			return found.is_focused === true
+			// No client attached (or an answer that does not parse) is also `undefined` rather than
+			// `false`: a session nobody is viewing has no focused pane to be, so "not focused" would be
+			// reading a fact out of an absence. Callers fail OPEN on it.
+			const client = clientPane(exec)
+			if (client === undefined) return undefined
+			return samePane(client, target.id)
 		},
 
 		/**

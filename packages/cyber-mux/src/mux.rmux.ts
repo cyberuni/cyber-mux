@@ -359,7 +359,11 @@ export const rmuxMuxAdapter: MuxAdapter = {
 		const line = out.split('\n').find((l) => l.split(' ')[0] === target.id)
 		if (!line) return undefined
 		const [, paneActive, windowActive, sessionAttached] = line.split(' ')
-		return paneActive === '1' && windowActive === '1' && sessionAttached !== '0' && sessionAttached !== undefined
+		// Presence-checked field by field before any is compared, for the tmux adapter's reason: a SHORT
+		// line left `paneActive`/`windowActive` `undefined`, and `undefined === '1'` is `false`, so a
+		// line this code could not parse answered "not focused" rather than "cannot say".
+		if (paneActive === undefined || windowActive === undefined || sessionAttached === undefined) return undefined
+		return paneActive === '1' && windowActive === '1' && sessionAttached !== '0'
 	},
 
 	/**

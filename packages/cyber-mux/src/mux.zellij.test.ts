@@ -24,6 +24,15 @@ function fakeExec(calls: string[][], responses: Record<string, string | null | (
 	}
 }
 
+/**
+ * `zellij action list-clients` output: a header row, then one row per client whose SECOND
+ * whitespace-separated column is the pane id. `CLIENTS_NONE` is the header alone — what a session no
+ * client has ever attached to prints.
+ */
+const CLIENTS_ON_9 = 'CLIENT_ID ZELLIJ_PANE_ID RUNNING_COMMAND\n1 terminal_9 zsh'
+const CLIENTS_ON_10 = 'CLIENT_ID ZELLIJ_PANE_ID RUNNING_COMMAND\n1 terminal_10 zsh'
+const CLIENTS_NONE = 'CLIENT_ID ZELLIJ_PANE_ID RUNNING_COMMAND'
+
 /** The session BEFORE an open — nothing standing, so anything the listing gains is the open's. */
 const LIST_NONE = '[]'
 
@@ -365,15 +374,43 @@ describe('spec:cyber-mux/mux/lookup', () => {
 		})
 
 		it('lookup-focus-unknown-not-boolean', () => {
-			const exec = fakeExec([], { 'list-panes': LIST_ONE })
+			const exec = fakeExec([], { 'list-panes': LIST_ONE, 'list-clients': CLIENTS_ON_9 })
 			expect(zellijMuxAdapter.isPaneFocused(exec, { id: 'terminal_9' })).toBe(true)
 			expect(zellijMuxAdapter.isPaneFocused(exec, { id: 'terminal_99' })).toBeUndefined()
 		})
 
 		it('isPaneFocused reports false for a pane the backend says is not focused', () => {
-			const list = JSON.stringify([{ id: 'terminal_9', tab_id: 2, terminal_command: 'zsh', is_focused: false }])
-			const exec = fakeExec([], { 'list-panes': list })
+			const list = JSON.stringify([
+				{ id: 'terminal_9', tab_id: 2, terminal_command: 'zsh', is_focused: false },
+				{ id: 'terminal_10', tab_id: 2, terminal_command: 'zsh', is_focused: true },
+			])
+			const exec = fakeExec([], { 'list-panes': list, 'list-clients': CLIENTS_ON_10 })
 			expect(zellijMuxAdapter.isPaneFocused(exec, { id: 'terminal_9' })).toBe(false)
+		})
+
+		// The plausible wrong answer this member used to give. `list-panes --json` marks `is_focused`
+		// on MORE THAN ONE record at a time — a live session marks the floating plugin pane AND the
+		// tiled pane under it — so reading that field answered a confident `true` for a pane the client
+		// was not on. `open`'s restore already knew this and read `list-clients`; the probe now does
+		// too. Revert `isPaneFocused` to `found.is_focused === true` and this row goes red.
+		it('isPaneFocused believes the client, not is_focused, when two records claim focus', () => {
+			const list = JSON.stringify([
+				{ id: 'plugin_3', tab_id: 2, is_plugin: true, is_focused: true },
+				{ id: 'terminal_9', tab_id: 2, terminal_command: 'zsh', is_focused: true },
+			])
+			const exec = fakeExec([], { 'list-panes': list, 'list-clients': CLIENTS_ON_9 })
+			expect(zellijMuxAdapter.isPaneFocused(exec, { id: 'plugin_3' })).toBe(false)
+			expect(zellijMuxAdapter.isPaneFocused(exec, { id: 'terminal_9' })).toBe(true)
+		})
+
+		// No client attached is "cannot say", not "not focused": there is no focused pane at all for
+		// this one to fail to be, so a `false` would be reading a fact out of an absence.
+		it('isPaneFocused is unknown when no client is attached', () => {
+			const exec = fakeExec([], { 'list-panes': LIST_ONE, 'list-clients': CLIENTS_NONE })
+			expect(zellijMuxAdapter.isPaneFocused(exec, { id: 'terminal_9' })).toBeUndefined()
+			expect(
+				zellijMuxAdapter.isPaneFocused(fakeExec([], { 'list-panes': LIST_ONE }), { id: 'terminal_9' }),
+			).toBeUndefined()
 		})
 
 		it('lookup-listing-enumerates-all-panes', () => {

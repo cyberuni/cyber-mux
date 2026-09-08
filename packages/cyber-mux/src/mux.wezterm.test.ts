@@ -20,6 +20,24 @@ const LIST_ONE = JSON.stringify([
 	{ window_id: 1, tab_id: 2, pane_id: 9, workspace: 'default', title: 'zsh', cwd: 'file://host/unit' },
 ])
 
+const LIST_TWO = JSON.stringify([
+	{ window_id: 1, tab_id: 2, pane_id: 9, workspace: 'default' },
+	{ window_id: 1, tab_id: 2, pane_id: 10, workspace: 'default' },
+])
+
+/**
+ * Two tabs in one window, each with its own active pane — the shape measured live, where `is_active`
+ * was `true` on more than one row at once. A focus probe reading that field cannot tell these apart.
+ */
+const LIST_TWO_TABS_BOTH_ACTIVE = JSON.stringify([
+	{ window_id: 1, tab_id: 2, pane_id: 9, workspace: 'default', is_active: true },
+	{ window_id: 1, tab_id: 3, pane_id: 10, workspace: 'default', is_active: true },
+])
+
+/** `wezterm cli list-clients --format json` — one row per attached client. */
+const CLIENTS_ON_9 = JSON.stringify([{ username: 'u', hostname: 'h', pid: 1, focused_pane_id: 9 }])
+const CLIENTS_ON_10 = JSON.stringify([{ username: 'u', hostname: 'h', pid: 1, focused_pane_id: 10 }])
+
 describe('spec:cyber-mux/mux/placement', () => {
 	describe('weztermMuxAdapter', () => {
 		it('placement-wezterm-workspace-followup-call', () => {
@@ -387,9 +405,40 @@ describe('spec:cyber-mux/mux/lookup', () => {
 			expect(weztermMuxAdapter.paneExists(exec, { id: '99' })).toBe(false)
 		})
 
-		// No primitive to report focus at all — `undefined` is the seam's own honest answer, not a
-		// stand-in for false.
-		it('lookup-wezterm-focus-always-unknown', () => {
+		// wezterm DOES have a focus primitive — `list-clients --format json` carries `focused_pane_id`,
+		// and it moves with `activate-pane` (measured live on the pinned 20240203 build). The member
+		// used to answer a blanket `undefined` on the claim that no primitive existed.
+		it('lookup-wezterm-focus-reads-the-attached-client', () => {
+			const focused = fakeExec([], { list: LIST_ONE, 'list-clients': CLIENTS_ON_9 })
+			expect(weztermMuxAdapter.isPaneFocused(focused, { id: '9' })).toBe(true)
+			const elsewhere = fakeExec([], { list: LIST_TWO, 'list-clients': CLIENTS_ON_10 })
+			expect(weztermMuxAdapter.isPaneFocused(elsewhere, { id: '9' })).toBe(false)
+		})
+
+		// The trap this member is written around. `list --format json`'s `is_active` is per-TAB, and
+		// measured live it read `true` on THREE rows at once across two tabs and two windows — so a
+		// probe reading it would answer a confident `true` for two panes nobody is looking at. Pane 10
+		// here is its tab's active pane and is NOT where the client is.
+		it('lookup-wezterm-focus-does-not-read-is_active', () => {
+			const exec = fakeExec([], { list: LIST_TWO_TABS_BOTH_ACTIVE, 'list-clients': CLIENTS_ON_9 })
+			expect(weztermMuxAdapter.isPaneFocused(exec, { id: '9' })).toBe(true)
+			expect(weztermMuxAdapter.isPaneFocused(exec, { id: '10' })).toBe(false)
+		})
+
+		// The three ways this cannot be answered, none of which may become `false`: a pane no listing
+		// carries (gone, or the listing itself failed), a mux server with no client attached (measured:
+		// a literal `[]`), and an unparseable answer.
+		it('lookup-wezterm-focus-unknown-when-unanswerable', () => {
+			expect(
+				weztermMuxAdapter.isPaneFocused(fakeExec([], { list: LIST_ONE, 'list-clients': CLIENTS_ON_9 }), { id: '99' }),
+			).toBeUndefined()
+			expect(
+				weztermMuxAdapter.isPaneFocused(fakeExec([], { list: LIST_ONE, 'list-clients': '[]' }), { id: '9' }),
+			).toBeUndefined()
+			expect(weztermMuxAdapter.isPaneFocused(fakeExec([], { list: LIST_ONE }), { id: '9' })).toBeUndefined()
+			expect(
+				weztermMuxAdapter.isPaneFocused(fakeExec([], { list: LIST_ONE, 'list-clients': 'not json' }), { id: '9' }),
+			).toBeUndefined()
 			expect(weztermMuxAdapter.isPaneFocused(fakeExec([]), { id: '9' })).toBeUndefined()
 		})
 

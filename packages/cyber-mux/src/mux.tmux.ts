@@ -401,7 +401,14 @@ export const tmuxMuxAdapter: MuxAdapter = {
 		const line = out.split('\n').find((l) => l.split(' ')[0] === target.id)
 		if (!line) return undefined
 		const [, paneActive, windowActive, sessionAttached] = line.split(' ')
-		return paneActive === '1' && windowActive === '1' && sessionAttached !== '0' && sessionAttached !== undefined
+		// EVERY field checked for presence before any of them is read, not just the last one. A line
+		// that came back SHORT — one format token unexpanded, one field empty — used to leave
+		// `paneActive`/`windowActive` `undefined`, and `undefined === '1'` is `false`, so a listing this
+		// code could not actually parse answered "not focused" with full confidence. That is the plain
+		// wrong answer this member's whole tri-state exists to avoid; an unparseable line is a query
+		// that could not be answered.
+		if (paneActive === undefined || windowActive === undefined || sessionAttached === undefined) return undefined
+		return paneActive === '1' && windowActive === '1' && sessionAttached !== '0'
 	},
 
 	/**

@@ -289,10 +289,15 @@ export function createOttyAdapter(deps: { window?: string | undefined }): MuxAda
 		},
 
 		isPaneFocused(exec, target) {
-			const panes = listOttyPanes(exec)
-			const found = panes.find((p) => p.id === target.id)
+			// `is_focused` off the `panes --json` listing — and the FIELD is presence-checked, not only the
+			// pane. `otty panes --json` is documented as a command; its row FIELDS never are (see the
+			// header), so `is_focused` being absent from a real row is the likeliest shape of being wrong
+			// about this backend. `undefined === true` is `false`, which would turn that silence into a
+			// confident "not focused" — the plausible wrong answer. `isPaneZoomed` right below refuses on
+			// the same ground; this member now matches it instead of contradicting it.
+			const found = listOttyPanes(exec).find((p) => p.id === target.id)
 			if (!found) return undefined
-			return found.is_focused === true
+			return typeof found.is_focused === 'boolean' ? found.is_focused : undefined
 		},
 
 		/**

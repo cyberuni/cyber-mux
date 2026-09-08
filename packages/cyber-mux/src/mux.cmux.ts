@@ -365,7 +365,12 @@ export function createCmuxAdapter(deps: { workspace?: string | undefined }): Mux
 			// working behavior on source-only evidence — the half of #132 held for someone with a Mac.
 			const found = listCmuxSurfaces(exec).find((s) => s.id === target.id)
 			if (!found) return undefined
-			return found.focused === true
+			// The FIELD is presence-checked too, not just the surface. `focused` is optional on this row
+			// type, and `undefined === true` is `false` — so a listing that carries the surface but not
+			// the field used to answer a confident "not focused" about a backend that had said nothing.
+			// That matters more here than anywhere: every row shape in this adapter is a SOURCE read, so
+			// an absent field is the exact failure to expect. Same bar `isPaneZoomed` already holds.
+			return typeof found.focused === 'boolean' ? found.focused : undefined
 		},
 
 		/**

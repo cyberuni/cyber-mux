@@ -332,6 +332,17 @@ describe('spec:cyber-mux/mux', () => {
 			expect(cmuxMuxAdapter.isPaneFocused(exec, { id: 'surface:99' })).toBeUndefined()
 		})
 
+		// A row that carries the surface but NOT the focus field. Every row shape in this adapter is a
+		// source read rather than a live one, so a missing field is the likeliest way it is wrong — and
+		// `undefined === true` is `false`, which would turn that silence into a confident "not focused".
+		// Revert to `found.focused === true` and this goes red.
+		it('isPaneFocused() is undefined when the row carries no focus field', () => {
+			const exec = fakeExec([], {
+				'list-panels': JSON.stringify({ surfaces: [{ id: 'surface:1', title: 'zsh' }] }),
+			})
+			expect(cmuxMuxAdapter.isPaneFocused(exec, { id: 'surface:1' })).toBeUndefined()
+		})
+
 		// No `cwd`: cmux reports none per surface, and `requested_working_directory` is the directory
 		// asked for at creation, not where the shell is — exporting it would be a quiet lie after a `cd`.
 		it('listPanes() returns every surface, with no cwd and no invented label', () => {

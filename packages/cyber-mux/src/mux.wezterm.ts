@@ -24,9 +24,13 @@ import { pollForOutput } from './wait-output.ts'
  * - **No way to title a PANE**, at birth or after — `set-tab-title`/`set-window-title` exist, there
  *   is no pane equivalent. `rename(..., 'pane', …)` throws; `open`'s pane-tier `label` degrades to a
  *   stderr warning rather than silently dropping it or failing the whole open.
- * - **No focus-query primitive** — `list --format json`'s documented fields carry no active/focused
- *   indicator for a pane, tab, or window. `isPaneFocused` always answers `undefined`, which is the
- *   seam's own honest answer for "no primitive to report focus", not a workaround.
+ * - **A real focus-query primitive, and this file used to deny it.** `cli list-clients --format
+ *   json` carries `focused_pane_id` per attached client, and it MOVES: measured on the pinned
+ *   20240203 build with a GUI client attached to a headless mux server, it followed `cli
+ *   activate-pane` in both directions. `isPaneFocused` reads it and no longer answers a blanket
+ *   `undefined`. What it deliberately does NOT read is `list --format json`'s `is_active`, which is
+ *   the seam-shaped trap here: that flag is per-TAB, and the same run measured THREE rows reporting
+ *   `is_active: true` at once across two tabs and two windows.
  * - **A real, natively ABSOLUTE pane zoom, and it is the one thing in this file that WAS driven.**
  *   `cli zoom-pane --pane-id <id> --zoom|--unzoom|--toggle`, plus an `is_zoomed` flag on every
  *   `cli list --format json` row. Both were exercised against a headless `wezterm-mux-server` on the
@@ -255,11 +259,38 @@ export function createWeztermAdapter(deps: { newId: NewId }): MuxAdapter {
 			return listWeztermPanes(exec).some((p) => String(p.pane_id) === target.id)
 		},
 
-		isPaneFocused() {
-			// `list --format json`'s documented fields carry no active/focused indicator for a pane, tab, or
-			// window — there is no primitive to ask. `undefined` is the seam's own answer for exactly this
-			// case, not a stand-in for `false`: callers fail OPEN on it.
-			return undefined
+		/**
+		 * `wezterm cli list-clients --format json` carries `focused_pane_id` per attached client. This
+		 * member used to return a hard `undefined` on the grounds that "there is no primitive to ask",
+		 * and **that was wrong** — measured on the pinned 20240203-110809-5046fc22 build, against a
+		 * headless `wezterm-mux-server` with a real GUI client attached to it over the same socket:
+		 * `focused_pane_id` read `0` at rest, `1` after `cli activate-pane --pane-id 1`, and `0` again
+		 * after activating pane 0 back. It tracks focus, live, in both directions.
+		 *
+		 * **Not `list --format json`'s `is_active`**, which is the field this file already reads for
+		 * zoom and the obvious-looking answer. It is per-TAB, and the same run measured why that is
+		 * fatal here: with two tabs in one window and a second window open, THREE rows reported
+		 * `is_active: true` at once. It answers "is this the active pane of its tab", so a caller asking
+		 * "is the user looking at this pane" would get a confident `true` for two panes they are not
+		 * looking at — the plausible wrong answer, not a throw.
+		 *
+		 * Three-valued, and each value is earned:
+		 *
+		 * - `undefined` when the pane is in no listing (gone, or the listing itself failed —
+		 *   `listWeztermPanes` folds an exec failure into an empty array, which lands here as "cannot
+		 *   say" rather than as "not focused").
+		 * - `undefined` when NO client is attached, which a headless mux server reports as a literal
+		 *   `[]` (measured). Nobody is viewing anything, so there is no focused pane for this one to
+		 *   fail to be, and `false` would be reading a fact out of an absence.
+		 * - `true`/`false` otherwise, against every attached client: focused if ANY of them is on this
+		 *   pane. `MuxTarget` carries no client qualifier, so "the caller's client" is not expressible
+		 *   and any-client is the only answerable reading.
+		 */
+		isPaneFocused(exec, target) {
+			if (!listWeztermPanes(exec).some((p) => String(p.pane_id) === target.id)) return undefined
+			const clients = listWeztermClients(exec)
+			if (clients === undefined || clients.length === 0) return undefined
+			return clients.some((c) => c.focused_pane_id != null && String(c.focused_pane_id) === target.id)
 		},
 
 		/**
@@ -464,8 +495,8 @@ interface WeztermListEntry {
 	 * this adapter already makes, so `isPaneZoomed` costs wezterm no second exec.
 	 *
 	 * Verified against a live 20240203 mux server, unlike most of this file: the key is on every row
-	 * of the listing (alongside `is_active`, which `isPaneFocused` predates and does not yet read),
-	 * and only the zoomed pane's row read `true`.
+	 * of the listing, and only the zoomed pane's row read `true`. `is_active` rides the same row and is
+	 * deliberately NOT modelled here — `isPaneFocused` explains why it is the wrong field for focus.
 	 */
 	is_zoomed?: boolean | undefined
 }
@@ -484,6 +515,38 @@ function listWeztermPanes(exec: Exec): WeztermListEntry[] {
 	return parsed.filter(
 		(p): p is WeztermListEntry => p != null && p.pane_id != null && p.tab_id != null && p.window_id != null,
 	)
+}
+
+interface WeztermClientEntry {
+	/**
+	 * The pane the client is currently viewing. Verified live on 20240203 against a GUI client attached
+	 * to a headless mux server: present on the row, and it MOVED with `cli activate-pane` both ways.
+	 * Optional on the type all the same — this is a JSON payload from another process, and a row
+	 * missing it must reach `isPaneFocused` as "cannot say".
+	 */
+	focused_pane_id?: number | string | undefined
+}
+
+/**
+ * The attached clients, or `undefined` when wezterm could not be asked — and that distinction is the
+ * whole reason this returns a nullable rather than folding failure into `[]` the way
+ * `listWeztermPanes` does. Here the two readings differ: `[]` is a real, measured answer (a mux server
+ * with no client attached prints exactly that) meaning "nobody is viewing anything", while an exec or
+ * parse failure means "wezterm did not answer". `isPaneFocused` maps both to `undefined` today, so
+ * nothing turns on it yet; collapsing them would still be throwing away the one fact that lets a
+ * later caller tell an idle server from a broken one.
+ */
+function listWeztermClients(exec: Exec): WeztermClientEntry[] | undefined {
+	const out = exec('wezterm', ['cli', 'list-clients', '--format', 'json'])
+	if (out === null) return undefined
+	let parsed: unknown
+	try {
+		parsed = JSON.parse(out)
+	} catch {
+		return undefined
+	}
+	if (!Array.isArray(parsed)) return undefined
+	return parsed.filter((c): c is WeztermClientEntry => c != null && typeof c === 'object')
 }
 
 /** `cwd` is reported as a `file://` URI; strip the scheme and host down to the bare path. */

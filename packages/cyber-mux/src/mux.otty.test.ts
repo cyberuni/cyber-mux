@@ -51,7 +51,12 @@ const NEW_WINDOW_RESPONSE = JSON.stringify({
 
 const LIST_PANES_RESPONSE = JSON.stringify([
 	{ pane_id: 'pane:1', title: 'main', cwd: '/home/user', is_focused: true },
-	{ pane_id: 'pane:2', title: 'tests', cwd: '/home/user/tests' },
+	// Explicit `is_focused: false` — the row type models the field as optional, and the two readings
+	// have to be told apart: pane:2 is a pane otty SAYS is not focused, pane:3 is a row that says
+	// nothing about focus at all. Which of the two a real otty emits for an unfocused pane is unknown
+	// (its listing's row fields are undocumented — #128), and `isPaneFocused` is written so that being
+	// wrong about it costs an `undefined` rather than a confident lie.
+	{ pane_id: 'pane:2', title: 'tests', cwd: '/home/user/tests', is_focused: false },
 	{ pane_id: 'pane:3', cwd: '/tmp' },
 ])
 
@@ -379,6 +384,15 @@ describe('spec:cyber-mux/mux', () => {
 		it('isPaneFocused() returns undefined for an unknown pane', () => {
 			const exec = fakeExec([], { panes: LIST_PANES_RESPONSE })
 			expect(ottyMuxAdapter.isPaneFocused(exec, { id: 'pane:99' })).toBeUndefined()
+		})
+
+		// `otty panes --json` is documented as a command; its row FIELDS never are. So a real row
+		// without `is_focused` is the likeliest shape of being wrong about this backend, and
+		// `undefined === true` is `false` — a confident "not focused" read out of a silence. Revert to
+		// `found.is_focused === true` and this goes red.
+		it('isPaneFocused() is undefined when the row carries no focus field', () => {
+			const exec = fakeExec([], { panes: LIST_PANES_RESPONSE })
+			expect(ottyMuxAdapter.isPaneFocused(exec, { id: 'pane:3' })).toBeUndefined()
 		})
 
 		it('listPanes() returns all panes with their metadata', () => {
