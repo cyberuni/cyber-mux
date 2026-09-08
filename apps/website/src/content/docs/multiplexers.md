@@ -245,6 +245,15 @@ limitations rather than forced parity, but they are docs claims awaiting a real 
 - **Has a real workspace tier.** cmux's hierarchy is Window → Workspace → Pane → Surface, where a
   **Surface** is the terminal unit (a tab within a pane). `--at workspace` maps to a new workspace;
   `--at tab` maps to a new surface in the current pane; `--at pane:*` maps to a new pane (a split).
+- **Groups workspaces, unlike every other backend with a workspace tier.** cmux has a tier *above* its
+  workspace — `workspace-group`, a named collapsible sidebar section holding several top-level
+  workspaces — so a `--at workspace` open carrying a workspace group id is really grouped rather than
+  ignored the way herdr's and WezTerm's is. The opaque id rides cmux's `--idempotency-key`, so
+  re-using it finds the group instead of minting a second one. A `--at tab` or `--at pane:*` open is
+  *not* grouped: it lands in the workspace the caller is already in.
+  **One caveat:** `workspace-group create` always mints a brand-new *anchor* workspace, so the first
+  grouping call for a given id adds a workspace to the sidebar. It does not steal focus, and repeat
+  calls for the same id open nothing.
 - **Never binds a git worktree.** Its CLI has no `worktree` subcommand or concept of one, so — like
   WezTerm and Zellij — it falls back to plain git plus a placement-appropriate `open()`.
 - **No `--env` flag on any space-creating command.** Every cmux open takes the same

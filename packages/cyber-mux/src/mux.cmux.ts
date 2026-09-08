@@ -14,10 +14,15 @@ import { pollForOutput } from './wait-output.ts'
  * within a pane), which maps to cyber-mux's `LivePane`. The env variable `$CMUX_SURFACE_ID` carries
  * the caller's surface identity — analogous to `$TMUX_PANE` or `$WEZTERM_PANE`.
  *
- * Probed from the cmux docs and CLI reference only — cmux is not installed in this sandbox (it is
- * macOS-GUI-only), so nothing here carries the "verified against a live binary" claim
- * `mux.tmux.ts`/`mux.herdr.ts` make; it makes the same honest disclaimer `mux.wezterm.ts` and
- * `mux.zellij.ts` do.
+ * Probed from the cmux docs and CLI reference — and, for the `workspace-group` family below, from
+ * cmux's own Swift source (`manaflow-ai/cmux`, read at commit `71eb616d`). cmux is not installed in
+ * this sandbox (it is macOS-GUI-only), so nothing here carries the "verified against a live binary"
+ * claim `mux.tmux.ts`/`mux.herdr.ts` make; it makes the same honest disclaimer `mux.wezterm.ts` and
+ * `mux.zellij.ts` do, and issue #128 tracks the missing real-boundary suite that would settle it.
+ *
+ * Prefer the source over https://cmux.com/docs/api when they disagree: that page documents 27 of
+ * cmux's 162 top-level commands and never claimed to be an inventory, so absence from it is not
+ * evidence a verb does not exist. That misreading is what issue #132 was originally filed on.
  *
  * Real capability shape that fell out of the probe:
  *
@@ -28,6 +33,17 @@ import { pollForOutput } from './wait-output.ts'
  *   surface).
  * - **Workspace is a real tier.** `cmux new-workspace` creates a genuinely separate workspace,
  *   reported as `OpenedPane.workspace`.
+ * - **And there is a real tier ABOVE it.** `workspace-group` groups multiple top-level WORKSPACES into
+ *   a named, collapsible sidebar section. This is the tier `MuxOpenOptions.workspaceGroup` targets, and
+ *   it is why `group` is NOT the no-op this header used to justify: the old reasoning ("cmux's workspace
+ *   tier already groups every surface in it, so there is nothing to add") is sound for Pane → Surface
+ *   and simply does not reach the tier the flag is about. See `group` for the mapping.
+ * - **Grouping OPENS a workspace, once per group id.** `workspace-group create` always mints a brand-new
+ *   ANCHOR workspace for the group, so the first `group` call for a given id adds a visible workspace to
+ *   the user's sidebar that the caller did not ask for. That is a real deviation from the seam's "as
+ *   read-only in its side effects as `rename`, it opens nothing", declared here rather than hidden: the
+ *   alternative was the silent drop this replaced, and cmux offers no membership-only create. It does
+ *   NOT steal focus (`selectAnchor: false`), and later calls for the same id open nothing.
  * - **No `--env` on any route.** Like wezterm and zellij, env is native at no tier, so every open
  *   rides the `envFallback` compensation (an `env K=V` prefix on the launch command, or a stderr
  *   warning when there is no command to ride).
@@ -81,6 +97,18 @@ export function createCmuxAdapter(deps: { workspace?: string | undefined }): Mux
 				if (!surfaceId) throw new Error('cmux new-workspace did not report the initial surface ref')
 				const opened = openedSurface(surfaceId, parsed.pane_ref, parsed.workspace_ref)
 				if (opts.label) adapter.rename(exec, opened, 'tab', opts.label)
+				// Through `group`, not a second spelling of create/add here: grouping a workspace this open
+				// just created and grouping one that was already open are the same act, so one spelling per
+				// backend is the only way the two cannot drift. Gated on the WORKSPACE route alone — a `tab`
+				// or `pane:*` open lands in the caller's existing workspace, and grouping that would group a
+				// space the caller never opened, which is the same line tmux draws at its split.
+				//
+				// Unlike tmux this does NOT come free: cmux's group tier is the workspace while `group`'s
+				// target is a tab, so it pays the `rpc surface.list` lookup even here, where the workspace ref
+				// is already in hand. Spelling create/add a second time to save that call is the drift the
+				// seam routes through one member to prevent, and the call is the honest price of not drifting.
+				// `{ id: opened.tab }`, never `opened`: `group` takes a TAB id and `opened.id` is a SURFACE.
+				if (opts.workspaceGroup != null) adapter.group(exec, { id: opened.tab }, opts.workspaceGroup)
 				runLaunch(adapter, exec, opened, opts.env, opts.launch)
 				return opened
 			}
@@ -143,11 +171,35 @@ export function createCmuxAdapter(deps: { workspace?: string | undefined }): Mux
 			if (paneRef) exec('cmux', ['rename-pane', '--pane', paneRef, '--title', name])
 		},
 
-		group() {
-			// A complete no-op, herdr/wezterm/zellij-style: cmux has a real workspace tier that already
-			// groups every surface in it. The grouping TAG (`MuxOpenOptions.workspaceGroup`) exists for
-			// a backend with NO workspace tier (tmux) to hold one in. cmux has a real tier, so there is
-			// nothing for this to add.
+		group(exec, target, group) {
+			// NOT a no-op, and the reason the old one gave was the right answer to the wrong tier. cmux's
+			// workspace tier does group every surface in it — but the tier this flag targets is the one
+			// ABOVE it. cmux ships a first-class `workspace-group` family that groups multiple top-level
+			// WORKSPACES into a named, collapsible sidebar section, so a caller passing `workspaceGroup`
+			// has a real cmux realization and used to get silence.
+			//
+			// `target.id` is a TAB id, which on this backend is a PANE ref (`openedSurface` reports
+			// `tab: pane_ref`), while the groupable space is the WORKSPACE that pane sits in — so the
+			// membership call needs a lookup the other backends do not. `cmux rpc surface.list` is that
+			// lookup; see `paneToWorkspace`.
+			const workspace = paneToWorkspace(exec, target.id)
+			if (!workspace) {
+				throw new Error(withReason(exec, `cmux could not resolve the workspace holding ${target.id}`))
+			}
+			// The seam's group id is OPAQUE and caller-chosen; cmux mints its OWN group ids (a UUID, and a
+			// per-session `workspace_group:N` ref), so the id cannot simply BE the group. `--idempotency-key`
+			// is the seam's exact counterpart: a second `create` carrying the same key returns the existing
+			// group with `"created": false` rather than minting a second one, so this stays the single
+			// spelling for both "make the group" and "find the group I already made". The same value also
+			// rides `--name` so the sidebar section a human sees carries the caller's own id — cmux ignores
+			// the name on the repeat call (it never consults names for identity), so the two calls agree.
+			const out = exec('cmux', ['--json', 'workspace-group', 'create', '--name', group, '--idempotency-key', group])
+			if (!out) throw new Error(withReason(exec, 'cmux workspace-group create failed'))
+			const groupRef = parseGroupRef(out)
+			if (!groupRef) throw new Error('cmux workspace-group create did not report the group ref')
+			// Unconditional, no membership pre-check: `add` on a workspace already in this group short-circuits
+			// and still reports success, so re-grouping is idempotent and a pre-flight read would buy nothing.
+			exec('cmux', ['workspace-group', 'add', '--group', groupRef, '--workspace', workspace])
 		},
 
 		sendText(exec, target, text) {
@@ -243,6 +295,60 @@ function parseCmuxOutput(out: string): CmuxOutput {
 	} catch {
 		return {}
 	}
+}
+
+/**
+ * The group ref `workspace-group create` reports, out of its `{ group, created }` envelope.
+ *
+ * `ref` first because cmux's DEFAULT `--id-format` is `refs`, which strips `id` from any object that
+ * carries a sibling `ref` — so under the plain `--json` this adapter sends, `workspace_group:N` is the
+ * only id present. `id` is read as a fallback rather than ignored: it is what an `--id-format uuids`
+ * or `both` response carries, and `workspace-group add --group` accepts either spelling.
+ */
+function parseGroupRef(out: string): string | undefined {
+	let parsed: unknown
+	try {
+		parsed = JSON.parse(out)
+	} catch {
+		return undefined
+	}
+	if (!parsed || typeof parsed !== 'object') return undefined
+	const group = (parsed as { group?: { ref?: string; id?: string } }).group
+	return group?.ref ?? group?.id
+}
+
+/**
+ * The workspace holding a pane — the lookup `group` needs and no other member does.
+ *
+ * `cmux identify` cannot answer this. Its `--surface` flag does not DERIVE a workspace: the workspace
+ * comes from `--workspace` or `$CMUX_WORKSPACE_ID`, and `--surface` is only validated against it, so
+ * for a space outside the caller's own workspace `identify` reports `"caller": null` and exits 0 — a
+ * silent wrong answer, which is the one thing a lookup must never give. `list-panes` does not report
+ * an owning workspace either; it takes one as an input FILTER.
+ *
+ * So this goes through `rpc`, cmux's documented raw-socket verb (`docs/cli-contract.md`, which carries
+ * a worked `surface_id` example): `surface.list` resolves its target workspace FROM a `pane_id` or
+ * `surface_id` when given no workspace, and echoes it at the top level of the response. The
+ * first-class alternative is a sweep — `workspace list`, then `list-panels --workspace` per row — which
+ * is what cmux itself does internally, at one round trip per workspace instead of one total.
+ *
+ * `rpc` skips the id-format pass unless asked, so the response carries BOTH `workspace_ref` and
+ * `workspace_id`; the ref is preferred for the reason `parseGroupRef` prefers it.
+ *
+ * Read off cmux's own Swift source, NOT verified against a live binary — see the header.
+ */
+function paneToWorkspace(exec: Exec, paneId: string): string | undefined {
+	const out = exec('cmux', ['rpc', 'surface.list', JSON.stringify({ pane_id: paneId })])
+	if (!out) return undefined
+	let parsed: unknown
+	try {
+		parsed = JSON.parse(out)
+	} catch {
+		return undefined
+	}
+	if (!parsed || typeof parsed !== 'object') return undefined
+	const shape = parsed as { workspace_ref?: string; workspace_id?: string }
+	return shape.workspace_ref ?? shape.workspace_id
 }
 
 interface CmuxSurface {

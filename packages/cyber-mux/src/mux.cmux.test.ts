@@ -33,6 +33,20 @@ const NEW_WORKSPACE_RESPONSE = JSON.stringify({
 	workspace_ref: 'workspace:2',
 })
 
+/** `rpc surface.list` echoes the workspace it resolved the pane into at the TOP level, not per row. */
+const SURFACE_LIST_RESPONSE = JSON.stringify({
+	workspace_id: '9C4E1B2A-0000-4000-8000-000000000001',
+	workspace_ref: 'workspace:2',
+	window_ref: 'window:1',
+	surfaces: [{ ref: 'surface:10', pane_ref: 'pane:5' }],
+})
+
+/** `workspace-group create` wraps the group in a `{ group, created }` envelope. */
+const GROUP_CREATE_RESPONSE = JSON.stringify({
+	group: { ref: 'workspace_group:1', name: 'shift-a', member_workspace_refs: [] },
+	created: true,
+})
+
 const LIST_PANES_RESPONSE = JSON.stringify([
 	{
 		pane_ref: 'pane:1',
@@ -218,15 +232,127 @@ describe('spec:cyber-mux/mux', () => {
 			])
 		})
 
-		it('group() is a no-op — cmux has a real workspace tier', () => {
-			const calls: string[][] = []
-			const exec = fakeExec(calls, {})
-			cmuxMuxAdapter.group(exec, { id: 'surface:1' }, 'my-group')
-			expect(calls).toEqual([])
-		})
-
 		it('name is cmux', () => {
 			expect(cmuxMuxAdapter.name).toBe('cmux')
+		})
+	})
+})
+
+describe('spec:cyber-mux/mux/placement', () => {
+	describe('cmuxMuxAdapter', () => {
+		const groupExec = (calls: string[][]) =>
+			fakeExec(calls, { rpc: SURFACE_LIST_RESPONSE, 'workspace-group': GROUP_CREATE_RESPONSE })
+
+		// `group` on an already-open space, the verb `open` itself routes through — one spelling, so the
+		// two cannot drift.
+		it('group() creates the group idempotently, then adds the workspace', () => {
+			const calls: string[][] = []
+			cmuxMuxAdapter.group(groupExec(calls), { id: 'pane:5' }, 'shift-a')
+			expect(calls).toEqual([
+				['rpc', 'surface.list', '{"pane_id":"pane:5"}'],
+				['--json', 'workspace-group', 'create', '--name', 'shift-a', '--idempotency-key', 'shift-a'],
+				['workspace-group', 'add', '--group', 'workspace_group:1', '--workspace', 'workspace:2'],
+			])
+		})
+
+		// The id reaches cmux VERBATIM, on both flags — never parsed, split, or derived from a label.
+		it('group() passes the opaque id through unaltered', () => {
+			const calls: string[][] = []
+			cmuxMuxAdapter.group(groupExec(calls), { id: 'pane:5' }, 'acme - beta - main')
+			expect(calls[1]).toEqual([
+				'--json',
+				'workspace-group',
+				'create',
+				'--name',
+				'acme - beta - main',
+				'--idempotency-key',
+				'acme - beta - main',
+			])
+		})
+
+		// The seam's `name` is the SPACE's own name, not the group's. cmux has a real workspace tier
+		// whose tab label is already the tab's own name, so — herdr's answer exactly — it is not stored.
+		it('group() ignores the space name: nothing composed it, so nothing is stored', () => {
+			const withName: string[][] = []
+			const withoutName: string[][] = []
+			cmuxMuxAdapter.group(groupExec(withName), { id: 'pane:5' }, 'shift-a', 'editor')
+			cmuxMuxAdapter.group(groupExec(withoutName), { id: 'pane:5' }, 'shift-a')
+			expect(withName).toEqual(withoutName)
+		})
+
+		it('group() prefers the group ref, and falls back to a uuid id under --id-format uuids', () => {
+			const calls: string[][] = []
+			const uuid = '3F2504E0-4F89-11D3-9A0C-0305E82C3301'
+			const exec = fakeExec(calls, {
+				rpc: SURFACE_LIST_RESPONSE,
+				'workspace-group': JSON.stringify({ group: { id: uuid, name: 'shift-a' }, created: true }),
+			})
+			cmuxMuxAdapter.group(exec, { id: 'pane:5' }, 'shift-a')
+			expect(calls[2]).toEqual(['workspace-group', 'add', '--group', uuid, '--workspace', 'workspace:2'])
+		})
+
+		// A lookup that cannot answer must not guess a workspace: grouping the WRONG one is the failure
+		// this whole route exists to avoid, so it refuses by name before any group command is issued.
+		it("group() throws when the pane's workspace cannot be resolved, issuing no group command", () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'workspace-group': GROUP_CREATE_RESPONSE })
+			expect(() => cmuxMuxAdapter.group(exec, { id: 'pane:5' }, 'shift-a')).toThrow(/workspace/i)
+			expect(calls).toEqual([['rpc', 'surface.list', '{"pane_id":"pane:5"}']])
+		})
+
+		it('group() throws when create reports no group ref, issuing no add', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, {
+				rpc: SURFACE_LIST_RESPONSE,
+				'workspace-group': JSON.stringify({ created: true }),
+			})
+			expect(() => cmuxMuxAdapter.group(exec, { id: 'pane:5' }, 'shift-a')).toThrow(/group ref/i)
+			expect(calls.map((c) => c[0])).toEqual(['rpc', '--json'])
+		})
+
+		it('placement-cmux-group-id-workspace-group', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, {
+				'new-workspace': NEW_WORKSPACE_RESPONSE,
+				rpc: SURFACE_LIST_RESPONSE,
+				'workspace-group': GROUP_CREATE_RESPONSE,
+			})
+			cmuxMuxAdapter.open(exec, { cwd: '/unit', at: 'workspace', workspaceGroup: 'shift-a' })
+			expect(calls).toEqual([
+				['--json', 'new-workspace', '--cwd', '/unit'],
+				// the TAB id of the new workspace — cmux's pane ref — is what the lookup resolves
+				['rpc', 'surface.list', '{"pane_id":"pane:5"}'],
+				['--json', 'workspace-group', 'create', '--name', 'shift-a', '--idempotency-key', 'shift-a'],
+				['workspace-group', 'add', '--group', 'workspace_group:1', '--workspace', 'workspace:2'],
+			])
+		})
+
+		// A workspace nobody grouped stays ungrouped, and no adapter invents an id.
+		it('open() at workspace with no group issues no grouping command', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'new-workspace': NEW_WORKSPACE_RESPONSE })
+			cmuxMuxAdapter.open(exec, { cwd: '/unit', at: 'workspace' })
+			expect(calls).toEqual([['--json', 'new-workspace', '--cwd', '/unit']])
+		})
+
+		// A tab or split lands in the caller's EXISTING workspace; grouping that would group a space the
+		// caller never opened — the same line tmux draws at its split.
+		it('placement-cmux-group-only-the-workspace-route', () => {
+			const tabCalls: string[][] = []
+			cmuxMuxAdapter.open(fakeExec(tabCalls, { 'new-surface': NEW_SURFACE_RESPONSE }), {
+				cwd: '/unit',
+				at: 'tab',
+				workspaceGroup: 'shift-a',
+			})
+			expect(tabCalls).toEqual([['--json', 'new-surface', '--cwd', '/unit']])
+
+			const paneCalls: string[][] = []
+			cmuxMuxAdapter.open(fakeExec(paneCalls, { 'new-pane': NEW_PANE_RESPONSE }), {
+				cwd: '/unit',
+				at: 'pane:right',
+				workspaceGroup: 'shift-a',
+			})
+			expect(paneCalls).toEqual([['--json', 'new-pane', '--direction', 'right', '--cwd', '/unit']])
 		})
 	})
 })
