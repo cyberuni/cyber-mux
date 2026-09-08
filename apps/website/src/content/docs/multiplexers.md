@@ -270,12 +270,16 @@ is no otty row in that job and no `mux.otty.integration.test.ts`, and nothing he
 was driven against:
 
 - **Has a real workspace tier.** otty's hierarchy is Windows > Tabs > Splits > Panes. `--at workspace`
-  maps to a new window; `--at tab` maps to a new tab; `--at pane:*` maps to a split.
+  maps to a new window (`otty open`, which always opens one — it takes no `--new-window`, and names
+  the window at birth with `--title`); `--at tab` maps to a new tab; `--at pane:*` maps to a split,
+  `otty pane split --direction right|down`.
 - **Never binds a git worktree.** Its CLI has no `worktree` subcommand, so — like the other GUI-based
   backends — it falls back to plain git plus `open()`.
 - **No `--env` flag on any space-creating command.** Every otty open takes the command-prefix-or-warn
   fallback.
-- **Can name a pane.** `pane rename` and `tab rename` rename an already-open space.
+- **Cannot name a pane.** otty scopes `rename` to windows and tabs, so `tab rename` names an
+  already-open tab and a pane-tier `rename` is refused by name — a `--label` on a `--at pane:*` open
+  degrades to a warning instead, exactly as on WezTerm.
 - **Reports focused pane.** `panes --json` carries an `is_focused` field, so `isPaneFocused` answers
   `true`/`false` rather than `unknown`.
 - **Cannot size a split.** Split sizing is not available via the CLI; a requested `ratio` is dropped.
