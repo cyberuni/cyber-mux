@@ -904,12 +904,40 @@ function herdrWorktreeCapability(): WorktreeWorkspaceCapability {
 			return parseWorktreeBindings(exec('herdr', ['worktree', 'list', '--cwd', opts.primaryRoot]))
 		},
 
-		releaseWorkspace(exec, workspace) {
+		releaseWorkspace(exec, workspace, opts) {
 			// Closes the workspace only — the checkout stays on disk for `git worktree remove` to take
 			// under cyber-mux's own gates. Verified against a live herdr: worktrees survive the close.
-			exec('herdr', ['workspace', 'close', workspace])
+			//
+			// `--group` is what makes the close reach a primary workspace's whole worktree group, and it
+			// is the DEFAULT because that reach is what this verb has always had: herdr cascaded
+			// implicitly through 0.8.2, and 0.9.0 moved the same behavior behind the flag
+			// (herdrdev/herdr#2874). Sending the bare verb to a 0.9.0 server does not error — it just
+			// releases the primary and leaves the group up, which is the silent narrowing this default
+			// exists to prevent.
+			if (opts?.group === false) {
+				exec('herdr', ['workspace', 'close', workspace])
+				return
+			}
+			if (exec('herdr', ['workspace', 'close', workspace, '--group']) !== null) return
+			// Pre-0.9.0 herdr has no `--group` and rejects it CLIENT-side, at argument parsing, with its
+			// usage line on stderr — before the request ever reaches the server, so nothing was closed.
+			// That is a version signal, not a failure: on those releases the bare verb already cascades,
+			// so retrying it is what keeps the same observable behavior on 0.8.2 and 0.9.0 alike. The
+			// guard is deliberately narrow — a server-side refusal answers JSON (`{"error":{"code":…}}`),
+			// never a usage line, so a real failure is never retried into a NON-cascading close.
+			if (rejectedUnknownFlag(exec)) exec('herdr', ['workspace', 'close', workspace])
 		},
 	}
+}
+
+/**
+ * Whether the last `Exec` failure was herdr rejecting a flag it does not know — its argument parser
+ * answers the bare usage line on stderr and exits without contacting the server, which is what
+ * distinguishes "this herdr is too old for that flag" from "the server refused the operation".
+ * Every server-side refusal is a JSON error envelope instead.
+ */
+function rejectedUnknownFlag(exec: Exec): boolean {
+	return exec.lastError?.startsWith('usage:') === true
 }
 
 /**

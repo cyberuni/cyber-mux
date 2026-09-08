@@ -1275,10 +1275,72 @@ describe('herdrMuxAdapter — capabilities without an owned node in this file', 
 		expect(worktree().bindings(() => out, { primaryRoot: '/repo' }).size).toBe(0)
 	})
 
-	it('worktree.releaseWorkspace() closes the workspace without touching the checkout', () => {
+	it('worktree.releaseWorkspace() closes the whole worktree group by default', () => {
 		const calls: string[][] = []
 		const exec = fakeExec(calls, { 'workspace close': '' })
 		worktree().releaseWorkspace(exec, 'w21')
+		// `--group` is the default because it is what the verb has always DONE: herdr cascaded
+		// implicitly through 0.8.2, and 0.9.0 put that same reach behind the flag. Without it a 0.9.0
+		// server closes only the primary and silently leaves the group open (issue #154).
+		expect(calls).toEqual([['workspace', 'close', 'w21', '--group']])
+	})
+
+	it('worktree.releaseWorkspace({ group: false }) closes only the workspace named', () => {
+		const calls: string[][] = []
+		const exec = fakeExec(calls, { 'workspace close': '' })
+		worktree().releaseWorkspace(exec, 'w21', { group: false })
+		expect(calls).toEqual([['workspace', 'close', 'w21']])
+	})
+
+	it('worktree.releaseWorkspace({ group: true }) is the default spelled out', () => {
+		const calls: string[][] = []
+		const exec = fakeExec(calls, { 'workspace close': '' })
+		worktree().releaseWorkspace(exec, 'w21', { group: true })
+		expect(calls).toEqual([['workspace', 'close', 'w21', '--group']])
+	})
+
+	it('worktree.releaseWorkspace() retries bare when herdr rejects --group as an unknown flag', () => {
+		// Pre-0.9.0 herdr parses `--group` client-side and answers its usage line without contacting the
+		// server, so nothing was closed. There the bare verb already cascades — retrying it is what
+		// keeps the group released on 0.8.2 and 0.9.0 alike.
+		const calls: string[][] = []
+		const exec: Exec = (_cmd, args) => {
+			calls.push(args)
+			if (args.includes('--group')) {
+				exec.lastError = 'usage: herdr workspace close <workspace_id>'
+				return null
+			}
+			exec.lastError = undefined
+			return ''
+		}
+		worktree().releaseWorkspace(exec, 'w21')
+		expect(calls).toEqual([
+			['workspace', 'close', 'w21', '--group'],
+			['workspace', 'close', 'w21'],
+		])
+	})
+
+	it('worktree.releaseWorkspace() does NOT retry bare when the SERVER refuses the close', () => {
+		// A server-side refusal answers a JSON error envelope, never a usage line. Retrying it would
+		// turn a failed group close into a silent primary-only close — exactly the bug being fixed.
+		const calls: string[][] = []
+		const exec: Exec = (_cmd, args) => {
+			calls.push(args)
+			exec.lastError = '{"error":{"code":"workspace_not_found","message":"workspace w21 not found"}}'
+			return null
+		}
+		worktree().releaseWorkspace(exec, 'w21')
+		expect(calls).toEqual([['workspace', 'close', 'w21', '--group']])
+	})
+
+	it('worktree.releaseWorkspace({ group: false }) never retries with the flag', () => {
+		const calls: string[][] = []
+		const exec: Exec = (_cmd, args) => {
+			calls.push(args)
+			exec.lastError = 'usage: herdr workspace close <workspace_id>'
+			return null
+		}
+		worktree().releaseWorkspace(exec, 'w21', { group: false })
 		expect(calls).toEqual([['workspace', 'close', 'w21']])
 	})
 
