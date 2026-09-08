@@ -970,3 +970,114 @@ Decisions (`135-pane-resize` — the resize seam member, issue #135):
   **Unverified, and stated as such:** the otty and zellij readings are from published CLI docs; this
   machine has neither binary. Nothing in either adapter changed — both simply continue to omit
   `regions` — so no untested command shape was written on the strength of those docs.
+
+Decisions (`backend-survey-2026-09` — feasibility verdicts for multiplexers not yet driven):
+
+- **`directvt/vtm` — VERDICT: undrivable.** 3,357 stars, probed 2026-09-07 against `doc/settings.md`
+  (the event-sources table) and `doc/command-line-options.md` at commit `e84626e`, not the README.
+  Gate 1 (per-pane identity) **FAILED**: the scripting API is exclusively relative traversal
+  (`vtm.desktop.FocusNextWindow(n)`) or spawn-by-menu-template-name (`vtm.taskbar.Set({id='Term'})`,
+  `vtm.desktop.Run({id=...})`). Neither yields a handle onto an existing live pane from outside, so
+  there is nothing to address. Gates 2 and 3 not reached. Durable, in screen's own way: this is the
+  shape of the control surface, not a missing flag.
+
+- **`aaronjanse/3mux` — VERDICT: undrivable.** 1,912 stars, probed 2026-09-07 against `main.go` and
+  `serve.go` at commit `f088961` — no `docs/` folder exists, so source was the only reference.
+  Gate 1 **FAILED**: the CLI is `new <name>` / `attach <name>` / `kill <name>`, all session-level, and
+  the sockets carry fds, resize, detach and kill — never a pane id. No addressing of any kind, not
+  even relative. Durable.
+
+- **`prompt-toolkit/pymux` — VERDICT: undrivable.** 1,547 stars, probed 2026-09-07 against
+  `pymux/commands/commands.py` at commit `163eeb3`; no prose reference exists. Gate 1 **FAILED**, and
+  instructively: an internal stable `pane_id` *does* exist, but is never accepted as a CLI target.
+  `select-pane` / `select-window` take only `':.+'` / `':.-'` (next/prev) or a renumbering index, and
+  `split-window` has no `-t` at all. Internal identity that the CLI will not accept is not identity
+  for this seam's purposes.
+
+- **`deadpixi/mtm` — VERDICT: undrivable.** 1,204 stars, probed 2026-09-07 against the `mtm.1` man
+  page at commit `b346b86`, cross-checked by grepping `mtm.c` for IPC primitives (none found).
+  Gate 1 **FAILED**: there is no external control channel at all — commands are in-band keychords into
+  the TUI's own input, addressed by direction and focus. Durable.
+
+- **`martanne/abduco` — VERDICT: not-a-multiplexer.** 985 stars, probed 2026-09-07 against the
+  `abduco.1` man page. One session is one pty running one command; there is no split, pane, or window
+  concept to address. The man page itself names `dvtm` as the tool expected to provide multiplexing on
+  top of it. Durable.
+
+- **`rse/stmux` — VERDICT: not-a-multiplexer (for this seam).** 547 stars, first seen in this sweep,
+  probed 2026-09-07 against `src/stmux.md` at commit `290cfa79`, cross-checked against
+  `src/stmux-7-help.ts`. Gate 1 **FAILED**: it is a launch-time static grid (`stmux -- [ A .. B ]`)
+  navigated by in-TUI keystrokes (`CTRL+a 1-9`, arrows) with no external command surface — and more
+  fundamentally, no facility to create a pane after launch, which `open()` requires.
+
+- **`Yazelix/nova` — VERDICT: already driven.** Probed 2026-09-07: its multiplexing component
+  (`Yazelix/nova-zellij`) is a source fork of vanilla zellij carrying the same `zellij-client` /
+  `server` / `utils` crates and an unchanged CLI (`DumpScreen --pane-id <ID>`, same MANPAGE.md); the
+  stated deltas are Kitty-graphics rendering only. cyber-mux drives zellij, so this needs no adapter.
+
+- **`cosmos72/twin` — VERDICT: undrivable as an `Exec` backend, with the reason recorded because it is
+  NOT the usual one.** 1,100 stars, probed 2026-09-07 against `docs/libtw.txt`, `docs/twin.1` and the
+  sample clients (`lsobj.c`, `restackW.c`) at HEAD of `main`. All three gates are conceptually
+  satisfied — stable object handles (`tobj`), `Tw_CreateWindow` returns an id at birth, and
+  `TWS_screen_ChildrenW_List` enumerates — but every one of them is a **compiled-C library API
+  (`libtw`)**, not an invocable CLI or protocol string. `SessionAdapter` takes an `Exec` that runs
+  commands; there is no command to run. **RECHECK TRIGGER:** twin shipping a CLI or socket protocol
+  front-end over `libtw`. Recorded as undrivable-under-the-current-contract rather than
+  architecturally undrivable, because the identity is genuinely there.
+
+- **`coder/boo` — VERDICT: not a pane host.** 779 stars, new since the 2026-08-26 refresh, probed
+  2026-09-07 against `src/help.zig` at commit `39245a70`. All three gates pass **at session
+  granularity**: `boo attach <name>` with unique-prefix matching, `boo new -d` printing the session
+  name on stdout, `boo ls --json` enumerating. Recorded as a NO anyway, and this is the judgment worth
+  keeping: boo has no CLI-drivable intra-session splitting — each concurrent shell is its own
+  top-level session, so an adapter would refuse every `pane:*` placement and implement only
+  `workspace`. That is abduco's shape with a better listing, not a multiplexer this seam can drive.
+  **RECHECK TRIGGER:** a split verb that creates a second addressable surface inside one session.
+
+- **`austinjones/tab-rs` — VERDICT: not a pane host, and cold.** 685 stars, new since 2026-08-26 but
+  last pushed **2023-03-11**; probed 2026-09-07 against the clap `App` definition in `tab/src/cli.rs`
+  at commit `76e6a75`. Same shape as boo: stable caller-chosen `TAB-NAME` identity and `--list`
+  enumeration, but named tabs with no splits, so `pane:*` is unimplementable. Additionally, no
+  headless/detached creation flag was found — `tab <name>` attaches interactively — so even the
+  workspace tier is unevidenced for scripted use. Two independent reasons not to adapt it.
+
+- **`iAmCorey/kooky` — VERDICT: viable.** 644 stars, probed 2026-09-07 against the parse-table
+  generator `renderCLIHelp()` in `Sources/KookyHookKit/CLIFrontend.swift` at current `main` — kooky
+  publishes no reference doc or man page, so the contract is source-derived and unversioned.
+  Gate 1 **CLEARED**: `focus --tab <session-uuid>` / `close --tab <uuid>`, with non-UUID input
+  rejected. Gate 2 **CLEARED**: `open` returns the created tab's UUID synchronously. Gate 3
+  **CLEARED**: `list [--json]` enumerates windows -> workspaces -> tabs with ids.
+  Its addressable unit is a tab, not a split — the same mapping `mux.cmux.ts` already makes for a cmux
+  surface. Open question carried into the issue: whether kooky has any split verb, since without one
+  the adapter answers `tab`/`workspace` and refuses every `pane:*`.
+  ISSUE: https://github.com/cyberuni/cyber-mux/issues/158
+
+- **`am-will/limux` — VERDICT: viable.** 549 stars, new since the 2026-08-26 refresh, probed
+  2026-09-07 against `rust/limux-cli/src/main.rs` (`print_help()` and the command handlers) at commit
+  `7e31649`. Gate 1 **CLEARED**: `new-pane [--pane <id|ref>] [--surface <id|ref>]` with a global
+  `--id-format refs|both|uuids`. Gate 2 **CLEARED**: the response carries `pane_id` / `pane_ref`.
+  Gate 3 **CLEARED**: `list-panes [--workspace <id|ref>]`. A GTK4/Ghostty-embedded desktop app, so
+  driving it needs the app process running — the cmux/otty situation, not a gate failure.
+  ISSUE: https://github.com/cyberuni/cyber-mux/issues/157
+
+- **Two `backend-survey-2026-08b` entries were STALE and are corrected here** (this log is
+  append-only, so the correction is recorded rather than edited in place). `Gaurav-Gosain/tuios` was
+  left as "ungated, still" with the next step "read `docs/protocol.md`" — that work has since been
+  done and filed as **#145**. `muxy-app/muxy` was recorded as ungated and is filed as **#146**. Both
+  were re-confirmed 2026-09-07: tuios's `docs/protocol.md` (910 lines, commit `6c5cc805`) clears all
+  three gates (`list-windows` returns real `window_id`s matched by exact id/prefix/name/title;
+  `new-window` answers `{"type":"window_created","window_id":"9a3c..."}`; `list-windows` enumerates),
+  and muxy ships an external CLI over a unix socket with `--pane <id>` addressing, `split-right` /
+  `split-down` printing the new pane id, and `muxy list-panes`. Neither was re-filed.
+
+- **Discovery refreshed 2026-09-07** across `terminal multiplexer`, `tmux alternative`, and
+  `terminal workspace panes`, all `stars:>500`, queried live. New above the line since 2026-08-26:
+  `coder/boo` (779), `austinjones/tab-rs` (685), `am-will/limux` (549), `rse/stmux` (547) — all four
+  gated above. Surfaced and DROPPED as not pane hosts: `seebi/tmux-colors-solarized` (a theme),
+  `mrjones2014/smart-splits.nvim` (a Neovim plugin), `decolua/9remote` (a phone remote-control
+  front-end), `eneskirca/nodeterm` (a tmux-BACKED front-end, so tmux is the multiplexer and cyber-mux
+  already drives it).
+  **The ungated backlog from the two 2026-08 sweeps is now empty** — every candidate either carries a
+  verdict above or was filed as an issue. `monotykamary/openmux` keeps its `blocked-upstream` verdict
+  unchanged: its recheck trigger (`pane split` printing the new pane's id, OR any pane-enumeration
+  command) has not fired, so it was not re-probed.
