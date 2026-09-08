@@ -147,6 +147,58 @@ describe.skipIf(!hasWezterm() || !hasMuxServer())('spec:cyber-mux/mux', () => {
 		// The refusal, against the real binary. wezterm has no floating-pane concept at all, so the
 		// adapter refuses by name rather than substituting a split — and it must refuse BEFORE running
 		// anything, which a real boundary is what proves.
+		/**
+		 * The zoom rows — and on wezterm they are the whole evidence for the member, not a supplement to
+		 * a doc read. Everything `mux.wezterm.ts` says about `zoom-pane` and `is_zoomed` was measured
+		 * here, against a real headless mux server, in a file whose standing disclaimer is that its
+		 * claims come from `--help`.
+		 */
+		it('setPaneZoom(true) really zooms the pane, and the real listing reports it back', () => {
+			const base = weztermMuxAdapter.listPanes(exec)[0]
+			const target = weztermMuxAdapter.open(exec, { cwd, at: 'pane:right', from: { id: base?.id ?? '0' } })
+			expect(weztermMuxAdapter.isPaneZoomed(exec, target)).toBe(false)
+
+			weztermMuxAdapter.setPaneZoom(exec, target, true)
+
+			expect(weztermMuxAdapter.isPaneZoomed(exec, target)).toBe(true)
+			// A zoom hides a pane, it does not close one — the pane it was split from is still there.
+			expect(weztermMuxAdapter.paneExists(exec, { id: base?.id ?? '0' })).toBe(true)
+			weztermMuxAdapter.setPaneZoom(exec, target, false)
+		})
+
+		/**
+		 * wezterm's zoom is genuinely per-PANE, which no other backend here manages — so this row asserts
+		 * the property rather than the workaround: zooming a second pane while the first is zoomed
+		 * TRANSFERS the zoom, and unzooming a pane that is not zoomed leaves its zoomed sibling alone
+		 * even before the seam's guard would have stopped it.
+		 */
+		it('setPaneZoom() transfers the zoom between siblings and leaves the zoomed one alone otherwise', () => {
+			const base = weztermMuxAdapter.listPanes(exec)[0]
+			const first = weztermMuxAdapter.open(exec, { cwd, at: 'pane:right', from: { id: base?.id ?? '0' } })
+			const second = weztermMuxAdapter.open(exec, { cwd, at: 'pane:down', from: first })
+			weztermMuxAdapter.setPaneZoom(exec, first, true)
+			expect(weztermMuxAdapter.isPaneZoomed(exec, first)).toBe(true)
+
+			weztermMuxAdapter.setPaneZoom(exec, second, true)
+			expect(weztermMuxAdapter.isPaneZoomed(exec, second)).toBe(true)
+			expect(weztermMuxAdapter.isPaneZoomed(exec, first)).toBe(false)
+
+			// The seam's no-op, asserted through its consequence: asking a not-zoomed pane to unzoom must
+			// not disturb the pane that IS zoomed.
+			weztermMuxAdapter.setPaneZoom(exec, first, false)
+			expect(weztermMuxAdapter.isPaneZoomed(exec, second)).toBe(true)
+
+			weztermMuxAdapter.setPaneZoom(exec, second, false)
+			expect(weztermMuxAdapter.isPaneZoomed(exec, second)).toBe(false)
+		})
+
+		it('isPaneZoomed() answers undefined for a pane the real wezterm no longer has', () => {
+			const base = weztermMuxAdapter.listPanes(exec)[0]
+			const target = weztermMuxAdapter.open(exec, { cwd, at: 'pane:right', from: { id: base?.id ?? '0' } })
+			weztermMuxAdapter.teardown(exec, target)
+			expect(weztermMuxAdapter.isPaneZoomed(exec, target)).toBeUndefined()
+		})
+
 		it('open({ at: pane:float }) refuses rather than substituting a split', () => {
 			const before = weztermMuxAdapter.listPanes(exec).length
 			expect(() => weztermMuxAdapter.open(exec, { cwd, at: 'pane:float' })).toThrow()

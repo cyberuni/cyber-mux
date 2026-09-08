@@ -157,6 +157,18 @@ export function createZellijAdapter(deps: { session?: string | undefined }): Mux
 		 * boolean. A LOCAL run is not: the suite skips every row when no binary is present and still
 		 * reports green (issue #125).
 		 */
+		/**
+		 * `true` — `zellij action toggle-fullscreen -p <pane-id>`, zellij's name for the same thing.
+		 * Verified live on 0.45.0 (the version CI pins) rather than read out of the source, which is what
+		 * `canFloatPanes` and `opensWithoutStealingFocus` above had to settle for: driving it against a
+		 * three-terminal-pane tab flipped that pane's `is_fullscreen` in `list-panes --json` and back.
+		 *
+		 * Declared despite the verb being a TOGGLE, because zellij also REPORTS the state the toggle has
+		 * to be guarded by (`is_fullscreen`, per pane, free in the listing this adapter already makes).
+		 * That combination is what the flag actually claims — see `mux.tmux.ts`'s note.
+		 */
+		canZoomPanes: true,
+
 		opensWithoutStealingFocus: true,
 
 		open(exec, opts) {
@@ -365,6 +377,56 @@ export function createZellijAdapter(deps: { session?: string | undefined }): Mux
 			return found.is_focused === true
 		},
 
+		/**
+		 * `focus-pane-id` and THEN `toggle-fullscreen -p <id>` — both calls, and the first is not
+		 * redundant. Measured on a live 0.45.0: with `terminal_1` fullscreen, `toggle-fullscreen -p
+		 * terminal_2` simply LEFT fullscreen — every pane came back `is_fullscreen: false` and
+		 * `terminal_1` kept the focus — so naming the pane does not transfer the zoom any more than it
+		 * does on tmux. `focus-pane-id terminal_2` first unfullscreens the tab and moves the focus, and
+		 * the toggle that follows then fullscreens the right pane.
+		 *
+		 * That focus move is why zooming moves the user here, which `MuxAdapter.setPaneZoom` declares
+		 * rather than compensates — and note it is unavoidable rather than chosen: a bare
+		 * `toggle-fullscreen -p <id>` on an un-fullscreened tab already focuses the pane it zooms
+		 * (measured: the client moved from `terminal_0` to `terminal_2`). There is nothing focus-
+		 * preserving to prefer, and `--no-focus` — which `open` leans on — is not a flag this verb has.
+		 *
+		 * Unzooming needs no focus call: the guard has already established that this pane is the
+		 * fullscreen one, and on zellij the fullscreen pane is the focused one.
+		 *
+		 * The state is read first because the seam's member is absolute and this verb is a toggle; a
+		 * pane already in the requested state issues nothing.
+		 */
+		setPaneZoom(exec, target, zoomed) {
+			if (adapter.isPaneZoomed(exec, target) === zoomed) return
+			// Best-effort, and NOT checked — the same unchecked call `focus` makes, for a reason measured
+			// on 0.45.0: `focus-pane-id` exits **2** when the pane is ALREADY focused ("Pane Terminal(0)
+			// is already focused"), which is a success for this purpose, and it exits 2 with the same
+			// shape when the pane does not exist ("Pane with id Terminal(77) not found"). The exit code
+			// cannot tell those apart, so gating on it would throw on the commonest case — zooming the
+			// pane the user is already on. The `toggle-fullscreen` below is the call that reports a real
+			// failure: a pane zellij cannot resolve fails there, by name, and is thrown from there.
+			if (zoomed) exec('zellij', ['action', 'focus-pane-id', target.id])
+			if (exec('zellij', ['action', 'toggle-fullscreen', '-p', target.id]) === null) {
+				throw new Error(`zellij could not ${zoomed ? 'zoom' : 'unzoom'} pane ${target.id}`)
+			}
+		},
+
+		/**
+		 * `is_fullscreen`, per pane, off the `list-panes --json` call this adapter already makes — a
+		 * genuinely per-pane flag, unlike tmux's window-scoped one, so no conjunction is needed. Verified
+		 * live on 0.45.0: exactly one record carried `is_fullscreen: true` while a pane was zoomed, and
+		 * every record read `false` otherwise.
+		 *
+		 * Unresolvable (no matching record) answers `undefined`, never a false `false` — a caller cannot
+		 * tell "not zoomed" from "pane gone" here, the same rule `isPaneFocused` follows.
+		 */
+		isPaneZoomed(exec, target) {
+			const found = listZellijPanes(exec).find((p) => samePane(p.id, target.id))
+			if (!found) return undefined
+			return found.is_fullscreen === true
+		},
+
 		listPanes(exec): LivePane[] {
 			return listZellijPanes(exec).map((p) => {
 				// `is_floating` read strictly: only a literal `true` floats, so a record missing the key
@@ -414,6 +476,17 @@ interface ZellijPane {
 	 * `mux.zellij.integration.test.ts` pins at the real boundary.
 	 */
 	is_floating?: boolean | undefined
+	/**
+	 * Whether the pane fills its tab — `is_fullscreen`, zellij's name for zoom. Free in the same
+	 * sense `is_floating` is: it rides the `list-panes --json` call this adapter already makes, so
+	 * `isPaneZoomed` costs zellij no second exec.
+	 *
+	 * Verified against a live 0.45.0 rather than read off a key dump, and the distinction is the same
+	 * one `is_floating` documents: exactly one record carried `true` while a pane was fullscreen, and
+	 * it was the pane named — so this is a per-pane flag rather than the tab-wide one tmux and herdr
+	 * report.
+	 */
+	is_fullscreen?: boolean | undefined
 	/**
 	 * Whether this record is a PLUGIN pane rather than a terminal one — `is_plugin`. Load-bearing for
 	 * identity, not decoration: zellij numbers plugin panes and terminal panes in separate spaces, so

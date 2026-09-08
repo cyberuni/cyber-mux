@@ -338,6 +338,84 @@ describe.skipIf(!hasTmux())('spec:cyber-mux/mux', () => {
 			expect(taken!.rect.width).toBeGreaterThan(after.find((p) => p.id === opened.id)!.rect.width)
 		})
 
+		/**
+		 * The zoom rows. Every one of these is the reason a mocked `Exec` cannot settle this member:
+		 * the assertions are about the pane's real WIDTH on a real screen and about what tmux does with
+		 * a flag, neither of which a fake can be wrong about.
+		 */
+		it('setPaneZoom(true) really makes the pane fill its region, and reads back zoomed', () => {
+			const regions = tmuxMuxAdapter.regions
+			if (!regions) throw new Error('the tmux adapter must implement regions')
+			const opened = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
+			const split = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'pane:right', from: opened, ratio: 0.5 })
+			const before = regions.describeRegion(exec, opened)
+			const half = before.find((p) => p.id === split.id)!.rect.width
+			expect(tmuxMuxAdapter.isPaneZoomed(exec, split)).toBe(false)
+
+			tmuxMuxAdapter.setPaneZoom(exec, split, true)
+
+			expect(tmuxMuxAdapter.isPaneZoomed(exec, split)).toBe(true)
+			// The pane got BIG — the whole point of the member, and the half no mock can assert.
+			const zoomedWidth = tmuxMuxAdapter.regions!.describeRegion(exec, split).find((p) => p.id === split.id)!.rect.width
+			expect(zoomedWidth).toBeGreaterThan(half)
+			// Its sibling is still OPEN behind it — a zoom hides a pane, it does not close one.
+			expect(tmuxMuxAdapter.paneExists(exec, opened)).toBe(true)
+		})
+
+		/**
+		 * The row that a "read the flag, then toggle" implementation passes and a bare `resize-pane -Z
+		 * -t <pane>` fails. Measured on 3.7c: with %1 zoomed, `-Z -t %2` leaves NOTHING zoomed, because
+		 * tmux's zoom follows the ACTIVE pane rather than the named one. Only the `select-pane` first
+		 * transfers it.
+		 */
+		it('setPaneZoom(true) TRANSFERS the zoom off a sibling that already had it', () => {
+			const opened = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
+			const split = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'pane:right', from: opened, ratio: 0.5 })
+			tmuxMuxAdapter.setPaneZoom(exec, opened, true)
+			expect(tmuxMuxAdapter.isPaneZoomed(exec, opened)).toBe(true)
+
+			tmuxMuxAdapter.setPaneZoom(exec, split, true)
+
+			expect(tmuxMuxAdapter.isPaneZoomed(exec, split)).toBe(true)
+			expect(tmuxMuxAdapter.isPaneZoomed(exec, opened)).toBe(false)
+		})
+
+		it('setPaneZoom(false) really restores the pane to its share of the split', () => {
+			const regions = tmuxMuxAdapter.regions
+			if (!regions) throw new Error('the tmux adapter must implement regions')
+			const opened = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
+			const split = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'pane:right', from: opened, ratio: 0.5 })
+			const half = regions.describeRegion(exec, opened).find((p) => p.id === split.id)!.rect.width
+			tmuxMuxAdapter.setPaneZoom(exec, split, true)
+
+			tmuxMuxAdapter.setPaneZoom(exec, split, false)
+
+			expect(tmuxMuxAdapter.isPaneZoomed(exec, split)).toBe(false)
+			expect(regions.describeRegion(exec, opened).find((p) => p.id === split.id)!.rect.width).toBe(half)
+		})
+
+		/**
+		 * The seam's no-op, asserted through its OBSERVABLE consequence rather than a call count — the
+		 * form a mocked test cannot reach at all. `setPaneZoom(<not zoomed>, false)` asks for nothing,
+		 * so the sibling that IS zoomed must survive it. Without the read-first guard the bare
+		 * `resize-pane -Z` would unzoom that sibling instead.
+		 */
+		it('setPaneZoom(false) on a pane that is not zoomed leaves its zoomed sibling alone', () => {
+			const opened = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
+			const split = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'pane:right', from: opened, ratio: 0.5 })
+			tmuxMuxAdapter.setPaneZoom(exec, split, true)
+
+			tmuxMuxAdapter.setPaneZoom(exec, opened, false)
+
+			expect(tmuxMuxAdapter.isPaneZoomed(exec, split)).toBe(true)
+		})
+
+		it('isPaneZoomed() answers undefined for a pane the real tmux no longer has', () => {
+			const opened = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
+			tmuxMuxAdapter.teardown(exec, opened)
+			expect(tmuxMuxAdapter.isPaneZoomed(exec, opened)).toBeUndefined()
+		})
+
 		it('resizePane() throws on a region tmux reports as a single pane', () => {
 			const regions = tmuxMuxAdapter.regions
 			if (!regions) throw new Error('the tmux adapter must implement regions')

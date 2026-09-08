@@ -832,6 +832,22 @@ export interface MuxAdapter {
 	 */
 	readonly canFloatPanes?: boolean | undefined
 	/**
+	 * Whether this backend can ZOOM a pane — i.e. whether it honors `setPaneZoom`. tmux, rmux, herdr,
+	 * zellij and wezterm declare it, each against a verb driven live; cmux and otty omit it.
+	 *
+	 * **A declaration, exactly like `canFloatPanes` — the absence means REFUSE, not degrade**, and it
+	 * is never the refusal itself: it lets a caller ask before zooming, while `setPaneZoom` re-checks
+	 * as its own contract, the same belt-and-braces `agent wait` and `open` already run. A caller that
+	 * never zooms never reads this.
+	 *
+	 * Optional rather than required, and that is deliberate: unlike `opensWithoutStealingFocus`,
+	 * `undefined` and `false` mean the same thing here — no zoom verb to call — so an adapter author
+	 * who simply omitted it costs a caller nothing it could have known. The read side is where the
+	 * "unanswered vs negative" distinction actually bites, and `isPaneZoomed` carries it there with
+	 * `undefined`.
+	 */
+	readonly canZoomPanes?: boolean | undefined
+	/**
 	 * Whether `open()` leaves the caller's focus where it was. `true` = this backend has a primitive
 	 * for it and **every** route uses it; `false` = the backend's CLI offers none, and an open moves
 	 * the user. A caller driving a pane pool needs to know whether its opens are visible to the human
@@ -975,6 +991,94 @@ export interface MuxAdapter {
 	 * focus, opens nothing (unlike `focus`).
 	 */
 	isPaneFocused(exec: Exec, target: MuxTarget): boolean | undefined
+	/**
+	 * Make the target pane fill its region (`zoomed: true`), or restore it to its share of the tiled
+	 * layout (`zoomed: false`). Its siblings stay open behind it — a zoom hides no pane and closes
+	 * none, unlike `teardown`, and resizes none of them permanently, unlike `resizePane`.
+	 *
+	 * **This is not `focus`, and the two are not interchangeable.** `focus` moves the CLIENT to the
+	 * pane; this makes the PANE BIG. A caller that has just opened a worker pane and wants a human to
+	 * actually read it needs the second, and only the first was expressible before this member. A
+	 * caller that wants both calls both.
+	 *
+	 * **ABSOLUTE, not a toggle**, for exactly `resizePane`'s reason: a caller that must first read the
+	 * state and then decide whether to flip it cannot be made correct against a concurrent user, and
+	 * cannot be made correct at all on a backend that will not report the state. `zoom(target)` with no
+	 * argument would be unusable by the agent this CLI exists for — it could ask for "big" and get
+	 * "small". A caller that genuinely wants the toggle spells it as
+	 * `setPaneZoom(e, t, !isPaneZoomed(e, t))`, which is one line and is honest about the read it
+	 * depends on; the seam does not carry a second spelling every adapter would have to implement.
+	 *
+	 * **The no-op is part of the contract**, not an optimization: asking for the state a pane is
+	 * ALREADY in never touches the backend at all. Every adapter reads first and returns without executing
+	 * anything when the answer already matches. That rule is load-bearing rather than tidy, because
+	 * two backends spell zoom at the TAB tier rather than the pane tier — herdr's `pane zoom --off
+	 * <pane>` and tmux's `resize-pane -Z` both unzoom whatever pane in that tab is zoomed, not the one
+	 * named (verified live: `herdr pane zoom <p3> --off` on herdr 0.9.0 unzoomed the zoomed sibling p2
+	 * and moved focus to p3). Without the guard, `setPaneZoom(p3, false)` — a pane that is not zoomed,
+	 * so a request that asks for nothing — would silently unzoom a pane the caller never named.
+	 *
+	 * **Zooming MOVES FOCUS to the pane, on every backend that has the verb**, and that is reported
+	 * here rather than hidden or compensated. It is not this seam's choice: tmux and rmux's
+	 * `resize-pane -Z` makes the target the active pane, zellij's `toggle-fullscreen` focuses it,
+	 * wezterm's `zoom-pane --zoom` makes it active, and herdr's `pane zoom --on` answers
+	 * `focus_changed: true` (all four verified live). Undoing the move afterwards would be a SECOND
+	 * visible focus move rather than the absence of one — the same reason `opensWithoutStealingFocus`
+	 * is a declaration rather than a behavior. Unzooming moves nothing.
+	 *
+	 * **REQUIRED on the adapter, and REFUSED BY NAME on the two backends that cannot render it** —
+	 * `PaneZoomUnsupportedError` (`zoom.ts`), never an emulation. `MuxAdapter.canZoomPanes` is how a
+	 * caller asks BEFORE zooming, exactly as `canFloatPanes` is for a float. This is the shape issue
+	 * #142 predicted for the case where a backend turns out to have nothing, and the evidence landed
+	 * there: five of seven backends have the verb and were driven live (tmux 3.7c and rmux 0.10.0
+	 * `resize-pane -Z`, herdr 0.8.0/0.9.0 `pane zoom --on|--off`, zellij 0.45.0 `action
+	 * toggle-fullscreen`, wezterm 20240203 `cli zoom-pane --zoom|--unzoom`); cmux has no pane-zoom verb
+	 * at all and otty has one whose flag vocabulary is undocumented. See each adapter's own note.
+	 *
+	 * There is nothing to emulate it WITH, which is why the answer is a refusal rather than a degrade.
+	 * Resizing the pane to fill its region is a different thing on screen — it permanently resizes the
+	 * siblings and leaves no state to restore — so substituting one would hand back a pane that
+	 * satisfies "big" and violates everything else the caller assumed. That is the same all-or-nothing
+	 * rule `'pane:float'` and `agentLifecycle` already make.
+	 *
+	 * Throws rather than reporting a false success when the backend's own zoom command fails (a pane
+	 * that no longer resolves, most often). A pane that is already in the requested state is not a
+	 * failure — it is the no-op above.
+	 */
+	setPaneZoom(exec: Exec, target: MuxTarget, zoomed: boolean): void
+	/**
+	 * Whether the target pane is currently zoomed — the read side of `setPaneZoom`, and the member that
+	 * makes an absolute write usable by an agent that has to know what it is looking at. `true` =
+	 * positively zoomed, `false` = positively not zoomed, `undefined` = the pane could not be resolved
+	 * or the backend could not be asked. Read-only: moves no focus, zooms nothing, opens nothing —
+	 * exactly `isPaneFocused`'s bar.
+	 *
+	 * **Per PANE, even where the backend's own flag is per TAB.** tmux and rmux report
+	 * `#{window_zoomed_flag}`, which is `1` on every pane of a zoomed window, and herdr's `pane layout`
+	 * reports one `zoomed` for the whole tab; on both, "is THIS pane the zoomed one" is that flag AND
+	 * the tab's active/focused pane being this one, which is what those adapters compose. zellij
+	 * (`is_fullscreen`) and wezterm (`is_zoomed`) carry a genuinely per-pane flag and read it directly.
+	 * A caller never sees the difference, which is the point of normalizing here rather than at the
+	 * call site.
+	 *
+	 * **A targeted probe, and deliberately NOT a `LivePane` field.** `floating` rides `LivePane`
+	 * because every backend answers it inside the listing call the adapter already makes, so it is
+	 * free; zoom is not free on herdr, whose `pane list` carries no zoom key at all (verified live on
+	 * 0.9.0) and whose only zoom read is `pane layout --pane <id>`, one call PER TAB. Putting it on
+	 * `LivePane` would make `listPanes` — the bulk cull `reconcile` runs — cost one extra exec per tab
+	 * on that backend, for a fact most of its callers never read. `isPaneFocused` is the precedent and
+	 * the exact parallel: the other view-state fact, reported by three backends' listings and still a
+	 * targeted probe rather than a `LivePane` column.
+	 *
+	 * **`undefined`, never `false`, on a backend that cannot be asked** — and that is why this member
+	 * does not take `LivePane.floating`'s "required, answered `false` by construction" shape. A backend
+	 * with no floating-pane concept truthfully has only tiled panes, so `false` is a real answer there.
+	 * A backend with no zoom CLI is not a backend with no zoom: cmux binds pane zoom to ⌘⇧↩ in its own
+	 * GUI and exposes it through neither its CLI nor its control socket, so a `false` here would be a
+	 * confident lie about a pane the user has zoomed by hand. `undefined` says the honest thing, and
+	 * callers fail OPEN on it exactly as they do for `isPaneFocused`.
+	 */
+	isPaneZoomed(exec: Exec, target: MuxTarget): boolean | undefined
 	/**
 	 * Enumerate every live pane this backend can currently see — the bulk counterpart to
 	 * `paneExists`'s single targeted query. `reconcile` uses this to cull dead records in one pass

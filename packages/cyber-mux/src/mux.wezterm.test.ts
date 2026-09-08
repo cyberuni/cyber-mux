@@ -477,3 +477,58 @@ describe('weztermMuxAdapter — wait-output by polling', () => {
 		).rejects.toThrow(/no longer exists/)
 	})
 })
+
+describe('spec:cyber-mux/mux/driving', () => {
+	describe('weztermMuxAdapter — pane zoom', () => {
+		// `is_zoomed` is per PANE on wezterm, like zellij's `is_fullscreen` and unlike tmux's window flag.
+		const listing = (zoomed: number | null) =>
+			JSON.stringify(
+				[9, 10].map((id) => ({
+					window_id: 1,
+					tab_id: 2,
+					pane_id: id,
+					workspace: 'default',
+					is_zoomed: id === zoomed,
+				})),
+			)
+
+		it('isPaneZoomed() reads is_zoomed straight off the listing it already makes', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { list: listing(9) })
+			expect(weztermMuxAdapter.isPaneZoomed(exec, { id: '9' })).toBe(true)
+			expect(weztermMuxAdapter.isPaneZoomed(fakeExec([], { list: listing(9) }), { id: '10' })).toBe(false)
+			expect(calls[0]).toEqual(['cli', 'list', '--format', 'json'])
+		})
+
+		it('isPaneZoomed() answers undefined for a pane the listing does not carry, never a false false', () => {
+			expect(weztermMuxAdapter.isPaneZoomed(fakeExec([], { list: listing(null) }), { id: '99' })).toBeUndefined()
+		})
+
+		it.each([
+			{ zoomed: true, flag: '--zoom', current: null },
+			{ zoomed: false, flag: '--unzoom', current: 9 },
+		])('setPaneZoom() drives wezterm’s own ABSOLUTE flag, with no toggle to compose', ({ zoomed, flag, current }) => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { list: listing(current), 'zoom-pane': '' })
+			weztermMuxAdapter.setPaneZoom(exec, { id: '9' }, zoomed)
+			expect(calls).toEqual([
+				['cli', 'list', '--format', 'json'],
+				['cli', 'zoom-pane', '--pane-id', '9', flag],
+			])
+		})
+
+		it.each([
+			{ id: '9', zoomed: true },
+			{ id: '10', zoomed: false },
+		])('setPaneZoom() touches nothing when the pane is already in the requested state', ({ id, zoomed }) => {
+			const calls: string[][] = []
+			weztermMuxAdapter.setPaneZoom(fakeExec(calls, { list: listing(9) }), { id }, zoomed)
+			expect(calls).toEqual([['cli', 'list', '--format', 'json']])
+		})
+
+		it('setPaneZoom() throws rather than reporting a false success when wezterm refuses', () => {
+			const exec = fakeExec([], { list: listing(null) })
+			expect(() => weztermMuxAdapter.setPaneZoom(exec, { id: '9' }, true)).toThrow(/could not zoom pane 9/)
+		})
+	})
+})

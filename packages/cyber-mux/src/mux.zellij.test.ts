@@ -546,3 +546,90 @@ describe('zellijMuxAdapter — wait-output by polling', () => {
 		).rejects.toThrow(/no longer exists/)
 	})
 })
+
+describe('spec:cyber-mux/mux/driving', () => {
+	describe('zellijMuxAdapter — pane zoom', () => {
+		// `is_fullscreen` is genuinely PER PANE on zellij, unlike tmux's window flag — so no conjunction.
+		const listing = (fullscreen: string | null) =>
+			JSON.stringify(
+				['terminal_1', 'terminal_2'].map((id) => ({
+					id: Number(id.split('_')[1]),
+					is_plugin: false,
+					is_focused: id === fullscreen,
+					is_fullscreen: id === fullscreen,
+				})),
+			)
+
+		it('isPaneZoomed() reads is_fullscreen straight off the listing it already makes', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'list-panes': listing('terminal_1') })
+			expect(zellijMuxAdapter.isPaneZoomed(exec, { id: 'terminal_1' })).toBe(true)
+			expect(
+				zellijMuxAdapter.isPaneZoomed(fakeExec([], { 'list-panes': listing('terminal_1') }), { id: 'terminal_2' }),
+			).toBe(false)
+			expect(calls[0]).toEqual(['action', 'list-panes', '--json'])
+		})
+
+		it('isPaneZoomed() answers undefined for a pane the listing does not carry, never a false false', () => {
+			const exec = fakeExec([], { 'list-panes': listing(null) })
+			expect(zellijMuxAdapter.isPaneZoomed(exec, { id: 'terminal_9' })).toBeUndefined()
+		})
+
+		it('setPaneZoom(true) focuses the pane first, because toggle-fullscreen alone does not transfer', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, {
+				'list-panes': listing('terminal_1'),
+				'focus-pane-id': '',
+				'toggle-fullscreen': '',
+			})
+			zellijMuxAdapter.setPaneZoom(exec, { id: 'terminal_2' }, true)
+			expect(calls).toEqual([
+				['action', 'list-panes', '--json'],
+				['action', 'focus-pane-id', 'terminal_2'],
+				['action', 'toggle-fullscreen', '-p', 'terminal_2'],
+			])
+		})
+
+		it('setPaneZoom(false) issues the bare toggle — the fullscreen pane already holds the focus', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'list-panes': listing('terminal_1'), 'toggle-fullscreen': '' })
+			zellijMuxAdapter.setPaneZoom(exec, { id: 'terminal_1' }, false)
+			expect(calls).toEqual([
+				['action', 'list-panes', '--json'],
+				['action', 'toggle-fullscreen', '-p', 'terminal_1'],
+			])
+		})
+
+		it.each([
+			{ id: 'terminal_1', zoomed: true },
+			{ id: 'terminal_2', zoomed: false },
+		])('setPaneZoom() touches nothing when the pane is already in the requested state', ({ id, zoomed }) => {
+			const calls: string[][] = []
+			zellijMuxAdapter.setPaneZoom(fakeExec(calls, { 'list-panes': listing('terminal_1') }), { id }, zoomed)
+			expect(calls).toEqual([['action', 'list-panes', '--json']])
+		})
+
+		/**
+		 * The failure is reported by `toggle-fullscreen`, never by `focus-pane-id` — whose exit code
+		 * cannot tell "already focused" (a success here) from "pane not found". So a failing focus is
+		 * NOT an error: the fake answers it `null` and the zoom still lands.
+		 */
+		it('setPaneZoom() throws rather than reporting a false success when zellij refuses', () => {
+			const exec = fakeExec([], { 'list-panes': listing(null), 'focus-pane-id': null })
+			expect(() => zellijMuxAdapter.setPaneZoom(exec, { id: 'terminal_2' }, true)).toThrow(
+				/could not zoom pane terminal_2/,
+			)
+		})
+
+		it('setPaneZoom() does NOT fail on a focus-pane-id that exits nonzero — that is zellij’s "already focused"', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, {
+				'list-panes': listing('terminal_1'),
+				'focus-pane-id': null,
+				'toggle-fullscreen': '',
+			})
+			zellijMuxAdapter.setPaneZoom(exec, { id: 'terminal_2' }, true)
+			expect(calls.at(-1)).toEqual(['action', 'toggle-fullscreen', '-p', 'terminal_2'])
+		})
+	})
+})

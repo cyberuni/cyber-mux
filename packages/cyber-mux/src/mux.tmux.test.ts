@@ -1178,3 +1178,65 @@ describe('tmuxMuxAdapter — pane resize', () => {
 		expect(() => resizePane(exec, { id: '%0' }, 0.6)).toThrow(/tmux could not resize pane %0/)
 	})
 })
+
+describe('spec:cyber-mux/mux/driving', () => {
+	// The listing `isPaneZoomed` reads: a three-pane window with %1 zoomed. `#{window_zoomed_flag}` is
+	// per WINDOW, so it reads `1` on all three rows — the shape measured on a live 3.7c, and the whole
+	// reason the answer is the conjunction with `#{pane_active}` rather than the flag alone.
+	const ZOOMED_ON_1 = '%0 1 0\n%1 1 1\n%2 1 0'
+	const NOT_ZOOMED = '%0 0 0\n%1 0 1\n%2 0 0'
+
+	it('isPaneZoomed() is the window flag AND pane_active, so only the big pane reports true', () => {
+		const calls: string[][] = []
+		const exec = fakeExec(calls, { 'list-panes': ZOOMED_ON_1 })
+		expect(tmuxMuxAdapter.isPaneZoomed(exec, { id: '%1' })).toBe(true)
+		// The two panes hiding BEHIND the zoomed one carry the same window flag and are not zoomed.
+		expect(tmuxMuxAdapter.isPaneZoomed(fakeExec([], { 'list-panes': ZOOMED_ON_1 }), { id: '%0' })).toBe(false)
+		expect(calls[0]).toEqual(['list-panes', '-a', '-F', '#{pane_id} #{window_zoomed_flag} #{pane_active}'])
+	})
+
+	it('isPaneZoomed() answers undefined for a pane the listing does not carry, never a false false', () => {
+		expect(tmuxMuxAdapter.isPaneZoomed(fakeExec([], { 'list-panes': NOT_ZOOMED }), { id: '%99' })).toBeUndefined()
+		// And undefined when tmux answers nothing at all.
+		expect(tmuxMuxAdapter.isPaneZoomed(fakeExec([]), { id: '%1' })).toBeUndefined()
+	})
+
+	it('setPaneZoom(true) selects the pane first, because -Z alone follows the ACTIVE pane', () => {
+		const calls: string[][] = []
+		const exec = fakeExec(calls, { 'list-panes': ZOOMED_ON_1, 'select-pane': '', 'resize-pane': '' })
+		tmuxMuxAdapter.setPaneZoom(exec, { id: '%2' }, true)
+		expect(calls).toEqual([
+			['list-panes', '-a', '-F', '#{pane_id} #{window_zoomed_flag} #{pane_active}'],
+			['select-pane', '-t', '%2'],
+			['resize-pane', '-Z', '-t', '%2'],
+		])
+	})
+
+	it('setPaneZoom(false) issues the bare toggle — the guard already proved this pane is the zoomed one', () => {
+		const calls: string[][] = []
+		const exec = fakeExec(calls, { 'list-panes': ZOOMED_ON_1, 'resize-pane': '' })
+		tmuxMuxAdapter.setPaneZoom(exec, { id: '%1' }, false)
+		expect(calls).toEqual([
+			['list-panes', '-a', '-F', '#{pane_id} #{window_zoomed_flag} #{pane_active}'],
+			['resize-pane', '-Z', '-t', '%1'],
+		])
+	})
+
+	// The no-op is the seam's contract, not an optimization — see `MuxAdapter.setPaneZoom`. Asserted
+	// as "no command after the read", which is the only observable form it has.
+	it.each([
+		{ id: '%1', zoomed: true, listing: ZOOMED_ON_1 },
+		{ id: '%2', zoomed: false, listing: ZOOMED_ON_1 },
+	])('setPaneZoom() touches nothing when the pane is already in the requested state', ({ id, zoomed, listing }) => {
+		const calls: string[][] = []
+		tmuxMuxAdapter.setPaneZoom(fakeExec(calls, { 'list-panes': listing }), { id }, zoomed)
+		expect(calls).toHaveLength(1)
+		expect(calls[0]?.[0]).toBe('list-panes')
+	})
+
+	it('setPaneZoom() throws rather than reporting a false success when tmux refuses', () => {
+		// `resize-pane` unanswered — the `Exec` seam's spelling for a command that failed.
+		const exec = fakeExec([], { 'list-panes': NOT_ZOOMED, 'select-pane': '' })
+		expect(() => tmuxMuxAdapter.setPaneZoom(exec, { id: '%2' }, true)).toThrow(/could not zoom pane %2/)
+	})
+})

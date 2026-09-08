@@ -86,6 +86,12 @@ function fakeAdapter(opts: { canSizeSplits?: boolean; failOnOpen?: number; works
 		rename: () => {
 			calls.log.push('rename')
 		},
+		// `template apply` opens and names panes; it zooms none, so these exist only to satisfy the
+		// contract and throw if the walk ever reaches for them.
+		setPaneZoom: () => {
+			throw new Error('template apply zooms no pane')
+		},
+		isPaneZoomed: () => undefined,
 		open(_exec, options) {
 			calls.opens.push(options)
 			calls.log.push('open')

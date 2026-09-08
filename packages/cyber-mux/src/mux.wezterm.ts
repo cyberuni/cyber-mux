@@ -27,6 +27,12 @@ import { pollForOutput } from './wait-output.ts'
  * - **No focus-query primitive** — `list --format json`'s documented fields carry no active/focused
  *   indicator for a pane, tab, or window. `isPaneFocused` always answers `undefined`, which is the
  *   seam's own honest answer for "no primitive to report focus", not a workaround.
+ * - **A real, natively ABSOLUTE pane zoom, and it is the one thing in this file that WAS driven.**
+ *   `cli zoom-pane --pane-id <id> --zoom|--unzoom|--toggle`, plus an `is_zoomed` flag on every
+ *   `cli list --format json` row. Both were exercised against a headless `wezterm-mux-server` on the
+ *   pinned 20240203 build, so `canZoomPanes`, `setPaneZoom` and `isPaneZoomed` below carry the live
+ *   claim the rest of this header does not. Issue #142 filed this backend as "needs confirming — no
+ *   documented zoom verb"; it has one, and a better-shaped one than any other backend here.
  * - **No per-key press primitive** — there is no `send-keys`-shaped verb, only `send-text`. The core
  *   vocabulary is instead realized by encoding each key as its raw terminal byte sequence and typing
  *   it via `send-text --no-paste`; see `WEZTERM_KEY_BYTES`.
@@ -67,6 +73,23 @@ export function createWeztermAdapter(deps: { newId: NewId }): MuxAdapter {
 		 * the machine this was written on, the same disclaimer the rest of this header carries.
 		 */
 		opensWithoutStealingFocus: false,
+
+		/**
+		 * `true` — `wezterm cli zoom-pane --pane-id <id> --zoom|--unzoom`, and this is the ONE claim in
+		 * this file that IS verified against a live binary. Issue #142 filed wezterm as "needs
+		 * confirming — `wezterm cli` has no documented zoom verb; zoom is a GUI key action". That is
+		 * wrong, and the measurement is `wezterm cli --help` on 20240203-110809-5046fc22 (the version
+		 * `pull-request.yml` pins), which lists `zoom-pane   Zoom, unzoom, or toggle zoom state`, with
+		 * `zoom-pane --help` giving `--pane-id`, `--zoom`, `--unzoom` and `--toggle`.
+		 *
+		 * It is also the best-behaved zoom on this seam. Driven against a real headless
+		 * `wezterm-mux-server` with three panes in a tab: `--zoom` is per-PANE and truly absolute —
+		 * repeating it on an already-zoomed pane changed nothing, `--zoom` on a second pane while the
+		 * first was zoomed TRANSFERRED the zoom (which neither tmux nor zellij does), and `--unzoom` on a
+		 * pane that was not zoomed left its zoomed sibling alone. Every other backend here needs the
+		 * seam's read-first guard to get those three properties; wezterm has them natively.
+		 */
+		canZoomPanes: true,
 
 		open(exec, opts) {
 			const at = opts.at ?? 'tab'
@@ -224,6 +247,45 @@ export function createWeztermAdapter(deps: { newId: NewId }): MuxAdapter {
 			return undefined
 		},
 
+		/**
+		 * `zoom-pane --zoom|--unzoom`, the native absolute form — no toggle to compose and no state to
+		 * read back first on wezterm's own account (see `canZoomPanes` for the live probe). The guard is
+		 * kept anyway, and it is the seam's contract rather than a wezterm need: `setPaneZoom` promises
+		 * that a pane already in the requested state is not touched at all, and that promise is uniform
+		 * across adapters or it is not a promise. It costs one `cli list` here.
+		 *
+		 * Zooming makes the pane ACTIVE (measured: `is_active` moved to the zoomed pane), which
+		 * `MuxAdapter.setPaneZoom` declares. Unzooming moves nothing.
+		 *
+		 * Throws on failure rather than reporting a false success: a pane id wezterm cannot resolve
+		 * fails the command outright (`unable to resolve current tab; terminating`, exit 1, measured),
+		 * which reaches this as a `null` from `Exec`.
+		 */
+		setPaneZoom(exec, target, zoomed) {
+			if (adapter.isPaneZoomed(exec, target) === zoomed) return
+			if (exec('wezterm', ['cli', 'zoom-pane', '--pane-id', target.id, zoomed ? '--zoom' : '--unzoom']) === null) {
+				throw new Error(`wezterm could not ${zoomed ? 'zoom' : 'unzoom'} pane ${target.id}`)
+			}
+		},
+
+		/**
+		 * `is_zoomed`, per pane, off the `cli list --format json` call this adapter already makes — free,
+		 * exactly as zellij's `is_fullscreen` is, and per-pane rather than the tab-wide flag tmux and
+		 * herdr report. Verified live on 20240203: the field is present on every row and flipped to
+		 * `true` on precisely the pane that was zoomed.
+		 *
+		 * This is the one read-back wezterm HAS, and the contrast with `isPaneFocused` right above is
+		 * the point rather than an inconsistency: the same JSON row that carries no answer for focus
+		 * carries a real one for zoom, so this member answers and that one still does not.
+		 *
+		 * Unresolvable (no matching record) answers `undefined`, never a false `false`.
+		 */
+		isPaneZoomed(exec, target) {
+			const found = listWeztermPanes(exec).find((p) => String(p.pane_id) === target.id)
+			if (!found) return undefined
+			return found.is_zoomed === true
+		},
+
 		listPanes(exec): LivePane[] {
 			return listWeztermPanes(exec).map((p) => {
 				// `floating` is `false` BY CONSTRUCTION, not a stub and not a refusal: wezterm has no floating-pane
@@ -324,6 +386,15 @@ interface WeztermListEntry {
 	workspace: string
 	title?: string | undefined
 	cwd?: string | undefined
+	/**
+	 * Whether the pane fills its tab — `is_zoomed`. Free: it rides the `cli list --format json` call
+	 * this adapter already makes, so `isPaneZoomed` costs wezterm no second exec.
+	 *
+	 * Verified against a live 20240203 mux server, unlike most of this file: the key is on every row
+	 * of the listing (alongside `is_active`, which `isPaneFocused` predates and does not yet read),
+	 * and only the zoomed pane's row read `true`.
+	 */
+	is_zoomed?: boolean | undefined
 }
 
 /** One `wezterm cli list --format json` call, parsed defensively — never throws on bad output. */
