@@ -1,4 +1,4 @@
-import { envFallback } from './env-fallback.ts'
+import { envFallback, shellQuote } from './env-fallback.ts'
 import { type Exec, withReason } from './exec.ts'
 import { refuseFloatingPane } from './floating.ts'
 import type { LivePane, MuxAdapter, MuxReadOptions, OpenedPane } from './mux.ts'
@@ -14,11 +14,15 @@ import { pollForOutput } from './wait-output.ts'
  * within a pane), which maps to cyber-mux's `LivePane`. The env variable `$CMUX_SURFACE_ID` carries
  * the caller's surface identity — analogous to `$TMUX_PANE` or `$WEZTERM_PANE`.
  *
- * Probed from the cmux docs and CLI reference — and, for the `workspace-group` family below, from
- * cmux's own Swift source (`manaflow-ai/cmux`, read at commit `71eb616d`). cmux is not installed in
- * this sandbox (it is macOS-GUI-only), so nothing here carries the "verified against a live binary"
+ * Probed from cmux's own Swift source (`manaflow-ai/cmux`, read at commit `71eb616d`) — the CLI's
+ * argument parser (`CLI/cmux.swift`), its own verb inventory
+ * (`CLI/CMUXCLI+CommandSuggestions.swift`), the server-side payload builders under
+ * `Packages/macOS/CmuxControlSocket/`, and `docs/cli-contract.md`. cmux is not installed in this
+ * sandbox (it is macOS-GUI-only), so nothing here carries the "verified against a live binary"
  * claim `mux.tmux.ts`/`mux.herdr.ts` make; it makes the same honest disclaimer `mux.wezterm.ts` and
  * `mux.zellij.ts` do, and issue #128 tracks the missing real-boundary suite that would settle it.
+ * A source read is materially stronger than the docs read this file used to rest on, and it is
+ * still not a verification.
  *
  * Prefer the source over https://cmux.com/docs/api when they disagree: that page documents 27 of
  * cmux's 162 top-level commands and never claimed to be an inventory, so absence from it is not
@@ -31,7 +35,7 @@ import { pollForOutput } from './wait-output.ts'
  *   `LivePane.id` carries a surface id. `--at tab` maps to `cmux new-surface` (a new tab in the
  *   current pane); `--at pane:*` maps to `cmux new-pane` (a split, which creates a pane with one
  *   surface).
- * - **Workspace is a real tier.** `cmux new-workspace` creates a genuinely separate workspace,
+ * - **Workspace is a real tier.** `cmux workspace create` creates a genuinely separate workspace,
  *   reported as `OpenedPane.workspace`.
  * - **And there is a real tier ABOVE it.** `workspace-group` groups multiple top-level WORKSPACES into
  *   a named, collapsible sidebar section. This is the tier `MuxOpenOptions.workspaceGroup` targets, and
@@ -44,30 +48,82 @@ import { pollForOutput } from './wait-output.ts'
  *   read-only in its side effects as `rename`, it opens nothing", declared here rather than hidden: the
  *   alternative was the silent drop this replaced, and cmux offers no membership-only create. It does
  *   NOT steal focus (`selectAnchor: false`), and later calls for the same id open nothing.
- * - **No `--env` on any route.** Like wezterm and zellij, env is native at no tier, so every open
+ * - **Env is native at the WORKSPACE tier only, and is not adopted yet.** `workspace create` takes
+ *   `--env KEY=VALUE` (repeatable) and `--env-file <path>` (`cmux.swift:10429`,
+ *   `parseWorkspaceEnvOptions`), and `docs/cli-contract.md` says that env is inherited by every pane,
+ *   surface and split created later in the workspace. `new-surface` and `new-pane` take no env flag
+ *   at all. This header used to claim "no `--env` on any route", which was wrong. Every route still
  *   rides the `envFallback` compensation (an `env K=V` prefix on the launch command, or a stderr
- *   warning when there is no command to ride).
- * - **Splits can be sized** — `cmux new-pane --direction right --size 0.3` sizes the NEW pane, so
- *   `ratio` (fraction kept by the ORIGINAL) is inverted to `1 - ratio`. `canSizeSplits` is true.
+ *   warning when there is no command to ride): swapping a WORKING compensation for a native flag
+ *   changes behavior on source-only evidence, which is the half of issue #132 held for someone with
+ *   a Mac. The false claim is corrected here; the capability stays unclaimed until it is verified.
+ * - **Splits CANNOT be sized.** `new-pane` accepts only `--type --direction --url --profile
+ *   --placement --focus --workspace --window` (`cmux.swift:7263-7291`) — there is no `--size`, and it
+ *   validates no unknown flag, so the `--size` this adapter used to send was accepted and ignored.
+ *   The only sizing verb is `resize-pane`, which is cell-based rather than fractional and so cannot
+ *   render a `ratio` either. `canSizeSplits` is therefore omitted, zellij's answer exactly, and a
+ *   `ratio` is dropped to cmux's own even split.
+ * - **`new-pane` takes no `--cwd` either** — the same silent ignore, and the asymmetry is real:
+ *   `new-surface` DOES take `--cwd` (an alias of `--working-directory`, run through `resolvePath`,
+ *   `cmux.swift:7299`) and so does `workspace create`, so only the `pane:*` route loses it. Dropping
+ *   the flag alone would open the split in the wrong directory silently, so the route compensates the
+ *   way `envFallback` does: a `cd <dir>` that rides the launch command, or is sent alone when there is
+ *   none. That is a shell-level cd, not a native cwd — it lands in the surface's shell history, and it
+ *   only means anything in a shell surface.
+ * - **The listing verb is `list-panels`, not `list-panes`.** `list-panes` (`pane.list`) reports PANES
+ *   — `{"panes":[…]}`, one row per geometric container, carrying surface ids as flat arrays and no
+ *   title. `list-panels` (`surface.list`) reports SURFACES — `{"surfaces":[…]}` with per-row `ref`,
+ *   `title`, `type`, `focused`, `pane_ref`, `selected_in_pane` (`ControlCommandCoordinator+Surface.swift:150-186`)
+ *   — which is the tier `LivePane` maps to here. Note the key names: the id is `ref` (`surface_ref` is
+ *   the spelling in CREATION payloads, not list rows) and focus is `focused`, not `is_focused`.
+ * - **No live cwd anywhere in the listing.** The nearest field is `requested_working_directory`, on
+ *   terminal surfaces only, and it is the directory requested at CREATION — reporting it as
+ *   `LivePane.cwd` would become a quiet lie the moment the user `cd`s. So `cwd` is absent from a cmux
+ *   pane listing, and the `lookup-listing-reports-cwd` scenario no longer carries a cmux row.
  * - **`new-pane` has no split-TARGET flag.** It splits the focused pane (or the biggest space); the
  *   `--workspace` flag specifies which workspace, but not which pane within it. So `from` — which
  *   pane a `pane:*` split lands beside — is honored by FOCUSING that surface first, the sole way to
  *   choose the split target. That is a real focus move, and the honest cost of getting the RIGHT
  *   pane split.
- * - **No pane geometry adapter.** `cmux list-panes --json` does not report position, so `regions`
+ * - **No pane geometry adapter.** Neither `list-panes` nor `list-panels` reports position, so `regions`
  *   (`describeRegion`/`describeWorkspace`) is not implementable. `template save` refuses on cmux by
  *   naming the backend, the same optional-absence it handles for wezterm.
  * - **No git-worktree concept in the CLI.** No `worktree` subcommand, so — like tmux, wezterm, and
  *   zellij — this backend never binds a worktree to a workspace; callers fall back to plain git plus
  *   `open()`.
- * - **Naming surfaces.** cmux surfaces can be labeled — verified against the skill docs: a label can
- *   be set after creation. No `--label` flag on `new-surface` / `new-pane`, so naming is post-birth.
+ * - **Naming is a TAB rename, and cmux's tab IS its surface.** `rename-surface` and `rename-pane`,
+ *   which this adapter used to run, appear nowhere in cmux — not in the dispatch, not in the help
+ *   text, not in `topLevelCommandNames`. The real verb is `rename-tab --surface <id> --title <text>`
+ *   (`cmux.swift:6985` → `runRenameTab` `:11541`), a documented alias for `tab-action --action
+ *   rename`, whose `--surface` is itself an alias for `--tab` and which accepts a `tab:<n>` or
+ *   `surface:<n>` handle. **No pane rename exists at any layer** — the only rename verbs cmux has are
+ *   `rename-tab`, `rename-window`, `rename-workspace`, and the socket API has no `pane.rename`,
+ *   because a cmux pane is a geometric container with no name to set. So the `pane` tier retargets
+ *   the pane's surface rather than refusing; see `rename`.
+ * - **A workspace is created by `workspace create`, not `new-workspace`.** Both reach the same
+ *   `workspace.create` method, but `new-workspace` hardcodes `honorJSONOutput: false`
+ *   (`cmux.swift:7155`) and the JSON print is gated on it (`:10491`), so `cmux --json new-workspace`
+ *   prints the human line `OK workspace:3` and never JSON — the adapter parsed `{}` out of it and
+ *   threw on every call. The namespaced `workspace create` (`:11166`) honors `--json` and answers
+ *   `{window_*, workspace_*, surface_*}` (`TerminalController+WorkspaceCreate.swift:156-198`). It also
+ *   takes `--name`, so a workspace is NAMED AT BIRTH here rather than renamed afterwards.
+ *   The payload carries **no `pane_ref`**, so a workspace open reports its own surface as
+ *   `OpenedPane.tab` — which `group`'s lookup resolves, since it accepts either handle kind.
+ * - **Closing an explicit surface needs its workspace.** With `--surface` given, `close-surface`
+ *   resolves the surface *within* a workspace and throws "close-surface requires --workspace or
+ *   --window with explicit --surface" when it has neither (`cmux.swift:7360-7377`). It falls back to
+ *   `$CMUX_WORKSPACE_ID` first (`:7351`), so the flagless form this adapter used to send works
+ *   whenever the caller is itself inside cmux — and fails for a library caller with no cmux env, and
+ *   resolves against the WRONG workspace for a surface outside the caller's own. `teardown` now names
+ *   the workspace whenever the adapter is bound to one.
  */
 export function createCmuxAdapter(deps: { workspace?: string | undefined }): MuxAdapter {
 	const adapter: MuxAdapter = {
 		name: 'cmux',
 
-		canSizeSplits: true,
+		// No `canSizeSplits`: `new-pane` has no size flag at all and `resize-pane` is cell-based, so
+		// there is nothing to render a fractional `ratio` with. Its absence is what callers degrade on
+		// — zellij's answer exactly. This used to be `true`, backed by a `--size` flag cmux never had.
 
 		/**
 		 * `false`, and cmux needs BOTH halves to be true to say otherwise. No creating verb documents a
@@ -85,18 +141,24 @@ export function createCmuxAdapter(deps: { workspace?: string | undefined }): Mux
 			const at = opts.at ?? 'tab'
 
 			if (at === 'workspace') {
-				// `cmux new-workspace` creates a genuinely separate workspace.
-				const args = ['--json', 'new-workspace']
+				// `cmux workspace create` creates a genuinely separate workspace — the NAMESPACED spelling,
+				// not the `new-workspace` alias, which is the same method behind a hardcoded
+				// `honorJSONOutput: false` and so answers the human line `OK workspace:3` to a `--json`
+				// request. Parsing that never yielded a ref, so this route threw on every call.
+				const args = ['--json', 'workspace', 'create']
 				if (opts.cwd) args.push('--cwd', opts.cwd)
+				// Named at BIRTH, unlike every other tier here: `workspace create --name` is the flag the
+				// seam's `label` maps to at this tier, so there is no post-birth rename to make.
+				if (opts.label) args.push('--name', opts.label)
 				const out = exec('cmux', args)
-				if (!out) throw new Error(withReason(exec, 'cmux new-workspace failed'))
+				if (!out) throw new Error(withReason(exec, 'cmux workspace create failed'))
 				const parsed = parseCmuxOutput(out)
-				if (!parsed.workspace_ref) throw new Error('cmux new-workspace did not report the workspace ref')
-				// new-workspace returns the workspace ref and a surface_ref for the initial surface.
+				if (!parsed.workspace_ref) throw new Error('cmux workspace create did not report the workspace ref')
+				// The payload reports the new workspace's initial surface; it carries no pane ref, so
+				// `openedSurface` reports that surface as the tab too.
 				const surfaceId = parsed.surface_ref
-				if (!surfaceId) throw new Error('cmux new-workspace did not report the initial surface ref')
+				if (!surfaceId) throw new Error('cmux workspace create did not report the initial surface ref')
 				const opened = openedSurface(surfaceId, parsed.pane_ref, parsed.workspace_ref)
-				if (opts.label) adapter.rename(exec, opened, 'tab', opts.label)
 				// Through `group`, not a second spelling of create/add here: grouping a workspace this open
 				// just created and grouping one that was already open are the same act, so one spelling per
 				// backend is the only way the two cannot drift. Gated on the WORKSPACE route alone — a `tab`
@@ -107,7 +169,9 @@ export function createCmuxAdapter(deps: { workspace?: string | undefined }): Mux
 				// target is a tab, so it pays the `rpc surface.list` lookup even here, where the workspace ref
 				// is already in hand. Spelling create/add a second time to save that call is the drift the
 				// seam routes through one member to prevent, and the call is the honest price of not drifting.
-				// `{ id: opened.tab }`, never `opened`: `group` takes a TAB id and `opened.id` is a SURFACE.
+				// `{ id: opened.tab }` is what `group` takes — a TAB id. On THIS route that is the new
+				// workspace's own surface, because `workspace create` reports no pane ref; on a split it is a
+				// pane ref. `paneToWorkspace` resolves either kind, which is what keeps the one spelling.
 				if (opts.workspaceGroup != null) adapter.group(exec, { id: opened.tab }, opts.workspaceGroup)
 				runLaunch(adapter, exec, opened, opts.env, opts.launch)
 				return opened
@@ -142,33 +206,44 @@ export function createCmuxAdapter(deps: { workspace?: string | undefined }): Mux
 			// `new-pane` has no split-target flag, so `from` is honored by focusing first.
 			if (opts.from) adapter.focus(exec, opts.from)
 
+			// `--direction` is the whole flag set this route can use. `--cwd` and `--size` are NOT flags
+			// `new-pane` has, and it rejects no unknown flag, so the two this used to send were accepted
+			// and dropped on the floor: the split opened in the wrong directory and the ratio did nothing.
+			// `ratio` degrades to cmux's even split (see `canSizeSplits`); `cwd` is compensated below.
 			const direction = at === 'pane:down' ? 'down' : 'right'
-			const args = ['--json', 'new-pane', '--direction', direction]
-			if (opts.cwd) args.push('--cwd', opts.cwd)
-			// `ratio` is the fraction kept by the ORIGINAL pane; cmux's `--size` sizes the NEW pane,
-			// so we invert: new size = 1 - ratio.
-			if (opts.ratio != null) args.push('--size', String(1 - opts.ratio))
-			const out = exec('cmux', args)
+			const out = exec('cmux', ['--json', 'new-pane', '--direction', direction])
 			if (!out) throw new Error(withReason(exec, 'cmux new-pane failed'))
 			const parsed = parseCmuxOutput(out)
 			const surfaceId = parsed.surface_ref
 			if (!surfaceId) throw new Error('cmux new-pane did not report the surface ref')
 			const opened = openedSurface(surfaceId, parsed.pane_ref, deps.workspace)
 			if (opts.label) adapter.rename(exec, opened, 'pane', opts.label)
-			runLaunch(adapter, exec, opened, opts.env, opts.launch)
+			runLaunch(adapter, exec, opened, opts.env, opts.launch, opts.cwd)
 			return opened
 		},
 
-		rename(exec, target, tier, name) {
-			if (tier === 'tab') {
-				// Rename the surface (tab within a pane).
-				exec('cmux', ['rename-surface', '--surface', target.id, '--title', name])
-				return
+		/**
+		 * One command for BOTH tiers, because cmux has one nameable space here: the surface.
+		 *
+		 * `rename-surface`/`rename-pane`, which this used to run, do not exist — no dispatch, no help
+		 * text, no entry in the CLI's own verb inventory. `rename-tab` is the real verb, and cmux's tab
+		 * IS its surface (`--surface` is a documented alias for `--tab`, and `$CMUX_TAB_ID` aliases
+		 * `$CMUX_SURFACE_ID`). The `pane` tier retargets rather than refusing, per the seam's rule that
+		 * `rename` is REQUIRED: a cmux pane is a geometric container with no name at any layer, so the
+		 * truthful realization of "name this pane" is to name the surface the user actually reads.
+		 *
+		 * `target.id` may be either handle kind and this never parses one to find out — the seam addresses
+		 * the `tab` tier by `OpenedPane.tab`, which is a pane ref on a split and a surface ref on a
+		 * workspace open, and under `--id-format uuids` neither kind is distinguishable by shape anyway.
+		 * `resolveSurface` answers with the listing instead, which costs the one extra exec that buys a
+		 * rename that works on both.
+		 */
+		rename(exec, target, _tier, name) {
+			const surface = resolveSurface(exec, target.id)
+			if (!surface) {
+				throw new Error(withReason(exec, `cmux could not resolve a surface to rename for ${target.id}`))
 			}
-			// Rename the pane. The target.id is a surface; we need to get its pane and rename that.
-			// For now, assume the caller passed a pane ref or we look it up.
-			const paneRef = surfaceToPane(exec, target.id)
-			if (paneRef) exec('cmux', ['rename-pane', '--pane', paneRef, '--title', name])
+			exec('cmux', ['rename-tab', '--surface', surface, '--title', name])
 		},
 
 		group(exec, target, group) {
@@ -245,7 +320,17 @@ export function createCmuxAdapter(deps: { workspace?: string | undefined }): Mux
 
 		teardown(exec, target) {
 			// Close the surface. cmux does not allow closing the last pane in a workspace.
-			exec('cmux', ['close-surface', '--surface', target.id])
+			//
+			// The workspace is NAMED whenever this adapter is bound to one: with an explicit `--surface`,
+			// `close-surface` resolves the surface inside a workspace and refuses outright when it has
+			// neither `--workspace` nor `--window`. It does fall back to `$CMUX_WORKSPACE_ID`, which is why
+			// the flagless form worked from inside cmux at all — but that fallback is the caller's OWN
+			// workspace, so a surface in another one resolved against the wrong space, and a library caller
+			// with no cmux env got the refusal. Unbound, this still sends the flagless form and still leans
+			// on that fallback; there is nothing truer to send.
+			const args = ['close-surface', '--surface', target.id]
+			if (deps.workspace) args.push('--workspace', deps.workspace)
+			exec('cmux', args)
 		},
 
 		paneExists(exec, target) {
@@ -253,12 +338,14 @@ export function createCmuxAdapter(deps: { workspace?: string | undefined }): Mux
 		},
 
 		isPaneFocused(exec, target) {
-			// cmux's identify --json can report the focused surface. For now, return undefined (unknown)
-			// since the exact focused surface ref needs verification against a live binary.
-			const surfaces = listCmuxSurfaces(exec)
-			const found = surfaces.find((s) => s.id === target.id)
+			// `focused` per surface, off the same listing `listPanes` makes — `undefined` only for a surface
+			// the listing does not carry, which is the seam's "cannot tell" rather than a false negative.
+			// This used to answer `undefined` for EVERY surface, because the listing it read was empty for
+			// every real response. `identify` would answer without the listing, and adopting it changes
+			// working behavior on source-only evidence — the half of #132 held for someone with a Mac.
+			const found = listCmuxSurfaces(exec).find((s) => s.id === target.id)
 			if (!found) return undefined
-			return found.is_focused === true
+			return found.focused === true
 		},
 
 		listPanes(exec): LivePane[] {
@@ -267,8 +354,11 @@ export function createCmuxAdapter(deps: { workspace?: string | undefined }): Mux
 				// concept at all, so every pane it can report really is tiled. The create side refuses a
 				// `'pane:float'` open by NAME (`refuseFloatingPane` in `open` above) because there is no
 				// truthful pane to hand back; the read side has a truthful answer, and this is it.
+				//
+				// No `cwd`: cmux reports none. A surface row carries `requested_working_directory` — the
+				// directory asked for at creation — and nothing that tracks where the shell IS, so exporting
+				// it would answer the "which pane is in this repo" question wrongly the moment anyone `cd`s.
 				const pane: LivePane = { id: s.id, mux: 'cmux' as const, floating: false }
-				if (s.cwd) pane.cwd = s.cwd
 				if (s.title) pane.label = s.title
 				return pane
 			})
@@ -335,10 +425,28 @@ function parseGroupRef(out: string): string | undefined {
  * `rpc` skips the id-format pass unless asked, so the response carries BOTH `workspace_ref` and
  * `workspace_id`; the ref is preferred for the reason `parseGroupRef` prefers it.
  *
+ * **The tab id is not always a PANE, and the answer is verified rather than assumed.** `group` takes a
+ * TAB id, which on this backend is a pane ref for a split (`pane.create` reports `pane_ref`) and a
+ * SURFACE ref for a workspace open (`workspace.create` reports no pane, so `openedSurface` falls back
+ * to the surface). The coordinator resolves a `kind:N` selector through a handle registry that is
+ * keyed by the ref STRING and not by kind, so a surface handle passed as `pane_id` resolves to a UUID
+ * that names no pane — and the routing then quietly falls back to the CALLER's own workspace, the
+ * silent wrong answer this lookup exists to avoid.
+ *
+ * So each attempt is checked against its own result: a correctly routed `surface.list` returns the
+ * workspace CONTAINING the handle, so its rows must carry that handle as a surface or as a pane. When
+ * they do not, the routing fell back and the answer is discarded; the surface spelling is tried next,
+ * and a second miss reports nothing rather than a workspace nobody asked about.
+ *
  * Read off cmux's own Swift source, NOT verified against a live binary — see the header.
  */
-function paneToWorkspace(exec: Exec, paneId: string): string | undefined {
-	const out = exec('cmux', ['rpc', 'surface.list', JSON.stringify({ pane_id: paneId })])
+function paneToWorkspace(exec: Exec, tabId: string): string | undefined {
+	return workspaceHolding(exec, { pane_id: tabId }, tabId) ?? workspaceHolding(exec, { surface_id: tabId }, tabId)
+}
+
+/** One `surface.list` routing attempt, kept only when its rows actually contain `tabId`. */
+function workspaceHolding(exec: Exec, params: Record<string, string>, tabId: string): string | undefined {
+	const out = exec('cmux', ['rpc', 'surface.list', JSON.stringify(params)])
 	if (!out) return undefined
 	let parsed: unknown
 	try {
@@ -347,20 +455,46 @@ function paneToWorkspace(exec: Exec, paneId: string): string | undefined {
 		return undefined
 	}
 	if (!parsed || typeof parsed !== 'object') return undefined
-	const shape = parsed as { workspace_ref?: string; workspace_id?: string }
-	return shape.workspace_ref ?? shape.workspace_id
+	const shape = parsed as { workspace_ref?: string; workspace_id?: string; surfaces?: unknown }
+	const workspace = shape.workspace_ref ?? shape.workspace_id
+	if (!workspace) return undefined
+	const rows = Array.isArray(shape.surfaces) ? shape.surfaces : []
+	const holds = rows.some((row) => {
+		if (!row || typeof row !== 'object') return false
+		const item = row as { ref?: string; id?: string; pane_ref?: string; pane_id?: string }
+		return item.ref === tabId || item.id === tabId || item.pane_ref === tabId || item.pane_id === tabId
+	})
+	return holds ? workspace : undefined
 }
 
 interface CmuxSurface {
 	id: string
 	title?: string
-	cwd?: string
-	is_focused?: boolean
+	focused?: boolean
+	/** The pane holding this surface — what lets `rename` accept a pane handle. */
+	pane?: string
+	/** Whether this is the surface the pane is showing, i.e. the one a pane-tier rename names. */
+	selected?: boolean
 }
 
+/**
+ * Every surface in the caller's workspace — the one read `listPanes`, `paneExists`, `isPaneFocused`
+ * and `rename` all share.
+ *
+ * `list-panels` (`surface.list`), NOT `list-panes` (`pane.list`). The two verbs report different
+ * tiers and different shapes: `list-panes` answers `{"panes":[…]}`, one row per geometric container,
+ * carrying surface ids as flat arrays, no title and no focus per surface. This function used to read
+ * that verb and to require a top-level ARRAY of panes each holding an array of surface OBJECTS —
+ * a shape cmux never emits, so it returned `[]` for every real response and took all three members
+ * down with it: an always-empty listing, a `paneExists` that was always false, and an `isPaneFocused`
+ * that was always unknown.
+ *
+ * `ref` before `id` for the reason `parseGroupRef` gives: the default `--id-format refs` strips `id`
+ * from any object carrying a sibling `ref`, and `--id-format uuids` does the reverse, so reading both
+ * is what makes this work under either.
+ */
 function listCmuxSurfaces(exec: Exec): CmuxSurface[] {
-	// cmux list-panes --json lists all surfaces across all panes in the current workspace.
-	const out = exec('cmux', ['list-panes', '--json'])
+	const out = exec('cmux', ['--json', 'list-panels'])
 	if (!out) return []
 	let parsed: unknown
 	try {
@@ -368,24 +502,49 @@ function listCmuxSurfaces(exec: Exec): CmuxSurface[] {
 	} catch {
 		return []
 	}
-	if (!Array.isArray(parsed)) return []
-	// Flatten: each pane has surfaces; we want the surfaces.
+	if (!parsed || typeof parsed !== 'object') return []
+	const rows = (parsed as { surfaces?: unknown }).surfaces
+	if (!Array.isArray(rows)) return []
 	const surfaces: CmuxSurface[] = []
-	for (const pane of parsed) {
-		if (pane && Array.isArray(pane.surfaces)) {
-			for (const s of pane.surfaces) {
-				if (s?.surface_ref) {
-					surfaces.push({
-						id: s.surface_ref,
-						title: s.title,
-						cwd: s.cwd,
-						is_focused: s.is_focused,
-					})
-				}
-			}
+	for (const row of rows) {
+		if (!row || typeof row !== 'object') continue
+		const item = row as {
+			ref?: string
+			id?: string
+			title?: string
+			focused?: boolean
+			pane_ref?: string
+			pane_id?: string
+			selected_in_pane?: boolean
 		}
+		const id = item.ref ?? item.id
+		if (!id) continue
+		const surface: CmuxSurface = { id }
+		if (item.title) surface.title = item.title
+		if (typeof item.focused === 'boolean') surface.focused = item.focused
+		const pane = item.pane_ref ?? item.pane_id
+		if (pane) surface.pane = pane
+		if (item.selected_in_pane === true) surface.selected = true
+		surfaces.push(surface)
 	}
 	return surfaces
+}
+
+/**
+ * The surface a `rename` names, given either a surface handle or a pane handle.
+ *
+ * A surface handle answers itself. A pane handle answers the surface that pane is SHOWING
+ * (`selected_in_pane`), falling back to its first — a pane with several tabs has no single name, and
+ * the one the user is looking at is the only defensible choice among them. Neither kind is parsed:
+ * the listing is what says which is which, so a UUID under `--id-format uuids` resolves exactly as a
+ * `surface:7` ref does.
+ */
+function resolveSurface(exec: Exec, id: string): string | undefined {
+	const surfaces = listCmuxSurfaces(exec)
+	if (surfaces.some((s) => s.id === id)) return id
+	const inPane = surfaces.filter((s) => s.pane === id)
+	if (inPane.length === 0) return undefined
+	return (inPane.find((s) => s.selected) ?? inPane[0])?.id
 }
 
 function openedSurface(surfaceId: string, paneRef: string | undefined, workspace: string | undefined): OpenedPane {
@@ -394,43 +553,41 @@ function openedSurface(surfaceId: string, paneRef: string | undefined, workspace
 	return opened
 }
 
-function surfaceToPane(exec: Exec, surfaceId: string): string | undefined {
-	// Look up the pane that contains this surface.
-	const out = exec('cmux', ['list-panes', '--json'])
-	if (!out) return undefined
-	let parsed: unknown
-	try {
-		parsed = JSON.parse(out)
-	} catch {
-		return undefined
-	}
-	if (!Array.isArray(parsed)) return undefined
-	for (const pane of parsed) {
-		if (pane?.pane_ref && Array.isArray(pane.surfaces)) {
-			for (const s of pane.surfaces) {
-				if (s && s.surface_ref === surfaceId) return pane.pane_ref as string
-			}
-		}
-	}
-	return undefined
-}
-
+/**
+ * Run the caller's launch command in the freshly opened surface, carrying whatever the route could
+ * not set natively.
+ *
+ * `cwd` is passed ONLY by the `pane:*` route, the one route with no `--cwd` flag to send. It rides as
+ * a `cd` on the command line — the same last-resort shape `envFallback` uses for env, and unlike env
+ * it needs no command to ride, so a split with a cwd and no launch still lands in the right directory.
+ * The env prefix goes INSIDE the `cd`'s `&&`, never outside it: `env K=V cd '/x' && cmd` would set the
+ * variables on `cd` and leave `cmd` without them.
+ */
 function runLaunch(
 	adapter: MuxAdapter,
 	exec: Exec,
 	target: OpenedPane,
 	env: Record<string, string> | undefined,
 	launch: string | undefined,
+	cwd?: string | undefined,
 ) {
 	const fallback = envFallback(env, launch)
 	if (fallback.kind === 'dropped') {
 		process.stderr.write(
 			`env (${fallback.variables.join(', ')}) could not be set on this cmux surface — ` +
-				'cmux has no --env flag on new-pane/new-surface/new-workspace\n',
+				'cmux has no --env flag on new-pane/new-surface, and its workspace --env is not adopted yet\n',
 		)
+		if (cwd) adapter.submit(exec, target, `cd ${shellQuote(cwd)}`)
 		return
 	}
-	if (fallback.command !== undefined) adapter.submit(exec, target, fallback.command)
+	const command = cwd ? cdPrefixed(cwd, fallback.command) : fallback.command
+	if (command !== undefined) adapter.submit(exec, target, command)
+}
+
+/** `cd <dir>` on its own, or chained ahead of the command that must run in that directory. */
+function cdPrefixed(cwd: string, command: string | undefined): string {
+	const cd = `cd ${shellQuote(cwd)}`
+	return command === undefined ? cd : `${cd} && ${command}`
 }
 
 /**

@@ -293,6 +293,11 @@ Feature: mux lookup — resolving a pane, the focus probe, and the listing conte
     Given a <backend> pane running in a known directory
     When the live panes are listed
     Then that pane's entry carries that directory as its cwd
+    # cmux was a row here and is not one any more (CR 132). The claim rested on a `cwd` key in
+    # `list-panes --json` that cmux does not emit: the surface listing carries
+    # `requested_working_directory`, the directory a surface was CREATED with, and nothing that tracks
+    # where its shell IS. Exporting that would answer "which pane is in this repo" wrongly from the
+    # first `cd` -- worse than answering nothing, which is what the seam's optional `cwd` already means.
 
     Examples:
       | backend |
@@ -300,8 +305,13 @@ Feature: mux lookup — resolving a pane, the focus probe, and the listing conte
       | herdr   |
       | wezterm |
       | zellij  |
-      | cmux    |
       | otty    |
+
+  @id:lookup-listing-reports-no-cwd-on-cmux
+  Scenario: cmux's live pane listing carries no working directory
+    Given a cmux surface running in a known directory
+    When the live panes are listed
+    Then that surface's entry carries no cwd
 
   # ── A listed pane's id names exactly one pane (CR 116) ──
   # Resolution addresses a pane by id, so an id two panes share is an identity hazard everywhere:

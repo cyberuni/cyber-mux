@@ -116,15 +116,18 @@ reads the live pane list, which answers ids and labels in one read.
   two-and-two and has to refuse by name; the **read** side does not split, which is why this rides
   `LivePane` directly rather than a capability object.
 
-- **The live pane listing reports each pane's working directory, on every backend (CR 116)** — a
-  caller filters a listing by cwd ("which pane is in this repo"), and cwd is one of the three fields
-  an ambiguous name yields to choose a candidate by, so a backend that omits it answers both
-  questions with nothing. Every backend reports it in the listing call the adapter already makes, so
-  it costs no extra exec: tmux's `#{pane_current_path}`, herdr's and cmux's and otty's own `cwd`,
-  wezterm's `file://` URI reduced to a bare path, and zellij's `pane_cwd`. `LivePane.cwd` stays
-  **optional** rather than required, unlike `floating` — a record can genuinely lack a directory to
-  report (a zellij plugin pane omits the key entirely, having none), and an absent value there is the
-  honest answer rather than a manufactured one.
+- **The live pane listing reports each pane's working directory, wherever the backend has one to
+  report (CR 116, narrowed by CR 132)** — a caller filters a listing by cwd ("which pane is in this
+  repo"), and cwd is one of the three fields an ambiguous name yields to choose a candidate by, so a
+  backend that omits it answers both questions with nothing. Every backend that HAS the field reports
+  it in the listing call the adapter already makes, so it costs no extra exec: tmux's
+  `#{pane_current_path}`, herdr's and otty's own `cwd`, wezterm's `file://` URI reduced to a bare
+  path, and zellij's `pane_cwd`. **cmux is the backend with none**: its surface listing carries
+  `requested_working_directory` — the directory a surface was *created* with — and nothing that
+  tracks where the shell is, so it answers no cwd rather than one that goes stale at the first `cd`.
+  `LivePane.cwd` stays **optional** rather than required, unlike `floating` — a record can genuinely
+  lack a directory to report (a zellij plugin pane omits the key entirely, having none; every cmux
+  surface does), and an absent value there is the honest answer rather than a manufactured one.
 
 - **A listed pane's id names exactly one pane (CR 116)** — resolution addresses a pane by id, so an
   id two panes share resolves the wrong record wherever ids are compared: the existence probe, the
@@ -247,9 +250,11 @@ already in the listing they ask for, and the float-less backends answer `false` 
 ### The live pane listing reports each pane's working directory (CR 116)
 
 Filtering a listing by directory, and telling two same-named candidates apart, both read this field.
-Every backend answers it in the listing call the adapter already makes. It stays optional, because a
-record with no directory at all — a zellij plugin pane — must be able to say so.
+Every backend that has the field answers it in the listing call the adapter already makes. It stays
+optional, because a record with no directory at all — a zellij plugin pane, or any cmux surface —
+must be able to say so.
 
 | Edge | Path (Given) | Scenario |
 |---|---|---|
-| CWD1 record carries a directory → reported as `cwd` | a pane in a known directory on each of tmux, herdr, wezterm, zellij, cmux, and otty | `<backend>'s live pane listing reports each pane's working directory` |
+| CWD1 record carries a directory → reported as `cwd` | a pane in a known directory on each of tmux, herdr, wezterm, zellij, and otty | `<backend>'s live pane listing reports each pane's working directory` |
+| CWD2 backend reports no live directory → `cwd` absent | a cmux surface in a known directory | `cmux's live pane listing carries no working directory` |
