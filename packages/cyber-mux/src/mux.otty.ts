@@ -2,6 +2,7 @@ import { envFallback } from './env-fallback.ts'
 import { type Exec, withReason } from './exec.ts'
 import { refuseFloatingPane } from './floating.ts'
 import type { LivePane, MuxAdapter, MuxReadOptions, OpenedPane } from './mux.ts'
+import { assertRatioInRange } from './ratio.ts'
 import { pollForOutput } from './wait-output.ts'
 
 /**
@@ -33,6 +34,13 @@ import { pollForOutput } from './wait-output.ts'
  *   warning when there is no command to ride).
  * - **Split direction is a VALUE, not a flag.** `otty pane split --direction <right|left|up|down>`;
  *   `pane:right`/`pane:down` map to `right`/`down`. There is no `--bottom` in that vocabulary.
+ * - **Splits CAN be sized** — `otty pane split --size` is documented as the NEW pane's share, so
+ *   `ratio` (the fraction kept by the ORIGINAL) inverts to `1 - ratio`, the same inversion
+ *   `mux.cmux.ts` and `mux.wezterm.ts` document. otty's units are a WHOLE PERCENT over a documented
+ *   10-90 range, not cmux's 0-1 fraction. `canSizeSplits` is true.
+ * - **Naming a tab happens at birth.** `otty tab new --title` is documented, so `--at tab` names the
+ *   tab in the creating call instead of a follow-up `rename` — the same fix `open` at the window
+ *   tier already makes with its own `--title`.
  * - **`send-keys` mixes text and key tokens.** `otty pane send-keys --pane <id> -- "text" key:Enter`
  *   can do both in one call. We implement `sendText` and `sendKeys` separately per the contract.
  * - **No pane-tier `rename`.** The reference scopes the shared verbs as "show, list, new, close,
@@ -50,7 +58,20 @@ export function createOttyAdapter(deps: { window?: string | undefined }): MuxAda
 	const adapter: MuxAdapter = {
 		name: 'otty',
 
-		canSizeSplits: false,
+		/**
+		 * `true`. otty's `pane split` documents `--size`, and unlike its sibling `pane resize` (which
+		 * counts CELLS, and is why `resizePane` stays refused) `--size` is a SHARE of the split region —
+		 * a unit the seam's `ratio` can be converted into without knowing the region's extent, which is
+		 * the one thing otty cannot report.
+		 *
+		 * The conversion is not the identity, and the direction of it is the whole risk here: `--size` is
+		 * the NEW pane's share while `ratio` is the fraction kept by the ORIGINAL, so it inverts —
+		 * see `toOttySize`.
+		 *
+		 * Read off otty's documented CLI, NOT verified against a live binary — no otty on the machine
+		 * this was written on, matching the rest of this header.
+		 */
+		canSizeSplits: true,
 
 		/**
 		 * `false`, for cmux's two reasons exactly: no suppress-focus flag is documented on `pane split`,
@@ -87,6 +108,10 @@ export function createOttyAdapter(deps: { window?: string | undefined }): MuxAda
 
 			if (at === 'tab') {
 				const args = ['tab', 'new']
+				// `--title` names the TAB, which is the space `at: 'tab'` opens — so the label lands at birth
+				// in the creating call rather than as a second round trip through `rename`, which left a
+				// window where the tab carried otty's default name. Same fix the workspace arm above makes.
+				if (opts.label) args.push('--title', opts.label)
 				if (opts.cwd) args.push('--cwd', opts.cwd)
 				const out = exec('otty', args)
 				if (!out) throw new Error(withReason(exec, 'otty tab new failed'))
@@ -94,7 +119,6 @@ export function createOttyAdapter(deps: { window?: string | undefined }): MuxAda
 				const paneId = parsed.pane_id
 				if (!paneId) throw new Error('otty tab new did not report the pane id')
 				const opened = openedPane(paneId, parsed.tab_id, deps.window)
-				if (opts.label) adapter.rename(exec, opened, 'tab', opts.label)
 				runLaunch(adapter, exec, opened, opts.env, opts.launch)
 				return opened
 			}
@@ -116,6 +140,19 @@ export function createOttyAdapter(deps: { window?: string | undefined }): MuxAda
 			const direction = at === 'pane:down' ? 'down' : 'right'
 			const args = ['pane', 'split', '--direction', direction]
 			if (opts.cwd) args.push('--cwd', opts.cwd)
+			if (opts.ratio != null) {
+				const { size, requested } = toOttySize(opts.ratio)
+				// A clamp is a size the caller did NOT ask for, so it is announced rather than applied
+				// quietly — the alternative is `--size 5`, which otty's own 10-90 range rejects, turning a
+				// ratio the seam accepts into a failed split.
+				if (size !== requested) {
+					process.stderr.write(
+						`otty sizes a split between 10% and 90% — ratio ${opts.ratio} asked for a ${requested}% ` +
+							`new pane, so ${size}% was used instead\n`,
+					)
+				}
+				args.push('--size', String(size))
+			}
 			const out = exec('otty', args)
 			if (!out) throw new Error(withReason(exec, 'otty pane split failed'))
 			const parsed = parseOttyOutput(out)
@@ -298,6 +335,36 @@ function runLaunch(
 		return
 	}
 	if (fallback.command !== undefined) adapter.submit(exec, target, fallback.command)
+}
+
+/** otty's documented `--size` range on `pane split`: a whole percent, 10 through 90. */
+const OTTY_MIN_SIZE = 10
+const OTTY_MAX_SIZE = 90
+
+/**
+ * The seam's `ratio` as otty's `--size`, plus what was asked for before the range clamp.
+ *
+ * Two conversions, both of which are silent wrong-sized panes when wrong:
+ *
+ * - **The inversion.** `ratio` is the fraction kept by the ORIGINAL pane; otty's `--size` is *"the
+ *   NEW pane's share"*, so the value passed is `1 - ratio`. That is the same direction `mux.cmux.ts`
+ *   (`--size`) and `mux.wezterm.ts` (`--percent`) already document, and the OPPOSITE of herdr's
+ *   `--ratio`, which sizes the original and passes through verbatim.
+ * - **The units.** cmux takes a 0-1 fraction; otty documents a whole percent over the range 10-90,
+ *   so this scales and rounds like `toWeztermSize` and then clamps into otty's range. A ratio
+ *   outside `0 < ratio < 1` is refused by the seam's own guard before either happens.
+ *
+ * The clamp is reported back so the caller can be told (see `open`): otty rejects a `--size` outside
+ * 10-90, so a ratio like `0.95` has no faithful rendering — the choice is a near miss it is told
+ * about, or a split that does not open at all.
+ *
+ * Read off otty's documented CLI, NOT verified against a live binary — no otty on the machine this
+ * was written on, matching this file's header. #128 tracks the missing live suite.
+ */
+function toOttySize(ratio: number): { size: number; requested: number } {
+	assertRatioInRange(ratio)
+	const requested = Math.round((1 - ratio) * 100)
+	return { requested, size: Math.min(OTTY_MAX_SIZE, Math.max(OTTY_MIN_SIZE, requested)) }
 }
 
 /**

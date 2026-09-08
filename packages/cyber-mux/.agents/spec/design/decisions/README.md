@@ -1201,6 +1201,54 @@ Decisions (`backend-survey-2026-09` — feasibility verdicts for multiplexers no
   unchanged: its recheck trigger (`pane split` printing the new pane's id, OR any pane-enumeration
   command) has not fired, so it was not re-probed.
 
+Decisions (`144-otty-size-title` — otty's documented `pane split --size` and `tab new --title`,
+issue #144):
+
+- **`canSizeSplits` on otty flips to `true`, and the issue's own reasoning for keeping it `false` is
+  WRONG.** #144 argued the declaration should stay `false` with a better comment, on the reading that
+  `--size 30` is a **cell count** like the sibling verb `otty pane resize --right 10 --down 5`, and
+  that converting a `ratio` to cells needs a region extent otty cannot report — the same argument
+  `resizePane` already records. The reference does not say that. Read 2026-09-07 from
+  docs.otty.sh/reference/cli: **`--size` = the NEW pane's share, 10–90**, on the example
+  `otty pane split --direction right --command "htop" --size 30`. A *share* is exactly the unit the
+  seam's `ratio` is in, and needs no extent to be expressed in — which is why this one is
+  implementable while `resizePane` stays refused. Both halves of #144's third item still land: the
+  old comment gave a reason that was wrong; it was just wrong in the other direction.
+
+- **The conversion is `1 - ratio`, scaled to whole percent** — the inversion `mux.cmux.ts`
+  (`--size`, a 0–1 fraction) and `mux.wezterm.ts` (`--percent`, whole percent) both already document,
+  and the opposite of herdr's `--ratio`, which sizes the ORIGINAL and passes through verbatim. otty's
+  units are wezterm's, its direction is cmux's, and it is the first backend with a **range** as well:
+  10–90. Boundary-tested at 0.9 → `--size 10` and 0.1 → `--size 90`.
+
+- **Out-of-range ratios are CLAMPED with a stderr warning, not refused and not applied quietly** —
+  DECIDED. The seam accepts any `0 < ratio < 1`; otty accepts only 10–90. `ratio: 0.95` therefore has
+  no faithful rendering. Sending `--size 5` fails at otty's argument parser, turning a ratio the seam
+  guarantees into a dead split; clamping silently is the silent-wrong-output this seam refuses. So the
+  size is clamped INTO otty's range and the near miss is announced — the same degrade-loudly trade
+  this file already makes for a `label` on a `pane:*` open. A caller who cannot accept the near miss
+  sees the warning; one who can gets a pane.
+
+- **`tab new --title` names the tab at birth** — DECIDED, no tension. Documented on the same page
+  (`otty tab new --command "cargo watch" --title build`), so the follow-up `rename(…, 'tab', …)` is
+  dropped: one round trip fewer, and no window in which the tab carries otty's default name. This is
+  the tab-tier twin of what #160 did at the window tier with `otty open --title`.
+
+- **Not verified against a live binary.** otty is a macOS-only GUI app absent from this machine, with
+  no public source to cross-check, so every claim above is read off the published reference and
+  nothing was probed. Coverage is mocked-`Exec` argv assertions in `mux.otty.test.ts`; #128 tracks the
+  missing real-boundary suite for cmux/otty.
+
+- **`--cwd` is documented on NEITHER `tab new` NOR `pane split`, and the adapter passes it on both** —
+  observed, NOT acted on here. `tab new` documents `--command` and `--title`; `pane split` documents
+  `--direction`, `--command`, `--size`; no page of the reference mentions `--cwd` at all. This is the
+  same class as #156, but absence from a rendered SPA doc is not proof (the #132 lesson) and it is a
+  different unit of work, so it is filed as **#163** rather than widening #144's PR. Corroborated by a
+  second read that asked the question directly: the global flag list (`--format`, `--json`,
+  `--no-headers`, `-q/--quiet`, `--socket`, `--config-file`, `--timeout`, `-y/--yes`, `--version`,
+  `-h/--help`) carries no working-directory flag either, and `/workflows/cli-usage` handles directories
+  through `otty open [path]`'s POSITIONAL argument — which the workspace tier already uses, and which
+  is why that tier is unaffected.
 Decisions (`worktree-landed-signals` — issue #151, squash-merge detection in worktree disposability):
 
 - **Layer the landed signals, never replace the ancestry one** — DECIDED. `git branch --merged` is
