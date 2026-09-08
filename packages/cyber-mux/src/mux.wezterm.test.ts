@@ -20,6 +20,24 @@ const LIST_ONE = JSON.stringify([
 	{ window_id: 1, tab_id: 2, pane_id: 9, workspace: 'default', title: 'zsh', cwd: 'file://host/unit' },
 ])
 
+const LIST_TWO = JSON.stringify([
+	{ window_id: 1, tab_id: 2, pane_id: 9, workspace: 'default' },
+	{ window_id: 1, tab_id: 2, pane_id: 10, workspace: 'default' },
+])
+
+/**
+ * Two tabs in one window, each with its own active pane — the shape measured live, where `is_active`
+ * was `true` on more than one row at once. A focus probe reading that field cannot tell these apart.
+ */
+const LIST_TWO_TABS_BOTH_ACTIVE = JSON.stringify([
+	{ window_id: 1, tab_id: 2, pane_id: 9, workspace: 'default', is_active: true },
+	{ window_id: 1, tab_id: 3, pane_id: 10, workspace: 'default', is_active: true },
+])
+
+/** `wezterm cli list-clients --format json` — one row per attached client. */
+const CLIENTS_ON_9 = JSON.stringify([{ username: 'u', hostname: 'h', pid: 1, focused_pane_id: 9 }])
+const CLIENTS_ON_10 = JSON.stringify([{ username: 'u', hostname: 'h', pid: 1, focused_pane_id: 10 }])
+
 describe('spec:cyber-mux/mux/placement', () => {
 	describe('weztermMuxAdapter', () => {
 		it('placement-wezterm-workspace-followup-call', () => {
@@ -27,10 +45,11 @@ describe('spec:cyber-mux/mux/placement', () => {
 			const exec = fakeExec(calls, { 'split-pane': '9', list: LIST_ONE })
 			const target = weztermMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right' })
 			expect(target).toEqual({ id: '9', tab: '2', workspace: 'default' })
-			expect(calls[0]).toEqual(['cli', 'split-pane', '--right', '--cwd', '/unit'])
+			// calls[0] is the focus read `open()` takes before anything moves — see `restoringFocus`.
+			expect(calls[1]).toEqual(['cli', 'split-pane', '--right', '--cwd', '/unit'])
 			// unlike tmux/herdr, the tab/workspace cost a SEPARATE list call — spawn/split-pane report
 			// only the bare pane id.
-			expect(calls[1]).toEqual(['cli', 'list', '--format', 'json'])
+			expect(calls[2]).toEqual(['cli', 'list', '--format', 'json'])
 		})
 
 		// Every wezterm pane belongs to SOME workspace, even the implicit "default" one — unlike tmux,
@@ -52,14 +71,14 @@ describe('spec:cyber-mux/mux/placement', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'split-pane': '9', list: LIST_ONE })
 			weztermMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:down' })
-			expect(calls[0]).toEqual(['cli', 'split-pane', '--bottom', '--cwd', '/unit'])
+			expect(calls[1]).toEqual(['cli', 'split-pane', '--bottom', '--cwd', '/unit'])
 		})
 
 		it('placement-at-tab-new-tab', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { spawn: '9', list: LIST_ONE })
 			const target = weztermMuxAdapter.open(exec, { cwd: '/unit', at: 'tab' })
-			expect(calls[0]).toEqual(['cli', 'spawn', '--cwd', '/unit'])
+			expect(calls[1]).toEqual(['cli', 'spawn', '--cwd', '/unit'])
 			expect(target).toEqual({ id: '9', tab: '2', workspace: 'default' })
 		})
 
@@ -75,9 +94,10 @@ describe('spec:cyber-mux/mux/placement', () => {
 			])
 			const exec = fakeExec(calls, { spawn: '9', list })
 			weztermMuxAdapter.open(exec, { cwd: '/unit', at: 'tab', within: 'pool' })
-			// The list lookup that resolved the anchor comes FIRST, then the targeted spawn.
-			expect(calls[0]).toEqual(['cli', 'list', '--format', 'json'])
-			expect(calls[1]).toEqual(['cli', 'spawn', '--window-id', '4', '--cwd', '/unit'])
+			// The list lookup that resolved the anchor comes FIRST of the open's own calls (behind the
+			// focus read at calls[0]), then the targeted spawn.
+			expect(calls[1]).toEqual(['cli', 'list', '--format', 'json'])
+			expect(calls[2]).toEqual(['cli', 'spawn', '--window-id', '4', '--cwd', '/unit'])
 		})
 
 		// `within` has no scenario — extra.
@@ -107,7 +127,7 @@ describe('spec:cyber-mux/mux/placement', () => {
 			const adapter = createWeztermAdapter({ newId: () => 'abcdef1234' })
 			const target = adapter.open(exec, { cwd: '/unit', at: 'workspace' })
 			expect(target.workspace).toBe('cyber-mux-abcdef12')
-			expect(calls[0]).toEqual(['cli', 'spawn', '--new-window', '--workspace', 'cyber-mux-abcdef12', '--cwd', '/unit'])
+			expect(calls[1]).toEqual(['cli', 'spawn', '--new-window', '--workspace', 'cyber-mux-abcdef12', '--cwd', '/unit'])
 		})
 
 		// Same scenario — many-to-one, this leg pins --label overriding the mint.
@@ -115,7 +135,7 @@ describe('spec:cyber-mux/mux/placement', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { spawn: '9', list: LIST_ONE })
 			const target = weztermMuxAdapter.open(exec, { cwd: '/unit', at: 'workspace', label: 'my-unit' })
-			expect(calls[0]).toEqual(['cli', 'spawn', '--new-window', '--workspace', 'my-unit', '--cwd', '/unit'])
+			expect(calls[1]).toEqual(['cli', 'spawn', '--new-window', '--workspace', 'my-unit', '--cwd', '/unit'])
 			expect(target.workspace).toBe('my-unit')
 		})
 
@@ -155,20 +175,22 @@ describe('spec:cyber-mux/mux/placement', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'split-pane': '9', list: LIST_ONE })
 			weztermMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right', ratio: 0.333 })
-			expect(calls[0]).toEqual(['cli', 'split-pane', '--right', '--percent', '67', '--cwd', '/unit'])
-			expect(calls[0]).not.toContain('33')
+			expect(calls[1]).toEqual(['cli', 'split-pane', '--right', '--percent', '67', '--cwd', '/unit'])
+			expect(calls[1]).not.toContain('33')
 		})
 
 		it('placement-ratio-omitted-even-default', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'split-pane': '9', list: LIST_ONE })
 			weztermMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right' })
-			expect(calls[0]).not.toContain('--percent')
+			expect(calls[1]).not.toContain('--percent')
 		})
 
 		// The seam refuses a ratio outside `0 < ratio < 1` before `--percent` reaches wezterm, rather than
-		// render `--percent -50` (above 1) or `--percent 100` (0). It throws before any exec call, so no
-		// split-pane command is issued.
+		// render `--percent -50` (above 1) or `--percent 100` (0). It throws before any command that
+		// CREATES anything, so no split-pane command is issued — the lone call is `open()`'s focus read,
+		// no split at all, and no exec AT ALL: the range check is pre-flight, above the focus read the
+		// restoring open would otherwise spend on an open that was never going to happen.
 		it.each([1.5, 0])('placement-ratio-out-of-range-rejected', (ratio) => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'split-pane': '9', list: LIST_ONE })
@@ -195,7 +217,9 @@ describe('spec:cyber-mux/mux/placement', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'split-pane': '9', list: LIST_ONE })
 			weztermMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right', from: { id: '3' } })
-			expect(calls[0]).toEqual(['cli', 'split-pane', '--right', '--pane-id', '3', '--cwd', '/unit'])
+			// wezterm names the split target on the command itself, so `from` costs no focus move of its
+			// own — only the focus read at calls[0] sits ahead of the split.
+			expect(calls[1]).toEqual(['cli', 'split-pane', '--right', '--pane-id', '3', '--cwd', '/unit'])
 		})
 
 		// wezterm has NO --env on spawn or split-pane at all — unlike herdr, which loses it on only one
@@ -387,9 +411,40 @@ describe('spec:cyber-mux/mux/lookup', () => {
 			expect(weztermMuxAdapter.paneExists(exec, { id: '99' })).toBe(false)
 		})
 
-		// No primitive to report focus at all — `undefined` is the seam's own honest answer, not a
-		// stand-in for false.
-		it('lookup-wezterm-focus-always-unknown', () => {
+		// wezterm DOES have a focus primitive — `list-clients --format json` carries `focused_pane_id`,
+		// and it moves with `activate-pane` (measured live on the pinned 20240203 build). The member
+		// used to answer a blanket `undefined` on the claim that no primitive existed.
+		it('lookup-wezterm-focus-reads-the-attached-client', () => {
+			const focused = fakeExec([], { list: LIST_ONE, 'list-clients': CLIENTS_ON_9 })
+			expect(weztermMuxAdapter.isPaneFocused(focused, { id: '9' })).toBe(true)
+			const elsewhere = fakeExec([], { list: LIST_TWO, 'list-clients': CLIENTS_ON_10 })
+			expect(weztermMuxAdapter.isPaneFocused(elsewhere, { id: '9' })).toBe(false)
+		})
+
+		// The trap this member is written around. `list --format json`'s `is_active` is per-TAB, and
+		// measured live it read `true` on THREE rows at once across two tabs and two windows — so a
+		// probe reading it would answer a confident `true` for two panes nobody is looking at. Pane 10
+		// here is its tab's active pane and is NOT where the client is.
+		it('lookup-wezterm-focus-does-not-read-is_active', () => {
+			const exec = fakeExec([], { list: LIST_TWO_TABS_BOTH_ACTIVE, 'list-clients': CLIENTS_ON_9 })
+			expect(weztermMuxAdapter.isPaneFocused(exec, { id: '9' })).toBe(true)
+			expect(weztermMuxAdapter.isPaneFocused(exec, { id: '10' })).toBe(false)
+		})
+
+		// The three ways this cannot be answered, none of which may become `false`: a pane no listing
+		// carries (gone, or the listing itself failed), a mux server with no client attached (measured:
+		// a literal `[]`), and an unparseable answer.
+		it('lookup-wezterm-focus-unknown-when-unanswerable', () => {
+			expect(
+				weztermMuxAdapter.isPaneFocused(fakeExec([], { list: LIST_ONE, 'list-clients': CLIENTS_ON_9 }), { id: '99' }),
+			).toBeUndefined()
+			expect(
+				weztermMuxAdapter.isPaneFocused(fakeExec([], { list: LIST_ONE, 'list-clients': '[]' }), { id: '9' }),
+			).toBeUndefined()
+			expect(weztermMuxAdapter.isPaneFocused(fakeExec([], { list: LIST_ONE }), { id: '9' })).toBeUndefined()
+			expect(
+				weztermMuxAdapter.isPaneFocused(fakeExec([], { list: LIST_ONE, 'list-clients': 'not json' }), { id: '9' }),
+			).toBeUndefined()
 			expect(weztermMuxAdapter.isPaneFocused(fakeExec([]), { id: '9' })).toBeUndefined()
 		})
 

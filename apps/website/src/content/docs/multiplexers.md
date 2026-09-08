@@ -16,15 +16,45 @@ supports and what cyber-mux does when it falls short.
 | Workspace tier        | ✗ (collapses to window) | ✗ (collapses to window) | ✓                       | ✓ (a real Window/Workspace split) | ✗ (placement collapses to tab, but occupancy is reported) | ✓ (Window/Workspace) | ✓ (Window) |
 | Worktree binding      | ✗                       | ✗                       | ✓                       | ✗                       | ✗                       | ✗                       | ✗                       |
 | Name a pane           | —                       | —                       | ✓                       | ✗ (throws / warns)      | ✓                       | ✓ (names its surface)   | ✗ (throws / warns)      |
-| Report focused pane   | best-effort             | best-effort             | best-effort             | ✗ (always `unknown`)    | ✓ (`list-panes --json`) | ✓                       | ✓                       |
+| Report focused pane   | ✓ (best-effort)         | ✓ (best-effort)         | ✓ (`pane get`)          | ✓ (`list-clients`)      | ✓ (`list-clients`)      | ✓ (source-read)         | ✓ (docs-read)           |
 | Knows the running harness | ✗                   | ✗                       | ✓                       | ✗                       | ✗                       | ✗                       | ✗                       |
 | Size splits           | ✓                       | ✓                       | ✓                       | ✓                       | ✗                       | ✗                       | ✓ (`--size`, 10–90%)    |
 | Floating pane         | ✓ (tmux 3.7+, `new-pane`) | ✗ (refused by name)   | ✗ (refused by name)     | ✗ (refused by name)     | ✓ (`new-pane --floating`) | ✗ (refused by name)   | ✗ (refused by name)     |
-| Opens without stealing focus | ✓ (`-d`)          | ✓ (`-d`)                | ✓ (`--no-focus`)        | ✗                       | ✓ (Zellij 0.45+)        | ✗                       | ✗                       |
+| Focus on open         | preserved (`-d`)        | preserved (`-d`)        | preserved (`--no-focus`) | restored               | restored (0.45+)        | restored                | restored                |
 | Resize an open pane   | ✓                       | ✓                       | ✓                       | ✗ (refused by name)     | ✗ (refused by name)     | ✗ (refused by name)     | ✗ (refused by name)     |
 | Zoom a pane           | ✓ (`resize-pane -Z`)    | ✓ (`resize-pane -Z`)    | ✓ (`pane zoom --on/--off`) | ✓ (`zoom-pane`)      | ✓ (`toggle-fullscreen`) | ✗ (refused by name)     | ✗ (refused by name)     |
 | Move a pane beside another | ✓ (`move-pane`)    | ✓ (`move-pane`)         | ✓ (`pane move --tab`)   | ✓ (`split-pane --move-pane-id`) | ✗ (refused by name) | ✗ (refused by name)  | ✗ (refused by name)     |
 | Break a pane out      | ✓ (`break-pane`)        | ✓ (`break-pane`)        | ✓ (`pane move --new-tab`) | ✓ (`move-pane-to-new-tab`) | ✗ (refused by name) | ✓ (`break-pane`, source-read) | ✗ (refused by name) |
+
+### Reading the two focus rows
+
+**Report focused pane** is [`isPaneFocused`](/cyber-mux/api/mux-adapter/#inspecting-and-tearing-down),
+and it answers three ways, never two: *focused*, *not focused*, or *unknown*. Every backend can now
+reach all three — a query that cannot be answered says so rather than returning a confident "no", so
+a caller can tell "the user is elsewhere" from "nobody can tell me". Callers fail open on *unknown*.
+
+`✓ (best-effort)` on tmux and rmux means the answer is derived rather than native: the pane must be
+its window's active pane, in the session's current window, with a client attached. WezTerm and Zellij
+read the attached client directly (`list-clients`), which is the only reading that survives more than
+one tab — a per-tab "active pane" flag is `true` on several panes at once and cannot answer this.
+cmux and otty are marked *source-read* and *docs-read* because neither backend can be driven on Linux
+CI ([#128](https://github.com/cyberuni/cyber-mux/issues/128)); their row fields have not been observed
+on a running binary.
+
+**Focus on open** is [`focusOnOpen`](/cyber-mux/api/mux-adapter/#optional-capabilities), and it has
+three values:
+
+- **preserved** — nothing moves, at any instant, on any route. The backend has a suppress-focus flag,
+  every route passes it, and no route has to visit a pane to choose a split target.
+- **restored** — a focus move happens and is deterministically undone before `open()` returns. The
+  caller ends on the pane they started on; a human watching may see a flicker. This is the honest
+  answer for the four backends whose split has no target flag, so the anchor pane must be focused to
+  choose it.
+- **stolen** — focus moves and stays moved. No backend declares this today.
+
+The distinction matters because *restored* and *preserved* used to share one value. Zellij restores
+and tmux never moves, and a caller drawing a UI around "will the user's eye jump" needs to tell those
+apart.
 
 ## tmux
 
@@ -164,9 +194,17 @@ spec'd limitations rather than forced parity:
   `set-tab-title`. A new **workspace's** name, by contrast, *is* native at birth (it doubles as the
   `--workspace` value `spawn` already takes). `listPanes`/`describeRegion` never report a label at
   all — `title` is always the ambient running-program name, never something an author chose.
-- **No focus-query primitive.** `list --format json` carries no active/focused field for a pane, tab,
-  or window, so `isPaneFocused` always answers `unknown` — the whole backend's answer, not a
-  per-query fallback the way tmux's and herdr's `unknown` is.
+- **A real focus-query primitive, in a place that is easy to miss.** `list --format json` carries an
+  `is_active` field, and it is the *wrong* one: it is per-**tab**, so with two tabs open it reads
+  `true` on two panes at once, and a probe built on it would confidently name a pane the user is not
+  looking at. The right one is `list-clients --format json`'s `focused_pane_id`, which names the pane
+  the attached client is actually on. `isPaneFocused` reads that, and answers `unknown` when no
+  client is attached — a headless mux server has nobody viewing anything, so "not focused" would be a
+  fact read out of an absence.
+- **No suppress-focus flag on any creating verb, so focus is restored rather than preserved.**
+  Neither `spawn` nor `split-pane` has a `--no-focus`, and both activate what they create (measured).
+  So every open reads `list-clients` first and `activate-pane`s the caller back afterwards — a
+  visible detour that ends where it started, which is what `focusOnOpen: 'restored'` declares.
 - **`--percent` sizes the *new* pane** — the same direction as tmux's `-l`, not herdr's pass-through
   — when sizing a `pane:*` split.
 - `spawn`/`split-pane` report only the bare pane id — unlike tmux/herdr, its tab (and, on a `tab` or
@@ -204,17 +242,23 @@ rather than forced parity:
   command when there is one, or a stderr warning when there isn't.
 - **Can name a pane, at birth or after.** `new-pane --name` sets it at birth; `rename-pane` and
   `rename-tab-by-id` rename an already-open space.
-- **Reports focused pane for real.** `list-panes --json` carries an `is_focused` field per pane, so
-  `isPaneFocused` answers `true`/`false` rather than `unknown`.
-- **Opens without stealing focus, from Zellij 0.45.0.** That release added `--no-focus`, which is why
+- **Reports focused pane for real — off `list-clients`, not `is_focused`.** `list-panes --json`
+  carries an `is_focused` field per pane, and it is `true` on more than one record at a time: a live
+  session marks both the floating plugin pane and the tiled pane beneath it. It reports "focused
+  within its layer", so a probe reading it can name a pane the client was never on. `isPaneFocused`
+  reads `list-clients` instead — the same authority the focus restore below already used — and
+  answers `unknown` when no client is attached.
+- **Restores focus on open, from Zellij 0.45.0.** That release added `--no-focus`, which is why
   the adapter's floor moved from 0.44.1 to 0.45.0. A `tab`/`workspace` open, and a `pane:*` open that
   names no `from`, pass the flag and move nothing. A `pane:*` open that *does* name a `from` cannot:
   under `--no-focus` Zellij anchors the split on the pane the command was issued from rather than on
   the focused one, so passing it would split the wrong pane. That path instead focuses the target,
   splits it, and then focuses back to the pane that had focus before — a visible round trip, ending
-  where it started. On Zellij < 0.45.0 the open fails loudly with Zellij's own unknown-argument error
-  rather than silently stealing focus. Both mechanisms are asserted against a real Zellij 0.45.0 in
-  CI's live-backends job.
+  where it started. That round trip is why this backend declares `focusOnOpen: 'restored'` rather
+  than `'preserved'`: one of its two routes genuinely moves the user before putting them back, and
+  the old boolean had no way to say so. On Zellij < 0.45.0 the open fails loudly with Zellij's own
+  unknown-argument error rather than silently stealing focus. Both mechanisms are asserted against a
+  real Zellij 0.45.0 in CI's live-backends job.
 - **Cannot size a split.** Zellij's tiled splits are always even: `new-pane`'s size flags
   (`-x`/`-y`/`--width`/`--height`) all require `--floating`, so a tiled split has no flag to honor a
   ratio with. cyber-mux *does* drive floats — `--at pane:float` is `new-pane --floating` and
@@ -272,7 +316,16 @@ on, and it is still not a verification:
   name. A `--label` on a split therefore names the split's surface. A **workspace** is the exception
   and is named at birth, by `workspace create --name`.
 - **Reports focused surface.** `list-panels --json` carries a `focused` field per surface, so
-  `isPaneFocused` answers `true`/`false` rather than `unknown`.
+  `isPaneFocused` answers `true`/`false` — and `unknown` when the row carries no such field, rather
+  than reading that silence as "not focused". The row shape is a source read, never observed on a
+  running binary, so an absent field is exactly the shape of being wrong here.
+- **Restores focus on open.** `new-pane` has no split-**target** flag, so a `--at pane:*` open with a
+  `from` has to focus that surface before splitting it. Every open therefore reads which surface is
+  focused first and focuses it back afterwards. Note that cmux's creating verbs *do* take `--focus
+  <true|false>` and document a `false` default
+  ([#167](https://github.com/cyberuni/cyber-mux/issues/167)) — cyber-mux does not pass it, because
+  the restore is correct whether or not that documented default is what ships, and the flag itself is
+  unverifiable without a Mac.
 - **Cannot size a split.** `new-pane` has no size flag, and `resize-pane` is cell-based rather than
   fractional, so a `ratio` degrades to cmux's own even split.
 - **Cannot set a split's directory natively.** `new-surface` and `workspace create` both take `--cwd`;
@@ -318,7 +371,14 @@ was driven against:
   already-open tab and a pane-tier `rename` is refused by name — a `--label` on a `--at pane:*` open
   degrades to a warning instead, exactly as on WezTerm.
 - **Reports focused pane.** `panes --json` carries an `is_focused` field, so `isPaneFocused` answers
-  `true`/`false` rather than `unknown`.
+  `true`/`false` — and `unknown` when a row carries no such field. otty documents the command but
+  never its row fields, so an absent `is_focused` is the likeliest way this is wrong, and it must not
+  read as a confident "not focused".
+- **Restores focus on open.** `pane split` has no target flag, so a `from` is honored by focusing
+  that pane first; every open reads which pane is focused and focuses it back afterwards. otty's
+  [orchestration guide](https://docs.otty.sh/agents/orchestration) does show `pane split --no-focus`
+  ([#172](https://github.com/cyberuni/cyber-mux/issues/172)), which cyber-mux does not pass: it would
+  not suppress the anchor move, and the restore is correct either way.
 - **Can size a split.** `pane split --size` sizes the **new** pane, so `ratio` — the fraction kept by
   the *original* — is inverted (same as tmux, WezTerm, and cmux). otty's unit is a whole **percent**
   over a documented **10–90** range, so the fraction is scaled and rounded, and a ratio outside that

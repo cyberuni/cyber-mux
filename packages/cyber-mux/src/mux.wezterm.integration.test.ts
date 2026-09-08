@@ -125,6 +125,59 @@ describe.skipIf(!hasWezterm() || !hasMuxServer())('spec:cyber-mux/mux', () => {
 			expect(panes.some((p) => p.id === target.id)).toBe(true)
 		})
 
+		/**
+		 * The half of wezterm's focus probe a CI runner CAN prove: with no GUI client attached — which is
+		 * exactly what a headless `wezterm-mux-server` is — `list-clients` answers a literal `[]`, and
+		 * `isPaneFocused` must turn that into `undefined` rather than `false`. Nobody is viewing
+		 * anything, so "not focused" would be a fact read out of an absence.
+		 *
+		 * The `true`/`false` half needs a real client, which a runner has no display for. It was measured
+		 * by hand instead, on this same pinned build, by attaching a `wezterm connect unix` GUI to a
+		 * headless mux server under WSLg: `focused_pane_id` read `0` at rest, `1` after `cli
+		 * activate-pane --pane-id 1`, and `0` again after activating pane 0 back. That measurement is
+		 * what justifies reading this field at all; this row is what CI can keep honest.
+		 */
+		it('isPaneFocused() answers unknown — not false — when no client is attached', () => {
+			const base = weztermMuxAdapter.listPanes(exec)[0]
+			expect(base, 'the mux server should report at least one pane').toBeDefined()
+			// The listing this rests on is real and empty, not merely unparseable.
+			expect(exec('wezterm', ['cli', 'list-clients', '--format', 'json'])).toBe('[]')
+			expect(weztermMuxAdapter.isPaneFocused(exec, { id: base?.id ?? '0' })).toBeUndefined()
+			// A pane no listing carries is the other way this cannot be answered.
+			expect(weztermMuxAdapter.isPaneFocused(exec, { id: '99999' })).toBeUndefined()
+		})
+
+		/**
+		 * `list --format json`'s `is_active` is the field this adapter deliberately does NOT read for
+		 * focus, and this is the measurement that says why: two tabs in one window report `is_active:
+		 * true` on TWO rows at once. A probe reading it would answer a confident `true` for a pane the
+		 * user is not looking at — the plausible wrong answer, not a throw or an empty result.
+		 */
+		it('is_active is per-tab, so more than one pane reports it at once', () => {
+			const base = weztermMuxAdapter.listPanes(exec)[0]
+			const first = weztermMuxAdapter.open(exec, { cwd, at: 'pane:right', from: { id: base?.id ?? '0' } })
+			// A second TAB, which is the shape that makes `is_active` ambiguous. Driven as raw argv
+			// rather than through `open({ at: 'tab' })`: that route spells no `--pane-id` and wezterm then
+			// resolves the current pane from `$WEZTERM_PANE`, which this suite (running outside any
+			// wezterm) does not have — it fails with "unable to resolve current pane". Not what is under
+			// test here; the tab just has to exist.
+			const second = exec('wezterm', ['cli', 'spawn', '--pane-id', first.id, '--cwd', cwd])
+			expect(second, 'spawning a second tab should report its pane id').toBeTruthy()
+			const rows = JSON.parse(exec('wezterm', ['cli', 'list', '--format', 'json']) ?? '[]') as {
+				pane_id: number
+				is_active?: boolean
+			}[]
+			const active = rows.filter((r) => r.is_active === true).map((r) => String(r.pane_id))
+			// Torn down before the assertions, not after: these rows share one mux server with every other
+			// row in this file, a split can only subdivide the space it is given, and a `expect` that
+			// fails would otherwise leave an extra TAB standing and starve the rows that follow.
+			weztermMuxAdapter.teardown(exec, { id: second?.trim() ?? '' })
+			weztermMuxAdapter.teardown(exec, first)
+			expect(active).toContain(first.id)
+			expect(active).toContain(second?.trim())
+			expect(active.length).toBeGreaterThan(1)
+		})
+
 		it('teardown() actually kills the real pane', () => {
 			const base = weztermMuxAdapter.listPanes(exec)[0]
 			const target = weztermMuxAdapter.open(exec, { cwd, at: 'pane:right', from: { id: base?.id ?? '0' } })

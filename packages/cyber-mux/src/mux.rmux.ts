@@ -107,7 +107,12 @@ export const rmuxMuxAdapter: MuxAdapter = {
 	canMovePanes: true,
 	canBreakPanes: true,
 
-	opensWithoutStealingFocus: true,
+	/**
+	 * `'preserved'`, not merely "restored": every creating route passes `-d`, and `-t` names the pane
+	 * to split directly, so nothing has to VISIT a pane to choose a target. Nothing moves at any
+	 * instant — the strongest of the three values, and the same one tmux earns for the same reason.
+	 */
+	focusOnOpen: 'preserved',
 
 	open(exec, opts) {
 		// rmux has tmux's tiers, so it has tmux's collapse: no Workspace level, and "window" is its
@@ -359,7 +364,11 @@ export const rmuxMuxAdapter: MuxAdapter = {
 		const line = out.split('\n').find((l) => l.split(' ')[0] === target.id)
 		if (!line) return undefined
 		const [, paneActive, windowActive, sessionAttached] = line.split(' ')
-		return paneActive === '1' && windowActive === '1' && sessionAttached !== '0' && sessionAttached !== undefined
+		// Presence-checked field by field before any is compared, for the tmux adapter's reason: a SHORT
+		// line left `paneActive`/`windowActive` `undefined`, and `undefined === '1'` is `false`, so a
+		// line this code could not parse answered "not focused" rather than "cannot say".
+		if (paneActive === undefined || windowActive === undefined || sessionAttached === undefined) return undefined
+		return paneActive === '1' && windowActive === '1' && sessionAttached !== '0'
 	},
 
 	/**

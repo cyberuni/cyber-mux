@@ -112,7 +112,7 @@ describe.skipIf(!hasRmux())('spec:cyber-mux/mux', () => {
 			'workspace',
 			'pane:right',
 			'pane:down',
-		] as const)('open({ at: %s }) does not move the active pane — backing opensWithoutStealingFocus', (at) => {
+		] as const)('open({ at: %s }) does not move the active pane — backing focusOnOpen: preserved', (at) => {
 			const before = exec('rmux', ['display-message', '-p', '-t', 'main', '#{pane_id}'])
 			expect(before).toMatch(/^%\d+$/)
 			const opened = rmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at })

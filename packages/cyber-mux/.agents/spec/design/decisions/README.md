@@ -2193,3 +2193,90 @@ adapter stops it, issue #177):
   not measured against an older binary.
 
 ISSUE: https://github.com/cyberuni/cyber-mux/issues/177
+
+Decisions (`152-focus-gaps` — the focus-reporting and focus-on-open gaps, issue #152):
+
+- **The issue's premise was wrong on WezTerm, and that is the first deliverable.** Its second bullet
+  named WezTerm, cmux and otty as backends where opening without stealing focus is unsupported, and
+  its first said WezTerm "has no focus-query verb". Measured on the pinned
+  `20240203-110809-5046fc22` build (the one `pull-request.yml` names), against a headless
+  `wezterm-mux-server` and, for the client half, a real `wezterm connect unix` GUI attached to it
+  over the same socket under WSLg:
+  - `cli list-clients --format json` carries `focused_pane_id` per attached client, and it MOVES —
+    `0` at rest, `1` after `cli activate-pane --pane-id 1`, `0` again after activating pane 0 back.
+    **WezTerm has a focus-query primitive.** VERDICT: the "no focus-query verb" half of the premise
+    is false.
+  - `cli spawn --help` and `cli split-pane --help` list no `--no-focus` and no `--focus`, and both
+    verbs activate what they create (a split of pane 0 left pane 1 as its tab's active pane; a spawn
+    made its new tab's pane active). VERDICT: the focus-on-open half of the premise HOLDS for
+    WezTerm — there is nothing to suppress. It was the untested third; it is now the confirmed one.
+  - cmux (#167) and otty (#172) are unchanged by this: their flags remain source/docs reads that need
+    a Mac. This PR passes neither flag, so both issues stay open as per-backend follow-ups.
+
+- **`is_active` is the trap, and it is in the row this adapter already reads.** `cli list --format
+  json` carries `is_active` alongside the `is_zoomed` the zoom members read, which makes it the
+  obvious field for a focus probe. It is per-TAB: measured, THREE rows reported `is_active: true` at
+  once across two tabs and two windows. DECIDED: `isPaneFocused` reads `list-clients`, never
+  `is_active`. A probe on `is_active` would answer a confident `true` for panes nobody is looking at
+  — the plausible wrong answer, not a throw or an empty result.
+
+- **zellij had that exact bug already, and its own `open` knew.** `list-panes --json`'s `is_focused`
+  is true on more than one record at a time (the floating plugin pane and the tiled pane beneath it),
+  which the adapter's restore path documents and works around by reading `list-clients`. The PROBE
+  did not. DECIDED: `isPaneFocused` on zellij reads `list-clients` too — one authority per backend
+  for "where is the client", not two.
+
+- **`undefined` had to become reachable before it could mean anything.** The seam already declared
+  `boolean | undefined`, and six of seven adapters could not produce the `undefined` for the case it
+  exists for. DECIDED, per backend: tmux and rmux presence-check every `-F` field before comparing
+  any (a short line left `paneActive` as `undefined`, and `undefined === '1'` is `false`); cmux and
+  otty presence-check the focus FIELD, not just the row (both row shapes are source/docs reads, so an
+  absent field is the likeliest way they are wrong); wezterm and zellij answer `undefined` when no
+  client is attached. Every one is covered by a test proven to fail against the reverted code.
+
+- **`opensWithoutStealingFocus: boolean` is replaced by `focusOnOpen: 'preserved' | 'restored' |
+  'stolen'`.** The boolean could not express the thing the issue asked about. A backend that moves
+  focus and puts it back is neither "opens without stealing focus" nor the same product as one that
+  strands the caller, and the boolean had to call it one or the other — it called it `true`, which is
+  how zellij came to declare the same value as tmux while doing something visibly different. DECIDED:
+  three values, and the adapter declares the WEAKEST any of its routes earns. tmux/rmux/herdr
+  `'preserved'`; zellij `'restored'` (a correction, not a regression — its `from` path focuses the
+  anchor, opens, and focuses back); wezterm/cmux/otty `'restored'` as of this change.
+
+- **The restore is the answer to the `from` problem #167 and #172 both stop at.** Both note the bit
+  cannot move on a flag finding alone, because `from` is honored by FOCUSING the target first on a
+  backend whose split has no target flag — a move that happens before the open runs and that no flag
+  on the open can suppress. Of the three answers the issue offered (accept and narrow, restore
+  afterward, find a targeting route without the move), DECIDED: **restore afterward**, spelled once in
+  `restoringFocus` (`focus-on-open.ts`) so the four adapters that need it cannot drift into four
+  dances. Read before anything moves, restore in a `finally` so a throwing open cannot leave the
+  caller's view relocated, and skip the restore entirely when the read names nobody — a restore aimed
+  at a guess is a focus move INVENTED by the restore, worse than the theft it undoes.
+
+- **The unverified flags are deliberately NOT passed.** cmux's `--focus false` (#167) and otty's
+  `pane split --no-focus` (#172) are both real in their sources/docs and both unconfirmed on a
+  binary. DECIDED: pass neither. The restore is correct under BOTH readings — if the new pane does
+  not take focus, re-focusing the caller is a no-op; if it does, it is the fix — whereas passing an
+  unverified flag makes the outcome depend on being right about a read. The flags stay with their own
+  issues, which keep their `help wanted` label and their Mac requirement.
+
+- **Refusals stay pre-flight.** `pane:float` is refused above the focus read on all three wrapped
+  adapters, so `placement-float-refused-by-name`'s "costs no exec at all" survives the wrapper. Found
+  by that suite going red, not by review.
+
+- **What is LIVE and what is not.** LIVE, on the pinned wezterm through
+  `mux.wezterm.integration.test.ts`: the no-client-attached `undefined` (a headless mux server
+  reports a literal `[]`), the pane-not-in-listing `undefined`, and the `is_active`-is-per-tab
+  measurement that rules the field out. LIVE by hand only, not reproducible on a CI runner (which has
+  no display for a GUI client): `focused_pane_id` tracking `activate-pane` in both directions. NOT
+  LIVE at all: everything about cmux and otty (#128).
+
+- **One measurement this box could not settle, recorded rather than resolved.** With a GUI client
+  attached, `focused_pane_id` did NOT follow a `split-pane` even though `is_active` did — so wezterm
+  may already leave the attached client alone, and the restore may be a no-op there. The reading
+  cannot be separated from "the WSLg window never took OS focus" without a normally focused desktop
+  session. It does not change the declaration: `restoringFocus` re-activates the pane the client was
+  already on, which is correct under either reading, and `'restored'` promises only that the caller
+  ends where they started.
+
+ISSUE: https://github.com/cyberuni/cyber-mux/issues/152

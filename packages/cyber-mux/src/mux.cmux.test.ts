@@ -108,14 +108,15 @@ describe('spec:cyber-mux/mux', () => {
 			const exec = fakeExec(calls, { 'new-pane': NEW_PANE_RESPONSE })
 			const target = cmuxMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right' })
 			expect(target).toEqual({ id: 'surface:7', tab: 'pane:3' })
-			expect(calls[0]).toEqual(['--json', 'new-pane', '--direction', 'right'])
+			// calls[0] is the focus read `open()` takes before anything moves — see `restoringFocus`.
+			expect(calls[1]).toEqual(['--json', 'new-pane', '--direction', 'right'])
 		})
 
 		it('open() at pane:down splits with --direction down', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'new-pane': NEW_PANE_RESPONSE })
 			cmuxMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:down' })
-			expect(calls[0]).toEqual(['--json', 'new-pane', '--direction', 'down'])
+			expect(calls[1]).toEqual(['--json', 'new-pane', '--direction', 'down'])
 		})
 
 		// The split cannot take a cwd natively, so it rides a `cd` — the same last-resort shape env takes.
@@ -123,15 +124,15 @@ describe('spec:cyber-mux/mux', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'new-pane': NEW_PANE_RESPONSE })
 			cmuxMuxAdapter.open(exec, { cwd: '/unit dir', at: 'pane:right' })
-			expect(calls[1]).toEqual(['send', '--surface', 'surface:7', "cd '/unit dir'"])
-			expect(calls[2]).toEqual(['send-key', '--surface', 'surface:7', 'enter'])
+			expect(calls[2]).toEqual(['send', '--surface', 'surface:7', "cd '/unit dir'"])
+			expect(calls[3]).toEqual(['send-key', '--surface', 'surface:7', 'enter'])
 		})
 
 		it('open() at pane:right chains the launch command after the cd, with env inside it', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'new-pane': NEW_PANE_RESPONSE })
 			cmuxMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right', launch: 'pnpm test', env: { CI: '1' } })
-			expect(calls[1]).toEqual(['send', '--surface', 'surface:7', "cd '/unit' && env CI='1' pnpm test"])
+			expect(calls[2]).toEqual(['send', '--surface', 'surface:7', "cd '/unit' && env CI='1' pnpm test"])
 		})
 
 		it('open() reports the ambient workspace when the adapter is bound to one', () => {
@@ -144,7 +145,7 @@ describe('spec:cyber-mux/mux', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'new-surface': NEW_SURFACE_RESPONSE })
 			const target = cmuxMuxAdapter.open(exec, { cwd: '/unit', at: 'tab' })
-			expect(calls[0]).toEqual(['--json', 'new-surface', '--cwd', '/unit'])
+			expect(calls[1]).toEqual(['--json', 'new-surface', '--cwd', '/unit'])
 			expect(target).toEqual({ id: 'surface:8', tab: 'pane:2' })
 		})
 
@@ -152,7 +153,7 @@ describe('spec:cyber-mux/mux', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'new-surface': NEW_SURFACE_RESPONSE })
 			cmuxMuxAdapter.open(exec, { cwd: '/unit', at: 'tab', within: 'pane:5' })
-			expect(calls[0]).toEqual(['--json', 'new-surface', '--pane', 'pane:5', '--cwd', '/unit'])
+			expect(calls[1]).toEqual(['--json', 'new-surface', '--pane', 'pane:5', '--cwd', '/unit'])
 		})
 
 		// The NAMESPACED spelling: `new-workspace` hardcodes `honorJSONOutput: false`, so `--json
@@ -161,7 +162,7 @@ describe('spec:cyber-mux/mux', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { workspace: NEW_WORKSPACE_RESPONSE })
 			const target = cmuxMuxAdapter.open(exec, { cwd: '/unit', at: 'workspace' })
-			expect(calls[0]).toEqual(['--json', 'workspace', 'create', '--cwd', '/unit'])
+			expect(calls[1]).toEqual(['--json', 'workspace', 'create', '--cwd', '/unit'])
 			// No pane_ref in the payload, so the new workspace's own surface is the tab.
 			expect(target).toEqual({ id: 'surface:10', tab: 'surface:10', workspace: 'workspace:2' })
 		})
@@ -171,15 +172,21 @@ describe('spec:cyber-mux/mux', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { workspace: NEW_WORKSPACE_RESPONSE })
 			cmuxMuxAdapter.open(exec, { cwd: '/unit', at: 'workspace', label: 'shift a' })
-			expect(calls).toEqual([['--json', 'workspace', 'create', '--cwd', '/unit', '--name', 'shift a']])
+			expect(calls).toEqual([
+				// the focus read, ahead of the whole body — it names no surface here, so nothing is restored
+				['--json', 'list-panels'],
+				['--json', 'workspace', 'create', '--cwd', '/unit', '--name', 'shift a'],
+			])
 		})
 
 		it('open() with a `from` focuses that surface first — the only way to choose the split target', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'new-pane': NEW_PANE_RESPONSE })
 			cmuxMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right', from: { id: 'surface:3' } })
-			expect(calls[0]).toEqual(['focus-panel', '--panel', 'surface:3'])
-			expect(calls[1]).toEqual(['--json', 'new-pane', '--direction', 'right'])
+			// the focus read first, then the `from` focus, then the split it chose the target for
+			expect(calls[0]).toEqual(['--json', 'list-panels'])
+			expect(calls[1]).toEqual(['focus-panel', '--panel', 'surface:3'])
+			expect(calls[2]).toEqual(['--json', 'new-pane', '--direction', 'right'])
 		})
 
 		// cmux has no split-size flag at all, so a ratio degrades to its own even split rather than
@@ -188,7 +195,7 @@ describe('spec:cyber-mux/mux', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'new-pane': NEW_PANE_RESPONSE })
 			cmuxMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right', ratio: 0.7 })
-			expect(calls[0]).toEqual(['--json', 'new-pane', '--direction', 'right'])
+			expect(calls[1]).toEqual(['--json', 'new-pane', '--direction', 'right'])
 		})
 
 		it('canSizeSplits is not declared', () => {
@@ -298,8 +305,9 @@ describe('spec:cyber-mux/mux', () => {
 			})
 			const exec = fakeExec(calls, { 'new-pane': NEW_PANE_RESPONSE, 'list-panels': listing })
 			cmuxMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right', label: 'worker' })
-			expect(calls[0]).toEqual(['--json', 'new-pane', '--direction', 'right'])
-			expect(calls[2]).toEqual(['rename-tab', '--surface', 'surface:7', '--title', 'worker'])
+			// behind the focus read at calls[0]; calls[2] is `rename`'s own list-panels lookup
+			expect(calls[1]).toEqual(['--json', 'new-pane', '--direction', 'right'])
+			expect(calls[3]).toEqual(['rename-tab', '--surface', 'surface:7', '--title', 'worker'])
 		})
 
 		// All three read `list-panels`, not `list-panes`: the pane verb answers a different tier in a
@@ -330,6 +338,17 @@ describe('spec:cyber-mux/mux', () => {
 		it('isPaneFocused() returns undefined for an unknown surface', () => {
 			const exec = fakeExec([], { 'list-panels': LIST_PANELS_RESPONSE })
 			expect(cmuxMuxAdapter.isPaneFocused(exec, { id: 'surface:99' })).toBeUndefined()
+		})
+
+		// A row that carries the surface but NOT the focus field. Every row shape in this adapter is a
+		// source read rather than a live one, so a missing field is the likeliest way it is wrong — and
+		// `undefined === true` is `false`, which would turn that silence into a confident "not focused".
+		// Revert to `found.focused === true` and this goes red.
+		it('isPaneFocused() is undefined when the row carries no focus field', () => {
+			const exec = fakeExec([], {
+				'list-panels': JSON.stringify({ surfaces: [{ id: 'surface:1', title: 'zsh' }] }),
+			})
+			expect(cmuxMuxAdapter.isPaneFocused(exec, { id: 'surface:1' })).toBeUndefined()
 		})
 
 		// No `cwd`: cmux reports none per surface, and `requested_working_directory` is the directory
@@ -485,6 +504,7 @@ describe('spec:cyber-mux/mux/placement', () => {
 			})
 			cmuxMuxAdapter.open(exec, { cwd: '/unit', at: 'workspace', workspaceGroup: 'shift-a' })
 			expect(calls).toEqual([
+				['--json', 'list-panels'],
 				['--json', 'workspace', 'create', '--cwd', '/unit'],
 				// the TAB id of the new workspace — its own surface, since `workspace create` reports no pane
 				['rpc', 'surface.list', '{"pane_id":"surface:10"}'],
@@ -498,7 +518,10 @@ describe('spec:cyber-mux/mux/placement', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { workspace: NEW_WORKSPACE_RESPONSE })
 			cmuxMuxAdapter.open(exec, { cwd: '/unit', at: 'workspace' })
-			expect(calls).toEqual([['--json', 'workspace', 'create', '--cwd', '/unit']])
+			expect(calls).toEqual([
+				['--json', 'list-panels'],
+				['--json', 'workspace', 'create', '--cwd', '/unit'],
+			])
 		})
 
 		// A tab or split lands in the caller's EXISTING workspace; grouping that would group a space the
@@ -510,7 +533,10 @@ describe('spec:cyber-mux/mux/placement', () => {
 				at: 'tab',
 				workspaceGroup: 'shift-a',
 			})
-			expect(tabCalls).toEqual([['--json', 'new-surface', '--cwd', '/unit']])
+			expect(tabCalls).toEqual([
+				['--json', 'list-panels'],
+				['--json', 'new-surface', '--cwd', '/unit'],
+			])
 
 			const paneCalls: string[][] = []
 			cmuxMuxAdapter.open(fakeExec(paneCalls, { 'new-pane': NEW_PANE_RESPONSE }), {
@@ -518,7 +544,7 @@ describe('spec:cyber-mux/mux/placement', () => {
 				at: 'pane:right',
 				workspaceGroup: 'shift-a',
 			})
-			expect(paneCalls[0]).toEqual(['--json', 'new-pane', '--direction', 'right'])
+			expect(paneCalls[1]).toEqual(['--json', 'new-pane', '--direction', 'right'])
 			expect(paneCalls.map((c) => c[0])).not.toContain('workspace-group')
 		})
 	})

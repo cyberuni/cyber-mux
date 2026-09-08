@@ -1,6 +1,7 @@
 import { envFallback } from './env-fallback.ts'
 import { type Exec, withReason } from './exec.ts'
 import { refuseFloatingPane } from './floating.ts'
+import { restoringFocus } from './focus-on-open.ts'
 import type { LivePane, MuxAdapter, MuxReadOptions, MuxTarget, OpenedPane } from './mux.ts'
 import { type NewId, nodeNewId } from './new-id.ts'
 import { assertRatioInRange } from './ratio.ts'
@@ -24,9 +25,13 @@ import { pollForOutput } from './wait-output.ts'
  * - **No way to title a PANE**, at birth or after — `set-tab-title`/`set-window-title` exist, there
  *   is no pane equivalent. `rename(..., 'pane', …)` throws; `open`'s pane-tier `label` degrades to a
  *   stderr warning rather than silently dropping it or failing the whole open.
- * - **No focus-query primitive** — `list --format json`'s documented fields carry no active/focused
- *   indicator for a pane, tab, or window. `isPaneFocused` always answers `undefined`, which is the
- *   seam's own honest answer for "no primitive to report focus", not a workaround.
+ * - **A real focus-query primitive, and this file used to deny it.** `cli list-clients --format
+ *   json` carries `focused_pane_id` per attached client, and it MOVES: measured on the pinned
+ *   20240203 build with a GUI client attached to a headless mux server, it followed `cli
+ *   activate-pane` in both directions. `isPaneFocused` reads it and no longer answers a blanket
+ *   `undefined`. What it deliberately does NOT read is `list --format json`'s `is_active`, which is
+ *   the seam-shaped trap here: that flag is per-TAB, and the same run measured THREE rows reporting
+ *   `is_active: true` at once across two tabs and two windows.
  * - **A real, natively ABSOLUTE pane zoom, and it is the one thing in this file that WAS driven.**
  *   `cli zoom-pane --pane-id <id> --zoom|--unzoom|--toggle`, plus an `is_zoomed` flag on every
  *   `cli list --format json` row. Both were exercised against a headless `wezterm-mux-server` on the
@@ -61,18 +66,30 @@ export function createWeztermAdapter(deps: { newId: NewId }): MuxAdapter {
 		canSizeSplits: true,
 
 		/**
-		 * `false`: WezTerm's CLI documents no suppress-focus flag on any creating verb — neither
-		 * `cli spawn` (which opens a tab or a window) nor `cli split-pane` — and both activate what they
-		 * create. So every open moves the user, and this says so rather than pretending otherwise.
+		 * `'restored'`. WezTerm's CLI has no suppress-focus flag on any creating verb — `cli spawn
+		 * --help` and `cli split-pane --help` on the pinned 20240203 build list `--pane-id`, the
+		 * direction/placement flags, `--cells`/`--percent`, `--cwd`, `--move-pane-id`, `--domain-name`,
+		 * `--window-id`, `--new-window` and `--workspace`, and nothing resembling `--no-focus`. Measured,
+		 * not read: a split of pane 0 left pane 1 as its tab's active pane, and a `spawn` made its new
+		 * tab's pane active too.
 		 *
-		 * There is nothing to emulate it with. Re-activating the caller's pane afterward would be a
-		 * `cli activate-pane` — a second visible focus move, landing the user back where they started
-		 * after a visible detour — which is worse than the honest `false`, not better.
+		 * So the focus move cannot be SUPPRESSED here, which is why the old boolean answered `false` and
+		 * stopped. It can be UNDONE, and that is what changed: `cli list-clients` reports
+		 * `focused_pane_id` (see `isPaneFocused` for the live proof that it tracks focus), so the pane
+		 * the caller was on is readable before the open and `cli activate-pane` puts them back after.
+		 * The old comment argued a restore would be "a second visible focus move… worse than the honest
+		 * `false`", and that argument does not survive the seam having a value for it: `'restored'`
+		 * SAYS there is a visible detour, and a caller told the truth about a flicker is better served
+		 * than one told nothing and left stranded.
 		 *
-		 * Read off the WezTerm CLI reference, NOT verified against a live binary: there is no wezterm on
-		 * the machine this was written on, the same disclaimer the rest of this header carries.
+		 * The restore is a no-op when nothing moved — `restoringFocus` re-activates the pane the client
+		 * was already on — which also makes it safe under a reading this box cannot settle. Measured
+		 * with a real GUI client attached, `focused_pane_id` did NOT follow a `split-pane` even though
+		 * `is_active` did, so wezterm may already leave the attached client alone. If it does, this
+		 * costs one redundant `activate-pane`; if it does not, it is the fix. Either way the caller ends
+		 * on the pane they started on, which is the only thing this declaration promises.
 		 */
-		opensWithoutStealingFocus: false,
+		focusOnOpen: 'restored',
 
 		/**
 		 * `true` — `wezterm cli zoom-pane --pane-id <id> --zoom|--unzoom`, and this is the ONE claim in
@@ -108,65 +125,79 @@ export function createWeztermAdapter(deps: { newId: NewId }): MuxAdapter {
 
 		open(exec, opts) {
 			const at = opts.at ?? 'tab'
-			if (at === 'workspace') {
-				// WezTerm's `--workspace` both selects AND creates: naming one that does not yet exist makes
-				// it. Reusing "default" (the CLI's own default when `--workspace` is omitted) would NOT open
-				// the pane's own space — it would join whatever the caller was already in — so a fresh name
-				// is minted whenever the caller gave no `label`. When a label IS given it doubles as the
-				// workspace's name: WezTerm has one string per workspace, not a separate opaque id plus a
-				// display name the way tmux's window option split the two.
-				const workspace = opts.label ?? `cyber-mux-${deps.newId().slice(0, 8)}`
-				const out = exec('wezterm', ['cli', 'spawn', '--new-window', '--workspace', workspace, '--cwd', opts.cwd])
-				if (!out) throw new Error(withReason(exec, 'wezterm cli spawn --new-window failed'))
-				const pane = out.trim()
-				if (!pane) throw new Error('wezterm cli spawn --new-window did not report the new pane id')
-				const opened: OpenedPane = { id: pane, tab: resolveTab(exec, pane), workspace }
-				runLaunch(adapter, exec, opened, opts.env, opts.launch)
-				return opened
-			}
-			if (at === 'tab') {
-				// A WezTerm workspace is a set of WINDOWS and a tab lives in a window, so the anchor is
-				// resolved one level down: any window already in the named workspace will do — a tab spawned
-				// into it lands in that workspace. Without it `spawn` targets the window the USER is looking
-				// at, which is the whole reason `within` exists.
-				const within = opts.within ? ['--window-id', resolveWorkspaceWindow(exec, opts.within)] : []
-				const out = exec('wezterm', ['cli', 'spawn', ...within, '--cwd', opts.cwd])
-				if (!out) throw new Error(withReason(exec, 'wezterm cli spawn failed'))
-				const pane = out.trim()
-				if (!pane) throw new Error('wezterm cli spawn did not report the new pane id')
-				const opened = withTabAndWorkspace(exec, pane)
-				// `spawn` has no title flag at all (unlike tmux `-n`/herdr `--label`), so a tab's own label
-				// is always a post-birth rename — not just the one root-tab case herdr has. Addressed by
-				// TAB id, not the pane id `opened` itself carries — `rename`'s 'tab' tier takes a tab id.
-				if (opts.label) adapter.rename(exec, { id: opened.tab }, 'tab', opts.label)
-				runLaunch(adapter, exec, opened, opts.env, opts.launch)
-				return opened
-			}
-			// WezTerm has no floating-pane concept: `cli split-pane` always takes a share of the region and
-			// resizes its neighbors, and there is no non-modal above-the-layout pane anywhere in `wezterm
-			// cli`. So this REFUSES by name rather than substituting a split — the substitute would satisfy
-			// the caller's pane id and violate the one property they asked for. No `canFloatPanes` above is
-			// the declaration; this is the enforcement, and both are needed for the same reason `agent
-			// wait` checks twice.
+			// The refusal is PRE-FLIGHT, above the focus read rather than inside the opened body: it must
+			// cost no exec at all (`placement-float-refused-by-name` pins exactly that), and there is
+			// nothing to restore when nothing is going to be opened.
 			if (at === 'pane:float') refuseFloatingPane(adapter.name)
-			// pane:right / pane:down
-			const direction = at === 'pane:down' ? ['--bottom'] : ['--right']
-			const from = opts.from ? ['--pane-id', opts.from.id] : []
-			// The issue's own probe note: `--percent` sizes the NEW pane, the same inversion tmux's `-l`
-			// needs — not herdr's pass-through of the ORIGINAL pane's fraction.
-			const size = opts.ratio != null ? ['--percent', toWeztermSize(opts.ratio)] : []
-			const out = exec('wezterm', ['cli', 'split-pane', ...direction, ...from, ...size, '--cwd', opts.cwd])
-			if (!out) throw new Error(withReason(exec, 'wezterm cli split-pane failed'))
-			const pane = out.trim()
-			if (!pane) throw new Error('wezterm cli split-pane did not report the new pane id')
-			const opened = withTabAndWorkspace(exec, pane)
-			// No pane-title primitive exists at all — degrade with a warning rather than silently dropping
-			// the label or failing the whole split over a name nobody NEEDS to open the pane.
-			if (opts.label) {
-				process.stderr.write(`wezterm cannot name a pane — "${opts.label}" was not set on pane ${opened.id}\n`)
-			}
-			runLaunch(adapter, exec, opened, opts.env, opts.launch)
-			return opened
+			// Argument validation is pre-flight for the same reason, and it did not used to be: an
+			// out-of-range `ratio` threw from inside the split branch, which after the wrapper landed
+			// meant one focus read had already been spent on an open that was never going to happen.
+			// Rejecting bad input before touching the backend at all is the rule; the wrapper is where
+			// forgetting it starts to cost something.
+			if (opts.ratio != null) assertRatioInRange(opts.ratio)
+			// EVERY route, not only the `pane:*` one: a new tab or workspace is selected when it is
+			// created too, so those move the caller as well. The read runs before anything is created and
+			// the restore runs even if the open throws — see `restoringFocus`.
+			return restoringFocus(
+				{
+					read: () => focusedWeztermPane(exec),
+					restore: (pane) => adapter.focus(exec, { id: pane }),
+				},
+				() => {
+					if (at === 'workspace') {
+						// WezTerm's `--workspace` both selects AND creates: naming one that does not yet exist makes
+						// it. Reusing "default" (the CLI's own default when `--workspace` is omitted) would NOT open
+						// the pane's own space — it would join whatever the caller was already in — so a fresh name
+						// is minted whenever the caller gave no `label`. When a label IS given it doubles as the
+						// workspace's name: WezTerm has one string per workspace, not a separate opaque id plus a
+						// display name the way tmux's window option split the two.
+						const workspace = opts.label ?? `cyber-mux-${deps.newId().slice(0, 8)}`
+						const out = exec('wezterm', ['cli', 'spawn', '--new-window', '--workspace', workspace, '--cwd', opts.cwd])
+						if (!out) throw new Error(withReason(exec, 'wezterm cli spawn --new-window failed'))
+						const pane = out.trim()
+						if (!pane) throw new Error('wezterm cli spawn --new-window did not report the new pane id')
+						const opened: OpenedPane = { id: pane, tab: resolveTab(exec, pane), workspace }
+						runLaunch(adapter, exec, opened, opts.env, opts.launch)
+						return opened
+					}
+					if (at === 'tab') {
+						// A WezTerm workspace is a set of WINDOWS and a tab lives in a window, so the anchor is
+						// resolved one level down: any window already in the named workspace will do — a tab spawned
+						// into it lands in that workspace. Without it `spawn` targets the window the USER is looking
+						// at, which is the whole reason `within` exists.
+						const within = opts.within ? ['--window-id', resolveWorkspaceWindow(exec, opts.within)] : []
+						const out = exec('wezterm', ['cli', 'spawn', ...within, '--cwd', opts.cwd])
+						if (!out) throw new Error(withReason(exec, 'wezterm cli spawn failed'))
+						const pane = out.trim()
+						if (!pane) throw new Error('wezterm cli spawn did not report the new pane id')
+						const opened = withTabAndWorkspace(exec, pane)
+						// `spawn` has no title flag at all (unlike tmux `-n`/herdr `--label`), so a tab's own label
+						// is always a post-birth rename — not just the one root-tab case herdr has. Addressed by
+						// TAB id, not the pane id `opened` itself carries — `rename`'s 'tab' tier takes a tab id.
+						if (opts.label) adapter.rename(exec, { id: opened.tab }, 'tab', opts.label)
+						runLaunch(adapter, exec, opened, opts.env, opts.launch)
+						return opened
+					}
+					// pane:right / pane:down
+					const direction = at === 'pane:down' ? ['--bottom'] : ['--right']
+					const from = opts.from ? ['--pane-id', opts.from.id] : []
+					// The issue's own probe note: `--percent` sizes the NEW pane, the same inversion tmux's `-l`
+					// needs — not herdr's pass-through of the ORIGINAL pane's fraction.
+					const size = opts.ratio != null ? ['--percent', toWeztermSize(opts.ratio)] : []
+					const out = exec('wezterm', ['cli', 'split-pane', ...direction, ...from, ...size, '--cwd', opts.cwd])
+					if (!out) throw new Error(withReason(exec, 'wezterm cli split-pane failed'))
+					const pane = out.trim()
+					if (!pane) throw new Error('wezterm cli split-pane did not report the new pane id')
+					const opened = withTabAndWorkspace(exec, pane)
+					// No pane-title primitive exists at all — degrade with a warning rather than silently dropping
+					// the label or failing the whole split over a name nobody NEEDS to open the pane.
+					if (opts.label) {
+						process.stderr.write(`wezterm cannot name a pane — "${opts.label}" was not set on pane ${opened.id}\n`)
+					}
+					runLaunch(adapter, exec, opened, opts.env, opts.launch)
+					return opened
+				},
+			)
 		},
 
 		rename(exec, target, tier, name) {
@@ -255,11 +286,38 @@ export function createWeztermAdapter(deps: { newId: NewId }): MuxAdapter {
 			return listWeztermPanes(exec).some((p) => String(p.pane_id) === target.id)
 		},
 
-		isPaneFocused() {
-			// `list --format json`'s documented fields carry no active/focused indicator for a pane, tab, or
-			// window — there is no primitive to ask. `undefined` is the seam's own answer for exactly this
-			// case, not a stand-in for `false`: callers fail OPEN on it.
-			return undefined
+		/**
+		 * `wezterm cli list-clients --format json` carries `focused_pane_id` per attached client. This
+		 * member used to return a hard `undefined` on the grounds that "there is no primitive to ask",
+		 * and **that was wrong** — measured on the pinned 20240203-110809-5046fc22 build, against a
+		 * headless `wezterm-mux-server` with a real GUI client attached to it over the same socket:
+		 * `focused_pane_id` read `0` at rest, `1` after `cli activate-pane --pane-id 1`, and `0` again
+		 * after activating pane 0 back. It tracks focus, live, in both directions.
+		 *
+		 * **Not `list --format json`'s `is_active`**, which is the field this file already reads for
+		 * zoom and the obvious-looking answer. It is per-TAB, and the same run measured why that is
+		 * fatal here: with two tabs in one window and a second window open, THREE rows reported
+		 * `is_active: true` at once. It answers "is this the active pane of its tab", so a caller asking
+		 * "is the user looking at this pane" would get a confident `true` for two panes they are not
+		 * looking at — the plausible wrong answer, not a throw.
+		 *
+		 * Three-valued, and each value is earned:
+		 *
+		 * - `undefined` when the pane is in no listing (gone, or the listing itself failed —
+		 *   `listWeztermPanes` folds an exec failure into an empty array, which lands here as "cannot
+		 *   say" rather than as "not focused").
+		 * - `undefined` when NO client is attached, which a headless mux server reports as a literal
+		 *   `[]` (measured). Nobody is viewing anything, so there is no focused pane for this one to
+		 *   fail to be, and `false` would be reading a fact out of an absence.
+		 * - `true`/`false` otherwise, against every attached client: focused if ANY of them is on this
+		 *   pane. `MuxTarget` carries no client qualifier, so "the caller's client" is not expressible
+		 *   and any-client is the only answerable reading.
+		 */
+		isPaneFocused(exec, target) {
+			if (!listWeztermPanes(exec).some((p) => String(p.pane_id) === target.id)) return undefined
+			const clients = listWeztermClients(exec)
+			if (clients === undefined || clients.length === 0) return undefined
+			return clients.some((c) => c.focused_pane_id != null && String(c.focused_pane_id) === target.id)
 		},
 
 		/**
@@ -313,7 +371,7 @@ export function createWeztermAdapter(deps: { newId: NewId }): MuxAdapter {
 		 * tab and workspace the pane landed in are exactly what changed.
 		 *
 		 * Moving MOVES FOCUS here and there is no flag to stop it — the moved pane becomes its new tab's
-		 * active pane (measured). That is the same thing `opensWithoutStealingFocus: false` above
+		 * active pane (measured). That is the same thing `focusOnOpen: 'restored'` above
 		 * already declares about every wezterm route, reported rather than compensated.
 		 */
 		movePane(exec, target, destination, side) {
@@ -464,8 +522,8 @@ interface WeztermListEntry {
 	 * this adapter already makes, so `isPaneZoomed` costs wezterm no second exec.
 	 *
 	 * Verified against a live 20240203 mux server, unlike most of this file: the key is on every row
-	 * of the listing (alongside `is_active`, which `isPaneFocused` predates and does not yet read),
-	 * and only the zoomed pane's row read `true`.
+	 * of the listing, and only the zoomed pane's row read `true`. `is_active` rides the same row and is
+	 * deliberately NOT modelled here — `isPaneFocused` explains why it is the wrong field for focus.
 	 */
 	is_zoomed?: boolean | undefined
 }
@@ -484,6 +542,52 @@ function listWeztermPanes(exec: Exec): WeztermListEntry[] {
 	return parsed.filter(
 		(p): p is WeztermListEntry => p != null && p.pane_id != null && p.tab_id != null && p.window_id != null,
 	)
+}
+
+interface WeztermClientEntry {
+	/**
+	 * The pane the client is currently viewing. Verified live on 20240203 against a GUI client attached
+	 * to a headless mux server: present on the row, and it MOVED with `cli activate-pane` both ways.
+	 * Optional on the type all the same — this is a JSON payload from another process, and a row
+	 * missing it must reach `isPaneFocused` as "cannot say".
+	 */
+	focused_pane_id?: number | string | undefined
+}
+
+/**
+ * The pane the attached client is on, or `undefined` when nothing answers — the restore target
+ * `focusOnOpen: 'restored'` reads before an open moves anything.
+ *
+ * The FIRST client's pane. This adapter is single-client throughout (`MuxTarget` carries no client
+ * qualifier any more than it carries a session one), and with several attached there is no "the
+ * caller's client" for it to prefer. `undefined` when no client is attached — a headless mux server
+ * reports exactly that — and nothing is restored then, because nothing was stolen from anybody.
+ */
+function focusedWeztermPane(exec: Exec): string | undefined {
+	const focused = listWeztermClients(exec)?.[0]?.focused_pane_id
+	return focused == null ? undefined : String(focused)
+}
+
+/**
+ * The attached clients, or `undefined` when wezterm could not be asked — and that distinction is the
+ * whole reason this returns a nullable rather than folding failure into `[]` the way
+ * `listWeztermPanes` does. Here the two readings differ: `[]` is a real, measured answer (a mux server
+ * with no client attached prints exactly that) meaning "nobody is viewing anything", while an exec or
+ * parse failure means "wezterm did not answer". `isPaneFocused` maps both to `undefined` today, so
+ * nothing turns on it yet; collapsing them would still be throwing away the one fact that lets a
+ * later caller tell an idle server from a broken one.
+ */
+function listWeztermClients(exec: Exec): WeztermClientEntry[] | undefined {
+	const out = exec('wezterm', ['cli', 'list-clients', '--format', 'json'])
+	if (out === null) return undefined
+	let parsed: unknown
+	try {
+		parsed = JSON.parse(out)
+	} catch {
+		return undefined
+	}
+	if (!Array.isArray(parsed)) return undefined
+	return parsed.filter((c): c is WeztermClientEntry => c != null && typeof c === 'object')
 }
 
 /** `cwd` is reported as a `file://` URI; strip the scheme and host down to the bare path. */

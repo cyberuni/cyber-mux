@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Exec } from './exec.ts'
+import type { FocusOnOpen } from './focus-on-open.ts'
 import { cmuxMuxAdapter } from './mux.cmux.ts'
 import { herdrMuxAdapter } from './mux.herdr.ts'
 import { ottyMuxAdapter } from './mux.otty.ts'
@@ -10,7 +11,7 @@ import { weztermMuxAdapter } from './mux.wezterm.ts'
 import { zellijMuxAdapter } from './mux.zellij.ts'
 
 /**
- * `MuxAdapter.opensWithoutStealingFocus` — the declaration, and the argv that has to back it.
+ * `MuxAdapter.focusOnOpen` — the declaration, and the argv that has to back it.
  *
  * Collected in one file rather than spread across six adapter suites for the reason
  * `floating.test.ts` collects the float contract: the interesting property is the SPLIT across
@@ -40,6 +41,21 @@ function tmuxExec(calls: string[][]): Exec {
 		}
 		calls.push(args)
 		return '%9\t@1'
+	}
+}
+
+/**
+ * wezterm keys off `args[1]` — every call is `wezterm cli <subcommand> …`. `client` names the pane
+ * `list-clients` reports as focused, or `undefined` for a server nobody is attached to (which a real
+ * headless mux server answers as a literal `[]`).
+ */
+function weztermExec(calls: string[][], client: string | undefined): Exec {
+	const listing = JSON.stringify([{ window_id: 1, tab_id: 2, pane_id: 9, workspace: 'default' }])
+	return (_cmd, args) => {
+		calls.push(args)
+		if (args[1] === 'list-clients') return client === undefined ? '[]' : JSON.stringify([{ focused_pane_id: client }])
+		if (args[1] === 'list') return listing
+		return '9'
 	}
 }
 
@@ -96,21 +112,44 @@ const ZELLIJ_PLUGIN_ALSO_FOCUSED = JSON.stringify([
 
 // ── the declaration ────────────────────────────────────────────────────────────────────────────
 
+const ALL_ADAPTERS = [
+	tmuxMuxAdapter,
+	rmuxMuxAdapter,
+	herdrMuxAdapter,
+	zellijMuxAdapter,
+	weztermMuxAdapter,
+	cmuxMuxAdapter,
+	ottyMuxAdapter,
+]
+
 describe('spec:cyber-mux/mux/placement', () => {
-	describe('opensWithoutStealingFocus — the declaration', () => {
-		// REQUIRED on the seam, unlike `canSizeSplits`/`canFloatPanes`, so `toBe` on a boolean is the
-		// right assertion: there is no absent state to tolerate, and an adapter that forgot to answer is
-		// a type error rather than a silent `undefined` this row would have to accept.
-		it.each<{ adapter: MuxAdapter; keepsFocus: boolean }>([
-			{ adapter: tmuxMuxAdapter, keepsFocus: true },
-			{ adapter: rmuxMuxAdapter, keepsFocus: true },
-			{ adapter: herdrMuxAdapter, keepsFocus: true },
-			{ adapter: zellijMuxAdapter, keepsFocus: true },
-			{ adapter: weztermMuxAdapter, keepsFocus: false },
-			{ adapter: cmuxMuxAdapter, keepsFocus: false },
-			{ adapter: ottyMuxAdapter, keepsFocus: false },
-		])('$adapter.name declares whether an open leaves the caller’s focus alone', ({ adapter, keepsFocus }) => {
-			expect(adapter.opensWithoutStealingFocus).toBe(keepsFocus)
+	describe('focusOnOpen — the declaration', () => {
+		// REQUIRED on the seam, unlike `canSizeSplits`/`canFloatPanes`, so `toBe` on a concrete value is
+		// the right assertion: there is no absent state to tolerate, and an adapter that forgot to
+		// answer is a type error rather than a silent `undefined` this row would have to accept.
+		//
+		// Note zellij is `'restored'`, not `'preserved'` — the distinction the old boolean could not
+		// carry. Its `from` path focuses the anchor pane, opens, and focuses back; tmux's `-t` targets
+		// the pane to split directly and never has to visit it. Both end where they started and only
+		// one never left, which is exactly what a caller drawing a UI needs to tell apart.
+		it.each<{ adapter: MuxAdapter; focusOnOpen: FocusOnOpen }>([
+			{ adapter: tmuxMuxAdapter, focusOnOpen: 'preserved' },
+			{ adapter: rmuxMuxAdapter, focusOnOpen: 'preserved' },
+			{ adapter: herdrMuxAdapter, focusOnOpen: 'preserved' },
+			{ adapter: zellijMuxAdapter, focusOnOpen: 'restored' },
+			{ adapter: weztermMuxAdapter, focusOnOpen: 'restored' },
+			{ adapter: cmuxMuxAdapter, focusOnOpen: 'restored' },
+			{ adapter: ottyMuxAdapter, focusOnOpen: 'restored' },
+		])('$adapter.name declares what an open does to the caller’s focus', ({ adapter, focusOnOpen }) => {
+			expect(adapter.focusOnOpen).toBe(focusOnOpen)
+		})
+
+		// No adapter declares `'stolen'` any more, and that IS the acceptance criterion of #152 — "an
+		// open on any backend either leaves focus alone or deterministically restores it". The value
+		// stays in the vocabulary because a future adapter may earn it: a backend with no focus-read
+		// primitive at all cannot restore what it cannot name.
+		it('no backend leaves the caller stranded', () => {
+			for (const adapter of ALL_ADAPTERS) expect(adapter.focusOnOpen).not.toBe('stolen')
 		})
 	})
 
@@ -268,6 +307,58 @@ describe('spec:cyber-mux/mux/placement', () => {
 			})
 			const focusCalls = calls.filter((c) => c[1] === 'focus-pane-id')
 			expect(focusCalls).toEqual([['action', 'focus-pane-id', 'terminal_5']])
+		})
+	})
+
+	// ── wezterm / cmux / otty: the restore, on backends with nothing to suppress ──────────────────
+
+	describe('the three backends that can only restore', () => {
+		// wezterm has no suppress-focus flag on ANY creating verb — `cli spawn --help` and `cli
+		// split-pane --help` on the pinned 20240203 build list no `--no-focus` and no `--focus`, and
+		// both verbs activate what they create (measured). So `'restored'` is the strongest value
+		// available, and this is the row that makes it a promise rather than a comment.
+		it.each([
+			'tab',
+			'workspace',
+			'pane:right',
+			'pane:down',
+		] as const)('wezterm open({ at: %s }) reads the client first and activates it back afterwards', (at) => {
+			const calls: string[][] = []
+			weztermMuxAdapter.open(weztermExec(calls, '7'), { cwd: '/u', at })
+			expect(calls[0]).toEqual(['cli', 'list-clients', '--format', 'json'])
+			expect(calls.at(-1)).toEqual(['cli', 'activate-pane', '--pane-id', '7'])
+		})
+
+		// The restore is skipped, never guessed. A mux server with no client attached answers `[]`
+		// (measured) — nothing was stolen from anybody, so activating a pane picked by heuristic would
+		// be a focus move INVENTED by the restore, strictly worse than the theft it exists to undo.
+		it('wezterm restores nothing when no client is attached', () => {
+			const calls: string[][] = []
+			weztermMuxAdapter.open(weztermExec(calls, undefined), { cwd: '/u', at: 'pane:right' })
+			expect(calls.some((c) => c[1] === 'activate-pane')).toBe(false)
+		})
+
+		// A pane:float open is REFUSED before the read. The refusal costs no exec at all, which
+		// `floating.test.ts` pins seam-wide; this row keeps the focus wrapper from quietly buying it an
+		// exec back.
+		it('wezterm refuses a float without even asking where focus is', () => {
+			const calls: string[][] = []
+			expect(() => weztermMuxAdapter.open(weztermExec(calls, '7'), { cwd: '/u', at: 'pane:float' })).toThrow()
+			expect(calls).toEqual([])
+		})
+
+		// The restore runs even when the open THROWS. A half-finished open is exactly where a caller is
+		// least equipped to notice their view has moved, and a focus move left standing only on the
+		// failure path is the kind of state that gets found weeks later. The throw still propagates.
+		it('the restore survives a failing open', () => {
+			const calls: string[][] = []
+			const exec: Exec = (_cmd, args) => {
+				calls.push(args)
+				if (args[1] === 'list-clients') return JSON.stringify([{ focused_pane_id: 7 }])
+				return null
+			}
+			expect(() => weztermMuxAdapter.open(exec, { cwd: '/u', at: 'pane:right' })).toThrow()
+			expect(calls.at(-1)).toEqual(['cli', 'activate-pane', '--pane-id', '7'])
 		})
 	})
 })

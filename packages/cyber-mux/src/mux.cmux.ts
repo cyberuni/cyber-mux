@@ -1,6 +1,7 @@
 import { launchFallback } from './env-fallback.ts'
 import { type Exec, withReason } from './exec.ts'
 import { refuseFloatingPane } from './floating.ts'
+import { restoringFocus, soleFocusedPane } from './focus-on-open.ts'
 import { refusePaneMove } from './move.ts'
 import type { LivePane, MuxAdapter, MuxReadOptions, OpenedPane } from './mux.ts'
 import { pollForOutput } from './wait-output.ts'
@@ -155,91 +156,120 @@ export function createCmuxAdapter(deps: { workspace?: string | undefined }): Mux
 		 * Read off cmux's documented CLI, NOT verified against a live binary — no cmux on the machine
 		 * this was written on, matching the rest of this header.
 		 */
-		opensWithoutStealingFocus: false,
+		/**
+		 * `'restored'`. The old `false` rested on two claims and only one of them survived: "no creating
+		 * verb documents a suppress-focus flag" is wrong — every creating verb takes `--focus
+		 * <true|false>` and `applyFocusOption` defaults it to FALSE (issue #167, read from cmux's Swift
+		 * source, never driven) — while "`new-pane` has no split-TARGET flag, so `from` is honored by
+		 * focusing that surface first" still holds, and that move happens before the open even runs.
+		 *
+		 * So this cannot be `'preserved'` on the `from` path whatever `--focus` does, and issue #152
+		 * asked the question that resolves it: undo the move. The restore is what this declaration
+		 * promises, and it is correct under BOTH readings of the unverified flag — if the new pane does
+		 * not take focus, re-focusing the caller's own surface is a no-op; if it does, it is the fix.
+		 *
+		 * The `--focus false` flag itself is deliberately NOT passed here. That is #167's change, it
+		 * needs a Mac to confirm, and passing an unverified flag would trade a behavior that is right
+		 * either way for one that depends on being right about the source read.
+		 *
+		 * SOURCE-READ, not live: cmux is macOS-GUI-only and `live-backends` cannot exercise it (#128).
+		 */
+		focusOnOpen: 'restored',
 
 		open(exec, opts) {
 			const at = opts.at ?? 'tab'
-
-			if (at === 'workspace') {
-				// `cmux workspace create` creates a genuinely separate workspace — the NAMESPACED spelling,
-				// not the `new-workspace` alias, which is the same method behind a hardcoded
-				// `honorJSONOutput: false` and so answers the human line `OK workspace:3` to a `--json`
-				// request. Parsing that never yielded a ref, so this route threw on every call.
-				const args = ['--json', 'workspace', 'create']
-				if (opts.cwd) args.push('--cwd', opts.cwd)
-				// Named at BIRTH, unlike every other tier here: `workspace create --name` is the flag the
-				// seam's `label` maps to at this tier, so there is no post-birth rename to make.
-				if (opts.label) args.push('--name', opts.label)
-				const out = exec('cmux', args)
-				if (!out) throw new Error(withReason(exec, 'cmux workspace create failed'))
-				const parsed = parseCmuxOutput(out)
-				if (!parsed.workspace_ref) throw new Error('cmux workspace create did not report the workspace ref')
-				// The payload reports the new workspace's initial surface; it carries no pane ref, so
-				// `openedSurface` reports that surface as the tab too.
-				const surfaceId = parsed.surface_ref
-				if (!surfaceId) throw new Error('cmux workspace create did not report the initial surface ref')
-				const opened = openedSurface(surfaceId, parsed.pane_ref, parsed.workspace_ref)
-				// Through `group`, not a second spelling of create/add here: grouping a workspace this open
-				// just created and grouping one that was already open are the same act, so one spelling per
-				// backend is the only way the two cannot drift. Gated on the WORKSPACE route alone — a `tab`
-				// or `pane:*` open lands in the caller's existing workspace, and grouping that would group a
-				// space the caller never opened, which is the same line tmux draws at its split.
-				//
-				// Unlike tmux this does NOT come free: cmux's group tier is the workspace while `group`'s
-				// target is a tab, so it pays the `rpc surface.list` lookup even here, where the workspace ref
-				// is already in hand. Spelling create/add a second time to save that call is the drift the
-				// seam routes through one member to prevent, and the call is the honest price of not drifting.
-				// `{ id: opened.tab }` is what `group` takes — a TAB id. On THIS route that is the new
-				// workspace's own surface, because `workspace create` reports no pane ref; on a split it is a
-				// pane ref. `paneToWorkspace` resolves either kind, which is what keeps the one spelling.
-				if (opts.workspaceGroup != null) adapter.group(exec, { id: opened.tab }, opts.workspaceGroup)
-				runLaunch(adapter, exec, opened, opts.env, opts.launch)
-				return opened
-			}
-
-			if (at === 'tab') {
-				// `cmux new-surface` creates a new surface (tab) in the current pane.
-				// If `within` is provided, it names the pane to create the surface in.
-				const args = ['--json', 'new-surface']
-				if (opts.within) args.push('--pane', opts.within)
-				if (opts.cwd) args.push('--cwd', opts.cwd)
-				const out = exec('cmux', args)
-				if (!out) throw new Error(withReason(exec, 'cmux new-surface failed'))
-				const parsed = parseCmuxOutput(out)
-				const surfaceId = parsed.surface_ref
-				if (!surfaceId) throw new Error('cmux new-surface did not report the surface ref')
-				const opened = openedSurface(surfaceId, parsed.pane_ref, deps.workspace)
-				if (opts.label) adapter.rename(exec, opened, 'tab', opts.label)
-				runLaunch(adapter, exec, opened, opts.env, opts.launch)
-				return opened
-			}
-
-			// cmux has no floating-pane concept: `new-pane` always takes a share of the region and resizes
-			// its neighbors, and nothing in the CLI opens a pane above the layout. So this REFUSES by name
-			// rather than substituting a split — the substitute would satisfy the caller's pane id and
-			// violate the one property they asked for. No `canFloatPanes` above is the declaration; this
-			// is the enforcement, and both are needed for the same reason `agent wait` checks twice: the
-			// CLI's pre-flight check is not on the path a library caller reaching `open()` directly takes.
+			// The refusal is PRE-FLIGHT, above the focus read rather than inside the opened body: it must
+			// cost no exec at all (`placement-float-refused-by-name` pins exactly that), and there is
+			// nothing to restore when nothing is going to be opened.
 			if (at === 'pane:float') refuseFloatingPane(adapter.name)
+			// EVERY route, not only the `pane:*` one: a new tab or workspace is selected when it is
+			// created too, so those move the caller as well. The read runs before anything is created and
+			// the restore runs even if the open throws — see `restoringFocus`.
+			return restoringFocus(
+				{
+					read: () =>
+						soleFocusedPane(
+							listCmuxSurfaces(exec),
+							(r) => r.focused,
+							(r) => r.id,
+						),
+					restore: (pane) => adapter.focus(exec, { id: pane }),
+				},
+				() => {
+					if (at === 'workspace') {
+						// `cmux workspace create` creates a genuinely separate workspace — the NAMESPACED spelling,
+						// not the `new-workspace` alias, which is the same method behind a hardcoded
+						// `honorJSONOutput: false` and so answers the human line `OK workspace:3` to a `--json`
+						// request. Parsing that never yielded a ref, so this route threw on every call.
+						const args = ['--json', 'workspace', 'create']
+						if (opts.cwd) args.push('--cwd', opts.cwd)
+						// Named at BIRTH, unlike every other tier here: `workspace create --name` is the flag the
+						// seam's `label` maps to at this tier, so there is no post-birth rename to make.
+						if (opts.label) args.push('--name', opts.label)
+						const out = exec('cmux', args)
+						if (!out) throw new Error(withReason(exec, 'cmux workspace create failed'))
+						const parsed = parseCmuxOutput(out)
+						if (!parsed.workspace_ref) throw new Error('cmux workspace create did not report the workspace ref')
+						// The payload reports the new workspace's initial surface; it carries no pane ref, so
+						// `openedSurface` reports that surface as the tab too.
+						const surfaceId = parsed.surface_ref
+						if (!surfaceId) throw new Error('cmux workspace create did not report the initial surface ref')
+						const opened = openedSurface(surfaceId, parsed.pane_ref, parsed.workspace_ref)
+						// Through `group`, not a second spelling of create/add here: grouping a workspace this open
+						// just created and grouping one that was already open are the same act, so one spelling per
+						// backend is the only way the two cannot drift. Gated on the WORKSPACE route alone — a `tab`
+						// or `pane:*` open lands in the caller's existing workspace, and grouping that would group a
+						// space the caller never opened, which is the same line tmux draws at its split.
+						//
+						// Unlike tmux this does NOT come free: cmux's group tier is the workspace while `group`'s
+						// target is a tab, so it pays the `rpc surface.list` lookup even here, where the workspace ref
+						// is already in hand. Spelling create/add a second time to save that call is the drift the
+						// seam routes through one member to prevent, and the call is the honest price of not drifting.
+						// `{ id: opened.tab }` is what `group` takes — a TAB id. On THIS route that is the new
+						// workspace's own surface, because `workspace create` reports no pane ref; on a split it is a
+						// pane ref. `paneToWorkspace` resolves either kind, which is what keeps the one spelling.
+						if (opts.workspaceGroup != null) adapter.group(exec, { id: opened.tab }, opts.workspaceGroup)
+						runLaunch(adapter, exec, opened, opts.env, opts.launch)
+						return opened
+					}
 
-			// pane:right / pane:down — a split. Creates a new pane with one surface.
-			// `new-pane` has no split-target flag, so `from` is honored by focusing first.
-			if (opts.from) adapter.focus(exec, opts.from)
+					if (at === 'tab') {
+						// `cmux new-surface` creates a new surface (tab) in the current pane.
+						// If `within` is provided, it names the pane to create the surface in.
+						const args = ['--json', 'new-surface']
+						if (opts.within) args.push('--pane', opts.within)
+						if (opts.cwd) args.push('--cwd', opts.cwd)
+						const out = exec('cmux', args)
+						if (!out) throw new Error(withReason(exec, 'cmux new-surface failed'))
+						const parsed = parseCmuxOutput(out)
+						const surfaceId = parsed.surface_ref
+						if (!surfaceId) throw new Error('cmux new-surface did not report the surface ref')
+						const opened = openedSurface(surfaceId, parsed.pane_ref, deps.workspace)
+						if (opts.label) adapter.rename(exec, opened, 'tab', opts.label)
+						runLaunch(adapter, exec, opened, opts.env, opts.launch)
+						return opened
+					}
 
-			// `--direction` is the whole flag set this route can use. `--cwd` and `--size` are NOT flags
-			// `new-pane` has, and it rejects no unknown flag, so the two this used to send were accepted
-			// and dropped on the floor: the split opened in the wrong directory and the ratio did nothing.
-			// `ratio` degrades to cmux's even split (see `canSizeSplits`); `cwd` is compensated below.
-			const direction = at === 'pane:down' ? 'down' : 'right'
-			const out = exec('cmux', ['--json', 'new-pane', '--direction', direction])
-			if (!out) throw new Error(withReason(exec, 'cmux new-pane failed'))
-			const parsed = parseCmuxOutput(out)
-			const surfaceId = parsed.surface_ref
-			if (!surfaceId) throw new Error('cmux new-pane did not report the surface ref')
-			const opened = openedSurface(surfaceId, parsed.pane_ref, deps.workspace)
-			if (opts.label) adapter.rename(exec, opened, 'pane', opts.label)
-			runLaunch(adapter, exec, opened, opts.env, opts.launch, opts.cwd)
-			return opened
+					// pane:right / pane:down — a split. Creates a new pane with one surface.
+					// `new-pane` has no split-target flag, so `from` is honored by focusing first.
+					if (opts.from) adapter.focus(exec, opts.from)
+
+					// `--direction` is the whole flag set this route can use. `--cwd` and `--size` are NOT flags
+					// `new-pane` has, and it rejects no unknown flag, so the two this used to send were accepted
+					// and dropped on the floor: the split opened in the wrong directory and the ratio did nothing.
+					// `ratio` degrades to cmux's even split (see `canSizeSplits`); `cwd` is compensated below.
+					const direction = at === 'pane:down' ? 'down' : 'right'
+					const out = exec('cmux', ['--json', 'new-pane', '--direction', direction])
+					if (!out) throw new Error(withReason(exec, 'cmux new-pane failed'))
+					const parsed = parseCmuxOutput(out)
+					const surfaceId = parsed.surface_ref
+					if (!surfaceId) throw new Error('cmux new-pane did not report the surface ref')
+					const opened = openedSurface(surfaceId, parsed.pane_ref, deps.workspace)
+					if (opts.label) adapter.rename(exec, opened, 'pane', opts.label)
+					runLaunch(adapter, exec, opened, opts.env, opts.launch, opts.cwd)
+					return opened
+				},
+			)
 		},
 
 		/**
@@ -365,7 +395,12 @@ export function createCmuxAdapter(deps: { workspace?: string | undefined }): Mux
 			// working behavior on source-only evidence — the half of #132 held for someone with a Mac.
 			const found = listCmuxSurfaces(exec).find((s) => s.id === target.id)
 			if (!found) return undefined
-			return found.focused === true
+			// The FIELD is presence-checked too, not just the surface. `focused` is optional on this row
+			// type, and `undefined === true` is `false` — so a listing that carries the surface but not
+			// the field used to answer a confident "not focused" about a backend that had said nothing.
+			// That matters more here than anywhere: every row shape in this adapter is a SOURCE read, so
+			// an absent field is the exact failure to expect. Same bar `isPaneZoomed` already holds.
+			return typeof found.focused === 'boolean' ? found.focused : undefined
 		},
 
 		/**

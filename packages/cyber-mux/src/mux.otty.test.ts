@@ -51,7 +51,12 @@ const NEW_WINDOW_RESPONSE = JSON.stringify({
 
 const LIST_PANES_RESPONSE = JSON.stringify([
 	{ pane_id: 'pane:1', title: 'main', cwd: '/home/user', is_focused: true },
-	{ pane_id: 'pane:2', title: 'tests', cwd: '/home/user/tests' },
+	// Explicit `is_focused: false` — the row type models the field as optional, and the two readings
+	// have to be told apart: pane:2 is a pane otty SAYS is not focused, pane:3 is a row that says
+	// nothing about focus at all. Which of the two a real otty emits for an unfocused pane is unknown
+	// (its listing's row fields are undocumented — #128), and `isPaneFocused` is written so that being
+	// wrong about it costs an `undefined` rather than a confident lie.
+	{ pane_id: 'pane:2', title: 'tests', cwd: '/home/user/tests', is_focused: false },
 	{ pane_id: 'pane:3', cwd: '/tmp' },
 ])
 
@@ -67,7 +72,8 @@ describe('spec:cyber-mux/mux', () => {
 			const exec = fakeExec(calls, { 'pane split': NEW_PANE_RESPONSE })
 			const target = ottyMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right' })
 			expect(target).toEqual({ id: 'pane:7', tab: 'tab:3' })
-			expect(calls[0]).toEqual(['pane', 'split', '--direction', 'right', '--cwd', '/unit'])
+			// calls[0] is the focus read `open()` takes before anything moves — see `restoringFocus`.
+			expect(calls[1]).toEqual(['pane', 'split', '--direction', 'right', '--cwd', '/unit'])
 		})
 
 		// `down`, NOT `bottom`: `--bottom` is the `otty view`/`otty edit` spelling and is not a value in
@@ -76,7 +82,7 @@ describe('spec:cyber-mux/mux', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'pane split': NEW_PANE_RESPONSE })
 			ottyMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:down' })
-			expect(calls[0]).toEqual(['pane', 'split', '--direction', 'down', '--cwd', '/unit'])
+			expect(calls[1]).toEqual(['pane', 'split', '--direction', 'down', '--cwd', '/unit'])
 		})
 
 		it('open() reports the ambient window when the adapter is bound to one', () => {
@@ -89,7 +95,7 @@ describe('spec:cyber-mux/mux', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'tab new': NEW_TAB_RESPONSE })
 			const target = ottyMuxAdapter.open(exec, { cwd: '/unit', at: 'tab' })
-			expect(calls[0]).toEqual(['tab', 'new'])
+			expect(calls[1]).toEqual(['tab', 'new'])
 			expect(target).toEqual({ id: 'pane:8', tab: 'tab:4' })
 		})
 
@@ -101,6 +107,8 @@ describe('spec:cyber-mux/mux', () => {
 			const exec = fakeExec(calls, { 'tab new': NEW_TAB_RESPONSE })
 			ottyMuxAdapter.open(exec, { cwd: '/unit', at: 'tab', label: 'build' })
 			expect(calls).toEqual([
+				// the focus read, ahead of the whole body — it names no pane here, so nothing is restored
+				['panes', '--json'],
 				['tab', 'new', '--title', 'build'],
 				['pane', 'send-keys', '--pane', 'pane:8', '--', "cd '/unit'", 'key:Enter'],
 			])
@@ -112,7 +120,7 @@ describe('spec:cyber-mux/mux', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { open: NEW_WINDOW_RESPONSE })
 			const target = ottyMuxAdapter.open(exec, { cwd: '/unit', at: 'workspace' })
-			expect(calls[0]).toEqual(['open', '/unit'])
+			expect(calls[1]).toEqual(['open', '/unit'])
 			expect(target).toEqual({ id: 'pane:10', tab: 'tab:5', workspace: 'window:2' })
 		})
 
@@ -122,15 +130,20 @@ describe('spec:cyber-mux/mux', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { open: NEW_WINDOW_RESPONSE })
 			ottyMuxAdapter.open(exec, { cwd: '/unit', at: 'workspace', label: 'review' })
-			expect(calls).toEqual([['open', '--title', 'review', '/unit']])
+			expect(calls).toEqual([
+				['panes', '--json'],
+				['open', '--title', 'review', '/unit'],
+			])
 		})
 
 		it('open() with a `from` focuses that pane first', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'pane split': NEW_PANE_RESPONSE })
 			ottyMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right', from: { id: 'pane:3' } })
-			expect(calls[0]).toEqual(['pane', 'focus', '--pane', 'pane:3'])
-			expect(calls[1]).toEqual(['pane', 'split', '--direction', 'right', '--cwd', '/unit'])
+			// the focus read first, then the `from` focus, then the split it chose the target for
+			expect(calls[0]).toEqual(['panes', '--json'])
+			expect(calls[1]).toEqual(['pane', 'focus', '--pane', 'pane:3'])
+			expect(calls[2]).toEqual(['pane', 'split', '--direction', 'right', '--cwd', '/unit'])
 		})
 
 		it('canSizeSplits is true', () => {
@@ -145,14 +158,20 @@ describe('spec:cyber-mux/mux', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'pane split': NEW_PANE_RESPONSE })
 			ottyMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right', ratio: 0.7 })
-			expect(calls).toEqual([['pane', 'split', '--direction', 'right', '--cwd', '/unit', '--size', '30']])
+			expect(calls).toEqual([
+				['panes', '--json'],
+				['pane', 'split', '--direction', 'right', '--cwd', '/unit', '--size', '30'],
+			])
 		})
 
 		it('open() renders an even split as --size 50', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'pane split': NEW_PANE_RESPONSE })
 			ottyMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:down', ratio: 0.5 })
-			expect(calls).toEqual([['pane', 'split', '--direction', 'down', '--cwd', '/unit', '--size', '50']])
+			expect(calls).toEqual([
+				['panes', '--json'],
+				['pane', 'split', '--direction', 'down', '--cwd', '/unit', '--size', '50'],
+			])
 		})
 
 		// The two ends of otty's documented 10-90 range, rendered exactly — no clamp, no warning.
@@ -165,7 +184,10 @@ describe('spec:cyber-mux/mux', () => {
 			const written = captureStderr(() => {
 				ottyMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right', ratio })
 			})
-			expect(calls).toEqual([['pane', 'split', '--direction', 'right', '--cwd', '/unit', '--size', size]])
+			expect(calls).toEqual([
+				['panes', '--json'],
+				['pane', 'split', '--direction', 'right', '--cwd', '/unit', '--size', size],
+			])
 			expect(written).toBe('')
 		})
 
@@ -181,13 +203,17 @@ describe('spec:cyber-mux/mux', () => {
 			const written = captureStderr(() => {
 				ottyMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right', ratio })
 			})
-			expect(calls).toEqual([['pane', 'split', '--direction', 'right', '--cwd', '/unit', '--size', size]])
+			expect(calls).toEqual([
+				['panes', '--json'],
+				['pane', 'split', '--direction', 'right', '--cwd', '/unit', '--size', size],
+			])
 			expect(written).toContain(`${requested}%`)
 			expect(written).toContain(`${size}% was used instead`)
 		})
 
 		// The seam's own precondition, reached through otty's size render: a ratio outside `(0, 1)` names
-		// no split at all, so it throws BEFORE any command is issued.
+		// no split at all, and no exec AT ALL: the range check is pre-flight, above the focus read the
+		// restoring open would otherwise spend on an open that was never going to happen.
 		it.each([0, 1, 1.5, -0.2, Number.NaN])('open() refuses the out-of-range ratio %s', (ratio) => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'pane split': NEW_PANE_RESPONSE })
@@ -201,7 +227,7 @@ describe('spec:cyber-mux/mux', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'pane split': NEW_PANE_RESPONSE })
 			ottyMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right' })
-			expect(calls[0]).not.toContain('--size')
+			expect(calls[1]).not.toContain('--size')
 		})
 
 		// #163, and the two routes take DIFFERENT answers on purpose.
@@ -216,7 +242,10 @@ describe('spec:cyber-mux/mux', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'pane split': NEW_PANE_RESPONSE })
 			ottyMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right' })
-			expect(calls).toEqual([['pane', 'split', '--direction', 'right', '--cwd', '/unit']])
+			expect(calls).toEqual([
+				['panes', '--json'],
+				['pane', 'split', '--direction', 'right', '--cwd', '/unit'],
+			])
 		})
 
 		// A launch command on the split route runs UNPREFIXED — `--cwd` already put the pane in the
@@ -225,7 +254,7 @@ describe('spec:cyber-mux/mux', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'pane split': NEW_PANE_RESPONSE })
 			ottyMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right', launch: 'npm test' })
-			expect(calls[1]).toEqual(['pane', 'send-keys', '--pane', 'pane:7', '--', 'npm test', 'key:Enter'])
+			expect(calls[2]).toEqual(['pane', 'send-keys', '--pane', 'pane:7', '--', 'npm test', 'key:Enter'])
 		})
 
 		// `tab new` gets no such rescue: nothing on any of otty's 141 doc pages puts a working directory
@@ -237,8 +266,9 @@ describe('spec:cyber-mux/mux', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'tab new': NEW_TAB_RESPONSE })
 			ottyMuxAdapter.open(exec, { cwd: '/unit', at: 'tab' })
-			expect(calls[0]).not.toContain('--cwd')
+			expect(calls[1]).not.toContain('--cwd')
 			expect(calls).toEqual([
+				['panes', '--json'],
 				['tab', 'new'],
 				['pane', 'send-keys', '--pane', 'pane:8', '--', "cd '/unit'", 'key:Enter'],
 			])
@@ -250,7 +280,7 @@ describe('spec:cyber-mux/mux', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'tab new': NEW_TAB_RESPONSE })
 			ottyMuxAdapter.open(exec, { cwd: '/unit', at: 'tab', launch: 'npm test' })
-			expect(calls[1]?.[5]).toBe("cd '/unit' && npm test")
+			expect(calls[2]?.[5]).toBe("cd '/unit' && npm test")
 		})
 
 		// The ordering rule, and the only one here that is silently wrong when broken: `env K=V cd '/x'
@@ -265,7 +295,7 @@ describe('spec:cyber-mux/mux', () => {
 				launch: 'npm test',
 				env: { TOKEN: 'abc' },
 			})
-			expect(calls[1]?.[5]).toBe("cd '/unit' && env TOKEN='abc' npm test")
+			expect(calls[2]?.[5]).toBe("cd '/unit' && env TOKEN='abc' npm test")
 		})
 
 		// env with no command to ride is dropped and announced — but the directory is not collateral:
@@ -277,7 +307,7 @@ describe('spec:cyber-mux/mux', () => {
 				ottyMuxAdapter.open(exec, { cwd: '/unit', at: 'tab', env: { TOKEN: 'abc' } })
 			})
 			expect(written).toContain('TOKEN')
-			expect(calls[1]).toEqual(['pane', 'send-keys', '--pane', 'pane:8', '--', "cd '/unit'", 'key:Enter'])
+			expect(calls[2]).toEqual(['pane', 'send-keys', '--pane', 'pane:8', '--', "cd '/unit'", 'key:Enter'])
 		})
 
 		// A directory is user data on a shell command line: a space would split it into two words and a
@@ -287,7 +317,7 @@ describe('spec:cyber-mux/mux', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'tab new': NEW_TAB_RESPONSE })
 			ottyMuxAdapter.open(exec, { cwd: "/tmp/my dir/it's", at: 'tab' })
-			expect(calls[1]?.[5]).toBe(`cd '/tmp/my dir/it'\\''s'`)
+			expect(calls[2]?.[5]).toBe(`cd '/tmp/my dir/it'\\''s'`)
 		})
 
 		// The workspace tier is untouched by all of the above: `otty open [path]` takes the directory as
@@ -296,7 +326,10 @@ describe('spec:cyber-mux/mux', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { open: NEW_WINDOW_RESPONSE })
 			ottyMuxAdapter.open(exec, { cwd: '/unit', at: 'workspace' })
-			expect(calls).toEqual([['open', '/unit']])
+			expect(calls).toEqual([
+				['panes', '--json'],
+				['open', '/unit'],
+			])
 		})
 
 		it('sendText() sends text to a pane', () => {
@@ -381,6 +414,15 @@ describe('spec:cyber-mux/mux', () => {
 			expect(ottyMuxAdapter.isPaneFocused(exec, { id: 'pane:99' })).toBeUndefined()
 		})
 
+		// `otty panes --json` is documented as a command; its row FIELDS never are. So a real row
+		// without `is_focused` is the likeliest shape of being wrong about this backend, and
+		// `undefined === true` is `false` — a confident "not focused" read out of a silence. Revert to
+		// `found.is_focused === true` and this goes red.
+		it('isPaneFocused() is undefined when the row carries no focus field', () => {
+			const exec = fakeExec([], { panes: LIST_PANES_RESPONSE })
+			expect(ottyMuxAdapter.isPaneFocused(exec, { id: 'pane:3' })).toBeUndefined()
+		})
+
 		it('listPanes() returns all panes with their metadata', () => {
 			const exec = fakeExec([], { panes: LIST_PANES_RESPONSE })
 			const panes = ottyMuxAdapter.listPanes(exec)
@@ -432,7 +474,10 @@ describe('spec:cyber-mux/mux', () => {
 			} finally {
 				process.stderr.write = write
 			}
-			expect(calls).toEqual([['pane', 'split', '--direction', 'right', '--cwd', '/unit']])
+			expect(calls).toEqual([
+				['panes', '--json'],
+				['pane', 'split', '--direction', 'right', '--cwd', '/unit'],
+			])
 			expect(written.join('')).toContain('otty cannot name a pane')
 		})
 

@@ -97,7 +97,12 @@ export const herdrMuxAdapter: MuxAdapter = {
 	canMovePanes: true,
 	canBreakPanes: true,
 
-	opensWithoutStealingFocus: true,
+	/**
+	 * `'preserved'`: `--no-focus` is a real flag on `workspace create`, `tab create` and `pane split`,
+	 * and every route passes it. `pane split --pane` names the anchor directly, so no route has to
+	 * focus a pane in order to choose one — there is nothing to undo on top of the suppression.
+	 */
+	focusOnOpen: 'preserved',
 
 	open(exec, opts) {
 		const at = opts.at ?? 'tab'
@@ -163,7 +168,7 @@ export const herdrMuxAdapter: MuxAdapter = {
 			const size = opts.ratio != null ? ['--ratio', toHerdrRatio(opts.ratio)] : []
 			// `--no-focus` for the reason `workspace create`/`tab create` pass it, though here it changes
 			// nothing today: 0.8.2's `pane split` already leaves focus on the pane it split (measured, see
-			// `opensWithoutStealingFocus`). Stated rather than relied on — the seam declares this now, and
+			// `focusOnOpen`). Stated rather than relied on — the seam declares this now, and
 			// an invariant that holds only because of a backend default is one a release note can break
 			// silently.
 			const out = exec('herdr', [

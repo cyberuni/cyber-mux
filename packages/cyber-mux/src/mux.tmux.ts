@@ -139,7 +139,7 @@ export const tmuxMuxAdapter: MuxAdapter = {
 	 * There is no focus move to undo on top of that, unlike zellij: `-t` targets the pane to split
 	 * directly, so tmux never has to VISIT a pane to choose it.
 	 */
-	opensWithoutStealingFocus: true,
+	focusOnOpen: 'preserved',
 
 	open(exec, opts) {
 		// tmux has fewer tiers than herdr: no Workspace level, and "window" is its name for the Tab
@@ -220,7 +220,7 @@ export const tmuxMuxAdapter: MuxAdapter = {
 			// switches the attached client to the new window, stealing the caller's focus. The returned
 			// pane id and subsequent `send-keys -t` still target the new pane. This was the adapter's
 			// only `-d` for a long time; it is now on all three routes, which is what lets this backend
-			// declare `opensWithoutStealingFocus`.
+			// declare `focusOnOpen`.
 			args = ['new-window', '-d', ...env, '-c', opts.cwd, '-P', '-F', format]
 		} else {
 			// `-t` whenever the caller names a pane. Without it tmux does NOT split the calling pane — it
@@ -401,7 +401,14 @@ export const tmuxMuxAdapter: MuxAdapter = {
 		const line = out.split('\n').find((l) => l.split(' ')[0] === target.id)
 		if (!line) return undefined
 		const [, paneActive, windowActive, sessionAttached] = line.split(' ')
-		return paneActive === '1' && windowActive === '1' && sessionAttached !== '0' && sessionAttached !== undefined
+		// EVERY field checked for presence before any of them is read, not just the last one. A line
+		// that came back SHORT — one format token unexpanded, one field empty — used to leave
+		// `paneActive`/`windowActive` `undefined`, and `undefined === '1'` is `false`, so a listing this
+		// code could not actually parse answered "not focused" with full confidence. That is the plain
+		// wrong answer this member's whole tri-state exists to avoid; an unparseable line is a query
+		// that could not be answered.
+		if (paneActive === undefined || windowActive === undefined || sessionAttached === undefined) return undefined
+		return paneActive === '1' && windowActive === '1' && sessionAttached !== '0'
 	},
 
 	/**
