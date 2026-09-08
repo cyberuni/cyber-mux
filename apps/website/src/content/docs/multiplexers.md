@@ -398,10 +398,11 @@ was driven against:
 `cyber-mux` **detects** GNU Screen (a `CYBER_MUX=screen` override, or a `screen` ancestor) so it can
 say so honestly, but it does **not** drive it: pinning `CYBER_MUX=screen` yields a named error, not a
 backend. The blocker is identity, which is load-bearing across the whole contract
-(`SessionTarget.id`, `currentPane`, `LivePane.id`). Screen addresses its split **regions**
+(`MuxTarget.id`, `currentPane`, `LivePane.id`). Screen addresses its split **regions**
 positionally — there is no per-region id to send to or read from — and `$WINDOW` is left **unset** in
 windows opened via `screen -X`, exactly the panes a driver creates, so a pane cannot even identify
 *itself*. Every backend above ships a stable per-pane id (tmux `$TMUX_PANE`, rmux `$RMUX_PANE`, herdr
-`$HERDR_PANE_ID`, WezTerm `$WEZTERM_PANE`, cmux `$CMUX_SURFACE_ID`, otty `$OTTY_PANE_ID`); screen has no equivalent for
+`$HERDR_PANE_ID`, WezTerm `$WEZTERM_PANE`, Zellij `$ZELLIJ_PANE_ID`, cmux `$CMUX_SURFACE_ID`, otty
+`$OTTY_PANE_ID`); screen has no equivalent for
 driven panes. Rather than ship a half-faithful adapter whose pane identity is unstable, `cyber-mux`
 rejects the value with the reason — an honest "no" beats a backend that silently drives the wrong pane.

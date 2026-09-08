@@ -34,7 +34,7 @@ discovery.
 
 With no fast-path set, `cyber-mux` walks the process ancestry from its own PID (`ps -o ppid=,comm=`),
 looking for a `tmux`, `rmux-daemon` (or bare `rmux`), `herdr`, `wezterm`/`wezterm-gui`/`wezterm-mux-server`,
-`zellij`, `otty`, or `screen` ancestor. It walks *past* the tool's own shell — the immediate parent is
+`zellij`, or `screen` ancestor. It walks *past* the tool's own shell — the immediate parent is
 often not the human's pane. cmux and otty are GUI apps whose process names are not discoverable via
 ancestry, so they are detected by env hint only.
 

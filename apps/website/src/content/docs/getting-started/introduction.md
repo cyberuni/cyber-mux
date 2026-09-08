@@ -4,7 +4,8 @@ description: What cyber-mux is and why it exists.
 ---
 
 `cyber-mux` is a small CLI for **cross-multiplexer pane control**. It gives you one way to drive
-panes — open, send, submit, read, focus, close, list — regardless of the terminal multiplexer you
+panes — open, send, submit, read, wait, focus, close, list, exists — regardless of the terminal
+multiplexer you
 happen to be inside. It also manages **git worktrees** bound to a workspace, and can build a whole
 named **template** of panes in one call.
 
@@ -18,17 +19,17 @@ Today it supports seven backends:
   exercised there.
 - **herdr** — an agent-aware multiplexer ([herdr.dev](https://herdr.dev)).
 - **WezTerm** (alpha) — a GUI terminal with a built-in multiplexer ([wezterm.org](https://wezterm.org)), driven through `wezterm cli`.
-  Built against `wezterm cli --help`/the CLI reference rather than a live GUI — treat it as
-  unverified until confirmed against a real WezTerm session.
+  Verified against WezTerm `20240203-110809-5046fc22` — a headless `wezterm-mux-server` CI's
+  `live-backends` job drives on every pull request.
 - **Zellij** (alpha) — a terminal workspace with a built-in multiplexer ([zellij.dev](https://zellij.dev)), driven through `zellij action`.
-  Requires Zellij ≥ 0.45.0. Built from the Zellij docs and CHANGELOG rather than a live binary —
-  treat it as unverified until confirmed against a real Zellij session.
+  Requires Zellij ≥ 0.45.0, and is verified against exactly that version in the same `live-backends`
+  job — the suite runs *at* the floor rather than above it.
 - **cmux** (alpha) — a Ghostty-based macOS terminal built for AI coding agents ([cmux.com](https://cmux.com)), driven through `cmux` CLI.
-  Built from the cmux docs rather than a live GUI — treat it as unverified until confirmed against a
-  real cmux session.
+  Read off cmux's own Swift source rather than a live binary — it is a macOS GUI app, which CI's
+  Linux runner cannot drive, so treat it as unverified until confirmed against a real cmux session.
 - **otty** (alpha) — a native terminal-centric workspace for AI coding agents ([otty.sh](https://otty.sh)), driven through `otty` CLI.
-  Built from the otty docs rather than a live GUI — treat it as unverified until confirmed against a
-  real otty session.
+  Built from the otty docs rather than a live binary — another desktop GUI app CI cannot drive, so
+  treat it as unverified until confirmed against a real otty session.
 
 It is kept deliberately narrow: it drives panes and nothing else. No mail, no dispatch, no agent
 registry — those live in the tools that build *on top of* it. Those tools can skip the CLI and import
@@ -54,6 +55,7 @@ skip detection entirely.
 - [Detection](/cyber-mux/concepts/detection/) — how cyber-mux figures out where it is running.
 - [Templates](/cyber-mux/concepts/templates/) — named, reusable pane pools.
 - [Worktrees](/cyber-mux/concepts/worktrees/) — git worktrees bound to a workspace.
+- [`agent`](/cyber-mux/cli/agent/) — inspect and wait on a pane's agent-lifecycle state.
 - [AXI](/cyber-mux/concepts/axi/) — the agent-facing output contract every command follows.
 - [Library API](/cyber-mux/api/) — import the core directly instead of shelling out to the CLI.
 - [CLI Reference](/cyber-mux/cli/) — the full verb surface, one page per command.

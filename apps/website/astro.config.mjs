@@ -16,7 +16,7 @@ export default defineConfig({
     starlight({
       title: "cyber-mux",
       description:
-        "Cross-multiplexer pane control — one contract over tmux, herdr, and WezTerm.",
+        "Cross-multiplexer pane control — one contract over tmux, rmux, herdr, WezTerm, Zellij, cmux, and otty.",
       // The cyber-* family mark: a shared command reticle around a per-package glyph
       // (see docs/design/icon-system.md).
       //

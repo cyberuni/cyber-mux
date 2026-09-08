@@ -52,4 +52,4 @@ disclosure — rather than silently dropping them.
 
 ## See also
 
-- [CLI reference — template](/cyber-mux/cli/template/) — the concrete `template list/show/validate/save` verbs and `--template` flag.
+- [CLI reference — template](/cyber-mux/cli/template/) — the concrete `template list/show/validate/save/edit` verbs and `--template` flag.

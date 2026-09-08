@@ -95,7 +95,7 @@ cyber-mux template save <name> --from <pane> [--workspace] \
 
 Refuses (exit 1) when the backend cannot report the geometry `save` needs: plain `save` needs
 `describeRegion`; `--workspace` needs `describeWorkspace`. tmux, rmux, and herdr support both;
-WezTerm and Zellij support neither, and `save` refuses on them by naming the backend.
+WezTerm, Zellij, cmux, and otty support neither, and `save` refuses on them by naming the backend.
 
 **Examples**
 
@@ -202,7 +202,7 @@ sugar comes back out flat, never re-spelled as a `root` tree.
 
 ## `--template <name>`
 
-On `open` / `worktree add` / `worktree open`: build a whole named pool in the newly opened space
+On `open` / `worktree add`: build a whole named pool in the newly opened space
 instead of a single pane or bare checkout. Resolved and validated **before** anything opens, so a
 typo in the name or an invalid template leaves nothing behind. Conflicts with `--launch` and
 `--env` — the template owns everything in the panes it declares.

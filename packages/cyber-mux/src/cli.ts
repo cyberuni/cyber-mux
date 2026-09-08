@@ -1122,7 +1122,7 @@ function doctorCommand(deps: Deps): Command {
 
 function modeCommand(deps: Deps): Command {
 	return new Command('mode')
-		.description('Report the detected session backend (tmux / herdr / none)')
+		.description('Report the detected drivable backend (tmux / rmux / herdr / wezterm / zellij / cmux / otty / none)')
 		.addOption(FORMAT_OPTION)
 		.action(() => {
 			let name = 'none'
