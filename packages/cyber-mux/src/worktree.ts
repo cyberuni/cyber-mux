@@ -41,6 +41,45 @@ export interface Worktree {
 }
 
 /**
+ * Which layered signal established that a branch's work has landed, named in the COST order the
+ * layers run in. Each is positive-only — a layer that cannot match never contributes a `false`, it
+ * simply leaves the verdict to the layers already run — so the composite is a monotone OR of
+ * positives and two layers can never contradict each other. The only disagreement that CAN arise is
+ * between a positive here and a guard in `isWorktreeRemovable` (dirty, occupied, prunable, primary),
+ * and there the guard always wins.
+ *
+ * - `ancestor` — the branch tip is an ancestor of the default branch (`git branch --merged`). Git's
+ *   own proof, one batched call for the whole repo, and the only layer that was here before.
+ * - `upstream-gone` — the branch's remote-tracking ref has disappeared (`[gone]`), i.e. the forge
+ *   merged the pull request and deleted its head branch. One batched call, offline, and correct for
+ *   squash, rebase, and merge-commit strategies alike — but only as fresh as the caller's last
+ *   `git fetch --prune`, which this module deliberately does not run for them (see
+ *   `readGoneUpstreamBranches`).
+ * - `squash-patch` — the branch collapsed to a single synthetic commit is already applied on the
+ *   default branch (`git cherry`). Per-branch and offline; matches a clean squash or rebase merge,
+ *   and degrades to no answer for a conflict-resolved or hand-edited one.
+ * - `forge` — the forge says a merged pull request exists for this head branch. Authoritative for
+ *   every strategy, needs network and auth, blind to local-only branches, and therefore OPT-IN: it
+ *   runs only when a caller injects a `ForgeMergedProbe`.
+ */
+export type WorktreeMergedSignal = 'ancestor' | 'upstream-gone' | 'squash-patch' | 'forge'
+
+/**
+ * Ask the forge whether `branch` is the head of a merged pull request — the layer-4 seam. `undefined`
+ * means the forge could not say (offline, unauthenticated, no such PR host), which is distinct from a
+ * `false` "no merged PR" and, being positive-only, is treated identically here: neither clears a
+ * branch. Injected rather than built in so this module owes nothing to any particular forge.
+ */
+export type ForgeMergedProbe = (branch: string) => boolean | undefined
+
+/** The opt-in half of the landed-signal stack. Layers 1–3 always run — they are offline and cheap;
+ * only the forge query, which needs network and auth, has to be asked for. */
+export interface WorktreeSignalOptions {
+	/** The layer-4 forge query. Omitted, the forge is never consulted and every other layer still works. */
+	forge?: ForgeMergedProbe | undefined
+}
+
+/**
  * A worktree as reported when ENUMERATING — deliberately distinct from `Worktree`, which is the
  * result of CREATING one (where a branch exists by construction). Listing has to represent what
  * creation cannot produce: a detached HEAD, the primary checkout itself, and an entry whose
@@ -56,17 +95,25 @@ export interface WorktreeEntry {
 	/** git considers the entry stale — its checkout is gone from disk. */
 	prunable: boolean
 	/**
-	 * The branch's tip is an ancestor of the repo's default branch — its work has landed, so removing
-	 * the checkout destroys nothing the trunk does not already hold. Absent when UNDETERMINABLE, never
-	 * `false` as a stand-in: a detached HEAD or bare entry has no branch to ask about, and a repo whose
-	 * default branch cannot be resolved has nothing to compare against.
+	 * The branch's work has LANDED on the repo's default branch — so removing the checkout destroys
+	 * nothing the trunk does not already hold. Established by the layered signals in
+	 * `WorktreeMergedSignal`, in cost order, each POSITIVE-ONLY: the first that says "landed" wins, and
+	 * one that cannot match leaves the verdict where the cheaper layers left it. Absent when
+	 * UNDETERMINABLE, never `false` as a stand-in: a detached HEAD or bare entry has no branch to ask
+	 * about, and a repo whose default branch cannot be resolved has nothing to compare against.
 	 *
-	 * A SQUASH or rebase merge rewrites the commits, so the original tip is not an ancestor and this
-	 * reads `false` for work that did in fact land. The error is one-directional and deliberately so:
-	 * under-reporting a disposal candidate costs the reader one manual check, over-reporting costs them
-	 * work. See `docs/design/worktree-disposability.md` §3.
+	 * The residual error stays one-directional: a squash the heuristic cannot match (a conflict-resolved
+	 * or hand-edited one) reads `false` for work that did in fact land, because under-reporting a
+	 * disposal candidate costs the reader one manual check while over-reporting costs them work.
 	 */
 	merged?: boolean | undefined
+	/**
+	 * WHICH layer established `merged: true` — present only alongside a positive verdict, absent for a
+	 * `false` or undeterminable one. Reported rather than kept private because the layers do not carry
+	 * the same authority: `ancestor` is git's own proof, while `squash-patch` is a heuristic and
+	 * `upstream-gone` is the forge's word, so a caller auditing a reclaim needs to see which one spoke.
+	 */
+	mergedSignal?: WorktreeMergedSignal | undefined
 	/**
 	 * The checkout has uncommitted changes — tracked or untracked. Merged is not sufficient on its own:
 	 * a merged branch whose checkout carries edits is not disposable, because those edits exist nowhere
@@ -152,6 +199,7 @@ export function listWorktreesFromGit(
 	exec: Exec,
 	primaryRoot: string,
 	fs: WorktreeFs = nodeWorktreeFs,
+	signals?: WorktreeSignalOptions | undefined,
 ): WorktreeEntry[] {
 	const out = exec('git', ['-C', primaryRoot, 'worktree', 'list', '--porcelain'])
 	if (!out) return []
@@ -178,9 +226,20 @@ export function listWorktreesFromGit(
 				prunable: lines.some((line) => line === 'prunable' || line.startsWith('prunable ')),
 			}
 		})
-	const merged = readMergedBranches(exec, primaryRoot, resolveDefaultBranchRef(exec, primaryRoot, entries))
+	const target = resolveDefaultBranchRef(exec, primaryRoot, entries)
+	const merged = readMergedBranches(exec, primaryRoot, target)
+	// Both cheap layers are read ONCE for the whole repo, before the per-entry walk — they cost the
+	// same at one worktree as at fifty, and reading them per entry would turn a listing into N calls.
+	const goneUpstream = readGoneUpstreamBranches(exec, primaryRoot)
 	for (const entry of entries) {
-		if (merged && entry.branch) entry.merged = merged.has(entry.branch)
+		const landed = resolveLanded(exec, primaryRoot, entry.branch, {
+			target,
+			merged,
+			goneUpstream,
+			forge: signals?.forge,
+		})
+		if (landed.merged !== undefined) entry.merged = landed.merged
+		if (landed.signal !== undefined) entry.mergedSignal = landed.signal
 		// No directory to stat for an entry git already calls stale — and skipping it is the one place
 		// the per-worktree cost can be avoided honestly. Assigned only when git answered, so `dirty`
 		// stays absent (never explicit `undefined`) for a checkout git could not read.
@@ -224,6 +283,201 @@ function readMergedBranches(exec: Exec, primaryRoot: string, target: string | un
 			.map((line) => line.trim())
 			.filter(Boolean),
 	)
+}
+
+/**
+ * Every local branch whose remote-tracking ref has DISAPPEARED — `[gone]` — in one call for the whole
+ * repo. That is the forge's own statement that it merged the pull request and deleted its head
+ * branch, and it is the one landed-signal that is correct for squash, rebase, and merge-commit
+ * strategies alike without needing to reason about rewritten commits at all.
+ *
+ * Read, never refreshed: this deliberately does NOT run `git fetch --prune` on the caller's behalf.
+ * A listing is a report, and a report must not reach for the network, block on it, or mutate the
+ * repo's refs as a side effect. The signal is therefore exactly as fresh as the caller's last fetch,
+ * which for a pool driver means fetching on its own schedule.
+ *
+ * A branch with no upstream at all yields an empty track field and is simply absent from the set —
+ * `[gone]` requires a CONFIGURED upstream whose ref is missing, so a purely local branch can never
+ * land here. `undefined` when git refused, which keeps the layer silent rather than clearing nothing.
+ */
+function readGoneUpstreamBranches(exec: Exec, primaryRoot: string): Set<string> | undefined {
+	// Tab-separated rather than space-separated: a ref name cannot contain a tab, and neither can it
+	// contain a space, but the track field can — `[ahead 1, behind 2]` — so splitting on the FIRST tab
+	// is the only parse that stays unambiguous as git's track vocabulary grows.
+	const out = exec('git', [
+		'-C',
+		primaryRoot,
+		'for-each-ref',
+		'--format=%(refname:short)\t%(upstream:track)',
+		'refs/heads/',
+	])
+	if (out === null) return undefined
+	const gone = new Set<string>()
+	for (const line of out.split('\n')) {
+		const tab = line.indexOf('\t')
+		if (tab === -1) continue
+		if (line.slice(tab + 1).trim() === '[gone]') gone.add(line.slice(0, tab))
+	}
+	return gone
+}
+
+/**
+ * Whether the branch, COLLAPSED to a single synthetic commit, is already applied on `target` — the
+ * squash-merge signal, exactly as issue #151 specifies it.
+ *
+ * A squash merge lands one rewritten commit on the target whose patch is the branch's whole diff, so
+ * no commit of the branch is an ancestor of anything and `git branch --merged` can never see it. This
+ * builds the shape the squash actually produced: `commit-tree <branch>^{tree} -p <merge-base>` is the
+ * branch's final tree hung off the point it forked from — one commit whose patch is that whole diff —
+ * and `git cherry` then asks git's own patch-id machinery whether an equivalent patch is already on
+ * the target. A leading `-` means applied.
+ *
+ * POSITIVE-ONLY, and the reason is the whole safety argument: a squash that was conflict-resolved or
+ * hand-edited on the way in produces a different patch, so the ids do not match and this returns
+ * `false` — which must degrade to "not reusable" rather than being read as a contradiction of some
+ * other layer. It writes one loose commit object into the repo (unreferenced, so ordinary gc collects
+ * it); nothing else about the repo is touched, and no ref moves.
+ */
+function isSquashApplied(exec: Exec, primaryRoot: string, target: string, branch: string): boolean {
+	const git = (args: string[]) => exec('git', ['-C', primaryRoot, ...args])
+	const base = git(['merge-base', target, branch])
+	if (!base) return false
+	// `commit-tree` takes the tree-ish directly, so the branch tree needs no separate `rev-parse`.
+	//
+	// The identity is supplied INLINE, and is not a nicety: `commit-tree` refuses outright ("empty ident
+	// name") when neither the environment nor git's config names an author, which is the state of any
+	// machine that has not configured git yet — a CI runner, a fresh container. Left to the ambient
+	// identity this whole layer would go silently dark there and every squash-merged worktree would read
+	// unlanded again, which is the exact bug this exists to fix (caught by the live-backends job, whose
+	// runner has no git identity). A throwaway probe object should not carry the caller's name anyway.
+	const synthetic = exec('git', [
+		'-c',
+		'user.name=cyber-mux',
+		'-c',
+		'user.email=probe@cyber-mux.invalid',
+		'-C',
+		primaryRoot,
+		'commit-tree',
+		`${branch}^{tree}`,
+		'-p',
+		base,
+		'-m',
+		'cyber-mux squash probe',
+	])
+	if (!synthetic) return false
+	const cherry = git(['cherry', target, synthetic])
+	if (cherry === null) return false
+	// One synthetic commit in, so one line out: `- <sha>` when the patch is already upstream, `+ <sha>`
+	// when it is not. Anything else (an empty answer for an empty diff) is not a positive.
+	return cherry.split('\n').some((line) => line.startsWith('-'))
+}
+
+/** What the layered signals concluded for one branch: the verdict, and which layer produced it. */
+interface LandedVerdict {
+	merged?: boolean | undefined
+	signal?: WorktreeMergedSignal | undefined
+}
+
+/**
+ * Run the landed-signal layers for ONE branch, in cost order, stopping at the first positive.
+ *
+ * The layering rule, stated once here because it is the whole correctness argument: every layer is
+ * POSITIVE-ONLY. Layer 1 is allowed to seed a `false` — it is git's own ancestry answer and the
+ * historical meaning of this field — but no later layer can ever turn a `true` into a `false`, and a
+ * layer that cannot match simply declines to speak. So the layers cannot contradict each other, and
+ * the composite is monotone: adding a layer can only ever move a branch from "not landed" to
+ * "landed", never the other way.
+ *
+ * The disagreement that DOES matter is between a landed verdict and a guard — a dirty checkout, an
+ * occupied workspace, a stale entry, the primary checkout — and that is resolved in
+ * `isWorktreeRemovable`, where every guard outranks every signal. Nothing here can make a worktree
+ * disposable on its own.
+ *
+ * Why a wrong positive is survivable at all: neither `removeWorktreeSafely` nor `provisionWorktree`
+ * deletes the branch REF. Prune removes the checkout and provision repoints the checkout to a fresh
+ * branch; either way the old branch still names its commits, so COMMITTED work outlives a wrong
+ * answer and can be checked out again. The only thing a wrong answer can destroy is UNCOMMITTED work,
+ * which the `dirty` guard refuses outright.
+ */
+function resolveLanded(
+	exec: Exec,
+	primaryRoot: string,
+	branch: string | undefined,
+	ctx: {
+		target: string | undefined
+		merged: Set<string> | undefined
+		goneUpstream: Set<string> | undefined
+		forge: ForgeMergedProbe | undefined
+	},
+): LandedVerdict {
+	// A detached HEAD or bare entry has no branch to ask about — undeterminable, not `false`.
+	if (!branch) return {}
+	// Layer 1 — ancestry. The only layer that may report a negative, and the seed for the rest.
+	if (ctx.merged?.has(branch)) return { merged: true, signal: 'ancestor' }
+	const seed: LandedVerdict = ctx.merged ? { merged: false } : {}
+	// Layer 2 — the forge merged the PR and deleted its head branch.
+	if (ctx.goneUpstream?.has(branch)) return { merged: true, signal: 'upstream-gone' }
+	// Layer 3 — the branch collapsed to one commit is already applied on the target.
+	if (ctx.target && isSquashApplied(exec, primaryRoot, ctx.target, branch))
+		return { merged: true, signal: 'squash-patch' }
+	// Layer 4 — the forge itself, only when a caller injected the probe.
+	if (ctx.forge?.(branch) === true) return { merged: true, signal: 'forge' }
+	return seed
+}
+
+/**
+ * The `owner/repo` slug of the repo's `origin`, or `undefined` when there is no origin or its URL is
+ * not a recognizable forge URL. Derived from the REMOTE rather than from the process cwd because
+ * `Exec` runs commands without one: `gh` on its own would answer for whatever directory the caller
+ * happens to be in, which for a library seam is nobody's intent.
+ */
+function resolveOriginSlug(exec: Exec, primaryRoot: string): string | undefined {
+	const url = exec('git', ['-C', primaryRoot, 'remote', 'get-url', 'origin'])
+	if (!url) return undefined
+	// Both shapes git remotes actually take: `git@host:owner/repo(.git)` and `scheme://host/owner/repo(.git)`.
+	const match = /(?:[:/])([^/:]+\/[^/]+?)(?:\.git)?$/.exec(url.trim())
+	return match?.[1]
+}
+
+/**
+ * A `ForgeMergedProbe` backed by the GitHub CLI — the layer-4 implementation for repos hosted there,
+ * offered rather than imposed: it is not wired in anywhere, and a caller opts in by passing it as
+ * `signals.forge`.
+ *
+ * `gh pr list --head <branch> --state merged` answers the authoritative question for EVERY merge
+ * strategy, which is what makes it worth a network round trip when the offline layers cannot match a
+ * hand-edited squash. It is also the layer with the most ways to say nothing — no `gh` on PATH, no
+ * auth, no network, no origin, a non-GitHub remote, a local-only branch the forge has never seen —
+ * and all of them collapse to `undefined` (could not say) rather than to `false`, because a
+ * positive-only layer must never be the reason a branch looks unlanded.
+ */
+export function ghForgeMergedProbe(exec: Exec, primaryRoot: string): ForgeMergedProbe {
+	return (branch) => {
+		const slug = resolveOriginSlug(exec, primaryRoot)
+		if (!slug) return undefined
+		const out = exec('gh', [
+			'pr',
+			'list',
+			'--repo',
+			slug,
+			'--head',
+			branch,
+			'--state',
+			'merged',
+			'--json',
+			'number',
+			'--limit',
+			'1',
+		])
+		if (out === null) return undefined
+		try {
+			const prs: unknown = JSON.parse(out)
+			return Array.isArray(prs) ? prs.length > 0 : undefined
+		} catch {
+			// `gh` answered with something that is not the JSON we asked for — could not say, not "no".
+			return undefined
+		}
+	}
 }
 
 /**
@@ -362,7 +616,7 @@ function worktreePruneSkipReason(entry: WorktreeEntry): string {
 	if (entry.merged !== true)
 		return entry.merged === undefined
 			? 'merge status could not be determined'
-			: 'branch is not merged into the default branch'
+			: 'branch has not landed on the default branch — no ancestry, gone-upstream, or squash signal matched'
 	return 'not removable'
 }
 
@@ -379,10 +633,14 @@ function worktreePruneSkipReason(entry: WorktreeEntry): string {
 export function pruneWorktrees(
 	exec: Exec,
 	primaryRoot: string,
-	opts?: { dryRun?: boolean | undefined; fs?: WorktreeFs | undefined },
+	opts?: {
+		dryRun?: boolean | undefined
+		fs?: WorktreeFs | undefined
+		signals?: WorktreeSignalOptions | undefined
+	},
 ): WorktreePruneResult {
 	const fs = opts?.fs ?? nodeWorktreeFs
-	const entries = listWorktreesFromGit(exec, primaryRoot, fs).filter((entry) => entry.linked)
+	const entries = listWorktreesFromGit(exec, primaryRoot, fs, opts?.signals).filter((entry) => entry.linked)
 	const removed: WorktreeEntry[] = []
 	const skipped: WorktreePruneSkip[] = []
 	for (const entry of entries) {
@@ -452,11 +710,12 @@ export function provisionWorktree(
 		create: WorktreeCreateSpec
 		available?: ((entry: WorktreeEntry) => boolean) | undefined
 		fs?: WorktreeFs | undefined
+		signals?: WorktreeSignalOptions | undefined
 	},
 ): WorktreeProvisionResult {
 	const fs = opts.fs ?? nodeWorktreeFs
 	const available = opts.available ?? isWorktreeRemovable
-	const entries = listWorktreesFromGit(exec, primaryRoot, fs).filter((entry) => entry.linked)
+	const entries = listWorktreesFromGit(exec, primaryRoot, fs, opts.signals).filter((entry) => entry.linked)
 	const candidate = entries.find((entry) => available(entry))
 	if (candidate) {
 		const base = opts.create.base ?? resolveDefaultBranchRef(exec, primaryRoot, entries) ?? 'HEAD'
@@ -510,14 +769,23 @@ export interface RemoveWorktreeOptions {
 export interface WorktreeApi {
 	/** The primary checkout's root — `resolvePrimaryRoot` bound. */
 	primaryRoot(): string
-	/** Every worktree git reports; `primaryRoot` defaults to `primaryRoot()` — `listWorktreesFromGit` bound. */
-	list(primaryRoot?: string | undefined): WorktreeEntry[]
+	/** Every worktree git reports; `primaryRoot` defaults to `primaryRoot()` — `listWorktreesFromGit` bound.
+	 * `signals` carries the opt-in forge layer; layers 1–3 run either way. */
+	list(primaryRoot?: string | undefined, signals?: WorktreeSignalOptions | undefined): WorktreeEntry[]
 	/** Create a worktree — `gitWorktreeAdapter.add` bound. */
 	add(opts: WorktreeAddOptions): Worktree
 	/** Remove a worktree under cyber-mux's gates — `removeWorktreeSafely` bound (its `fs` supplied). */
 	removeSafely(path: string, opts: RemoveWorktreeOptions): void
 	/** Remove every disposable worktree; `primaryRoot` defaults to `primaryRoot()` — `pruneWorktrees` bound. */
-	prune(opts?: { primaryRoot?: string | undefined; dryRun?: boolean | undefined } | undefined): WorktreePruneResult
+	prune(
+		opts?:
+			| {
+					primaryRoot?: string | undefined
+					dryRun?: boolean | undefined
+					signals?: WorktreeSignalOptions | undefined
+			  }
+			| undefined,
+	): WorktreePruneResult
 	/**
 	 * Reuse a free worktree or create a fresh one; `primaryRoot` defaults to `primaryRoot()` —
 	 * `provisionWorktree` bound. `available` defaults to `isWorktreeRemovable`; a host injects its own to
@@ -527,6 +795,7 @@ export interface WorktreeApi {
 		primaryRoot?: string | undefined
 		create: WorktreeCreateSpec
 		available?: ((entry: WorktreeEntry) => boolean) | undefined
+		signals?: WorktreeSignalOptions | undefined
 	}): WorktreeProvisionResult
 	/** Symlink-resolved, native-cased path — `normalizeWorktreePath` bound. */
 	normalizePath(path: string): string
@@ -541,15 +810,21 @@ export function worktreeApi(deps?: WorktreeDeps | undefined): WorktreeApi {
 	const fs = deps?.fs ?? nodeWorktreeFs
 	return {
 		primaryRoot: () => resolvePrimaryRoot(exec),
-		list: (primaryRoot) => listWorktreesFromGit(exec, primaryRoot ?? resolvePrimaryRoot(exec), fs),
+		list: (primaryRoot, signals) => listWorktreesFromGit(exec, primaryRoot ?? resolvePrimaryRoot(exec), fs, signals),
 		add: (opts) => gitWorktreeAdapter.add(exec, opts),
 		removeSafely: (path, opts) => removeWorktreeSafely(exec, path, { ...opts, fs }),
-		prune: (opts) => pruneWorktrees(exec, opts?.primaryRoot ?? resolvePrimaryRoot(exec), { dryRun: opts?.dryRun, fs }),
+		prune: (opts) =>
+			pruneWorktrees(exec, opts?.primaryRoot ?? resolvePrimaryRoot(exec), {
+				dryRun: opts?.dryRun,
+				fs,
+				signals: opts?.signals,
+			}),
 		provision: (opts) =>
 			provisionWorktree(exec, opts.primaryRoot ?? resolvePrimaryRoot(exec), {
 				create: opts.create,
 				available: opts.available,
 				fs,
+				signals: opts.signals,
 			}),
 		normalizePath: (path) => normalizeWorktreePath(path, fs),
 	}

@@ -85,6 +85,71 @@ Feature: worktree seam — the library git-worktree contract
     And the undeterminable signal is absent from the entry rather than reported as a negative
     And isWorktreeRemovable never clears such a worktree, because undeterminable must never count as safe to delete
 
+  # ── the landed signal is LAYERED, in cost order, and every layer is positive-only ──
+  # `git branch --merged` is structurally blind to a squash merge: the squash commit on the target is
+  # a rewritten tip with no ancestry link to the branch, so a squash-merging repo under-reports every
+  # reusable worktree and a pool built on provision only ever creates. Three more layers close that,
+  # each ADDED to the ancestry answer rather than replacing it, in cost order: the remote-tracking ref
+  # gone (`[gone]`, one batched read, offline, correct for squash/rebase/merge alike), the branch
+  # collapsed to one synthetic commit already applied by patch-id (`commit-tree` + `cherry`), and —
+  # opt-in only — the forge's own word on whether a merged PR exists for the head branch.
+
+  @id:worktree-landed-layered-signals
+  Scenario: the landed signal layers cheaper signals over git ancestry, and names which one spoke
+    Given a squash-merged branch, a branch whose remote-tracking ref is gone, and a merge-commit branch
+    When listWorktreesFromGit computes each worktree's landed verdict
+    Then a branch git's own ancestry clears is reported merged and attributed to the ancestor signal
+    And a branch whose upstream is gone is reported merged and attributed to the upstream-gone signal
+    And a squash-merged branch is reported merged and attributed to the squash-patch signal
+    And existing merge-commit and fast-forward behavior is unchanged by the added layers
+
+  @id:worktree-landed-signals-cost-order
+  Scenario: the layers run in cost order and the cheap ones are read once for the whole repo
+    Given a repo whose worktrees are cleared by different layers
+    When listWorktreesFromGit computes the landed verdicts
+    Then the ancestry set and the gone-upstream set are each read in ONE call for the whole repo
+    And a branch an earlier layer already cleared never pays for a later layer's per-branch plumbing
+
+  @id:worktree-landed-signal-positive-only
+  Scenario: every layer is positive-only, so a signal that cannot match degrades to "not reusable"
+    Given a squash that was conflict-resolved or hand-edited, and a branch whose work continued after it landed
+    When listWorktreesFromGit computes each worktree's landed verdict
+    Then neither is reported merged, because no layer's patch matched
+    And no layer can ever turn another layer's positive into a negative — the composite is a monotone OR
+    And a branch no layer can answer for at all leaves merged ABSENT rather than false
+
+  @id:worktree-landed-signal-guard-outranks
+  Scenario: a landed signal never outranks a guard — disagreement resolves to "not disposable"
+    Given a worktree a landed signal clears whose checkout is dirty, and one that is open in a workspace
+    When isWorktreeRemovable is asked of each
+    Then neither is removable, on any signal and however cheap the layer that cleared it
+    # The reason a wrong landed verdict is survivable at all: neither provision nor remove deletes the
+    # branch REF, so committed work outlives a wrong answer; only uncommitted work is ever at risk,
+    # and the dirty guard refuses that outright.
+
+  @id:worktree-landed-signal-forge-optional
+  Scenario: the forge layer is opt-in and every other layer works offline
+    Given a caller that injects no forge probe
+    When listWorktreesFromGit computes the landed verdicts
+    Then nothing reaches for a network or a forge, and the offline layers still answer
+    And a caller that DOES inject one has it asked only about branches the offline layers left unresolved
+    And a forge that cannot say — no auth, no network, a local-only branch — is not read as a negative
+
+  @id:worktree-landed-signals-reach-provision
+  Scenario: provision recycles a squash-merged worktree instead of only ever creating
+    Given a squash-merging repo whose pool holds a clean, unoccupied, squash-merged worktree
+    When provision runs with the default availability gate
+    Then it reuses that worktree and reports which layer cleared it
+    And the recycled branch's ref still names its commits after the reuse
+    And a pool whose worktrees no layer clears still creates a fresh checkout
+
+  @id:worktree-landed-signals-reach-prune
+  Scenario: prune removes every worktree the layered signal clears, and says why it skipped the rest
+    Given worktrees cleared by the gone-upstream and squash-patch layers beside one no layer clears
+    When prune runs
+    Then both cleared worktrees are removed in the one call
+    And the remaining one is skipped with a reason naming that no landed signal matched
+
   # ── removal is the library's own gates + git; disposability is read, never acted on ──
   # removeWorktreeSafely runs cyber-mux's gates, then a releaseBinding callback the host supplies,
   # then git — gates BEFORE release, release BEFORE git — and the backend is never asked to remove.

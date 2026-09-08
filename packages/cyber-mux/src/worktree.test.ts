@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { Exec } from './exec.ts'
 import {
 	assertDistinctFromPrimary,
+	ghForgeMergedProbe,
 	gitWorktreeAdapter,
 	isWorktreeRemovable,
 	listWorktreesFromGit,
@@ -297,6 +298,278 @@ describe('spec:cyber-mux/mux/worktree', () => {
 		})
 	})
 
+	/**
+	 * The layered landed-signals (issue #151). `git branch --merged` cannot see a squash merge — the
+	 * squash commit on the target is a rewritten tip with no ancestry link — so a squash-merging repo
+	 * under-reports every reusable worktree and a pool built on `provision` only ever creates. These
+	 * cover the layers as LAYERS: cost order, positive-only composition, and the guard that outranks
+	 * every one of them.
+	 */
+	describe('landed signals — layered, positive-only', () => {
+		const porcelain = [
+			'worktree /repo',
+			'branch refs/heads/main',
+			'',
+			'worktree /repo.worktrees/squashed',
+			'branch refs/heads/feat/squashed',
+			'',
+			'worktree /repo.worktrees/deleted',
+			'branch refs/heads/feat/deleted',
+			'',
+			'worktree /repo.worktrees/open',
+			'branch refs/heads/feat/open',
+			'',
+		].join('\n')
+
+		/**
+		 * A fake that answers every git verb the layered read runs, routed by VERB rather than by a
+		 * substring of the whole argv — the layers share words (`branch` appears in `--merged` and in a
+		 * ref name), and a fake that guessed would silently feed one layer another layer's answer.
+		 *
+		 * `commit-tree` hands back a synthetic id that names the branch it collapsed, which is what lets
+		 * `cherry` answer per branch — the same coupling real git has, where the id is the only thing
+		 * carried from one call to the next.
+		 */
+		const gitFake = (answers: {
+			originHead?: string | null
+			merged?: string | null
+			gone?: string[] | null
+			squashApplied?: string[]
+			status?: (root: string) => string | null
+			calls?: string[][]
+		}): Exec => {
+			return (_cmd, args) => {
+				answers.calls?.push(args)
+				// Strip the leading global options the way git itself does — repeated `-c <k=v>` pairs and
+				// `-C <root>` — so routing is on the SUBCOMMAND and its own arguments, at stable indices. A
+				// fake that indexed the raw argv would break the moment a call gains a global option, which
+				// is exactly what happened when the squash probe started carrying its own identity.
+				const rest = [...args]
+				while (rest[0] === '-c' || rest[0] === '-C') rest.splice(0, 2)
+				switch (rest[0]) {
+					case 'symbolic-ref':
+						return answers.originHead === undefined ? 'origin/main' : answers.originHead
+					case 'branch':
+						return answers.merged === undefined ? 'main' : answers.merged
+					case 'status':
+						return answers.status?.(args[1]!) ?? ''
+					case 'for-each-ref':
+						if (answers.gone === null) return null
+						return ['main', 'feat/squashed', 'feat/deleted', 'feat/open']
+							.map((name) => `${name}\t${answers.gone?.includes(name) ? '[gone]' : ''}`)
+							.join('\n')
+					case 'merge-base':
+						return `base-${rest[2]}`
+					case 'commit-tree':
+						// `<branch>^{tree}` — carry the branch into the id so `cherry` can answer.
+						return `synthetic-${rest[1]!.replace('^{tree}', '')}`
+					case 'cherry': {
+						const branch = rest[2]!.replace('synthetic-', '')
+						return answers.squashApplied?.includes(branch) ? `- ${branch}` : `+ ${branch}`
+					}
+					default:
+						return porcelain
+				}
+			}
+		}
+
+		const byRoot = (exec: Exec, signals?: Parameters<typeof listWorktreesFromGit>[3]) =>
+			new Map(listWorktreesFromGit(exec, '/repo', undefined, signals).map((w) => [w.root, w]))
+
+		it('worktree-landed-layered-signals', () => {
+			// Layer 1 still answers first and still names itself, so the pre-#151 behavior is intact.
+			const entries = byRoot(gitFake({ merged: 'main\nfeat/squashed' }))
+			expect(entries.get('/repo.worktrees/squashed')).toMatchObject({ merged: true, mergedSignal: 'ancestor' })
+		})
+
+		it('worktree-landed-layered-signals', () => {
+			// Layer 2: the forge merged the PR and deleted the head branch, so the remote-tracking ref is
+			// `[gone]`. No ancestry link exists and none is needed.
+			const entries = byRoot(gitFake({ merged: 'main', gone: ['feat/deleted'] }))
+			expect(entries.get('/repo.worktrees/deleted')).toMatchObject({ merged: true, mergedSignal: 'upstream-gone' })
+			expect(isWorktreeRemovable(entries.get('/repo.worktrees/deleted')!)).toBe(true)
+		})
+
+		it('worktree-landed-layered-signals', () => {
+			// Layer 3: the branch collapsed to one synthetic commit is already applied on the target — the
+			// squash merge git's own `--merged` is structurally blind to.
+			const entries = byRoot(gitFake({ merged: 'main', squashApplied: ['feat/squashed'] }))
+			expect(entries.get('/repo.worktrees/squashed')).toMatchObject({ merged: true, mergedSignal: 'squash-patch' })
+			expect(isWorktreeRemovable(entries.get('/repo.worktrees/squashed')!)).toBe(true)
+		})
+
+		it('worktree-landed-signals-cost-order', () => {
+			// Cost order is a PROPERTY, not an accident: a branch layer 2 already cleared must never pay
+			// for layer 3's per-branch plumbing, and the two cheap layers are each read once for the
+			// whole repo rather than once per worktree.
+			const calls: string[][] = []
+			byRoot(gitFake({ merged: 'main', gone: ['feat/deleted'], squashApplied: ['feat/squashed'], calls }))
+			expect(calls.filter((args) => args.includes('--merged'))).toHaveLength(1)
+			expect(calls.filter((args) => args.includes('for-each-ref'))).toHaveLength(1)
+			expect(calls.filter((args) => args.includes('merge-base')).map((args) => args[4])).not.toContain('feat/deleted')
+		})
+
+		it('worktree-landed-layered-signals', () => {
+			// The squash probe carries its OWN identity. `git commit-tree` refuses outright ("empty ident
+			// name") on a machine that has never configured git — a CI runner, a fresh container — and
+			// without this the whole layer would go dark exactly there while passing on every developer
+			// laptop. Caught by the live-backends job; pinned here so it stays caught.
+			const calls: string[][] = []
+			byRoot(gitFake({ merged: 'main', squashApplied: ['feat/squashed'], calls }))
+			const probe = calls.find((args) => args.includes('commit-tree'))!
+			expect(probe.slice(0, 4)).toEqual(['-c', 'user.name=cyber-mux', '-c', 'user.email=probe@cyber-mux.invalid'])
+		})
+
+		it('worktree-landed-signal-positive-only', () => {
+			// A squash the heuristic cannot match — conflict-resolved or hand-edited on the way in — is the
+			// case that MUST degrade to "not reusable" rather than to a false positive.
+			const entries = byRoot(gitFake({ merged: 'main', squashApplied: [] }))
+			const squashed = entries.get('/repo.worktrees/squashed')!
+			expect(squashed.merged).toBe(false)
+			expect(squashed.mergedSignal).toBeUndefined()
+			expect(isWorktreeRemovable(squashed)).toBe(false)
+		})
+
+		it('worktree-landed-signal-positive-only', () => {
+			// Every layer silent and layer 1 unable to answer: undeterminable stays ABSENT, never `false`,
+			// and an absent signal is never removable.
+			const entries = byRoot(gitFake({ merged: null, gone: null }))
+			const open = entries.get('/repo.worktrees/open')!
+			expect(open.merged).toBeUndefined()
+			expect(open.mergedSignal).toBeUndefined()
+			expect(isWorktreeRemovable(open)).toBe(false)
+		})
+
+		it('worktree-landed-signal-guard-outranks', () => {
+			// THE disagreement case: a landed signal says the work is on the trunk, a guard says the
+			// checkout is in use. The guard wins — on every signal, in both directions of the pairing.
+			const dirty = byRoot(
+				gitFake({
+					merged: 'main',
+					gone: ['feat/deleted'],
+					status: (root) => (root === '/repo.worktrees/deleted' ? ' M src/a.ts' : ''),
+				}),
+			).get('/repo.worktrees/deleted')!
+			expect(dirty).toMatchObject({ merged: true, mergedSignal: 'upstream-gone', dirty: true })
+			expect(isWorktreeRemovable(dirty)).toBe(false)
+
+			const occupied = byRoot(gitFake({ merged: 'main', squashApplied: ['feat/squashed'] })).get(
+				'/repo.worktrees/squashed',
+			)!
+			expect(isWorktreeRemovable({ ...occupied, workspace: 'w1' })).toBe(false)
+		})
+
+		it('worktree-landed-signal-forge-optional', () => {
+			// Layer 4 is opt-in: with no probe injected nothing reaches for a forge, and every other layer
+			// still works offline.
+			const entries = byRoot(gitFake({ merged: 'main', gone: ['feat/deleted'] }))
+			expect(entries.get('/repo.worktrees/deleted')).toMatchObject({ merged: true, mergedSignal: 'upstream-gone' })
+			// And when one IS injected it is never asked about a branch the offline layers already cleared.
+			const asked: string[] = []
+			byRoot(gitFake({ merged: 'main', gone: ['feat/deleted'] }), {
+				forge: (branch) => {
+					asked.push(branch)
+					return undefined
+				},
+			})
+			expect(asked).not.toContain('feat/deleted')
+		})
+
+		it('worktree-landed-signal-forge-optional', () => {
+			const asked: string[] = []
+			const entries = byRoot(gitFake({ merged: 'main' }), {
+				forge: (branch) => {
+					asked.push(branch)
+					return branch === 'feat/open'
+				},
+			})
+			expect(entries.get('/repo.worktrees/open')).toMatchObject({ merged: true, mergedSignal: 'forge' })
+			expect(entries.get('/repo.worktrees/squashed')?.merged).toBe(false)
+			// Only branches the offline layers left unresolved reach the network.
+			expect(asked).not.toContain('main')
+		})
+
+		it('worktree-landed-signal-forge-optional', () => {
+			// A forge that cannot say (no auth, no network, a local-only branch) is not a `false`: it
+			// leaves the verdict exactly where the offline layers left it.
+			const entries = byRoot(gitFake({ merged: 'main' }), { forge: () => undefined })
+			expect(entries.get('/repo.worktrees/open')?.merged).toBe(false)
+		})
+
+		it('worktree-landed-signals-reach-provision', () => {
+			// The point of the whole change: a pool built on `provision` recycles a squash-merged
+			// worktree instead of only ever creating.
+			const exec = gitFake({ merged: 'main', squashApplied: ['feat/squashed'] })
+			const result = provisionWorktree(exec, '/repo', { create: { path: '/repo.worktrees/new', branch: 'feat/next' } })
+			expect(result.action).toBe('reused')
+			expect(result.reused).toMatchObject({ root: '/repo.worktrees/squashed', mergedSignal: 'squash-patch' })
+		})
+
+		it('worktree-landed-signals-reach-provision', () => {
+			// And it still refuses when no layer clears anything — reuse never becomes the default.
+			const exec = gitFake({ merged: 'main', gone: [], squashApplied: [] })
+			const result = provisionWorktree(exec, '/repo', { create: { path: '/repo.worktrees/new', branch: 'feat/next' } })
+			expect(result.action).toBe('created')
+		})
+
+		it('worktree-landed-signals-reach-prune', () => {
+			const removed: string[] = []
+			const exec: Exec = (cmd, args) => {
+				if (args[2] === 'worktree' && args[3] === 'remove') {
+					removed.push(args[4]!)
+					return ''
+				}
+				return gitFake({ merged: 'main', gone: ['feat/deleted'], squashApplied: ['feat/squashed'] })(cmd, args)
+			}
+			const result = pruneWorktrees(exec, '/repo', { fs: { exists: () => true, realpath: (p) => p } })
+			expect(removed.sort()).toEqual(['/repo.worktrees/deleted', '/repo.worktrees/squashed'])
+			expect(result.skipped.map((s) => s.entry.root)).toEqual(['/repo.worktrees/open'])
+			expect(result.skipped[0]?.reason).toMatch(/has not landed/)
+		})
+	})
+
+	describe('ghForgeMergedProbe', () => {
+		it('worktree-landed-signal-forge-optional', () => {
+			const calls: string[][] = []
+			const exec: Exec = (cmd, args) => {
+				calls.push([cmd, ...args])
+				if (cmd === 'git') return 'git@github.com:cyberuni/cyber-mux.git'
+				return '[{"number":151}]'
+			}
+			expect(ghForgeMergedProbe(exec, '/repo')('feat/x')).toBe(true)
+			// The slug comes from the REMOTE, never from the process cwd — `Exec` runs without one.
+			expect(calls[1]).toEqual([
+				'gh',
+				'pr',
+				'list',
+				'--repo',
+				'cyberuni/cyber-mux',
+				'--head',
+				'feat/x',
+				'--state',
+				'merged',
+				'--json',
+				'number',
+				'--limit',
+				'1',
+			])
+		})
+
+		it('worktree-landed-signal-forge-optional', () => {
+			const exec: Exec = (cmd) => (cmd === 'git' ? 'https://github.com/cyberuni/cyber-mux' : '[]')
+			expect(ghForgeMergedProbe(exec, '/repo')('feat/x')).toBe(false)
+		})
+
+		it('worktree-landed-signal-forge-optional', () => {
+			// No origin, no gh, or an answer that is not the JSON asked for — all "could not say".
+			expect(ghForgeMergedProbe(() => null, '/repo')('feat/x')).toBeUndefined()
+			const noGh: Exec = (cmd) => (cmd === 'git' ? 'git@github.com:o/r.git' : null)
+			expect(ghForgeMergedProbe(noGh, '/repo')('feat/x')).toBeUndefined()
+			const garbage: Exec = (cmd) => (cmd === 'git' ? 'git@github.com:o/r.git' : 'not json')
+			expect(ghForgeMergedProbe(garbage, '/repo')('feat/x')).toBeUndefined()
+		})
+	})
+
 	describe('isWorktreeRemovable', () => {
 		const removable = {
 			root: '/repo.worktrees/x',
@@ -376,7 +649,7 @@ describe('spec:cyber-mux/mux/worktree', () => {
 		it('reports why each non-removable entry was left alone', () => {
 			const result = pruneWorktrees(gitFake(), '/repo', { fs: fakeFs })
 			const reasons = new Map(result.skipped.map((s) => [s.entry.root, s.reason]))
-			expect(reasons.get('/repo.worktrees/open')).toMatch(/not merged/)
+			expect(reasons.get('/repo.worktrees/open')).toMatch(/has not landed/)
 			expect(reasons.get('/repo.worktrees/dirty')).toMatch(/uncommitted changes/)
 			expect(reasons.get('/repo.worktrees/gone')).toMatch(/git worktree prune/)
 		})

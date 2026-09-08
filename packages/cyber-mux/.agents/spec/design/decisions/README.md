@@ -1201,6 +1201,177 @@ Decisions (`backend-survey-2026-09` — feasibility verdicts for multiplexers no
   unchanged: its recheck trigger (`pane split` printing the new pane's id, OR any pane-enumeration
   command) has not fired, so it was not re-probed.
 
+Decisions (`144-otty-size-title` — otty's documented `pane split --size` and `tab new --title`,
+issue #144):
+
+- **`canSizeSplits` on otty flips to `true`, and the issue's own reasoning for keeping it `false` is
+  WRONG.** #144 argued the declaration should stay `false` with a better comment, on the reading that
+  `--size 30` is a **cell count** like the sibling verb `otty pane resize --right 10 --down 5`, and
+  that converting a `ratio` to cells needs a region extent otty cannot report — the same argument
+  `resizePane` already records. The reference does not say that. Read 2026-09-07 from
+  docs.otty.sh/reference/cli: **`--size` = the NEW pane's share, 10–90**, on the example
+  `otty pane split --direction right --command "htop" --size 30`. A *share* is exactly the unit the
+  seam's `ratio` is in, and needs no extent to be expressed in — which is why this one is
+  implementable while `resizePane` stays refused. Both halves of #144's third item still land: the
+  old comment gave a reason that was wrong; it was just wrong in the other direction.
+
+- **The conversion is `1 - ratio`, scaled to whole percent** — the inversion `mux.cmux.ts`
+  (`--size`, a 0–1 fraction) and `mux.wezterm.ts` (`--percent`, whole percent) both already document,
+  and the opposite of herdr's `--ratio`, which sizes the ORIGINAL and passes through verbatim. otty's
+  units are wezterm's, its direction is cmux's, and it is the first backend with a **range** as well:
+  10–90. Boundary-tested at 0.9 → `--size 10` and 0.1 → `--size 90`.
+
+- **Out-of-range ratios are CLAMPED with a stderr warning, not refused and not applied quietly** —
+  DECIDED. The seam accepts any `0 < ratio < 1`; otty accepts only 10–90. `ratio: 0.95` therefore has
+  no faithful rendering. Sending `--size 5` fails at otty's argument parser, turning a ratio the seam
+  guarantees into a dead split; clamping silently is the silent-wrong-output this seam refuses. So the
+  size is clamped INTO otty's range and the near miss is announced — the same degrade-loudly trade
+  this file already makes for a `label` on a `pane:*` open. A caller who cannot accept the near miss
+  sees the warning; one who can gets a pane.
+
+- **`tab new --title` names the tab at birth** — DECIDED, no tension. Documented on the same page
+  (`otty tab new --command "cargo watch" --title build`), so the follow-up `rename(…, 'tab', …)` is
+  dropped: one round trip fewer, and no window in which the tab carries otty's default name. This is
+  the tab-tier twin of what #160 did at the window tier with `otty open --title`.
+
+- **Not verified against a live binary.** otty is a macOS-only GUI app absent from this machine, with
+  no public source to cross-check, so every claim above is read off the published reference and
+  nothing was probed. Coverage is mocked-`Exec` argv assertions in `mux.otty.test.ts`; #128 tracks the
+  missing real-boundary suite for cmux/otty.
+
+- **`--cwd` is documented on NEITHER `tab new` NOR `pane split`, and the adapter passes it on both** —
+  observed, NOT acted on here. `tab new` documents `--command` and `--title`; `pane split` documents
+  `--direction`, `--command`, `--size`; no page of the reference mentions `--cwd` at all. This is the
+  same class as #156, but absence from a rendered SPA doc is not proof (the #132 lesson) and it is a
+  different unit of work, so it is filed as **#163** rather than widening #144's PR. Corroborated by a
+  second read that asked the question directly: the global flag list (`--format`, `--json`,
+  `--no-headers`, `-q/--quiet`, `--socket`, `--config-file`, `--timeout`, `-y/--yes`, `--version`,
+  `-h/--help`) carries no working-directory flag either, and `/workflows/cli-usage` handles directories
+  through `otty open [path]`'s POSITIONAL argument — which the workspace tier already uses, and which
+  is why that tier is unaffected.
+Decisions (`worktree-landed-signals` — issue #151, squash-merge detection in worktree disposability):
+
+- **Layer the landed signals, never replace the ancestry one** — DECIDED. `git branch --merged` is
+  structurally blind to a squash merge: the squash commit on the target is a rewritten tip with no
+  ancestry link back to the branch. Verified against real git in `worktree.integration.test.ts`, which
+  builds a scratch repo that genuinely squash-merges and asserts `--merged` still omits the branch.
+  cyber-mux itself merges with merge commits only, so its own history could never be the fixture.
+  Three layers are ADDED in cost order — `upstream-gone` (`%(upstream:track)` is `[gone]`, one batched
+  read, offline, correct for squash/rebase/merge alike), `squash-patch` (`commit-tree <branch>^{tree}
+  -p <merge-base>` then `git cherry`, three calls per unresolved branch, offline), and `forge` (the
+  forge's word on a merged PR, opt-in only). The ancestry answer keeps its meaning and its place at
+  the front; nothing about merge-commit or fast-forward repos changes.
+  - **Alternative rejected:** *replace `--merged` with the patch-id probe*. It answers the same
+    question more expensively for the overwhelmingly common case, and it is a heuristic where
+    ancestry is a proof — a strictly worse first layer.
+
+- **Every layer after the first is POSITIVE-ONLY, so the composite is a monotone OR** — DECIDED. Only
+  layer 1 may report a `false`; a later layer either says "landed" or declines to speak. Two layers
+  therefore cannot contradict each other, and the only disagreement that can arise is between a
+  landed signal and a GUARD — dirty, occupied, stale, primary — where the guard always wins
+  (`isWorktreeRemovable` is unchanged). The consequence is deliberate: a squash that was
+  conflict-resolved or hand-edited produces a different patch, does not match, and degrades to "not
+  reusable" rather than to a false positive. Covered live by the hand-edited-squash and
+  work-continued-after-landing scenarios.
+  - **Alternative rejected:** *require two layers to agree before clearing a branch*. It sounds
+    conservative and is not: `squash-patch` is the only layer that can corroborate `upstream-gone`,
+    and it fails on exactly the conflict-resolved squashes `upstream-gone` exists to catch — so the
+    rule would have deleted the layer's entire contribution while adding three git calls per branch.
+
+- **The blast radius of a wrong positive is a CHECKOUT, never committed work** — RECORDED, because it
+  is why layering is safe to do at all. Neither `removeWorktreeSafely` nor `provisionWorktree` deletes
+  the branch ref: prune removes the checkout, provision repoints it to a fresh branch at `base`. The
+  old branch still names its commits either way, asserted live in the provision scenario. The only
+  thing a wrong answer can destroy is UNCOMMITTED work, which the `dirty` guard already refuses.
+
+- **The listing reads the gone-upstream state, it never refreshes it** — DECIDED: no `git fetch
+  --prune` is run on the caller's behalf. A listing is a report, and a report must not reach for the
+  network, block on it, or move the repo's refs as a side effect. The signal is exactly as fresh as
+  the caller's last fetch, which for a pool driver means fetching on its own schedule.
+
+- **`mergedSignal` is reported, not kept private** — DECIDED. The layers do not carry equal authority
+  — `ancestor` is git's proof, `squash-patch` a patch-id heuristic, `upstream-gone` the forge's word —
+  so a caller auditing a reclaim needs to see which one spoke. It is a plain field on `WorktreeEntry`
+  alongside `merged`, absent for a negative or undeterminable verdict.
+
+- **The forge layer enters as an INJECTED probe, not a built-in** — DECIDED: `signals.forge` is a
+  `(branch) => boolean | undefined` seam, asked only about branches the offline layers left
+  unresolved, and every one of its failure modes (no `gh`, no auth, no network, no origin, a
+  local-only branch) collapses to `undefined` rather than `false`. `ghForgeMergedProbe` ships as an
+  opt-in implementation and resolves `--repo` from the `origin` remote rather than from the process
+  cwd, because `Exec` runs commands without one. Not wired into any CLI verb by this change — the
+  `cyber-mux worktree` flag that would expose it is a separate unit of work.
+
+- **The squash probe carries its OWN git identity** — DECIDED, after the live-backends job caught what
+  a developer machine structurally cannot. `git commit-tree` refuses with `fatal: empty ident name`
+  when neither the environment nor git's config names an author, which is the state of any machine
+  that has never configured git — a CI runner, a fresh container. Left to the ambient identity the
+  whole `squash-patch` layer goes silently dark there and every squash-merged worktree reads unlanded
+  again, i.e. exactly the bug this work exists to fix, reappearing only off the author's laptop. The
+  probe therefore passes `-c user.name` / `-c user.email` inline; the object is a throwaway that
+  should not carry the caller's name in any case. The integration suite now drives the library through
+  an `Exec` with every ambient identity STRIPPED, so the layer can never again pass for a reason that
+  lives in the developer's global gitconfig rather than in the code.
+
+Decisions (`132-cmux-broken-members` — six `MuxAdapter` members that could not work on cmux, issue #132):
+
+- **The six were re-derived against cmux's source, not accepted from the issue.** Read 2026-09-08 from
+  `manaflow-ai/cmux` at `71eb616d6f3fb4dcc707b206e08752c297917e02` (2026-09-08, `main`) — the CLI
+  dispatch and per-command parsers in `CLI/cmux.swift`, the CLI's own verb inventory in
+  `CLI/CMUXCLI+CommandSuggestions.swift`, the socket payload builders under
+  `Packages/macOS/CmuxControlSocket/` and `Sources/`, and `docs/cli-contract.md`. **Nothing was run
+  against a binary** — cmux is macOS-GUI-only and this machine is WSL2 Linux, so no claim here reaches
+  the bar `mux.tmux.ts`/`mux.herdr.ts` meet; #128 still tracks the missing real-boundary suite. The
+  issue's own read was at `525352e`; every defect below was re-confirmed at the newer commit rather
+  than carried over.
+
+- **Confirmed and fixed.** `new-pane` takes only `--type --direction --url --profile --placement
+  --focus --workspace --window` and validates no unknown flag (`cmux.swift:7263`), so the `--cwd` and
+  `--size` the adapter sent were accepted and ignored — `canSizeSplits: true` was a false claim, and
+  the split opened in the wrong directory. `new-workspace` hardcodes `honorJSONOutput: false`
+  (`:7155`, gated at `:10491`), so `--json new-workspace` prints `OK workspace:N` and the workspace
+  route threw on every call; the namespaced `workspace create` (`:11166`) honors `--json`.
+  `list-panes` (`pane.list`) answers `{"panes":[…]}` while the adapter required a top-level array of
+  panes holding surface OBJECTS, so `listCmuxSurfaces` returned `[]` for every real response and took
+  `listPanes`, `paneExists` and `isPaneFocused` down with it; `list-panels` (`surface.list`) is the
+  surface-tier verb, keyed `ref`/`title`/`focused`/`pane_ref`/`selected_in_pane`
+  (`ControlCommandCoordinator+Surface.swift:150`). `rename-surface`/`rename-pane` exist nowhere —
+  cmux's only rename verbs are `rename-tab`, `rename-window`, `rename-workspace` — and there is no
+  pane rename at any layer, so both seam tiers land on `rename-tab --surface … --title …`.
+
+- **One defect was overstated, and is recorded as measured rather than as filed.** The issue says
+  `teardown()` "hard-errors" on every call. It does not: `close-surface` falls back to
+  `$CMUX_WORKSPACE_ID` when given no `--workspace`/`--window` (`cmux.swift:7351`) and only refuses
+  when that is unset too (`:7373`). The real failures are narrower — a library caller with no cmux env
+  gets the refusal, and a surface outside the caller's own workspace resolves against the WRONG
+  workspace. `teardown` now names the workspace whenever the adapter is bound to one.
+
+- **The issue's "minor" whitespace claim is wrong for this adapter's argv, and a different `send`
+  hazard is real.** `send` joins its remaining positionals with single spaces (`cmux.swift:7674`), so
+  runs of whitespace survive as long as the text is ONE argv element — which is exactly how
+  `sendText`/`submit` pass it. What does bite is `unescapeSendText` (`:20173`): `send` interprets
+  `\n`/`\r` as Enter and `\t` as Tab in the text it is given, so a literal backslash-n in a caller's
+  string presses Enter. That is a turn-taking hazard, it is NOT one of the six, and it is left for its
+  own change rather than folded into this one.
+
+- **A defect in the `workspace-group` route landed by #162 fell out of this read and is fixed here.**
+  `workspace.create` reports `{window_*, workspace_*, surface_*}` and **no `pane_ref`**
+  (`TerminalController+WorkspaceCreate.swift:156-198`), so a workspace open's `OpenedPane.tab` is a
+  SURFACE ref, not the pane ref the fixture assumed. `paneToWorkspace` sent only `pane_id`, and cmux's
+  handle registry is keyed by the ref STRING rather than by kind (`uuidAny` →
+  `handles.uuid(forRef:)`), so a surface handle resolved to a UUID naming no pane and the routing fell
+  back to the CALLER's workspace — grouping the wrong space, silently. The lookup now verifies each
+  attempt against its own rows and tries the surface spelling when the pane one does not hold the
+  target.
+
+- **Held for a Mac, deliberately.** `identify`-backed `isPaneFocused`, any `capabilities` pre-flight,
+  and adopting `workspace create --env` all replace WORKING behavior on source-only evidence, so they
+  stay out. One more found in this pass and not acted on: `new-pane`/`new-surface`/`workspace create`
+  all take `--focus <true|false>` and apply it with `defaultValue: false`, which contradicts the
+  `opensWithoutStealingFocus: false` this adapter declares and the "cmux's CLI offers no way to
+  suppress the focus move" the website says. Flipping that flips real behavior for every caller, so it
+  wants its own issue and a live check, not a docs edit.
+
 Decisions (`tuios-regating-2026-09` — #145 re-measured against source, and parked):
 
 - **`Gaurav-Gosain/tuios` — VERDICT: blocked-upstream. No RELEASE clears the gates; `main` does.**
