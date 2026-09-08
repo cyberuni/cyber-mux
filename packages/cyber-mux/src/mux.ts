@@ -41,6 +41,33 @@ export type MuxPlacement = 'pane:right' | 'pane:down' | 'pane:float' | 'tab' | '
  */
 export type MuxSpaceTier = 'pane' | 'tab'
 
+/**
+ * Which side of the DESTINATION pane a `movePane` puts the moved pane on — the same two directions
+ * `MuxPlacement`'s `pane:right`/`pane:down` name, spelled without the `pane:` prefix because there is
+ * no other tier a move could land at: a move always makes a split, never a tab.
+ *
+ * Its own vocabulary rather than a reuse of `MuxPlacement` for `MuxSpaceTier`'s reason — three of
+ * that type's five members (`pane:float`, `tab`, `workspace`) are not sides and would have to be
+ * refused one by one at every adapter. Only `left`/`up` are missing, and deliberately: herdr's
+ * `pane move --split` takes `right|down` and nothing else, so a four-way vocabulary would be one no
+ * backend on this seam can honor in full.
+ *
+ * REQUIRED on `movePane`, with no default, and that is the same rule `MuxOpenOptions.from` makes one
+ * tier up: omitting it would not mean "the obvious side", it would mean "whatever this backend
+ * defaults to", and the backends do not agree (wezterm's `split-pane` defaults to `--bottom`, tmux's
+ * `move-pane` to a horizontal split, herdr refuses the command outright without `--split`).
+ */
+export type MuxMoveSide = 'right' | 'down'
+
+/**
+ * The tier a `breakPane` promotes a pane INTO — its own tab, or its own workspace.
+ *
+ * No `pane` member, unlike `MuxSpaceTier`: a pane already IS a pane, so the one tier below a tab is
+ * the one thing a break-out cannot target. And no `window` member, because the seam has no window
+ * tier — `workspace` is its top, and the backends that collapse the two say so at `open` already.
+ */
+export type MuxBreakTier = 'tab' | 'workspace'
+
 export interface MuxOpenOptions {
 	/** Working directory the new pane/window/session should start in. */
 	cwd: string
@@ -848,6 +875,27 @@ export interface MuxAdapter {
 	 */
 	readonly canZoomPanes?: boolean | undefined
 	/**
+	 * Whether this backend can MOVE a pane beside another one — i.e. whether it honors `movePane`.
+	 * tmux, rmux, herdr and wezterm declare it, each against a verb driven live; zellij, cmux and otty
+	 * omit it.
+	 *
+	 * `canZoomPanes`'s shape exactly: optional, absence means REFUSE rather than degrade, and it is a
+	 * declaration rather than the refusal itself.
+	 */
+	readonly canMovePanes?: boolean | undefined
+	/**
+	 * Whether this backend can BREAK a pane out into a space of its own — i.e. whether it honors
+	 * `breakPane`. tmux, rmux, herdr and wezterm declare it against a verb driven live; cmux declares
+	 * it against a SOURCE read (`pane.break` at `ae18c88`, never driven — #128); zellij and otty omit
+	 * it.
+	 *
+	 * **A second flag rather than one `canRelocatePanes`, and cmux is the whole reason.** It has a
+	 * break-out (`break-pane`) and nothing that puts a pane beside a named one, so a single flag would
+	 * have to answer `false` there and throw away half of what the backend really does. Two verbs, two
+	 * declarations — the same one-flag-per-capability rule `canFloatPanes` and `canSizeSplits` follow.
+	 */
+	readonly canBreakPanes?: boolean | undefined
+	/**
 	 * Whether `open()` leaves the caller's focus where it was. `true` = this backend has a primitive
 	 * for it and **every** route uses it; `false` = the backend's CLI offers none, and an open moves
 	 * the user. A caller driving a pane pool needs to know whether its opens are visible to the human
@@ -1079,6 +1127,92 @@ export interface MuxAdapter {
 	 * callers fail OPEN on it exactly as they do for `isPaneFocused`.
 	 */
 	isPaneZoomed(exec: Exec, target: MuxTarget): boolean | undefined
+	/**
+	 * Move an EXISTING pane beside another one — `target` leaves the region it was born in and becomes
+	 * a split of `destination`, on `side`. The pane keeps its process, its scrollback and its
+	 * contents; nothing is opened and nothing is torn down.
+	 *
+	 * **The destination is a PANE, never a tab or a workspace**, and that is the decision this member
+	 * turns on. Three of the four backends that have the verb can only name a pane —
+	 * tmux/rmux's `move-pane -t` and wezterm's `split-pane --pane-id` — and naming a WINDOW there does
+	 * not mean "into that window", it means "beside whatever pane is active in it", which is the exact
+	 * "whatever this backend defaults to" trap `MuxOpenOptions.from` documents one tier up. herdr,
+	 * the one backend whose `pane move` takes a tab, requires `--split right|down` alongside it and so
+	 * needs the side anyway. A pane destination is also strictly the more precise of the two: a caller
+	 * holding a tab picks a pane out of `describeRegion`/`listPanes` and gets a placement it chose,
+	 * while a caller holding a pane cannot recover one from a tab id without picking arbitrarily.
+	 *
+	 * **Returns `OpenedPane`, and a `void` return would be a bug rather than a simplification.** On
+	 * herdr a pane id is WORKSPACE-SCOPED, so a move across that boundary RENAMES the pane: measured
+	 * live on 0.9.0, `pane move wRE:p1 --tab wRD:t1` answered with the very same terminal carrying the
+	 * id `wRD:p4`. The old id is not immediately dead — herdr keeps resolving it as an alias, and
+	 * `pane get wRE:p1` answers, reporting `pane_id: wRD:p4` — but it is gone from `pane list`
+	 * (measured), which is the failure that matters: a caller matching its handle against the listing,
+	 * as `reconcile`'s cull does, sees its own pane as dead and culls a live record. The return is the
+	 * new identity plus the tab and workspace the pane now lives in — `open`'s answer, for the reason
+	 * `open` gives it.
+	 *
+	 * **Moving does not steal focus where the backend can help it.** tmux and rmux take `-d`, herdr
+	 * `--no-focus`, and all three were driven with it; wezterm has no such flag on `split-pane` and
+	 * makes the moved pane active, which is the same thing its `opensWithoutStealingFocus: false`
+	 * already declares about every other route. No option, for `opensWithoutStealingFocus`'s reason:
+	 * no caller wants the stealing behavior, so a flag would be a branch every caller writes and none
+	 * takes.
+	 *
+	 * **Not real everywhere — REFUSED BY NAME on three backends**, `PaneMoveUnsupportedError`
+	 * (`move.ts`), and `MuxAdapter.canMovePanes` is how a caller asks first. The gap is not the one
+	 * issue #143 predicted, which called this "real-everywhere on current evidence": zellij 0.45.0's
+	 * `move-pane` rotates a pane inside its own tab and names no destination, cmux's two container
+	 * moves land a surface as a TAB or split it off in place, and otty publishes the verb for tabs
+	 * only, with no flags. See each adapter's own note; the four capable backends were all driven live
+	 * (tmux 3.7c, rmux 0.10.0, herdr 0.8.0/0.9.0, wezterm 20240203).
+	 *
+	 * There is nothing to emulate it with, which is why the answer is a refusal rather than a degrade:
+	 * opening a fresh pane at the destination and closing the old one satisfies the geometry and
+	 * destroys the process, the scrollback and the identity the caller was moving. Same all-or-nothing
+	 * rule `'pane:float'` and `setPaneZoom` already make.
+	 *
+	 * Throws rather than reporting a false success when the backend's own move fails — an unresolvable
+	 * source or destination, most often.
+	 */
+	movePane(exec: Exec, target: MuxTarget, destination: MuxTarget, side: MuxMoveSide): OpenedPane
+	/**
+	 * Break a pane OUT into a space of its own — its own tab (`at: 'tab'`) or its own workspace
+	 * (`at: 'workspace'`) — leaving its former siblings behind to take the region back. Like
+	 * `movePane` this relocates a live pane and opens nothing: the process and the scrollback survive.
+	 *
+	 * **A separate member from `movePane`, not an overload of it.** They take different destinations
+	 * (one names where to land, one names a tier) and three backends spell them as two different
+	 * commands — tmux/rmux `move-pane` vs `break-pane`, wezterm `split-pane --move-pane-id` vs
+	 * `move-pane-to-new-tab`. herdr is the one backend that spells both as `pane move`, and even there
+	 * the flag sets are disjoint and mutually exclusive: its own usage prints them as three separate
+	 * lines, and `--tab` and `--new-tab` cannot be sent together.
+	 *
+	 * **`at: 'workspace'` COLLAPSES onto `'tab'` on a backend with no workspace tier** — tmux and rmux,
+	 * where both are a new Window — and that is not a refusal but the same collapse `open`'s
+	 * `MuxPlacement` already documents. The returned `OpenedPane` tells the truth about it by
+	 * reporting no `workspace`, exactly as an `open` does there.
+	 *
+	 * **Returns `OpenedPane` because the pane's identity can CHANGE**, which is `movePane`'s finding in
+	 * its sharpest form: on herdr, `pane move <p> --new-workspace` answered with a pane whose id had
+	 * been rewritten into the new workspace's namespace (live on 0.9.0, `wRT:p2` came back as
+	 * `wRV:p1`, and the old id vanished from `pane list`). Even where the id survives — tmux, rmux,
+	 * wezterm — the tab always changes and the workspace may, so a caller holding the old handle's TAB
+	 * is stale regardless.
+	 *
+	 * **REFUSED BY NAME on zellij and otty** (`PaneBreakUnsupportedError`, `move.ts`), which have no
+	 * break verb a program can reach; `MuxAdapter.canBreakPanes` is how a caller asks first. cmux
+	 * declares the capability on a SOURCE read of `pane.break` rather than a live drive, the same
+	 * standing caveat every other cmux member carries.
+	 *
+	 * Idempotence is the backend's, not this seam's, and the two families genuinely differ: breaking
+	 * out a pane that is already alone in its tab is a no-op on tmux and rmux (measured on 3.7c and
+	 * 0.10.0 — `break-pane` answers the pane's existing window and changes nothing), and mints yet
+	 * another tab on herdr and wezterm (measured — `wRD:t3` became `wRD:t4`). Callers that care
+	 * check with `listPanes` first; the seam does not add a read to every break to hide the
+	 * difference.
+	 */
+	breakPane(exec: Exec, target: MuxTarget, at: MuxBreakTier): OpenedPane
 	/**
 	 * Enumerate every live pane this backend can currently see — the bulk counterpart to
 	 * `paneExists`'s single targeted query. `reconcile` uses this to cull dead records in one pass

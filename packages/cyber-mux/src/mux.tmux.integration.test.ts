@@ -416,6 +416,107 @@ describe.skipIf(!hasTmux())('spec:cyber-mux/mux', () => {
 			expect(tmuxMuxAdapter.isPaneZoomed(exec, opened)).toBeUndefined()
 		})
 
+		/**
+		 * The relocation rows. A mocked `Exec` can prove the argv and nothing else — that `-h` really
+		 * lands the pane to the RIGHT of the destination rather than the left, that `-d` really leaves
+		 * the client where it was, and that break-out on a lone pane really is a no-op are all screen
+		 * facts, and all three are asserted here against real geometry the binary reports.
+		 */
+		it('movePane() carries a live pane into the destination’s tab and leaves its sibling behind', () => {
+			const home = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
+			const traveller = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'pane:right', from: home, ratio: 0.5 })
+			const destination = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
+
+			const moved = tmuxMuxAdapter.movePane(exec, traveller, destination, 'right')
+
+			// tmux pane ids are server-wide, so the id survives — unlike herdr's, which do not.
+			expect(moved.id).toBe(traveller.id)
+			expect(moved.tab).toBe(destination.tab)
+			expect(moved.tab).not.toBe(traveller.tab)
+			// The pane itself is still alive, and the sibling it left is still in the old tab.
+			expect(tmuxMuxAdapter.paneExists(exec, moved)).toBe(true)
+			expect(tmuxMuxAdapter.listPanes(exec).some((p) => p.id === home.id)).toBe(true)
+		})
+
+		it.each([
+			{ side: 'right', axis: 'x' },
+			{ side: 'down', axis: 'y' },
+		] as const)('movePane(%s) really lands the pane on that side of the destination', ({ side, axis }) => {
+			const regions = tmuxMuxAdapter.regions
+			if (!regions) throw new Error('the tmux adapter must implement regions')
+			const home = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
+			const traveller = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'pane:right', from: home, ratio: 0.5 })
+			const destination = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
+
+			const moved = tmuxMuxAdapter.movePane(exec, traveller, destination, side)
+
+			const region = regions.describeRegion(exec, destination)
+			const dest = region.find((p) => p.id === destination.id)
+			const landed = region.find((p) => p.id === moved.id)
+			if (!dest || !landed) throw new Error('both panes must be in the destination region after the move')
+			// `right` means a greater x and the same y; `down` the reverse. Asserting the ORDER is what a
+			// mocked argv check cannot do — `-h` and `-v` are only names until a binary places them.
+			expect(landed.rect[axis]).toBeGreaterThan(dest.rect[axis])
+		})
+
+		it('movePane() does not drag the client to the destination window — the -d the argv carries', () => {
+			const currentWindow = () => exec('tmux', ['display-message', '-p', '#{window_id}'])
+			const home = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
+			const traveller = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'pane:right', from: home, ratio: 0.5 })
+			const destination = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
+			const before = currentWindow()
+
+			tmuxMuxAdapter.movePane(exec, traveller, destination, 'right')
+
+			expect(currentWindow()).toBe(before)
+		})
+
+		it('movePane() throws on a destination the real tmux cannot resolve', () => {
+			const home = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
+			expect(() => tmuxMuxAdapter.movePane(exec, home, { id: '%999' }, 'right')).toThrow(/tmux could not move pane/)
+		})
+
+		it('breakPane() gives a split pane its own window, with the pane alive and its sibling untouched', () => {
+			const home = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
+			const traveller = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'pane:right', from: home, ratio: 0.5 })
+
+			const broken = tmuxMuxAdapter.breakPane(exec, traveller, 'tab')
+
+			expect(broken.id).toBe(traveller.id)
+			expect(broken.tab).not.toBe(traveller.tab)
+			expect(tmuxMuxAdapter.paneExists(exec, broken)).toBe(true)
+			// The reported window is a REAL one, not a plausible-looking string: naming it succeeds.
+			expect(() => tmuxMuxAdapter.rename(exec, { id: broken.tab }, 'tab', 'broken-out')).not.toThrow()
+			// And the pane it left behind is alone in the old window rather than gone with it.
+			const region = tmuxMuxAdapter.regions!.describeRegion(exec, home)
+			expect(region.map((p) => p.id)).toEqual([home.id])
+		})
+
+		// tmux has no workspace tier, so BOTH tiers are a new window and the pane reports no workspace —
+		// the same collapse `open` makes, asserted against the binary rather than the argv.
+		it.each(['tab', 'workspace'] as const)('breakPane(%s) lands a new window and reports no workspace', (at) => {
+			const home = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
+			const traveller = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'pane:right', from: home, ratio: 0.5 })
+
+			const broken = tmuxMuxAdapter.breakPane(exec, traveller, at)
+
+			expect(broken.workspace).toBeUndefined()
+			expect(broken.tab).not.toBe(home.tab)
+		})
+
+		/**
+		 * The divergence `MuxAdapter.breakPane` declares rather than normalizes: tmux NO-OPS a break-out
+		 * of a pane that is already alone, where herdr and wezterm mint another tab. Only a live binary
+		 * can say which family a backend is in.
+		 */
+		it('breakPane() on a pane that is already alone answers its existing window, changing nothing', () => {
+			const alone = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
+
+			const broken = tmuxMuxAdapter.breakPane(exec, alone, 'tab')
+
+			expect(broken).toEqual({ id: alone.id, tab: alone.tab })
+		})
+
 		it('resizePane() throws on a region tmux reports as a single pane', () => {
 			const regions = tmuxMuxAdapter.regions
 			if (!regions) throw new Error('the tmux adapter must implement regions')

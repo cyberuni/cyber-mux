@@ -540,5 +540,35 @@ describe.skipIf(!hasZellij() || !hasScript())('spec:cyber-mux/mux', () => {
 			// and the rows it dropped are exactly what `truncated` reports.
 			expect(trimmed.truncated).toBe(true)
 		})
+		/**
+		 * The relocation refusal, asserted against the real binary rather than only against the adapter.
+		 *
+		 * The refusal itself is a unit fact (`move.test.ts` covers it), so what earns a live row here is
+		 * the EVIDENCE the refusal rests on: that the pinned zellij genuinely has no cross-container move
+		 * and no break-out. Absence read off a docs page is not proof — this reads the inventory the
+		 * binary prints about itself, so a zellij that ever grows one of these verbs turns this row red
+		 * and forces the recheck instead of leaving a stale refusal in place.
+		 */
+		it('has no pane-to-tab move and no break-out verb at all, which is what movePane/breakPane refuse on', () => {
+			const inventory = exec('zellij', ['action', '--help']) ?? ''
+			expect(inventory, 'zellij action --help answered nothing').not.toBe('')
+			// `move-pane` exists and is intra-tab: its own help names a DIRECTION and no destination.
+			const movePaneHelp = exec('zellij', ['action', 'move-pane', '--help']) ?? ''
+			expect(movePaneHelp).toMatch(/\[DIRECTION\]/)
+			expect(movePaneHelp).not.toMatch(/--tab|--session|destination/i)
+			// And nothing anywhere in the inventory breaks a pane out.
+			expect(inventory).not.toMatch(/break-pane|break_pane|move-pane-to-tab|move-pane-to-new-tab/)
+		})
+
+		it('movePane()/breakPane() refuse by name without touching the real session', async () => {
+			const target = adapter.open(exec, { cwd, at: 'tab' })
+			await existsEventually(target)
+			const before = adapter.listPanes(exec).length
+
+			expect(() => adapter.movePane(exec, target, { id: 'terminal_1' }, 'right')).toThrow(/zellij cannot move a pane/)
+			expect(() => adapter.breakPane(exec, target, 'tab')).toThrow(/zellij cannot break a pane out/)
+
+			expect(adapter.listPanes(exec)).toHaveLength(before)
+		})
 	})
 })

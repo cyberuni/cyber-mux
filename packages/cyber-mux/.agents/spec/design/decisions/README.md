@@ -1785,3 +1785,104 @@ Decisions (`153-remote-async` — does driving a pane on a REMOTE machine force 
   cron job), not only by a future remote one. Recorded here rather than fixed, because a parse change
   is a code change and this CR is a decision.
   ISSUE: https://github.com/cyberuni/cyber-mux/issues/153
+
+
+Decisions (`143-pane-relocation` — the move and break-out seam members, issue #143):
+
+- **TWO members, `movePane` and `breakPane`, not one** — DECIDED, with the issue. They take
+  different destinations (one names where to land, one names a tier) and three of the five capable
+  backends spell them as two different commands: tmux/rmux `move-pane` vs `break-pane`, wezterm
+  `split-pane --move-pane-id` vs `move-pane-to-new-tab`. herdr is the one backend that spells both as
+  `pane move`, and even there the flag sets are disjoint and mutually exclusive — its own usage
+  prints three separate lines and `--tab` cannot be sent with `--new-tab`.
+
+- **`movePane`'s destination is a PANE plus a side, NOT a tab, a workspace or a placement** — DECIDED,
+  and this is the question the issue left open ("a vague destination will haunt every adapter"). A
+  pane destination is EXACT on every backend that can be driven: tmux/rmux `move-pane -t <pane>`,
+  wezterm `split-pane --pane-id <pane> --move-pane-id`, herdr `--target-pane`. A TAB destination is
+  exact only on herdr and cmux, and on the other three it degrades to "beside whatever pane that
+  container has active" — the same "whatever this backend defaults to" trap `MuxOpenOptions.from`
+  already documents one tier up. It is also the more recoverable of the two: a caller holding a tab
+  picks a pane out of `describeRegion`/`listPanes` and gets a placement it chose, while a caller
+  holding a pane cannot recover one from a tab id without picking arbitrarily. The side is REQUIRED
+  and defaults to nothing, because the backends' own defaults disagree (wezterm `--bottom`, tmux a
+  horizontal split, herdr refuses the command without `--split`).
+
+- **`MuxMoveSide` is `'right' | 'down'` and not four-way** — DECIDED. herdr's `pane move --split`
+  takes `right|down` and nothing else, so `left`/`up` would be a vocabulary one capable backend
+  cannot honor. It is its own type rather than a reuse of `MuxPlacement` for `MuxSpaceTier`'s reason:
+  three of that type's five members are not sides.
+
+- **Both members return `OpenedPane`; `movePane` returning `void`, as the issue proposed, is a bug** —
+  DECIDED, on a measurement the issue did not have. herdr pane ids are WORKSPACE-SCOPED, so any
+  relocation across that boundary rewrites the id: live on 0.9.0, `pane move wRE:p1 --tab wRD:t1`
+  answered `wRD:p4`, and `pane move wRT:p2 --new-workspace` answered `wRV:p1`. The old id is not
+  dead — herdr keeps resolving it as an alias reporting the new one — but it is GONE from `pane list`
+  (measured), which is the failure that matters: a caller matching its handle against the listing, as
+  `reconcile`'s cull does, sees a live pane as dead. Even where the id survives (tmux, rmux, wezterm)
+  the tab always changes, so a `void` return would leave every caller holding a stale `OpenedPane.tab`.
+
+- **NOT real-everywhere — `canMovePanes` / `canBreakPanes` plus refusal by name (`move.ts`)** —
+  DECIDED, AGAINST the issue, which called `movePane` "real-everywhere on current evidence, so it
+  belongs on `MuxAdapter`". zellij 0.45.0 — the version CI pins and the adapter's declared floor —
+  has NEITHER verb. Read off the binary's own command inventory rather than a docs page: `zellij
+  action move-pane [-p <id>] [DIRECTION]` rotates a pane inside its own tab, `move-pane-backwards`
+  rotates the other way, and no verb in the whole `zellij action` inventory breaks a pane out or
+  names a destination container. The zoom member's shape (`canZoomPanes` + `PaneZoomUnsupportedError`)
+  therefore carries over intact.
+
+- **TWO capability flags rather than one `canRelocatePanes`** — DECIDED, and cmux is the whole reason.
+  It has a break-out (`break-pane` → the control socket's `pane.break`, which detaches a surface into
+  its own workspace) and nothing that puts a surface beside a NAMED pane on a NAMED side: its
+  `move-surface --surface <s> --pane <p>` moves a surface into another pane CONTAINER where it lands
+  as a tab ordered by `--before`/`--after`/`--index`, and `split-off` /
+  `drag-surface-to-split --surface <s> <left|right|up|down>` splits a surface off inside its own pane
+  and takes no destination at all. A single flag would have had to answer `false` there and discard
+  the half cmux really has. This is the one-flag-per-capability rule `canFloatPanes` and
+  `canSizeSplits` already follow.
+
+- **cmux DECLARES `canBreakPanes` on a source read, and says so** — DECIDED. Read at HEAD `ae18c88`
+  (`CLI/cmux.swift:27398`, the coordinator's `.broken` case, the app's `detachSurface` path), never
+  driven — cmux is macOS/GUI-only and issue #128 is the missing real-boundary suite. Refusing a verb
+  the source plainly carries would repeat #132's misreading in reverse; every other cmux member is
+  implemented on the same evidence, so this one is too, under the same standing caveat. Two traps are
+  handled explicitly rather than discovered later: `pane.break` with neither `--pane` nor `--surface`
+  breaks the FOCUSED surface, so `--surface` is always passed; and `--workspace` there is the SOURCE
+  context, not a destination.
+
+- **`at: 'workspace'` collapses onto `'tab'` on tmux and rmux, and `'tab'` collapses UP onto
+  `'workspace'` on cmux** — DECIDED. Both are the tier collapse `open`'s `MuxPlacement` already makes,
+  in the two directions the backends force. tmux and rmux have no workspace tier, so both tiers are a
+  new Window and the returned pane reports no `workspace`; a cmux surface IS a tab, so `pane.break`
+  is the only break it has and it always lands the surface alone in a fresh workspace. In both cases
+  the returned `OpenedPane` reports where the pane actually landed, so a caller sees the collapse
+  rather than being told a comfortable lie.
+
+- **Relocation does not steal focus where the backend can help it, and that is not an option** —
+  DECIDED, on `opensWithoutStealingFocus`'s reasoning: no caller wants the stealing behavior, so a
+  flag would be a branch every caller writes and none takes. tmux/rmux `-d` and herdr `--no-focus`
+  are always sent; wezterm has no such flag on `split-pane` or `move-pane-to-new-tab` and makes the
+  moved pane active, which is exactly what its `opensWithoutStealingFocus: false` already declares.
+
+- **Break-out idempotence is REPORTED, not normalized** — DECIDED. The backends split into two
+  families and only a live binary can say which: tmux 3.7c and rmux 0.10.0 NO-OP a break-out of a
+  pane that is already alone, answering its existing window; herdr 0.9.0 and wezterm 20240203 mint
+  another tab (`wRD:t3` became `wRD:t4`). Spending a read on every break to hide the difference would
+  cost every caller for a case few have.
+
+- **No `swapPane`, no size argument, and no CLI verb** — DECIDED. `swapPane` stays out with the
+  issue (though cmux does have `swap-pane`, correcting the issue's "cmux and zellij do not
+  obviously"). A ratio/size on the move is dropped even though herdr `--ratio`, tmux `-l` and wezterm
+  `--percent` could render one: no caller asked, and `resizePane` follows a move. No `cyber-mux`
+  subcommand, following `resizePane` and `setPaneZoom` — the members and their refusals are the unit
+  of work.
+
+- **Live coverage on all five drivable backends, plus a live row for the refusal.** tmux, rmux,
+  herdr, wezterm each gained rows that assert screen facts rather than argv — that `-h`/`--right`
+  really lands the pane to the RIGHT of the destination (reverting the mapping turns them red while
+  every mocked row stays green), that the pane it left behind survives, that wezterm's silent
+  `move-pane-to-new-tab` is a SUCCESS (a falsiness check on its empty stdout turns three rows red),
+  and that herdr's workspace break rewrites the id out of `pane list`. zellij's suite asserts the
+  INVENTORY the refusal rests on, so a zellij that ever grows one of these verbs turns that row red
+  rather than leaving a stale refusal standing.
+  ISSUE: https://github.com/cyberuni/cyber-mux/issues/143

@@ -22,6 +22,9 @@ supports and what cyber-mux does when it falls short.
 | Floating pane         | ✓ (tmux 3.7+, `new-pane`) | ✗ (refused by name)   | ✗ (refused by name)     | ✗ (refused by name)     | ✓ (`new-pane --floating`) | ✗ (refused by name)   | ✗ (refused by name)     |
 | Opens without stealing focus | ✓ (`-d`)          | ✓ (`-d`)                | ✓ (`--no-focus`)        | ✗                       | ✓ (Zellij 0.45+)        | ✗                       | ✗                       |
 | Resize an open pane   | ✓                       | ✓                       | ✓                       | ✗ (refused by name)     | ✗ (refused by name)     | ✗ (refused by name)     | ✗ (refused by name)     |
+| Zoom a pane           | ✓ (`resize-pane -Z`)    | ✓ (`resize-pane -Z`)    | ✓ (`pane zoom --on/--off`) | ✓ (`zoom-pane`)      | ✓ (`toggle-fullscreen`) | ✗ (refused by name)     | ✗ (refused by name)     |
+| Move a pane beside another | ✓ (`move-pane`)    | ✓ (`move-pane`)         | ✓ (`pane move --tab`)   | ✓ (`split-pane --move-pane-id`) | ✗ (refused by name) | ✗ (refused by name)  | ✗ (refused by name)     |
+| Break a pane out      | ✓ (`break-pane`)        | ✓ (`break-pane`)        | ✓ (`pane move --new-tab`) | ✓ (`move-pane-to-new-tab`) | ✗ (refused by name) | ✓ (`break-pane`, source-read) | ✗ (refused by name) |
 
 ## tmux
 

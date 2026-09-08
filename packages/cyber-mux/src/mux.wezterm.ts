@@ -91,6 +91,21 @@ export function createWeztermAdapter(deps: { newId: NewId }): MuxAdapter {
 		 */
 		canZoomPanes: true,
 
+		/**
+		 * `true` for both, against two verbs driven live on the pinned 20240203 build through a headless
+		 * `wezterm-mux-server`. They are two DIFFERENT commands here, which is part of why the seam keeps
+		 * the members apart: `split-pane --pane-id <dst> --right|--bottom --move-pane-id <src>` relocates
+		 * a pane beside another one, and `move-pane-to-new-tab --pane-id <src>` promotes it.
+		 *
+		 * `--move-pane-id` is the flag that makes wezterm capable at all, and it is easy to miss: the
+		 * move is not its own verb, it is a mode of `split-pane` ("Instead of spawning a new command,
+		 * move the specified pane into the newly created split"). Measured: `split-pane --pane-id 2
+		 * --bottom --move-pane-id 1` carried pane 1 out of window 0 into pane 2's tab with its id intact
+		 * and printed `1`.
+		 */
+		canMovePanes: true,
+		canBreakPanes: true,
+
 		open(exec, opts) {
 			const at = opts.at ?? 'tab'
 			if (at === 'workspace') {
@@ -284,6 +299,64 @@ export function createWeztermAdapter(deps: { newId: NewId }): MuxAdapter {
 			const found = listWeztermPanes(exec).find((p) => String(p.pane_id) === target.id)
 			if (!found) return undefined
 			return found.is_zoomed === true
+		},
+
+		/**
+		 * `split-pane --pane-id <dst> --right|--bottom --move-pane-id <src>` — a MODE of the split verb
+		 * rather than a move verb of its own, and the destination is named as `--pane-id`, the pane being
+		 * split. That is exactly the seam's destination, which is the strongest single argument for a
+		 * pane-typed destination: wezterm has no way to name a tab here at all.
+		 *
+		 * Prints the moved pane's id on success (`1`, measured) and keeps it — wezterm ids are
+		 * server-wide, so unlike herdr nothing is renamed by crossing a window. The `OpenedPane` still
+		 * costs a `cli list` lookup, for `resolveTab`'s reason: the id is all that comes back, and the
+		 * tab and workspace the pane landed in are exactly what changed.
+		 *
+		 * Moving MOVES FOCUS here and there is no flag to stop it — the moved pane becomes its new tab's
+		 * active pane (measured). That is the same thing `opensWithoutStealingFocus: false` above
+		 * already declares about every wezterm route, reported rather than compensated.
+		 */
+		movePane(exec, target, destination, side) {
+			const out = exec('wezterm', [
+				'cli',
+				'split-pane',
+				'--pane-id',
+				destination.id,
+				side === 'down' ? '--bottom' : '--right',
+				'--move-pane-id',
+				target.id,
+			])
+			if (out === null) {
+				throw new Error(`wezterm could not move pane ${target.id} to ${destination.id}`)
+			}
+			return withTabAndWorkspace(exec, target.id)
+		},
+
+		/**
+		 * `move-pane-to-new-tab --pane-id <src>`, plus `--new-window --workspace <name>` for the
+		 * workspace tier — wezterm's workspace is a set of WINDOWS, so a pane can only reach a new one
+		 * by taking a new window with it.
+		 *
+		 * **The success check is `=== null`, not falsiness, and that is a real bug this avoids**: this
+		 * verb prints NOTHING on success (measured — empty stdout, exit 0), so an `if (!out)` guard
+		 * would throw on every successful break. `Exec` reports a failure as `null` and an empty
+		 * success as `''`; only the strict check tells them apart.
+		 *
+		 * The workspace name is MINTED when the caller reaches the workspace tier, exactly as `open`
+		 * does at that tier and for the same reason: `--workspace` defaults to `"default"`, so omitting
+		 * it would put the "new workspace" in the one the caller was already in. wezterm has one string
+		 * per workspace rather than an opaque id, so the minted name IS the identity.
+		 *
+		 * Costs the same `cli list` lookup `movePane` does, and here it is not optional at all: nothing
+		 * is printed, so the tab the pane landed in can only be read back.
+		 */
+		breakPane(exec, target, at) {
+			const args = ['cli', 'move-pane-to-new-tab', '--pane-id', target.id]
+			if (at === 'workspace') args.push('--new-window', '--workspace', `cyber-mux-${deps.newId().slice(0, 8)}`)
+			if (exec('wezterm', args) === null) {
+				throw new Error(`wezterm could not break out pane ${target.id} into its own ${at}`)
+			}
+			return withTabAndWorkspace(exec, target.id)
 		},
 
 		listPanes(exec): LivePane[] {
