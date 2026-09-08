@@ -266,7 +266,7 @@ describe.skipIf(!hasZellij() || !hasScript())('spec:cyber-mux/mux', () => {
 			expect(adapter.listPanes(exec).length).toBeGreaterThan(before)
 		})
 
-		// `opensWithoutStealingFocus`, at the only boundary that can answer it. Every other row here
+		// `focusOnOpen`, at the only boundary that can answer it. Every other row here
 		// proves the flag was SPELLED; this pair proves zellij honors it — and until this branch bumped
 		// CI's pin to 0.45.0 there was no binary that could run them at all, because `--no-focus` did not
 		// exist below it.
@@ -448,7 +448,7 @@ describe.skipIf(!hasZellij() || !hasScript())('spec:cyber-mux/mux', () => {
 		/**
 		 * The zoom rows. Every claim in `mux.zellij.ts` about `toggle-fullscreen` and `is_fullscreen` was
 		 * measured against a live 0.45.0 rather than read out of the source tree — which is a step up on
-		 * `canFloatPanes` and `opensWithoutStealingFocus`, both written blind and only ever confirmed
+		 * `canFloatPanes` and `focusOnOpen`, both written blind and only ever confirmed
 		 * BY this job.
 		 *
 		 * `pollUntil` on the read, not a bare assertion: `zellij action` replies are asynchronous and this

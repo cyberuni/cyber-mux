@@ -227,7 +227,7 @@ describe.skipIf(!hasTmux())('spec:cyber-mux/mux', () => {
 			'workspace',
 			'pane:right',
 			'pane:down',
-		] as const)('open({ at: %s }) does not move the attached client — backing opensWithoutStealingFocus', (at) => {
+		] as const)('open({ at: %s }) does not move the attached client — backing focusOnOpen: preserved', (at) => {
 			const before = exec('tmux', ['display-message', '-p', '#{pane_id}'])
 			const opened = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at })
 			expect(opened.id).not.toBe(before)

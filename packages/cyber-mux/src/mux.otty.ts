@@ -2,6 +2,7 @@ import { agentWaitStatesSatisfiable, refuseAgentWaitStates } from './agent-state
 import { launchFallback } from './env-fallback.ts'
 import { type Exec, withReason } from './exec.ts'
 import { refuseFloatingPane } from './floating.ts'
+import { restoringFocus, soleFocusedPane } from './focus-on-open.ts'
 import { refusePaneBreak, refusePaneMove } from './move.ts'
 import type { AgentStatus, LivePane, MuxAdapter, MuxReadOptions, OpenedPane } from './mux.ts'
 import { assertRatioInRange } from './ratio.ts'
@@ -123,99 +124,135 @@ export function createOttyAdapter(deps: { window?: string | undefined }): MuxAda
 		 * Read off otty's documented CLI, NOT verified against a live binary — no otty on the machine
 		 * this was written on, matching the rest of this header.
 		 */
-		opensWithoutStealingFocus: false,
+		/**
+		 * `'restored'`. The old `false` gave two reasons and one of them is gone: `pane split` DOES take
+		 * `--no-focus` — otty's own `/agents/orchestration` page runs `otty pane split --direction right
+		 * --cwd "$PWD" --no-focus --json` (issue #172) — while `tab new` and `open` still document none,
+		 * and `from` is still honored by FOCUSING the anchor pane first because otty's split has no
+		 * target flag. That anchor move happens before the open runs, so no flag on the open can
+		 * suppress it.
+		 *
+		 * Undoing it is what issue #152 asked for and what this declares. The restore is right whether
+		 * or not the documented flag behaves as documented: if the new pane does not take focus,
+		 * re-focusing the caller's own pane is a no-op; if it does, it is the fix.
+		 *
+		 * `--no-focus` itself is deliberately NOT passed here — that is #172's change, it needs a Mac to
+		 * confirm, and an unverified flag would make the outcome depend on being right about a docs
+		 * read that this behavior does not need.
+		 *
+		 * DOCS-READ, not live: otty is macOS/Windows-GUI-only and `live-backends` cannot exercise it
+		 * (#128).
+		 */
+		focusOnOpen: 'restored',
 
 		open(exec, opts) {
 			const at = opts.at ?? 'tab'
-
-			if (at === 'workspace') {
-				// `otty open [path]` ALWAYS opens a new window — the reference gives it `--command` and
-				// `--title` and nothing else. `--new-window` is a flag of the DIFFERENT `otty view`/`otty edit`
-				// family, where it selects between placements; passing it here fails at the argument parser.
-				const args = ['open']
-				// `--title` names the WINDOW, which is the space `at: 'workspace'` opens — so the label lands
-				// at birth rather than as a follow-up rename of the wrong tier (the tab).
-				if (opts.label) args.push('--title', opts.label)
-				if (opts.cwd) args.push(opts.cwd)
-				const out = exec('otty', args)
-				if (!out) throw new Error(withReason(exec, 'otty open failed'))
-				const parsed = parseOttyOutput(out)
-				if (!parsed.window_id) throw new Error('otty open did not report the window id')
-				const paneId = parsed.pane_id
-				if (!paneId) throw new Error('otty open did not report the initial pane id')
-				const opened = openedPane(paneId, parsed.tab_id, parsed.window_id)
-				runLaunch(adapter, exec, opened, opts.env, opts.launch)
-				return opened
-			}
-
-			if (at === 'tab') {
-				const args = ['tab', 'new']
-				// `--title` names the TAB, which is the space `at: 'tab'` opens — so the label lands at birth
-				// in the creating call rather than as a second round trip through `rename`, which left a
-				// window where the tab carried otty's default name. Same fix the workspace arm above makes.
-				if (opts.label) args.push('--title', opts.label)
-				// No `--cwd` here, unlike the split arm below: nothing otty publishes puts a working
-				// directory on `tab new`, so the directory is compensated in `runLaunch` as a `cd`
-				// instead — the answer that holds whether or not the flag exists (see the header).
-				const out = exec('otty', args)
-				if (!out) throw new Error(withReason(exec, 'otty tab new failed'))
-				const parsed = parseOttyOutput(out)
-				const paneId = parsed.pane_id
-				if (!paneId) throw new Error('otty tab new did not report the pane id')
-				const opened = openedPane(paneId, parsed.tab_id, deps.window)
-				runLaunch(adapter, exec, opened, opts.env, opts.launch, opts.cwd)
-				return opened
-			}
-
-			// otty has no floating-pane concept: `pane split` always takes a share of the region and resizes
-			// its neighbors, and nothing in the CLI opens a pane above the layout. So this REFUSES by name
-			// rather than substituting a split — the substitute would satisfy the caller's pane id and
-			// violate the one property they asked for. No `canFloatPanes` above is the declaration; this
-			// is the enforcement, and both are needed for the same reason `agent wait` checks twice: the
-			// CLI's pre-flight check is not on the path a library caller reaching `open()` directly takes.
+			// The refusal is PRE-FLIGHT, above the focus read rather than inside the opened body: it must
+			// cost no exec at all (`placement-float-refused-by-name` pins exactly that), and there is
+			// nothing to restore when nothing is going to be opened.
 			if (at === 'pane:float') refuseFloatingPane(adapter.name)
+			// Argument validation is pre-flight for the same reason, and it did not used to be: an
+			// out-of-range `ratio` threw from inside the split branch, which after the wrapper landed
+			// meant one focus read had already been spent on an open that was never going to happen.
+			// Rejecting bad input before touching the backend at all is the rule; the wrapper is where
+			// forgetting it starts to cost something.
+			if (opts.ratio != null) assertRatioInRange(opts.ratio)
+			// EVERY route, not only the `pane:*` one: a new tab or workspace is selected when it is
+			// created too, so those move the caller as well. The read runs before anything is created and
+			// the restore runs even if the open throws — see `restoringFocus`.
+			return restoringFocus(
+				{
+					read: () =>
+						soleFocusedPane(
+							listOttyPanes(exec),
+							(r) => r.is_focused,
+							(r) => r.id,
+						),
+					restore: (pane) => adapter.focus(exec, { id: pane }),
+				},
+				() => {
+					if (at === 'workspace') {
+						// `otty open [path]` ALWAYS opens a new window — the reference gives it `--command` and
+						// `--title` and nothing else. `--new-window` is a flag of the DIFFERENT `otty view`/`otty edit`
+						// family, where it selects between placements; passing it here fails at the argument parser.
+						const args = ['open']
+						// `--title` names the WINDOW, which is the space `at: 'workspace'` opens — so the label lands
+						// at birth rather than as a follow-up rename of the wrong tier (the tab).
+						if (opts.label) args.push('--title', opts.label)
+						if (opts.cwd) args.push(opts.cwd)
+						const out = exec('otty', args)
+						if (!out) throw new Error(withReason(exec, 'otty open failed'))
+						const parsed = parseOttyOutput(out)
+						if (!parsed.window_id) throw new Error('otty open did not report the window id')
+						const paneId = parsed.pane_id
+						if (!paneId) throw new Error('otty open did not report the initial pane id')
+						const opened = openedPane(paneId, parsed.tab_id, parsed.window_id)
+						runLaunch(adapter, exec, opened, opts.env, opts.launch)
+						return opened
+					}
 
-			// pane:right / pane:down — a split
-			if (opts.from) adapter.focus(exec, opts.from)
+					if (at === 'tab') {
+						const args = ['tab', 'new']
+						// `--title` names the TAB, which is the space `at: 'tab'` opens — so the label lands at birth
+						// in the creating call rather than as a second round trip through `rename`, which left a
+						// window where the tab carried otty's default name. Same fix the workspace arm above makes.
+						if (opts.label) args.push('--title', opts.label)
+						// No `--cwd` here, unlike the split arm below: nothing otty publishes puts a working
+						// directory on `tab new`, so the directory is compensated in `runLaunch` as a `cd`
+						// instead — the answer that holds whether or not the flag exists (see the header).
+						const out = exec('otty', args)
+						if (!out) throw new Error(withReason(exec, 'otty tab new failed'))
+						const parsed = parseOttyOutput(out)
+						const paneId = parsed.pane_id
+						if (!paneId) throw new Error('otty tab new did not report the pane id')
+						const opened = openedPane(paneId, parsed.tab_id, deps.window)
+						runLaunch(adapter, exec, opened, opts.env, opts.launch, opts.cwd)
+						return opened
+					}
 
-			// `--direction <value>`, NOT a bare directional flag: the reference documents
-			// `otty pane split --direction right …` over the vocabulary `right|left|up|down`. `--bottom` is
-			// not a direction otty names at all — that spelling belongs to `otty view`/`otty edit`.
-			const direction = at === 'pane:down' ? 'down' : 'right'
-			const args = ['pane', 'split', '--direction', direction]
-			if (opts.cwd) args.push('--cwd', opts.cwd)
-			// `--cwd` STAYS on this route, and on this route only: otty's own `/agents/orchestration`
-			// runs `otty pane split --direction right --cwd "$PWD" --no-focus --json` by hand. #163 read
-			// `/reference/cli`'s silence as proof the flag was fabricated; that page documents no flags
-			// for this command family at all. See the header for the measurement.
-			if (opts.ratio != null) {
-				const { size, requested } = toOttySize(opts.ratio)
-				// A clamp is a size the caller did NOT ask for, so it is announced rather than applied
-				// quietly — the alternative is `--size 5`, which otty's own 10-90 range rejects, turning a
-				// ratio the seam accepts into a failed split.
-				if (size !== requested) {
-					process.stderr.write(
-						`otty sizes a split between 10% and 90% — ratio ${opts.ratio} asked for a ${requested}% ` +
-							`new pane, so ${size}% was used instead\n`,
-					)
-				}
-				args.push('--size', String(size))
-			}
-			const out = exec('otty', args)
-			if (!out) throw new Error(withReason(exec, 'otty pane split failed'))
-			const parsed = parseOttyOutput(out)
-			const paneId = parsed.pane_id
-			if (!paneId) throw new Error('otty pane split did not report the pane id')
-			const opened = openedPane(paneId, parsed.tab_id, deps.window)
-			// No pane-title primitive exists at birth or after (see `rename` below) — degrade with a warning
-			// rather than silently dropping the label or failing the whole split over a name nobody NEEDS to
-			// open the pane. Same trade `mux.wezterm.ts` makes for the same missing primitive.
-			if (opts.label) {
-				process.stderr.write(`otty cannot name a pane — "${opts.label}" was not set on pane ${opened.id}\n`)
-			}
-			// No `cwd` argument: this route set it natively with `--cwd` above.
-			runLaunch(adapter, exec, opened, opts.env, opts.launch)
-			return opened
+					// pane:right / pane:down — a split
+					if (opts.from) adapter.focus(exec, opts.from)
+
+					// `--direction <value>`, NOT a bare directional flag: the reference documents
+					// `otty pane split --direction right …` over the vocabulary `right|left|up|down`. `--bottom` is
+					// not a direction otty names at all — that spelling belongs to `otty view`/`otty edit`.
+					const direction = at === 'pane:down' ? 'down' : 'right'
+					const args = ['pane', 'split', '--direction', direction]
+					if (opts.cwd) args.push('--cwd', opts.cwd)
+					// `--cwd` STAYS on this route, and on this route only: otty's own `/agents/orchestration`
+					// runs `otty pane split --direction right --cwd "$PWD" --no-focus --json` by hand. #163 read
+					// `/reference/cli`'s silence as proof the flag was fabricated; that page documents no flags
+					// for this command family at all. See the header for the measurement.
+					if (opts.ratio != null) {
+						const { size, requested } = toOttySize(opts.ratio)
+						// A clamp is a size the caller did NOT ask for, so it is announced rather than applied
+						// quietly — the alternative is `--size 5`, which otty's own 10-90 range rejects, turning a
+						// ratio the seam accepts into a failed split.
+						if (size !== requested) {
+							process.stderr.write(
+								`otty sizes a split between 10% and 90% — ratio ${opts.ratio} asked for a ${requested}% ` +
+									`new pane, so ${size}% was used instead\n`,
+							)
+						}
+						args.push('--size', String(size))
+					}
+					const out = exec('otty', args)
+					if (!out) throw new Error(withReason(exec, 'otty pane split failed'))
+					const parsed = parseOttyOutput(out)
+					const paneId = parsed.pane_id
+					if (!paneId) throw new Error('otty pane split did not report the pane id')
+					const opened = openedPane(paneId, parsed.tab_id, deps.window)
+					// No pane-title primitive exists at birth or after (see `rename` below) — degrade with a warning
+					// rather than silently dropping the label or failing the whole split over a name nobody NEEDS to
+					// open the pane. Same trade `mux.wezterm.ts` makes for the same missing primitive.
+					if (opts.label) {
+						process.stderr.write(`otty cannot name a pane — "${opts.label}" was not set on pane ${opened.id}\n`)
+					}
+					// No `cwd` argument: this route set it natively with `--cwd` above.
+					runLaunch(adapter, exec, opened, opts.env, opts.launch)
+					return opened
+				},
+			)
 		},
 
 		rename(exec, target, tier, name) {
@@ -289,10 +326,15 @@ export function createOttyAdapter(deps: { window?: string | undefined }): MuxAda
 		},
 
 		isPaneFocused(exec, target) {
-			const panes = listOttyPanes(exec)
-			const found = panes.find((p) => p.id === target.id)
+			// `is_focused` off the `panes --json` listing — and the FIELD is presence-checked, not only the
+			// pane. `otty panes --json` is documented as a command; its row FIELDS never are (see the
+			// header), so `is_focused` being absent from a real row is the likeliest shape of being wrong
+			// about this backend. `undefined === true` is `false`, which would turn that silence into a
+			// confident "not focused" — the plausible wrong answer. `isPaneZoomed` right below refuses on
+			// the same ground; this member now matches it instead of contradicting it.
+			const found = listOttyPanes(exec).find((p) => p.id === target.id)
 			if (!found) return undefined
-			return found.is_focused === true
+			return typeof found.is_focused === 'boolean' ? found.is_focused : undefined
 		},
 
 		/**

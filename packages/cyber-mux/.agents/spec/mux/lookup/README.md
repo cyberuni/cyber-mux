@@ -153,8 +153,11 @@ graph TD
   FB -->|"herdr"| FH{"pane record's focused flag"}
   FH -->|"set"| FOC
   FH -->|"unset"| NFOC
-  FB -->|"no primitive, unresolvable pane, or an erroring query"| UNK["unknown, so callers fail open"]
-  FB -->|"wezterm, always"| UNK
+  FB -->|"wezterm or zellij"| FC{"the client listing names this pane"}
+  FC -->|"yes"| FOC
+  FC -->|"no, it names another"| NFOC
+  FC -->|"no client attached"| UNK["unknown, so callers fail open"]
+  FB -->|"no primitive, unresolvable pane, an erroring query, a row with no focus field, or a short line"| UNK
   LS["the live panes are listed"] --> LALL["every live pane is reported, agent-bearing or not"]
   LS --> AUTH{"is a pane's name one a person set"}
   AUTH -->|"yes"| KEEP["reported beside the pane id, read whole"]
@@ -196,8 +199,9 @@ rendering of these outcomes — exit codes, the structured error, `--format` —
 | tmux: any of the three unset → not-focused | a tmux pane failing one of the three | `tmux reports a pane not focused when <condition>` |
 | herdr: pane record focused → focused | a herdr pane record reporting a viewing client | `herdr reports a pane focused when its pane record is focused` |
 | herdr: pane record not focused → not-focused | a herdr pane record reporting no viewing client | `herdr reports a pane not focused when its pane record is not focused` |
-| query cannot be answered → unknown | no primitive, an unresolvable pane, or an erroring query | `a focus query that cannot be answered is unknown, not a boolean` |
-| query cannot be answered → unknown | any wezterm pane, always | `wezterm always reports unknown — it has no focus primitive at all, not just a per-query gap` |
+| query cannot be answered → unknown | no primitive, an unresolvable pane, an erroring query, a row with no focus field, a short line, or no client attached | `a focus query that cannot be answered is unknown, not a boolean` |
+| wezterm: the attached client, not the per-tab active flag | a wezterm session with a client and more than one tab | `wezterm answers from the attached client, not from the per-tab active flag` |
+| a per-row focus flag is never the authority where a client listing exists | zellij's per-layer `is_focused`, wezterm's per-tab `is_active` | `a per-row focus flag is never the authority when the backend has a client listing` |
 
 ### The live pane listing carries the labels a name resolves from
 

@@ -2,7 +2,9 @@
  * The library barrel — the `.` entry. Pure re-exports of the cross-multiplexer core: the
  * `MuxAdapter` contract and its types, the mux probe, backend selection, the adapters, the
  * turn-taking `nudge`, the portable output wait (`wait-output.ts`), the read-window rule
- * (`read-window.ts`), the floating-pane refusal (`floating.ts` — here rather than on a subpath
+ * (`read-window.ts`), the focus-on-open vocabulary (`focus-on-open.ts` — here because the verb it
+ * describes, `open`, is on the surface everybody gets), the floating-pane refusal (`floating.ts` —
+ * here rather than on a subpath
  * because the verb it refuses, `open`, is on the surface everybody gets), the pane-resize refusal
  * (`resize.ts`, here for the same reason), the pane-zoom refusal (`zoom.ts`, likewise), the
  * pane-move and break-out refusals (`move.ts`, likewise), and the
@@ -16,6 +18,7 @@
 export * from './backend.ts'
 export * from './exec.ts'
 export * from './floating.ts'
+export * from './focus-on-open.ts'
 export * from './move.ts'
 export * from './mux.herdr.ts'
 export * from './mux.rmux.ts'

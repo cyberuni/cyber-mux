@@ -1,4 +1,5 @@
 import type { Exec } from './exec.ts'
+import type { FocusOnOpen } from './focus-on-open.ts'
 import type { Worktree } from './worktree.ts'
 
 /** Generic multiplexer seam — no host-specific concepts, so this composes with any caller. */
@@ -887,7 +888,7 @@ export interface MuxAdapter {
 	 * as its own contract, the same belt-and-braces `agent wait` and `open` already run. A caller that
 	 * never zooms never reads this.
 	 *
-	 * Optional rather than required, and that is deliberate: unlike `opensWithoutStealingFocus`,
+	 * Optional rather than required, and that is deliberate: unlike `focusOnOpen`,
 	 * `undefined` and `false` mean the same thing here — no zoom verb to call — so an adapter author
 	 * who simply omitted it costs a caller nothing it could have known. The read side is where the
 	 * "unanswered vs negative" distinction actually bites, and `isPaneZoomed` carries it there with
@@ -916,36 +917,33 @@ export interface MuxAdapter {
 	 */
 	readonly canBreakPanes?: boolean | undefined
 	/**
-	 * Whether `open()` leaves the caller's focus where it was. `true` = this backend has a primitive
-	 * for it and **every** route uses it; `false` = the backend's CLI offers none, and an open moves
-	 * the user. A caller driving a pane pool needs to know whether its opens are visible to the human
-	 * watching — three opens that each drag the eye somewhere else is a different product than three
-	 * that appear quietly.
+	 * What `open()` does to the caller's focus — `'preserved'` (nothing moves), `'restored'` (a move
+	 * happens and is deterministically undone before `open()` returns), or `'stolen'` (the move
+	 * stands). A caller driving a pane pool needs to know whether its opens are visible to the human
+	 * watching: three opens that each drag the eye somewhere else is a different product than three
+	 * that appear quietly, and a flicker that lands the user back home is a third thing again.
 	 *
-	 * **Declared, like `canSizeSplits` — never a `MuxOpenOptions` flag.** No caller wants the stealing
-	 * behavior, so an option would be a branch every caller writes and none takes. And unlike a float,
-	 * `false` here is not a refusal: an open that moves focus still returns the pane the caller asked
-	 * for, so the honest answer is to say so and let the caller decide, exactly the degrade a ratio
-	 * takes. There is also nothing to emulate with — re-focusing the caller afterward is a SECOND
-	 * visible focus move, not the absence of one — which is why this is normalized at the declaration
-	 * altitude and not at the behavior one.
+	 * See `FocusOnOpen` in `focus-on-open.ts` for what each value claims and why this replaced the
+	 * boolean `opensWithoutStealingFocus` (issue #152). The short version: the boolean could not
+	 * express `'restored'`, so a backend that moves focus and puts it back had to declare the same
+	 * value as one that never moved — and zellij did exactly that.
 	 *
-	 * **REQUIRED, unlike the two capability flags above**, and that is the one place the three differ.
-	 * Their absence has a truthful reading — no `-l` to pass, no float verb to call — so `undefined`
-	 * and `false` mean the same thing and nothing is lost. Here they do not: a new adapter that simply
-	 * never considered focus would read as `undefined`, indistinguishable from one that considered it
-	 * and found no primitive, and a caller cannot tell an unanswered question from a negative answer.
-	 * So the seam takes the adapter author's debt over the caller's ambiguity, the trade `rename`
-	 * already makes.
+	 * REQUIRED, unlike the capability flags above, and that is the one place they differ. Their
+	 * absence has a truthful reading — no `-l` to pass, no float verb to call — so `undefined` and
+	 * `false` mean the same thing and nothing is lost. Here they do not: an adapter that simply never
+	 * considered focus would read as `undefined`, indistinguishable from one that considered it and
+	 * found no primitive, and a caller cannot tell an unanswered question from a negative answer. So
+	 * the seam takes the adapter author's debt over the caller's ambiguity, the trade `rename` already
+	 * makes.
 	 *
-	 * `true` is a claim about every route `open()` can take — tab, workspace, and each `pane:*`
+	 * The declaration covers **every** route `open()` can take — tab, workspace, and each `pane:*`
 	 * placement — including the focus move an adapter makes to CHOOSE a split target. A backend whose
-	 * `new-pane` has no target flag honors `from` by focusing that pane first (zellij, cmux, otty); on
-	 * such a backend `true` requires undoing that move as well, not just suppressing the new pane's
-	 * activation. Suppressing one and not the other is still a focus move, and must be declared
-	 * `false`.
+	 * `new-pane` has no target flag honors `from` by focusing that pane first (zellij, cmux, otty),
+	 * and that move counts: suppressing the new pane's own activation while leaving the anchor move
+	 * standing is `'stolen'`, and undoing both is `'restored'`. An adapter declares the WEAKEST value
+	 * any of its routes earns, never the best one.
 	 */
-	readonly opensWithoutStealingFocus: boolean
+	readonly focusOnOpen: FocusOnOpen
 	/**
 	 * Present only on a backend that binds a git worktree to a workspace (herdr); `undefined` on one
 	 * with no such concept (tmux), where callers fall back to plain git plus `open()`.
@@ -1091,7 +1089,7 @@ export interface MuxAdapter {
 	 * `resize-pane -Z` makes the target the active pane, zellij's `toggle-fullscreen` focuses it,
 	 * wezterm's `zoom-pane --zoom` makes it active, and herdr's `pane zoom --on` answers
 	 * `focus_changed: true` (all four verified live). Undoing the move afterwards would be a SECOND
-	 * visible focus move rather than the absence of one — the same reason `opensWithoutStealingFocus`
+	 * visible focus move rather than the absence of one — the same reason `focusOnOpen`
 	 * is a declaration rather than a behavior. Unzooming moves nothing.
 	 *
 	 * **REQUIRED on the adapter, and REFUSED BY NAME on the two backends that cannot render it** —
@@ -1174,8 +1172,8 @@ export interface MuxAdapter {
 	 *
 	 * **Moving does not steal focus where the backend can help it.** tmux and rmux take `-d`, herdr
 	 * `--no-focus`, and all three were driven with it; wezterm has no such flag on `split-pane` and
-	 * makes the moved pane active, which is the same thing its `opensWithoutStealingFocus: false`
-	 * already declares about every other route. No option, for `opensWithoutStealingFocus`'s reason:
+	 * makes the moved pane active, which is the same thing its `focusOnOpen` declaration
+	 * already says about every other route. No option, for `focusOnOpen`'s reason:
 	 * no caller wants the stealing behavior, so a flag would be a branch every caller writes and none
 	 * takes.
 	 *

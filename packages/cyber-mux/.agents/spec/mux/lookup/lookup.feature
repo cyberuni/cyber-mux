@@ -44,19 +44,38 @@ Feature: mux lookup — resolving a pane, the focus probe, and the listing conte
     Then it answers unknown rather than a boolean, so callers fail open instead of treating the pane as absent
 
     Examples:
-      | condition                                    |
-      | a backend with no primitive to report focus  |
-      | a pane the backend can no longer resolve     |
-      | a focus query that errors                    |
+      | condition                                       |
+      | a backend with no primitive to report focus     |
+      | a pane the backend can no longer resolve        |
+      | a focus query that errors                       |
+      | a listing whose row carries no focus field      |
+      | a listing whose row carries a short, unparsable line |
+      | a backend session with no client attached to it |
 
-  @id:lookup-wezterm-focus-always-unknown
-  Scenario: wezterm always reports unknown — it has no focus primitive at all, not just a per-query gap
-    Given a wezterm pane, any pane
-    When the backend is asked whether that pane is focused
-    Then it reports unknown
-    # `wezterm cli list --format json`'s documented fields carry no active/focused indicator for a
-    # pane, tab, or window — unlike tmux/herdr, where unknown is a per-query FALLBACK, this is the
-    # WHOLE backend's answer, every time, by the same honest convention.
+  @id:lookup-wezterm-focus-reads-the-attached-client
+  Scenario: wezterm answers from the attached client, not from the per-tab active flag
+    Given a wezterm session with a client attached and more than one tab open
+    When the backend is asked whether a pane is focused
+    Then it answers from the pane the client reports itself focused on
+    And a pane that is merely its own tab's active pane reports not-focused
+    # `cli list-clients --format json` carries `focused_pane_id`, measured live on
+    # 20240203-110809-5046fc22 to move with `cli activate-pane` in both directions. The obvious-looking
+    # alternative, `cli list --format json`'s `is_active`, is per-TAB: measured, THREE rows reported it
+    # true at once across two tabs and two windows, so a probe on it names panes nobody is looking at.
+
+  @id:lookup-focus-one-client-authority-per-backend
+  Scenario Outline: a per-row focus flag is never the authority when the backend has a client listing
+    Given <backend> reports its focus flag true on more than one row at once
+    When the backend is asked whether a pane is focused
+    Then it answers from the client listing rather than the per-row flag
+
+    Examples:
+      | backend |
+      | zellij  |
+      | wezterm |
+    # zellij's `list-panes --json` marks `is_focused` on a floating plugin pane AND the tiled pane
+    # under it — it reports focus per LAYER. wezterm's `is_active` reports it per TAB. Neither answers
+    # "where is the client", and both have a client listing that does.
 
   # ── The live pane listing carries the labels a name resolves from ──
   # A label is a human name, not a key. The listing reports every live pane with the label a name

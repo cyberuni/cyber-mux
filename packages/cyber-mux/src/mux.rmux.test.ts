@@ -989,6 +989,12 @@ describe('spec:cyber-mux/mux/lookup', () => {
 		const exec = fakeExec([], { 'list-panes': '%1 1 1 1' })
 		expect(rmuxMuxAdapter.isPaneFocused(exec, { id: '%3' })).toBeUndefined()
 		expect(rmuxMuxAdapter.isPaneFocused(() => null, { id: '%3' })).toBeUndefined()
+		// A line that came back SHORT is a query that could not be answered, not a "no". Every field is
+		// presence-checked before any is compared; without that, `undefined === '1'` is `false` and an
+		// unparseable listing answered "not focused" with full confidence.
+		expect(rmuxMuxAdapter.isPaneFocused(fakeExec([], { 'list-panes': '%3' }), { id: '%3' })).toBeUndefined()
+		expect(rmuxMuxAdapter.isPaneFocused(fakeExec([], { 'list-panes': '%3 1' }), { id: '%3' })).toBeUndefined()
+		expect(rmuxMuxAdapter.isPaneFocused(fakeExec([], { 'list-panes': '%3 1 1' }), { id: '%3' })).toBeUndefined()
 	})
 
 	it('lookup-listing-enumerates-all-panes', () => {
