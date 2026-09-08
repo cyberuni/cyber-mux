@@ -15,6 +15,22 @@ function fakeExec(calls: string[][], responses: Record<string, string | null> = 
 	}
 }
 
+/** Collect what an adapter writes to stderr while `run` executes, restoring the real stream after. */
+function captureStderr(run: () => void): string {
+	const written: string[] = []
+	const write = process.stderr.write.bind(process.stderr)
+	process.stderr.write = ((chunk: string) => {
+		written.push(String(chunk))
+		return true
+	}) as typeof process.stderr.write
+	try {
+		run()
+	} finally {
+		process.stderr.write = write
+	}
+	return written.join('')
+}
+
 const NEW_PANE_RESPONSE = JSON.stringify({
 	pane_id: 'pane:7',
 	tab_id: 'tab:3',
@@ -76,6 +92,16 @@ describe('spec:cyber-mux/mux', () => {
 			expect(target).toEqual({ id: 'pane:8', tab: 'tab:4' })
 		})
 
+		// `otty tab new --title` is documented, so the tab is named in the CREATING call — one round
+		// trip, and no window in which the tab carries otty's default name. The whole-argv assertion is
+		// what pins the absence of the follow-up `tab rename` this used to issue.
+		it('open() at tab names the tab at birth with --title', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'tab new': NEW_TAB_RESPONSE })
+			ottyMuxAdapter.open(exec, { cwd: '/unit', at: 'tab', label: 'build' })
+			expect(calls).toEqual([['tab', 'new', '--title', 'build', '--cwd', '/unit']])
+		})
+
 		// `otty open` always opens a new window and documents no `--new-window` — that flag belongs to
 		// `otty view`/`otty edit`. Asserting the exact argv is what pins the absence.
 		it('open() at workspace creates a new window with no --new-window flag', () => {
@@ -103,8 +129,75 @@ describe('spec:cyber-mux/mux', () => {
 			expect(calls[1]).toEqual(['pane', 'split', '--direction', 'right', '--cwd', '/unit'])
 		})
 
-		it('canSizeSplits is false', () => {
-			expect(ottyMuxAdapter.canSizeSplits).toBe(false)
+		it('canSizeSplits is true', () => {
+			expect(ottyMuxAdapter.canSizeSplits).toBe(true)
+		})
+
+		// The inversion, on the reference's own example number: otty's `--size` is the NEW pane's share
+		// in whole percent, while `ratio` is the fraction kept by the ORIGINAL. Keeping 0.7 therefore
+		// gives the new pane 30 — the docs' `--size 30` — NOT 70. Getting this backwards is a silently
+		// wrong-sized pane, which is why it is asserted on the exact argv.
+		it('open() at pane:right inverts ratio into otty --size, the NEW pane share', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'pane split': NEW_PANE_RESPONSE })
+			ottyMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right', ratio: 0.7 })
+			expect(calls).toEqual([['pane', 'split', '--direction', 'right', '--cwd', '/unit', '--size', '30']])
+		})
+
+		it('open() renders an even split as --size 50', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'pane split': NEW_PANE_RESPONSE })
+			ottyMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:down', ratio: 0.5 })
+			expect(calls).toEqual([['pane', 'split', '--direction', 'down', '--cwd', '/unit', '--size', '50']])
+		})
+
+		// The two ends of otty's documented 10-90 range, rendered exactly — no clamp, no warning.
+		it.each([
+			[0.9, '10'],
+			[0.1, '90'],
+		])('open() renders ratio %s at the range boundary as --size %s', (ratio, size) => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'pane split': NEW_PANE_RESPONSE })
+			const written = captureStderr(() => {
+				ottyMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right', ratio })
+			})
+			expect(calls).toEqual([['pane', 'split', '--direction', 'right', '--cwd', '/unit', '--size', size]])
+			expect(written).toBe('')
+		})
+
+		// Past the boundary otty has no faithful rendering: `--size 5` is outside the range it documents
+		// and would fail the split outright. So the size is clamped INTO the range and the near miss is
+		// announced, rather than applied quietly or turned into a failure.
+		it.each([
+			[0.95, '10', 5],
+			[0.05, '90', 95],
+		])('open() clamps ratio %s to --size %s and says so', (ratio, size, requested) => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'pane split': NEW_PANE_RESPONSE })
+			const written = captureStderr(() => {
+				ottyMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right', ratio })
+			})
+			expect(calls).toEqual([['pane', 'split', '--direction', 'right', '--cwd', '/unit', '--size', size]])
+			expect(written).toContain(`${requested}%`)
+			expect(written).toContain(`${size}% was used instead`)
+		})
+
+		// The seam's own precondition, reached through otty's size render: a ratio outside `(0, 1)` names
+		// no split at all, so it throws BEFORE any command is issued.
+		it.each([0, 1, 1.5, -0.2, Number.NaN])('open() refuses the out-of-range ratio %s', (ratio) => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'pane split': NEW_PANE_RESPONSE })
+			expect(() => ottyMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right', ratio })).toThrow(
+				/ratio must be strictly between 0 and 1/,
+			)
+			expect(calls).toEqual([])
+		})
+
+		it('open() without a ratio sends no --size, leaving otty its own even default', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'pane split': NEW_PANE_RESPONSE })
+			ottyMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right' })
+			expect(calls[0]).not.toContain('--size')
 		})
 
 		it('sendText() sends text to a pane', () => {
