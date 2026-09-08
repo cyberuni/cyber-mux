@@ -1,8 +1,8 @@
 @frozen
-Feature: agent — the herdr agent-lifecycle capability
-  How cyber-mux drives herdr's native per-pane agent-state wait (herdr agent wait) as its own
-  optional AgentLifecycle capability, and refuses rather than emulates it on every backend that has
-  no equivalent primitive. The CLI rendering of the refusal — exit code, code, help — is the surface
+Feature: agent — the agent-lifecycle capability
+  How cyber-mux drives a backend's native per-pane agent-state wait (herdr agent wait, otty pane
+  wait) as its own optional AgentLifecycle capability, and refuses rather than emulates it on every
+  backend that has no equivalent primitive. The CLI rendering of the refusal — exit code, code, help — is the surface
   in ../cli/agent/agent.feature; this suite owns the surface-independent capability and orchestrator.
 
   # ── Driving herdr's native agent wait ──
@@ -38,12 +38,102 @@ Feature: agent — the herdr agent-lifecycle capability
     Then it returns the AgentStatus idle
     # the caller learns WHICH requested state (or the timeout) ended the wait, not merely that it ended
 
-  # ── agentLifecycle: present only on herdr ──
+  # ── Driving otty's native pane wait ──
+  # otty is the SECOND backend with the capability and binds a DIFFERENT primitive: otty pane wait
+  # --pane <id>, not the otty watch:<agent> <id> issue #134 proposed (whose positional is an agent
+  # session id no documented pane read can produce). It ends on idle alone and takes whole seconds,
+  # so until is a request rather than a guarantee and a timeout rounds. Docs-read, never measured:
+  # otty is GUI-only with no binary here and no real-boundary suite (#128).
+
+  @id:agent-wait-otty-builds-command
+  Scenario: otty waitForState builds pane wait against the pane id and returns idle
+    Given an otty pane, and a wait for it with no options, which otty satisfies
+    When waitForState runs
+    Then it runs otty pane wait --pane for that pane
+    And it returns the AgentStatus idle
+    # truthful rather than assumed: otty's wait has exactly one end state, so exit 0 IS idle
+
+  @id:agent-wait-otty-succeeds-on-empty-stdout
+  Scenario: otty waitForState treats empty stdout as a satisfied wait, not a failure
+    Given an otty pane whose satisfied wait prints nothing
+    When waitForState runs
+    Then it returns the AgentStatus idle
+    # the runner hands back '' for a command that exited 0 and printed nothing, so the binding tests
+    # out === null rather than !out — !out would turn every successful wait into a throw
+
+  @id:agent-wait-otty-timeout-rounds-up-to-whole-seconds
+  Scenario: otty waitForState rounds a timeout up to whole seconds
+    Given an otty pane, and a wait for it with a 1500ms timeout
+    When waitForState runs
+    Then the command it runs carries --timeout-secs 2
+    # rounding up costs at most 999ms of extra patience; rounding down costs part of the caller's bound
+
+  @id:agent-wait-otty-zero-timeout-never-unbounds-the-wait
+  Scenario Outline: otty waitForState never sends --timeout-secs 0 for a bounded wait
+    Given an otty pane, and a wait for it with a <timeoutMs>ms timeout
+    When waitForState runs
+    Then the command it runs carries --timeout-secs 1
+    # --timeout-secs 0 is otty's spelling for WAIT FOREVER, which is what omitting timeoutMs already
+    # means at the seam — so a bound the caller passed must never become it
+
+    Examples:
+      | timeoutMs |
+      | 0         |
+      | 200       |
+
+  @id:agent-wait-otty-timeout-omitted-indefinite
+  Scenario: otty waitForState with no timeoutMs sends no --timeout-secs flag
+    Given an otty pane, and a wait for it with no timeoutMs
+    When waitForState runs
+    Then the command it runs carries no --timeout-secs flag
+    # otty's own indefinite wait then applies, rather than a bound cyber-mux invented
+
+  @id:agent-wait-otty-until-idle-and-omitted-both-send-no-flag
+  Scenario: otty waitForState sends no state flag for an until it can honor
+    Given an otty pane, and waits for it asking for no until, an empty until, and until idle
+    When waitForState runs for each
+    Then every command it runs is the same otty pane wait --pane, carrying no state flag
+    # otty pane wait has no --until: an omitted set takes otty's own default (idle, the only state it
+    # has) and an explicit ['idle'] asks for exactly that
+
+  @id:agent-wait-otty-refuses-unreachable-until
+  Scenario Outline: otty waitForState refuses an until it cannot end on
+    Given an otty pane, and a wait for it asking until <until>
+    When waitForState runs
+    Then it throws AgentWaitStatesUnsupportedError naming otty, the requested states, and idle
+    And no exec runs
+    # refused BY NAME rather than narrowed to idle: a wait that ends on a state the caller did not ask
+    # for is a wrong answer wearing the shape of a right one. A set that CONTAINS idle is refused too,
+    # because otty cannot end on the other member either.
+
+    Examples:
+      | until      |
+      | blocked    |
+      | idle, done |
+
+  @id:agent-wait-otty-throws-when-the-wait-does-not-land
+  Scenario: otty waitForState throws naming the pane when the wait does not land
+    Given an otty pane whose wait does not land
+    When waitForState runs
+    Then it throws naming the pane, carrying otty's own words when the runner supplied them
+    # otty tells satisfied (exit 0) from no-reportable-state (6), no-such-pane (4) and timeout (9) by
+    # EXIT CODE, which the Exec seam does not carry — so those three fold into one throw. Nothing
+    # branches on exec.lastError: it is documented diagnostic-only and a runner may never set it.
+
+  @id:agent-status-otty-stays-undefined
+  Scenario: otty reports no agentStatus even though it can wait
+    Given an otty pane listing
+    When each listed pane's agentStatus is read
+    Then it is undefined
+    # the wait and the snapshot are independent members, and otty is where they part: it can block on
+    # its own agent state and exposes no documented CLI read of it. Never a false "unknown".
+
+  # ── agentLifecycle: present only where the primitive is ──
   # The same absent-rather-than-false convention worktree and regions already follow: a capability a
   # backend genuinely lacks is not present in a degraded form, it is not present at all.
 
   @id:agent-lifecycle-absent-non-herdr
-  Scenario Outline: agentLifecycle is undefined on every backend except herdr
+  Scenario Outline: agentLifecycle is undefined on every backend without a native agent wait
     Given a <backend> MuxAdapter
     When the adapter's agentLifecycle member is read
     Then it is undefined
@@ -53,6 +143,17 @@ Feature: agent — the herdr agent-lifecycle capability
       | tmux    |
       | wezterm |
       | zellij  |
+
+  @id:agent-lifecycle-present-with-primitive
+  Scenario Outline: agentLifecycle is present on every backend with a native agent wait
+    Given a <backend> MuxAdapter
+    When the adapter's agentLifecycle member is read
+    Then it is the backend's native waitForState binding
+
+    Examples:
+      | backend |
+      | herdr   |
+      | otty    |
 
   # ── deriveAgentWait: refuse, never emulate ──
   # Mirrors deriveRegionCapture in template-capture.ts exactly: the orchestrator is the one place
@@ -92,9 +193,19 @@ Feature: agent — the herdr agent-lifecycle capability
     Examples:
       | backend | answer |
       | herdr   | true   |
+      | otty    | true   |
       | tmux    | false  |
       | wezterm | false  |
       | zellij  | false  |
+
+  @id:agent-api-supported-and-status-part-on-otty
+  Scenario: agentApi's supported is true on otty while its status stays undefined
+    Given an environment resolving to otty, and a live pane on it
+    When agentApi(env).supported() and agentApi(env).status(pane) are called
+    Then supported returns true and status returns undefined
+    # the two members answer different questions and otty is where that stops being academic: it can
+    # BLOCK on its own agent state and exposes no documented CLI read of it. Until otty, every backend
+    # happened to answer both the same way.
 
   @id:agent-api-status-reads-snapshot
   Scenario: agentApi's status returns the pane's agentStatus snapshot on herdr
