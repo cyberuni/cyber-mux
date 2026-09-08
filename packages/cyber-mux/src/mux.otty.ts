@@ -1,7 +1,8 @@
+import { agentWaitStatesSatisfiable, refuseAgentWaitStates } from './agent-states.ts'
 import { launchFallback } from './env-fallback.ts'
 import { type Exec, withReason } from './exec.ts'
 import { refuseFloatingPane } from './floating.ts'
-import type { LivePane, MuxAdapter, MuxReadOptions, OpenedPane } from './mux.ts'
+import type { AgentStatus, LivePane, MuxAdapter, MuxReadOptions, OpenedPane } from './mux.ts'
 import { assertRatioInRange } from './ratio.ts'
 import { pollForOutput } from './wait-output.ts'
 import { refusePaneZoom } from './zoom.ts'
@@ -77,6 +78,11 @@ import { refusePaneZoom } from './zoom.ts'
  *   silently ignore. `otty pane zoom --help` on a real machine settles it; see `setPaneZoom`.
  * - **No pane geometry adapter.** `otty panes --json` does not report position, so `regions` is not
  *   implementable. `template save` refuses on otty by naming the backend.
+ * - **A NATIVE agent-lifecycle wait exists, and it is `otty pane wait`** — not the `otty watch:<agent>`
+ *   issue #134 proposed, whose positional is an agent session id no documented pane read can produce.
+ *   `pane wait` is pane-selected, blocking, and on an agent pane blocks on what the agent itself
+ *   reports, so `agentLifecycle` is PRESENT here — otty is the second backend with the capability
+ *   after herdr. It ends on `idle` alone; see `agentLifecycle` below for the three named limits.
  * - **No git-worktree concept in the CLI.** No `worktree` subcommand, so — like tmux, wezterm,
  *   zellij, and cmux — this backend never binds a worktree to a workspace; callers fall back to
  *   plain git plus `open()`.
@@ -353,6 +359,76 @@ export function createOttyAdapter(deps: { window?: string | undefined }): MuxAda
 			})
 		},
 
+		/**
+		 * The native agent-lifecycle wait — otty is the SECOND backend to have one, after herdr, and it
+		 * is a different primitive from the one issue #134 named.
+		 *
+		 * **Not `otty watch:<agent> <id>`, which is what #134 proposed and what the earlier verdict on it
+		 * measured.** That command's positional is an AGENT SESSION id ("the one from Agent History" —
+		 * `/workflows/cli-usage`), not a pane id; its whole flag table is `--interval-ms`,
+		 * `--timeout-secs`, `--unknown-timeout-secs`, `-v` with no pane selector; the agent KIND is baked
+		 * into the verb (`watch:claude` / `watch:codex` / `watch:opencode`); and no documented CLI read
+		 * maps a pane id to either fact — otty binds them the other way, internally, by process tree
+		 * (`/agents/supported-agents`). All of that still holds, and it is why `watch:` is not used here.
+		 *
+		 * **`otty pane wait` is the one that fits, and it was missed the first time round.** It is
+		 * pane-selected with the same `--pane <id|index>` every other pane verb takes, it blocks, and on
+		 * an agent pane the state it blocks on is the AGENT's own:
+		 *
+		 * > It exits 0 as soon as the pane is idle. For a pane running a coding agent, idle is what the
+		 * > agent reports — an agent owns its terminal for its whole life, so "back at a shell prompt"
+		 * > never happens there. […] A pane that can report neither exits 6 and says so; a timeout exits
+		 * > 9 naming the panes still busy. — `/workflows/cli-usage`
+		 *
+		 * `/agents/orchestration` lists it beside `watch:` for the same job ("Block until a build, a
+		 * pane, a tab or another agent is idle — `otty pane wait` / `otty watch:<agent>`") and
+		 * `/agents/skills` says the same in prose. That is `AgentLifecycle`'s contract exactly: native,
+		 * blocking, per-pane, on a state the backend derives itself — so this capability is PRESENT
+		 * rather than absent, and no `read()`-polling lookalike is involved.
+		 *
+		 * **Three things this cannot do, each named rather than papered over:**
+		 *
+		 * 1. **It ends on `idle` and nothing else**, so any `until` naming another state is refused BY
+		 *    NAME (`refuseAgentWaitStates`). Narrowing it silently would end the wait on a state the
+		 *    caller did not ask for.
+		 * 2. **Exit codes are invisible through the `Exec` seam.** otty distinguishes satisfied (0) from
+		 *    no-reportable-state (6), no-such-pane (4) and timeout (9) by exit code alone, and `Exec`
+		 *    returns `string | null` with no code. So this tells satisfied from not-satisfied — the
+		 *    distinction the seam needs — and folds the three failures into one throw whose message
+		 *    carries otty's own words via `withReason`. It does NOT branch on `exec.lastError`: that is
+		 *    documented diagnostic-only and a runner is free never to set it, so a guard keyed on it
+		 *    would be a live no-op.
+		 * 3. **A pane with NO agent answers `idle` when its shell is at a prompt.** That is a real
+		 *    divergence from herdr, which throws `agent_not_found`, and it cannot be guarded here: the
+		 *    "which agent sits in which" read `/agents/orchestration` credits to `otty pane list` has no
+		 *    documented output schema anywhere in the 141 pages, so there is no field to check. A caller
+		 *    that waits on a pane it did not start an agent in gets shell-idle under an agent name.
+		 *
+		 * Read off otty's documented CLI over all 141 URLs in `docs.otty.sh/sitemap.xml`, measured
+		 * 2026-09-08 — NOT verified against a live binary, matching this file's header. #128 tracks the
+		 * missing real-boundary suite; one `otty pane wait --help` on a Mac settles the flag table.
+		 */
+		agentLifecycle: {
+			waitForState(exec, target, opts) {
+				// Refused BEFORE any exec, so a set otty cannot express never turns into a wait that ends
+				// somewhere else. An omitted (or empty) `until` passes: the seam defines that as the
+				// backend's own default, and otty's default is the only state it has.
+				if (!agentWaitStatesSatisfiable(opts.until, OTTY_WAIT_STATES)) {
+					refuseAgentWaitStates(adapter.name, opts.until ?? [], OTTY_WAIT_STATES)
+				}
+				const args = ['pane', 'wait', '--pane', target.id]
+				if (opts.timeoutMs != null) args.push('--timeout-secs', String(toOttyTimeoutSecs(opts.timeoutMs)))
+				const out = exec('otty', args)
+				// `out === null`, never `!out`: a satisfied wait prints nothing documented, so success is
+				// an EMPTY STRING here, and `!out` would turn every successful wait into a throw.
+				if (out === null) {
+					throw new Error(withReason(exec, `otty pane wait did not reach idle for pane ${target.id}`))
+				}
+				// Truthful rather than assumed: otty's wait has exactly one end state, so exit 0 IS idle.
+				return 'idle'
+			},
+		},
+
 		// No `regions`: geometry is not available from otty's CLI.
 		// No `worktree`: otty has no worktree subcommand.
 	}
@@ -444,6 +520,33 @@ function runLaunch(
 		// env is lost, the directory need not be: the `cd` still comes back and is still submitted.
 	}
 	if (fallback.command !== undefined) adapter.submit(exec, target, fallback.command)
+}
+
+/**
+ * The `AgentStatus` values `otty pane wait` can end a wait on — exactly one.
+ *
+ * otty's own state vocabulary is wider than this (its hooks report `processing | idle | awaiting`, per
+ * `/reference/cli`; `/vt/osc/osc-26` spells the same report a second way as
+ * `running | awaiting-approval | finished`, an inconsistency inside otty's own docs that nothing here
+ * has to resolve). None of that is reachable: `pane wait` takes no `--until`, and the only end
+ * condition any page states for it is idle. So this is what the WAIT can promise, not what otty knows.
+ */
+const OTTY_WAIT_STATES: readonly AgentStatus[] = ['idle']
+
+/**
+ * The seam's `timeoutMs` as otty's `--timeout-secs`, rounded UP and floored at one second.
+ *
+ * Both halves guard the same failure, and it is the one that matters: `--timeout-secs 0` is otty's
+ * spelling for *wait forever*, which is what OMITTING `timeoutMs` already means at the seam. So a
+ * sub-second bound must never round to 0 — that would silently convert a caller's bounded wait into an
+ * unbounded one, in a command that blocks. Rounding up costs at most 999ms of extra patience;
+ * rounding down costs the timeout entirely.
+ *
+ * The granularity loss is otty's, not this adapter's: herdr's `--timeout` takes milliseconds and is
+ * passed through verbatim.
+ */
+function toOttyTimeoutSecs(timeoutMs: number): number {
+	return Math.max(1, Math.ceil(timeoutMs / 1000))
 }
 
 /** otty's documented `--size` range on `pane split`: a whole percent, 10 through 90. */

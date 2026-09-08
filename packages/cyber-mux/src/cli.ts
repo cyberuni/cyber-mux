@@ -1,6 +1,7 @@
 import { join } from 'node:path'
 import { Command, CommanderError, Option } from 'commander'
 import { AgentLifecycleUnsupportedError, deriveAgentWait } from './agent.ts'
+import { AgentWaitStatesUnsupportedError } from './agent-states.ts'
 import { callerPane, resolveMuxAdapter } from './backend.ts'
 import { AmbiguousPaneError, CliError, MissingPaneError, reportError } from './cli-error.ts'
 import { AT_OPTION, ENV_OPTION, FORMAT_OPTION, LABEL_OPTION } from './cli-options.ts'
@@ -1565,7 +1566,7 @@ function existsCommand(deps: Deps): Command {
 
 /**
  * The CLI surface of the library's agent-wait refusal: exit 1 (a genuine operation failure, not a
- * usage error), naming the backend, with a fix hint pointing at the herdr-only constraint. The
+ * usage error), naming the backend, with a fix hint pointing at the two backends that have the wait. The
  * DECISION to refuse is the orchestrator's (`AgentLifecycleUnsupportedError`); this composes only the
  * presentation, so the sentence lives in one place — the exact mirror of how `backendUnsupported`
  * surfaces `CaptureUnsupportedError` for `template save`.
@@ -1590,8 +1591,24 @@ function floatingUnsupported(err: FloatingPanesUnsupportedError): CliError {
 function agentUnsupported(err: AgentLifecycleUnsupportedError): CliError {
 	return new CliError(
 		'backend-unsupported',
-		`${err.backend} cannot wait on agent-lifecycle state — agent wait needs a backend with a native per-pane agent-state feed (herdr)`,
-		'run agent wait on herdr, the only backend with a native agent-state feed',
+		`${err.backend} cannot wait on agent-lifecycle state — agent wait needs a backend with a native per-pane agent-state wait (herdr, otty)`,
+		'run agent wait on herdr or otty, the backends with a native agent-state wait',
+		1,
+	)
+}
+
+/**
+ * The CLI surface of a `--until` a backend's native wait cannot express (otty, whose `pane wait` ends
+ * on `idle` alone). `backend-unsupported` like its sibling above, because the invocation is well-formed
+ * and every value in `--until` is a legal `AgentStatus` — what is missing is the backend's ability to
+ * end a wait there. Kept SEPARATE from `agentUnsupported` so the fix hint is the real one: drop the
+ * states this backend cannot reach, not "go run it on herdr".
+ */
+function agentStatesUnsupported(err: AgentWaitStatesUnsupportedError): CliError {
+	return new CliError(
+		'backend-unsupported',
+		err.message,
+		`pass --until ${err.supported.join(' ')}, or omit --until to take ${err.backend}'s own default`,
 		1,
 	)
 }
@@ -1599,7 +1616,7 @@ function agentUnsupported(err: AgentLifecycleUnsupportedError): CliError {
 /**
  * `agent status <pane>` — a SNAPSHOT that degrades, never refuses. It resolves a pane through the
  * shared ladder and prints its `agentStatus`, a fact independent of whether the backend can WAIT on it
- * (that is `agent wait`'s herdr-only capability). A backend with no agent-state feed still answers
+ * (that is `agent wait`'s capability, which herdr and otty have). A backend with no agent-state feed still answers
  * truthfully — the pane, with no status — and exits 0: refusing here would turn a caller away from a
  * fact the backend CAN answer (which pane this is) because of one it can't (what its agent is doing),
  * and the two are independent.
@@ -1629,23 +1646,24 @@ function agentStatusCommand(deps: Deps): Command {
 }
 
 /**
- * `agent wait <pane>` — a blocking DRIVE of herdr's native `agent wait`, or a refusal naming the
+ * `agent wait <pane>` — a blocking DRIVE of the backend's native wait (`herdr agent wait`, `otty pane wait`), or a refusal naming the
  * backend on one without the capability. Unlike `agent status`, waiting has no truthful degrade, so a
  * backend with no agent-lifecycle primitive is refused (`backend-unsupported`, exit 1) rather than
  * answered with a guess — the exact mirror of how `template save` refuses a geometry-incapable backend.
  *
  * The refusal is checked BEFORE the pane is resolved so a name that resolves nowhere never masks the
- * herdr-only refusal; the orchestrator (`deriveAgentWait`) re-checks the same seam member, that check
- * being its own library contract. `--until` is repeatable (omit to take herdr's default set) and
- * `--timeout` is optional (omit for an indefinite wait).
+ * capability refusal; the orchestrator (`deriveAgentWait`) re-checks the same seam member, that check
+ * being its own library contract. `--until` is repeatable (omit to take the backend's default set) and
+ * `--timeout` is optional (omit for an indefinite wait). A backend whose native wait cannot name every
+ * requested state refuses that too, separately — see `agentStatesUnsupported`.
  */
 function agentWaitCommand(deps: Deps): Command {
 	return new Command('wait')
-		.description("Block until a pane's agent reaches a state (herdr); refused on a backend with no agent-state feed")
+		.description("Block until a pane's agent reaches a state (herdr, otty); refused on a backend with no native wait")
 		.argument('[pane]', 'Target pane id or label')
 		.option(
 			'--until <status...>',
-			'Agent states any of which ends the wait (idle, working, blocked, done, unknown); omit for herdr’s default',
+			'Agent states any of which ends the wait (idle, working, blocked, done, unknown); omit for the backend’s default',
 		)
 		.option('--timeout <ms>', 'Milliseconds before the wait gives up; omit to wait indefinitely', (v) =>
 			Number.parseInt(v, 10),
@@ -1653,8 +1671,10 @@ function agentWaitCommand(deps: Deps): Command {
 		.addOption(FORMAT_OPTION)
 		.addHelpText(
 			'after',
-			'\nagent wait drives a native per-pane agent-state feed, which only herdr has — tmux, wezterm and\n' +
-				'zellij are refused with backend-unsupported. Use agent status for a snapshot that works everywhere.',
+			'\nagent wait drives a native per-pane agent-state wait, which only herdr and otty have — tmux,\n' +
+				'rmux, wezterm, zellij and cmux are refused with backend-unsupported. otty ends a wait on idle\n' +
+				'alone, so any other --until is refused there too. Use agent status for a snapshot that works\n' +
+				'everywhere.',
 		)
 		.action(
 			guarded((pane: string | undefined, opts: { until?: string[] | undefined; timeout?: number | undefined }) => {
@@ -1675,6 +1695,9 @@ function agentWaitCommand(deps: Deps): Command {
 					// Belt-and-braces: the early guard already refused a capability-less backend, but the
 					// orchestrator re-checks as its own contract, so honor its typed refusal here too.
 					if (err instanceof AgentLifecycleUnsupportedError) throw agentUnsupported(err)
+					// A backend that HAS the wait but cannot end it on every requested state — a different
+					// refusal with a different fix, so it is not folded into the one above.
+					if (err instanceof AgentWaitStatesUnsupportedError) throw agentStatesUnsupported(err)
 					// A wait the backend accepted but could not complete (an unparseable envelope, a lost pane).
 					throw new CliError(
 						'agent-wait-failed',
@@ -1689,12 +1712,15 @@ function agentWaitCommand(deps: Deps): Command {
 }
 
 /**
- * The `agent` group reaches the herdr agent-lifecycle capability: `status` (a snapshot that degrades
- * truthfully) and `wait` (a blocking drive of herdr's native wait, refused on every backend without
- * it). The state feed itself is herdr's; this group is how the CLI reads and blocks on it.
+ * The `agent` group reaches the agent-lifecycle capability: `status` (a snapshot that degrades
+ * truthfully, and only herdr feeds it) and `wait` (a blocking drive of the backend's native wait —
+ * herdr's `agent wait` or otty's `pane wait` — refused on every backend without one). The two halves
+ * do not cover the same backends, which is the point of them being separate verbs.
  */
 function agentCommand(deps: Deps): Command {
-	const cmd = new Command('agent').description("Inspect and wait on a pane's agent-lifecycle state (herdr)")
+	const cmd = new Command('agent').description(
+		"Inspect (herdr) and wait on (herdr, otty) a pane's agent-lifecycle state",
+	)
 	cmd.addCommand(agentStatusCommand(deps))
 	cmd.addCommand(agentWaitCommand(deps))
 	return cmd

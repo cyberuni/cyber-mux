@@ -704,25 +704,45 @@ export interface RegionInspector {
 export interface AgentWaitOptions {
 	/**
 	 * The agent states any one of which ends the wait. Omit to let the backend apply its OWN default
-	 * (herdr's is `idle|done|blocked`) — cyber-mux never restates that default in the command it runs,
-	 * so a future change to herdr's default is not silently pinned by this binding.
+	 * (herdr's is `idle|done|blocked`; otty's wait has only `idle` to default to) — cyber-mux never
+	 * restates that default in the command it runs, so a future change to it is not silently pinned by
+	 * this binding.
+	 *
+	 * A REQUEST, not a guarantee: a backend whose native wait cannot name a state in this set refuses
+	 * by name (`AgentWaitStatesUnsupportedError`) rather than narrowing the set to what it can do,
+	 * which would end the wait somewhere the caller never asked for.
 	 */
 	until?: AgentStatus[] | undefined
-	/** Milliseconds before the wait gives up; omit for an indefinite wait (the backend's own default). */
+	/**
+	 * Milliseconds before the wait gives up; omit for an indefinite wait (the backend's own default).
+	 *
+	 * Milliseconds because herdr's `--timeout` is; a backend whose flag is coarser rounds UP and never
+	 * to zero (otty's `--timeout-secs 0` means *wait forever*, so rounding down would silently unbound
+	 * a bounded wait).
+	 */
 	timeoutMs?: number | undefined
 }
 
 /**
  * The optional capability a backend implements when it has a NATIVE, blocking per-pane agent-state
- * wait (herdr's `agent wait`, built on the 0.7.5 `agent_status` feed) — present ONLY on a backend with
- * that primitive, absent on every backend without one.
+ * wait — present ONLY on a backend with that primitive, absent on every backend without one.
+ *
+ * Two backends have one, and they are not equally capable, which is why `until` is a REQUEST rather
+ * than a guarantee:
+ *
+ * - **herdr** — `agent wait <pane> [--until <status>]… [--timeout <ms>]`, over the whole `AgentStatus`
+ *   vocabulary and in milliseconds.
+ * - **otty** — `otty pane wait --pane <id> [--timeout-secs <n>]`, which ends on `idle` and nothing
+ *   else, in whole seconds. An `until` it cannot express is refused BY NAME
+ *   (`AgentWaitStatesUnsupportedError`, `agent-states.ts`) rather than quietly narrowed to what the
+ *   backend happens to support.
  *
  * Absent rather than a degraded emulation, the same all-or-nothing convention `worktree` and `regions`
- * follow: a lookalike wait built from `read()` polling would silently disagree with herdr's own state
- * derivation on the same question, so a backend that lacks the primitive is not present here in a weak
- * form — it is not present at all, and the orchestrator (`deriveAgentWait`, `agent.ts`) refuses rather
- * than guesses. `waitForState` never sees the adapter: it only ever runs against the one backend that
- * has it, which is why the emulate-or-refuse decision lives one level up.
+ * follow: a lookalike wait built from `read()` polling would silently disagree with the backend's own
+ * state derivation on the same question, so a backend that lacks the primitive is not present here in
+ * a weak form — it is not present at all, and the orchestrator (`deriveAgentWait`, `agent.ts`) refuses
+ * rather than guesses. `waitForState` never sees the adapter, which is why the emulate-or-refuse
+ * decision lives one level up.
  */
 export interface AgentLifecycle {
 	/**
@@ -1097,10 +1117,11 @@ export interface MuxAdapter {
 	readonly regions?: RegionInspector | undefined
 	/**
 	 * The optional native agent-lifecycle-wait capability (`AgentLifecycle`), present only on a backend
-	 * with a blocking per-pane agent-state primitive (herdr) and absent on one without (tmux, wezterm,
-	 * zellij). `agent wait` gates on it — refusing by NAMING the backend rather than emulating, because
-	 * a wait has no truthful degrade. Its ABSENCE is the refusal; see `deriveAgentWait` in `agent.ts`,
-	 * the single place that sees the adapter and so the single place the refusal can be made.
+	 * with a blocking per-pane agent-state primitive (herdr's `agent wait`, otty's `pane wait`) and
+	 * absent on one without (tmux, rmux, wezterm, zellij, cmux). `agent wait` gates on it — refusing by
+	 * NAMING the backend rather than emulating, because a wait has no truthful degrade. Its ABSENCE is
+	 * the refusal; see `deriveAgentWait` in `agent.ts`, the single place that sees the adapter and so
+	 * the single place the refusal can be made.
 	 */
 	readonly agentLifecycle?: AgentLifecycle | undefined
 }
