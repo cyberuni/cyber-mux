@@ -429,6 +429,94 @@ describe.skipIf(!hasZellij() || !hasScript())('spec:cyber-mux/mux', () => {
 			expect(gone).toBe('false')
 		})
 
+		/**
+		 * The zoom rows. Every claim in `mux.zellij.ts` about `toggle-fullscreen` and `is_fullscreen` was
+		 * measured against a live 0.45.0 rather than read out of the source tree — which is a step up on
+		 * `canFloatPanes` and `opensWithoutStealingFocus`, both written blind and only ever confirmed
+		 * BY this job.
+		 *
+		 * `pollUntil` on the read, not a bare assertion: `zellij action` replies are asynchronous and this
+		 * suite's own header documents a misdelivered `list-panes` reply. Polling can only wait out a
+		 * stale read, never manufacture a pass — a pane that never zooms never starts reporting zoomed.
+		 */
+		async function zoomedEventually(target: { id: string }, want: boolean): Promise<string> {
+			return pollUntil(
+				() => String(adapter.isPaneZoomed(exec, target)),
+				(out) => out === String(want),
+			)
+		}
+
+		/**
+		 * A fresh TAB with two tiled panes in it, for one zoom row to work in.
+		 *
+		 * Its own tab, and that is a harness requirement rather than tidiness: every row here splits, and
+		 * splitting the session's ONE tab over and over shrinks it until `new-pane --direction` can no
+		 * longer fit a pane and fails the silent way this file's header documents — which surfaces as
+		 * `open` throwing "did not report the new pane id" three rows later, reading like an adapter bug
+		 * and being a screen-space one. Verified by watching exactly that happen on the third zoom row.
+		 */
+		async function freshPair(): Promise<{ first: { id: string }; second: { id: string } }> {
+			const first = adapter.open(exec, { cwd, at: 'tab' })
+			expect(await existsEventually(first)).toBe('true')
+			expect(await parkClientOn(first.id)).toBe(first.id)
+			const second = adapter.open(exec, { cwd, at: 'pane:right', from: first })
+			expect(await existsEventually(second)).toBe('true')
+			return { first, second }
+		}
+
+		it('setPaneZoom(true) really fullscreens a real pane, and the sibling stays open behind it', async () => {
+			const { first, second } = await freshPair()
+			expect(adapter.isPaneZoomed(exec, second)).toBe(false)
+
+			adapter.setPaneZoom(exec, second, true)
+
+			expect(await zoomedEventually(second, true)).toBe('true')
+			// A zoom hides a pane, it does not close one.
+			expect(adapter.paneExists(exec, first)).toBe(true)
+		})
+
+		/**
+		 * The row a bare `toggle-fullscreen -p <id>` fails. Measured on 0.45.0: with one pane fullscreen,
+		 * toggling a DIFFERENT one simply leaves fullscreen — every pane comes back `is_fullscreen:
+		 * false` and the first keeps the focus. Only focusing the target first transfers it.
+		 */
+		it('setPaneZoom(true) TRANSFERS the zoom off a sibling that already had it', async () => {
+			const { first, second } = await freshPair()
+			adapter.setPaneZoom(exec, first, true)
+			expect(await zoomedEventually(first, true)).toBe('true')
+
+			adapter.setPaneZoom(exec, second, true)
+
+			expect(await zoomedEventually(second, true)).toBe('true')
+			expect(adapter.isPaneZoomed(exec, first)).toBe(false)
+		})
+
+		/** The seam's no-op, asserted through its observable consequence: the zoomed sibling survives. */
+		it('setPaneZoom(false) on a pane that is not zoomed leaves its zoomed sibling alone', async () => {
+			const { first, second } = await freshPair()
+			adapter.setPaneZoom(exec, second, true)
+			expect(await zoomedEventually(second, true)).toBe('true')
+
+			adapter.setPaneZoom(exec, first, false)
+
+			expect(adapter.isPaneZoomed(exec, second)).toBe(true)
+			// And the real unzoom still works from there, so the row leaves no fullscreen tab behind.
+			adapter.setPaneZoom(exec, second, false)
+			expect(await zoomedEventually(second, false)).toBe('false')
+		})
+
+		it('isPaneZoomed() answers undefined for a pane the real zellij no longer has', async () => {
+			const target = adapter.open(exec, { cwd, at: 'tab' })
+			expect(await existsEventually(target)).toBe('true')
+			adapter.teardown(exec, target)
+			expect(
+				await pollUntil(
+					() => String(adapter.isPaneZoomed(exec, target)),
+					(out) => out === 'undefined',
+				),
+			).toBe('undefined')
+		})
+
 		it('read({ lines }) trims a real capture and reports the rows it dropped', async () => {
 			const target = adapter.open(exec, { cwd, at: 'tab' })
 			adapter.submit(exec, target, 'for i in 1 2 3 4 5 6 7 8; do echo row-$i; done')

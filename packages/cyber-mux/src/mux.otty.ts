@@ -4,6 +4,7 @@ import { refuseFloatingPane } from './floating.ts'
 import type { LivePane, MuxAdapter, MuxReadOptions, OpenedPane } from './mux.ts'
 import { assertRatioInRange } from './ratio.ts'
 import { pollForOutput } from './wait-output.ts'
+import { refusePaneZoom } from './zoom.ts'
 
 /**
  * otty backend — detected via `$OTTY_PANE_ID`. Drives otty's CLI through `otty pane <verb> …`
@@ -48,6 +49,11 @@ import { pollForOutput } from './wait-output.ts'
  *   "split, zoom, resize, send-keys, send-text, run, exec, wait, and capture". `rename` is in
  *   neither list for `pane`, so this adapter names a tab and REFUSES to name a pane, exactly as
  *   `mux.wezterm.ts` does for the same reason.
+ * - **`otty pane zoom` exists and cannot be driven from the docs.** The reference names the verb once
+ *   and gives it no flags, no example, and no read-back field, while spelling out the flags of its
+ *   neighbours `split` and `resize`. An absolute zoom needs a write vocabulary and a state read and
+ *   the docs supply neither, so `setPaneZoom` refuses BY NAME rather than guessing a flag otty may
+ *   silently ignore. `otty pane zoom --help` on a real machine settles it; see `setPaneZoom`.
  * - **No pane geometry adapter.** `otty panes --json` does not report position, so `regions` is not
  *   implementable. `template save` refuses on otty by naming the backend.
  * - **No git-worktree concept in the CLI.** No `worktree` subcommand, so — like tmux, wezterm,
@@ -244,6 +250,51 @@ export function createOttyAdapter(deps: { window?: string | undefined }): MuxAda
 			const found = panes.find((p) => p.id === target.id)
 			if (!found) return undefined
 			return found.is_focused === true
+		},
+
+		/**
+		 * REFUSED BY NAME — and for a DIFFERENT reason from cmux's, which is why the two are not
+		 * collapsed into one note. otty HAS the verb; what it does not have is any documented way to
+		 * drive it absolutely. No `canZoomPanes` above is the declaration; this is the enforcement.
+		 *
+		 * `zoom` is named exactly once on the whole CLI reference — "Panes additionally have `split`
+		 * (`--direction right|left|up|down`), `zoom`, `resize`, `send-keys`, `send-text`, `run`, `exec`,
+		 * `wait`, and `capture`" — with no flag list, no example, and no `--on`/`--off`/`--toggle`
+		 * anywhere on the page. Its neighbors `split` and `resize` get their flags spelled out in that
+		 * same sentence, so the omission is the docs' own, not a reading failure. Nothing in the docs
+		 * reports zoom state back either: `otty panes --json` is documented but its row fields never
+		 * are, and `/reference/keybindings` gives one binding, "Zoom / unzoom split ⌘⇧↩", doing both
+		 * directions — which HINTS a toggle and settles nothing about the CLI.
+		 *
+		 * Both halves of an absolute set are therefore missing: the write, whose vocabulary is unknown,
+		 * and the read that write would have to be guarded by. Guessing a spelling would ship a flag
+		 * otty may silently ignore — the exact silent-success failure `mux.cmux.ts` documents on its
+		 * `resize-pane -Z` shim — and a bare `otty pane zoom` fired blind is the toggle
+		 * `MuxAdapter.setPaneZoom` exists to refuse to be: it could be asked for "big" and deliver
+		 * "small". This is `resizePane`'s refusal shape exactly: a backend with the neighbouring
+		 * primitive but not the fact the seam's verb needs does not get the verb.
+		 *
+		 * **One command settles it** on a machine with otty: `otty pane zoom --help`. If it takes an
+		 * absolute on/off, this becomes a two-line implementation and the declaration flips; if it is a
+		 * bare toggle, the refusal stands until `otty panes --json` is shown to carry a zoom field. See
+		 * issue #128 for the missing real-boundary suite that would run it.
+		 */
+		setPaneZoom() {
+			refusePaneZoom('otty')
+		},
+
+		/**
+		 * `undefined` — no documented zoom field on any otty listing, so the backend cannot be asked.
+		 * Never `false`: otty's own keybinding reference shows a user can zoom a split with ⌘⇧↩, so a
+		 * `false` here would be a confident lie about a pane they just zoomed. `isPaneFocused`'s wezterm
+		 * shape, and the same distinction `mux.cmux.ts` draws.
+		 *
+		 * This is a docs-read answer like the rest of this file, and it is the half that would change
+		 * first: if `otty panes --json` turns out to carry a zoom column, this member can answer for
+		 * real even while `setPaneZoom` stays refused, because a read needs no flag vocabulary.
+		 */
+		isPaneZoomed() {
+			return undefined
 		},
 
 		listPanes(exec): LivePane[] {

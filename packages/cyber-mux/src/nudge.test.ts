@@ -31,6 +31,10 @@ function fakeAdapter(
 		group: () => {
 			throw new Error('nudge groups no space — it takes turns in one that already exists')
 		},
+		setPaneZoom: () => {
+			throw new Error('nudge zooms nothing — it takes turns, it does not resize the screen')
+		},
+		isPaneZoomed: () => undefined,
 		sendText: () => {
 			throw new Error('nudge must not type without submitting — it takes turns via submit')
 		},

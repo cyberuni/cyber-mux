@@ -28,6 +28,8 @@ function fakeAdapter(opts: { reads: string[]; alive?: (readCount: number) => boo
 		open: unused,
 		rename: unused,
 		group: unused,
+		setPaneZoom: unused,
+		isPaneZoomed: () => undefined,
 		sendText: unused,
 		sendKeys: unused,
 		submit: unused,

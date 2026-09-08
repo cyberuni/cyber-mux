@@ -420,4 +420,89 @@ describe.skipIf(!hasHerdr())('spec:cyber-mux/mux', () => {
 			expect(liveSplit().ratio).toBe(before.ratio)
 		})
 	})
+
+	/**
+	 * The zoom rows, against the real herdr server in an isolated workspace of this suite's own — safe
+	 * from inside a herdr pane for `open({at:'workspace'})`'s reason: nothing here resolves against the
+	 * caller's own context.
+	 *
+	 * herdr is the backend whose CLI is already absolute, so what these rows exist to catch is not a
+	 * mis-composed toggle but the TAB-SCOPED semantics of `--off`, which no mocked `Exec` can be wrong
+	 * about because a mock has no tab.
+	 */
+	describe('herdrMuxAdapter — real herdr boundary, pane zoom', () => {
+		let cwd: string
+		let root: { id: string }
+		let split: { id: string }
+		let workspaceId: string | undefined
+
+		beforeAll(() => {
+			cwd = mkdtempSync(join(tmpdir(), 'cyber-mux-itest-'))
+			root = herdrMuxAdapter.open(realExec, { cwd, launch: 'sh', at: 'workspace' })
+			workspaceId = paneLocation(root.id).workspaceId
+			split = herdrMuxAdapter.open(realExec, { cwd, launch: 'sh', at: 'pane:right', from: root, ratio: 0.5 })
+		})
+
+		afterAll(() => {
+			if (workspaceId) {
+				try {
+					execFileSync('herdr', ['workspace', 'close', workspaceId], { stdio: 'ignore' })
+				} catch {
+					// already gone
+				}
+			}
+			rmSync(cwd, { recursive: true, force: true })
+		})
+
+		it('setPaneZoom(true) really zooms the pane the real herdr reports back, and the sibling stays open', () => {
+			expect(herdrMuxAdapter.isPaneZoomed(realExec, split)).toBe(false)
+
+			herdrMuxAdapter.setPaneZoom(realExec, split, true)
+
+			expect(herdrMuxAdapter.isPaneZoomed(realExec, split)).toBe(true)
+			// Tab-scoped flag, per-pane answer: the sibling shares the zoomed tab and is not the zoomed one.
+			expect(herdrMuxAdapter.isPaneZoomed(realExec, root)).toBe(false)
+			// A zoom hides a pane, it does not close one.
+			expect(herdrMuxAdapter.paneExists(realExec, root)).toBe(true)
+		})
+
+		/**
+		 * THE row this member exists for on herdr, and one only a live server can make: `pane zoom <id>
+		 * --off` names the pane to FOCUS, not the pane to unzoom, so an unguarded implementation asked to
+		 * unzoom a pane that is not zoomed silently unzooms the one that IS. Measured on 0.9.0 before the
+		 * guard was written; asserted here so it cannot come back.
+		 */
+		it('setPaneZoom(false) on a pane that is not zoomed leaves the zoomed sibling alone', () => {
+			herdrMuxAdapter.setPaneZoom(realExec, split, true)
+			expect(herdrMuxAdapter.isPaneZoomed(realExec, split)).toBe(true)
+
+			herdrMuxAdapter.setPaneZoom(realExec, root, false)
+
+			expect(herdrMuxAdapter.isPaneZoomed(realExec, split)).toBe(true)
+		})
+
+		it('setPaneZoom(true) TRANSFERS the zoom off a sibling that already had it', () => {
+			herdrMuxAdapter.setPaneZoom(realExec, split, true)
+
+			herdrMuxAdapter.setPaneZoom(realExec, root, true)
+
+			expect(herdrMuxAdapter.isPaneZoomed(realExec, root)).toBe(true)
+			expect(herdrMuxAdapter.isPaneZoomed(realExec, split)).toBe(false)
+		})
+
+		it('setPaneZoom(false) really unzooms the pane', () => {
+			herdrMuxAdapter.setPaneZoom(realExec, split, true)
+
+			herdrMuxAdapter.setPaneZoom(realExec, split, false)
+
+			expect(herdrMuxAdapter.isPaneZoomed(realExec, split)).toBe(false)
+			expect(herdrMuxAdapter.isPaneZoomed(realExec, root)).toBe(false)
+		})
+
+		it('isPaneZoomed() answers undefined for a pane the real herdr no longer has', () => {
+			const doomed = herdrMuxAdapter.open(realExec, { cwd, launch: 'sh', at: 'pane:down', from: root })
+			herdrMuxAdapter.teardown(realExec, doomed)
+			expect(herdrMuxAdapter.isPaneZoomed(realExec, doomed)).toBeUndefined()
+		})
+	})
 })

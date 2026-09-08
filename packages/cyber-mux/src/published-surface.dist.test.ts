@@ -66,6 +66,7 @@ describe('spec:cyber-mux/library — published surface', () => {
 				'FULL_SCROLLBACK_LINES',
 				'FloatingPanesUnsupportedError',
 				'PaneResizeUnsupportedError',
+				'PaneZoomUnsupportedError',
 				'RMUX_TAB_NAME_OPTION',
 				'RMUX_WORKSPACE_GROUP_OPTION',
 				'TMUX_TAB_NAME_OPTION',
@@ -73,6 +74,9 @@ describe('spec:cyber-mux/library — published surface', () => {
 				'assertWaitPattern',
 				'callerPane',
 				'canFloatPanes',
+				// The zoom declaration read, beside `canFloatPanes` and for its reason: a caller asks BEFORE
+				// zooming through one spelling rather than reaching into an optional member itself.
+				'canZoomPanes',
 				'capturedRows',
 				'createWeztermAdapter',
 				'createZellijAdapter',
@@ -93,6 +97,9 @@ describe('spec:cyber-mux/library — published surface', () => {
 				// do: an out-of-tree adapter implementing `MuxAdapter` needs the one spelling of the refusal,
 				// not a second message of its own that could drift from this one.
 				'refuseFloatingPane',
+				// And the zoom refusal helper, for `refuseFloatingPane`'s reason exactly: an out-of-tree adapter
+				// that cannot zoom needs the one spelling of the refusal, not a second message that can drift.
+				'refusePaneZoom',
 				'resolveMux',
 				'resolveMuxAdapter',
 				// rmux's option constants and adapter ride the barrel exactly as tmux's do — the two

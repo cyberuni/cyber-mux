@@ -444,6 +444,75 @@ describe.skipIf(!hasRmux())('spec:cyber-mux/mux', () => {
 			)
 		})
 
+		/**
+		 * The zoom rows, driven against a real rmux rather than inherited from the tmux suite — the same
+		 * "probed as its own claim" rule this whole file follows. Each asserts the pane's real WIDTH or
+		 * what the binary does with a flag, neither of which a mocked `Exec` can be wrong about.
+		 */
+		it('setPaneZoom(true) really makes the pane fill its region, and reads back zoomed', () => {
+			const regions = rmuxMuxAdapter.regions
+			if (!regions) throw new Error('the rmux adapter must implement regions')
+			const opened = rmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
+			const split = rmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'pane:right', from: opened, ratio: 0.5 })
+			const half = regions.describeRegion(exec, opened).find((p) => p.id === split.id)!.rect.width
+			expect(rmuxMuxAdapter.isPaneZoomed(exec, split)).toBe(false)
+
+			rmuxMuxAdapter.setPaneZoom(exec, split, true)
+
+			expect(rmuxMuxAdapter.isPaneZoomed(exec, split)).toBe(true)
+			expect(regions.describeRegion(exec, split).find((p) => p.id === split.id)!.rect.width).toBeGreaterThan(half)
+			// Its sibling is still OPEN behind it — a zoom hides a pane, it does not close one.
+			expect(rmuxMuxAdapter.paneExists(exec, opened)).toBe(true)
+		})
+
+		/**
+		 * The row a bare `resize-pane -Z -t <pane>` fails: measured on 0.10.0 exactly as on tmux 3.7c,
+		 * `-Z` on a window already zoomed on a DIFFERENT pane just unzooms it, because the zoom follows
+		 * the ACTIVE pane rather than the named one.
+		 */
+		it('setPaneZoom(true) TRANSFERS the zoom off a sibling that already had it', () => {
+			const opened = rmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
+			const split = rmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'pane:right', from: opened, ratio: 0.5 })
+			rmuxMuxAdapter.setPaneZoom(exec, opened, true)
+			expect(rmuxMuxAdapter.isPaneZoomed(exec, opened)).toBe(true)
+
+			rmuxMuxAdapter.setPaneZoom(exec, split, true)
+
+			expect(rmuxMuxAdapter.isPaneZoomed(exec, split)).toBe(true)
+			expect(rmuxMuxAdapter.isPaneZoomed(exec, opened)).toBe(false)
+		})
+
+		it('setPaneZoom(false) really restores the pane to its share of the split', () => {
+			const regions = rmuxMuxAdapter.regions
+			if (!regions) throw new Error('the rmux adapter must implement regions')
+			const opened = rmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
+			const split = rmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'pane:right', from: opened, ratio: 0.5 })
+			const half = regions.describeRegion(exec, opened).find((p) => p.id === split.id)!.rect.width
+			rmuxMuxAdapter.setPaneZoom(exec, split, true)
+
+			rmuxMuxAdapter.setPaneZoom(exec, split, false)
+
+			expect(rmuxMuxAdapter.isPaneZoomed(exec, split)).toBe(false)
+			expect(regions.describeRegion(exec, opened).find((p) => p.id === split.id)!.rect.width).toBe(half)
+		})
+
+		/** The seam's no-op, asserted through its observable consequence: the zoomed sibling survives. */
+		it('setPaneZoom(false) on a pane that is not zoomed leaves its zoomed sibling alone', () => {
+			const opened = rmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
+			const split = rmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'pane:right', from: opened, ratio: 0.5 })
+			rmuxMuxAdapter.setPaneZoom(exec, split, true)
+
+			rmuxMuxAdapter.setPaneZoom(exec, opened, false)
+
+			expect(rmuxMuxAdapter.isPaneZoomed(exec, split)).toBe(true)
+		})
+
+		it('isPaneZoomed() answers undefined for a pane the real rmux no longer has', () => {
+			const opened = rmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })
+			rmuxMuxAdapter.teardown(exec, opened)
+			expect(rmuxMuxAdapter.isPaneZoomed(exec, opened)).toBeUndefined()
+		})
+
 		it('resizePane() throws on a region rmux reports as a single pane', () => {
 			const regions = rmuxMuxAdapter.regions
 			if (!regions) throw new Error('the rmux adapter must implement regions')

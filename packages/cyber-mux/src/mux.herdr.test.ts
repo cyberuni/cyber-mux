@@ -1774,3 +1774,66 @@ describe('herdrMuxAdapter — pane resize', () => {
 		expect(() => resizePane(exec, { id: 'wK4:p1' }, 0.6)).toThrow(/herdr could not resize pane wK4:p1/)
 	})
 })
+
+describe('spec:cyber-mux/mux/driving', () => {
+	// `pane layout --pane <id>` — the only zoom read herdr has. `zoomed` is TAB-scoped, so the answer
+	// is the conjunction with `focused_pane_id`, the same shape tmux's window flag forces.
+	const layout = (zoomed: boolean, focused: string) =>
+		JSON.stringify({ result: { layout: { zoomed, focused_pane_id: focused, panes: [] } } })
+
+	it('isPaneZoomed() is the tab flag AND focused_pane_id, so only the big pane reports true', () => {
+		const calls: string[][] = []
+		const exec = fakeExec(calls, { 'pane layout': layout(true, 'w1:p2') })
+		expect(herdrMuxAdapter.isPaneZoomed(exec, { id: 'w1:p2' })).toBe(true)
+		// The sibling hiding BEHIND the zoomed pane sees the same tab flag and is not the zoomed one.
+		expect(herdrMuxAdapter.isPaneZoomed(fakeExec([], { 'pane layout': layout(true, 'w1:p2') }), { id: 'w1:p1' })).toBe(
+			false,
+		)
+		expect(calls[0]).toEqual(['pane', 'layout', '--pane', 'w1:p2'])
+	})
+
+	it.each([
+		['null output', null],
+		['an error envelope', JSON.stringify({ error: { code: 'pane_not_found' } })],
+		['unparseable output', 'not json'],
+	])('isPaneZoomed() answers undefined on %s, never a false false', (_case, out) => {
+		expect(herdrMuxAdapter.isPaneZoomed(fakeExec([], { 'pane layout': out }), { id: 'w1:p2' })).toBeUndefined()
+	})
+
+	it.each([
+		{ zoomed: true, flag: '--on', current: false },
+		{ zoomed: false, flag: '--off', current: true },
+	])('setPaneZoom() drives herdr’s own ABSOLUTE flag, with no toggle to compose', ({ zoomed, flag, current }) => {
+		const calls: string[][] = []
+		const exec = fakeExec(calls, { 'pane layout': layout(current, 'w1:p2'), 'pane zoom': '{}' })
+		herdrMuxAdapter.setPaneZoom(exec, { id: 'w1:p2' }, zoomed)
+		expect(calls).toEqual([
+			['pane', 'layout', '--pane', 'w1:p2'],
+			['pane', 'zoom', 'w1:p2', flag],
+		])
+	})
+
+	/**
+	 * herdr is the backend that PROVES the guard is contract rather than optimization: `--off` names
+	 * the pane to FOCUS, not the pane to unzoom, so an unguarded `setPaneZoom(p1, false)` here would
+	 * unzoom p2 — a pane the caller never named (measured on a live 0.9.0).
+	 */
+	it('setPaneZoom(false) on a pane that is not the zoomed one issues NOTHING', () => {
+		const calls: string[][] = []
+		const exec = fakeExec(calls, { 'pane layout': layout(true, 'w1:p2'), 'pane zoom': '{}' })
+		herdrMuxAdapter.setPaneZoom(exec, { id: 'w1:p1' }, false)
+		expect(calls).toEqual([['pane', 'layout', '--pane', 'w1:p1']])
+	})
+
+	it('setPaneZoom(true) on an already-zoomed pane issues NOTHING', () => {
+		const calls: string[][] = []
+		const exec = fakeExec(calls, { 'pane layout': layout(true, 'w1:p2'), 'pane zoom': '{}' })
+		herdrMuxAdapter.setPaneZoom(exec, { id: 'w1:p2' }, true)
+		expect(calls).toEqual([['pane', 'layout', '--pane', 'w1:p2']])
+	})
+
+	it('setPaneZoom() throws rather than reporting a false success when herdr refuses', () => {
+		const exec = fakeExec([], { 'pane layout': layout(false, 'w1:p1') })
+		expect(() => herdrMuxAdapter.setPaneZoom(exec, { id: 'w1:p2' }, true)).toThrow(/could not zoom pane w1:p2/)
+	})
+})

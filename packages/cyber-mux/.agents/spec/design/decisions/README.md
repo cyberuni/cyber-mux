@@ -1443,3 +1443,115 @@ Decisions (`tuios-regating-2026-09` — #145 re-measured against source, and par
   re-establishing: `main`'s verb surface clears all three gates, and the corrections above carry
   forward.
   ISSUE: https://github.com/cyberuni/cyber-mux/issues/145
+
+Decisions (`142-pane-zoom` — the zoom seam member, issue #142):
+
+- **The issue's open question is settled the other way round: wezterm HAS zoom and cmux has none.**
+  #142 named wezterm and cmux as the two unknowns and said the answer decides the member's shape —
+  "capability-interface-shaped only if wezterm and cmux turn out to have nothing". Both readings in
+  the issue were wrong, and the correction is a measurement rather than a preference:
+  - wezterm: the issue said *"`wezterm cli` has no documented zoom verb; zoom is a GUI key action"*.
+    It has one. `wezterm cli --help` on 20240203-110809-5046fc22 — the version `pull-request.yml`
+    pins — lists `zoom-pane   Zoom, unzoom, or toggle zoom state`, and `zoom-pane --help` gives
+    `--pane-id`, `--zoom`, `--unzoom`, `--toggle`. Driven against a real headless
+    `wezterm-mux-server`, it is the BEST-shaped zoom on the seam: per-pane, truly absolute
+    (repeating `--zoom` changes nothing), it TRANSFERS the zoom when a sibling holds it, and
+    `--unzoom` on a pane that is not zoomed leaves the zoomed sibling alone. `cli list --format
+    json` carries `is_zoomed` per row.
+  - cmux: no pane-zoom verb at any programmable layer. Read from `manaflow-ai/cmux` at HEAD
+    `ae18c88`, not from a binary (macOS-only, per `128-cmux-otty-isolation`): the only `zoom` verbs
+    in `CLI/` are `canvas zoom` (viewport magnification) and `browser zoom` (web page zoom); the
+    control socket's pane methods are exactly nine (`pane.break` `pane.create` `pane.focus`
+    `pane.join` `pane.last` `pane.list` `pane.resize` `pane.surfaces` `pane.swap`); the capability
+    exists only as the GUI keybinding `ShortcutAction.toggleSplitZoom` (⌘⇧↩). Upstream issue #351
+    asked for the CLI verb and was closed on the keybinding alone; PR #353 would add it and is
+    unmerged; issue #2100 is open.
+
+  So the member is REQUIRED on `MuxAdapter` with a `canZoomPanes` declaration and a refusal by name
+  (`PaneZoomUnsupportedError`, `zoom.ts`) — `canFloatPanes`'s exact shape, with a different pair of
+  refusers than the issue predicted.
+
+- **ABSOLUTE, not a toggle, and no toggle beside it** — DECIDED, following `resizePane`. A blind
+  toggle cannot be used correctly by an agent: it can ask for "big" and get "small". A caller that
+  wants the toggle spells `setPaneZoom(e, t, !isPaneZoomed(e, t))`, which is one line and is honest
+  about the read it depends on; a seam toggle would be a second spelling every adapter has to carry.
+
+- **The no-op is CONTRACT, not optimization: every adapter reads before it writes** — DECIDED, and
+  this is the decision a mocked test would never have forced. Two backends spell zoom at the TAB
+  tier rather than the pane tier, so an unguarded absolute write acts on a pane the caller never
+  named. Measured live on herdr 0.9.0: with p2 zoomed, `herdr pane zoom p3 --off` unzoomed **p2**
+  and moved focus to p3. `setPaneZoom(p3, false)` asks for nothing — p3 was never zoomed — and
+  would have silently unzoomed a sibling. tmux/rmux have the same trap from the other side: `-Z` on
+  a window already zoomed on a different pane merely unzooms it, so a naive "toggle when the flag
+  differs" leaves NOTHING zoomed instead of transferring.
+
+- **Per-backend renderings, each probed rather than inferred from a sibling:**
+  - tmux 3.7c / rmux 0.10.0 — `resize-pane -Z`, a TOGGLE, preceded by `select-pane -t <id>` when
+    zooming. The `select-pane` is not redundant: measured on both, `-Z -t %2` while `%1` is zoomed
+    leaves every pane at `z=0` with `%1` still active, because the zoom follows the ACTIVE pane.
+    `select-pane` unzooms the window and moves the active pane in one step. Read is
+    `#{window_zoomed_flag} AND #{pane_active}` — the flag is per WINDOW and reads `1` on all three
+    panes of a zoomed window — taken off `list-panes -a` rather than `display-message -p -t <pane>`,
+    which answers a dead pane with a blank line and exit 0.
+  - herdr 0.8.0 / 0.9.0 — `pane zoom <id> --on|--off`, natively ABSOLUTE and idempotent
+    (`{"changed":false}` on a repeat). Read is `pane layout --pane <id>` → `zoomed AND
+    focused_pane_id === id`. The 0.8.0 CI pin was settled from that binary's own bundled schema
+    (`herdr api schema --json`, protocol 19: `pane.zoom` with `PaneZoomParams { mode, pane_id }`,
+    and `PaneLayoutSnapshot` REQUIRING `zoomed: boolean` + `focused_pane_id: string`) because a
+    0.8.0 client answers a 0.9.0 server with `protocol_mismatch` and herdr has no throwaway-server
+    mode to run an old one beside it.
+  - zellij 0.45.0 — `action toggle-fullscreen -p <id>`, a toggle, preceded by `action focus-pane-id
+    <id>` when zooming, for tmux's reason (measured: toggling a different pane while one is
+    fullscreen just leaves fullscreen). **That focus call is deliberately UNCHECKED**, and finding
+    out why is the second thing only a live binary could teach: `focus-pane-id` exits **2** when the
+    pane is ALREADY focused ("Pane Terminal(0) is already focused") — a success for this purpose —
+    and exits 2 with the same shape when the pane does not exist. The exit code cannot tell them
+    apart, so gating on it threw on the commonest case; the `toggle-fullscreen` that follows is what
+    reports a real failure. Read is `is_fullscreen`, genuinely per-pane, free in the listing.
+  - wezterm 20240203 — `cli zoom-pane --pane-id <id> --zoom|--unzoom`. Read is `is_zoomed`, free in
+    the listing. Nothing to compose; the guard is kept only because the seam's no-op is uniform.
+  - otty — REFUSED, and NOT for cmux's reason. `otty pane zoom` exists; the docs name it once
+    ("Panes additionally have `split`…, `zoom`, `resize`, …") with no flag list, no example, and no
+    read-back field, while spelling out the flags of `split` and `resize` in that same sentence.
+    Both halves of an absolute set are missing — the write vocabulary and the read that guards it —
+    and guessing a flag would ship the same silent-success failure cmux's `resize-pane -Z` shim
+    already is (`-Z` is not in that verb's `boolFlags`, an unknown short flag lands in `positional`,
+    and the dispatch has no final `else`, so it resolves the pane, does nothing, and exits 0).
+    **RECHECK TRIGGER:** `otty pane zoom --help` on a machine with otty (#128). An absolute on/off
+    makes this a two-line implementation; a bare toggle keeps the refusal until `otty panes --json`
+    is shown to carry a zoom field.
+
+- **`isPaneZoomed` answers `undefined` on cmux and otty, never `false`** — DECIDED, and this is
+  where it diverges from `LivePane.floating`. A backend with no floating-pane concept truthfully has
+  only tiled panes, so `false` is a real answer there. A backend with no zoom CLI is not a backend
+  with no zoom: cmux binds pane zoom to ⌘⇧↩, so `false` would be a confident lie about a pane the
+  user zoomed by hand. `isPaneFocused`'s wezterm shape.
+
+- **`LivePane` does NOT gain a `zoomed` column, against the issue's proposal** — DECIDED, on a
+  measurement the issue did not have. It asked for the flag on `LivePane` "the same way `floating`
+  was added in #112 and for the same reason". The reason does not carry: `floating` rides `LivePane`
+  because every backend answers it inside the listing the adapter ALREADY makes, so it is free.
+  Zoom is free on tmux, rmux, zellij and wezterm — and not on herdr, whose `pane list` carries no
+  zoom key on any record (verified live on 0.9.0) and whose only read is `pane layout --pane <id>`,
+  one call PER TAB. Putting it on `LivePane` would make `listPanes` — the bulk cull `reconcile`
+  runs — cost one exec per tab on that backend for a fact most callers never read. `isPaneFocused`
+  is the precedent and the exact parallel: the other view-state fact, reported by three backends'
+  listings and still a targeted probe rather than a column.
+
+- **Zooming MOVES FOCUS, and that is declared rather than compensated** — DECIDED. Measured on all
+  four toggling backends plus wezterm: tmux/rmux's `-Z` makes the target active, zellij's
+  `toggle-fullscreen` focuses it, wezterm's `--zoom` makes it active, herdr's `--on` answers
+  `focus_changed: true`. Undoing it would be a SECOND visible focus move, not the absence of one —
+  `opensWithoutStealingFocus`'s reasoning exactly. Unzooming moves nothing.
+
+- **No CLI command, deliberately** — DECIDED, following `resizePane`, which is a seam member with no
+  `cyber-mux` subcommand either (`derivePaneResize` is exported and unwired). The member and its
+  refusal are the unit of work; a `zoom` verb is a separate change with its own option and output
+  conventions to settle.
+
+- **Live coverage on all five capable backends**, which is where this member had to be settled: the
+  tmux, rmux, herdr, zellij and wezterm real-boundary suites each gained zoom rows, and every one
+  asserts a real screen fact (the pane's actual width, or which sibling survived) rather than an
+  argv. The transfer row was checked against its own failure — deleting tmux's `select-pane` turns
+  it red while every mocked row stays green, which is the whole argument for where this was tested.
+  ISSUE: https://github.com/cyberuni/cyber-mux/issues/142

@@ -63,6 +63,18 @@ export const tmuxMuxAdapter: MuxAdapter = {
 	canFloatPanes: true,
 
 	/**
+	 * `true` — `resize-pane -Z`, and it is one of the oldest things tmux does. Verified live on 3.7c:
+	 * `list-commands` reports `resize-pane (resizep) [-DLMRTUZ] …`, and driving `-Z` against a
+	 * three-pane window flipped `#{window_zoomed_flag}` and grew `#{pane_width}` from 40 to 80.
+	 *
+	 * Declared even though the verb is a TOGGLE and the seam's is absolute: what this flag answers is
+	 * whether the backend can be made to honor `setPaneZoom` at all, and tmux can, because it also
+	 * reports the state the toggle has to be guarded by (`isPaneZoomed`). A backend with the toggle and
+	 * no read would have to omit this — that is otty's position, not tmux's.
+	 */
+	canZoomPanes: true,
+
+	/**
 	 * Every route passes `-d`, so no open moves the attached client. tmux is the backend where this
 	 * cost the most to make true: `-d` was already on `new-window`, but `split-window` and `new-pane`
 	 * were issuing it nowhere, and both ACTIVATE what they create. Measured on 3.7c rather than read
@@ -336,6 +348,61 @@ export const tmuxMuxAdapter: MuxAdapter = {
 		if (!line) return undefined
 		const [, paneActive, windowActive, sessionAttached] = line.split(' ')
 		return paneActive === '1' && windowActive === '1' && sessionAttached !== '0' && sessionAttached !== undefined
+	},
+
+	/**
+	 * `resize-pane -Z`, which is a TOGGLE — the seam's member is absolute, so the state is read first
+	 * and the toggle issued only when it differs (`isPaneZoomed` below). All of it verified live on
+	 * tmux 3.7c.
+	 *
+	 * **`select-pane` before `-Z`, and it is not redundant.** `resize-pane -Z -t <pane>` on a window
+	 * that is ALREADY zoomed on a DIFFERENT pane does not transfer the zoom — it just unzooms, leaving
+	 * the other pane active and nothing zoomed (measured: with %1 zoomed, `-Z -t %2` left `z=0` on
+	 * every pane and %1 still active). Naming the pane is not enough on tmux; the zoom follows the
+	 * ACTIVE pane. `select-pane -t <pane>` fixes both halves at once — it unzooms the window as a side
+	 * effect of moving the active pane, and it makes the target the pane `-Z` will zoom.
+	 *
+	 * That `select-pane` is also why zooming MOVES FOCUS here, which `MuxAdapter.setPaneZoom`
+	 * declares rather than compensates. It is not a cost this adapter chose: a bare `-Z -t <pane>` on
+	 * an unfocused pane already makes that pane active on tmux, so there is no focus-preserving
+	 * spelling to prefer.
+	 *
+	 * Unzooming needs no `select-pane`: the guard has already established that THIS pane is the zoomed
+	 * one, so it is already the active pane and a bare `-Z` restores it in place, moving nothing.
+	 */
+	setPaneZoom(exec, target, zoomed) {
+		if (tmuxMuxAdapter.isPaneZoomed(exec, target) === zoomed) return
+		if (zoomed && exec('tmux', ['select-pane', '-t', target.id]) === null) {
+			throw new Error(withReason(exec, `tmux could not select pane ${target.id}`))
+		}
+		if (exec('tmux', ['resize-pane', '-Z', '-t', target.id]) === null) {
+			throw new Error(withReason(exec, `tmux could not ${zoomed ? 'zoom' : 'unzoom'} pane ${target.id}`))
+		}
+	},
+
+	/**
+	 * `#{window_zoomed_flag}` AND `#{pane_active}`, because tmux's flag is per WINDOW: it reads `1` on
+	 * every pane of a zoomed window, including the small ones behind the zoomed one (verified live on
+	 * 3.7c — with %1 zoomed, all three panes reported `z=1`). The pane that is actually big is the
+	 * window's ACTIVE pane, so the per-pane answer the seam promises is the conjunction.
+	 *
+	 * Read out of `list-panes -a`, the same server-wide listing `isPaneFocused` uses, rather than
+	 * `display-message -p -t <pane>`: display-message answers a pane that no longer exists with a blank
+	 * line and exit code 0 (measured on 3.7c), which is indistinguishable from a real answer whose
+	 * fields did not expand. A missing LINE is unambiguous, and `undefined` is then the honest report
+	 * rather than a false `false`.
+	 *
+	 * `#{session_attached}` is deliberately NOT part of this, unlike `isPaneFocused`'s answer: a pane
+	 * is zoomed in its window whether or not any client is looking, and a detached session's zoom is
+	 * still there when a client attaches.
+	 */
+	isPaneZoomed(exec, target) {
+		const out = exec('tmux', ['list-panes', '-a', '-F', '#{pane_id} #{window_zoomed_flag} #{pane_active}'])
+		if (!out) return undefined
+		const line = out.split('\n').find((l) => l.split(' ')[0] === target.id)
+		if (!line) return undefined
+		const [, zoomedFlag, paneActive] = line.split(' ')
+		return zoomedFlag === '1' && paneActive === '1'
 	},
 
 	/**

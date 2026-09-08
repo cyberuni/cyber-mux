@@ -69,6 +69,19 @@ export const herdrMuxAdapter: MuxAdapter = {
 	 * No focus move to undo on top of that: `pane split <id>` names its target directly, so herdr
 	 * never has to VISIT a pane to choose which one gets split.
 	 */
+	/**
+	 * `true` — `herdr pane zoom <PANE_ID> --on|--off`, the one backend on this seam whose native verb is
+	 * already ABSOLUTE rather than a toggle. Driven live on 0.9.0, and pinned to the 0.8.0 CI pin from
+	 * that binary's OWN bundled schema rather than from a version guess: `herdr api schema --json` on
+	 * 0.8.0 (protocol 19) carries `pane.zoom` with `PaneZoomParams { mode, pane_id }`, and its
+	 * `PaneLayoutSnapshot` REQUIRES both `zoomed: boolean` and `focused_pane_id: string` — the two
+	 * fields `isPaneZoomed` composes. So neither half of this member depends on a herdr newer than the
+	 * one `pull-request.yml` drives. (0.8.0 could not be driven directly here: it answers a 0.9.0
+	 * server with `protocol_mismatch`, and herdr has no throwaway-server mode to start an old one
+	 * beside it.)
+	 */
+	canZoomPanes: true,
+
 	opensWithoutStealingFocus: true,
 
 	open(exec, opts) {
@@ -343,6 +356,54 @@ export const herdrMuxAdapter: MuxAdapter = {
 		try {
 			const focused = JSON.parse(out)?.result?.pane?.focused
 			return typeof focused === 'boolean' ? focused : undefined
+		} catch {
+			return undefined
+		}
+	},
+
+	/**
+	 * `pane zoom <id> --on|--off` — herdr is the only backend here whose own verb is absolute, so no
+	 * toggle has to be composed. It is idempotent too: a second `--on` on an already-zoomed pane
+	 * answered `{"changed":false,"focus_changed":false}` on a live 0.9.0.
+	 *
+	 * **The guard is still not optional, and this is the backend that proves why.** herdr's zoom is a
+	 * TAB-tier fact — `pane layout` reports one `zoomed` for the whole tab — and `--off` names the pane
+	 * to FOCUS, not the pane to unzoom. Measured on 0.9.0 in a throwaway workspace: with p2 zoomed,
+	 * `herdr pane zoom p3 --off` unzoomed **p2** and moved focus to p3. So an unguarded
+	 * `setPaneZoom(p3, false)` — a request that asks for nothing, since p3 was never zoomed — would
+	 * silently unzoom a pane the caller never named. Reading first turns that into the no-op the seam
+	 * promises.
+	 *
+	 * `--on` moves focus to the pane (`focus_changed: true` on the same probe), which
+	 * `MuxAdapter.setPaneZoom` declares rather than compensates; `--off` on the zoomed pane moves
+	 * nothing, since that pane already holds the focus.
+	 */
+	setPaneZoom(exec, target, zoomed) {
+		if (herdrMuxAdapter.isPaneZoomed(exec, target) === zoomed) return
+		if (exec('herdr', ['pane', 'zoom', target.id, zoomed ? '--on' : '--off']) == null) {
+			throw new Error(withReason(exec, `herdr could not ${zoomed ? 'zoom' : 'unzoom'} pane ${target.id}`))
+		}
+	},
+
+	/**
+	 * `pane layout --pane <id>`, whose payload carries `zoomed` for the TAB plus `focused_pane_id` —
+	 * so the per-pane answer the seam promises is the conjunction, tmux's shape under different key
+	 * names. Verified live on 0.9.0.
+	 *
+	 * `pane list` is deliberately NOT the source, and its absence is why `LivePane` grew no `zoomed`
+	 * column: a live 0.9.0 `herdr pane list` carries no zoom key on any record at all, so the only
+	 * read herdr has costs one call PER TAB. See `MuxAdapter.isPaneZoomed`.
+	 *
+	 * Parsed defensively, exactly as `isPaneFocused` is: null output, an error envelope, a missing or
+	 * non-boolean `zoomed`, or a parse failure all fold to `undefined` rather than a false `false`.
+	 */
+	isPaneZoomed(exec, target) {
+		const out = exec('herdr', ['pane', 'layout', '--pane', target.id])
+		if (out == null) return undefined
+		try {
+			const layout = JSON.parse(out)?.result?.layout
+			if (typeof layout?.zoomed !== 'boolean') return undefined
+			return layout.zoomed === true && layout.focused_pane_id === target.id
 		} catch {
 			return undefined
 		}

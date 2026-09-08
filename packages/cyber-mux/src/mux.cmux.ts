@@ -3,6 +3,7 @@ import { type Exec, withReason } from './exec.ts'
 import { refuseFloatingPane } from './floating.ts'
 import type { LivePane, MuxAdapter, MuxReadOptions, OpenedPane } from './mux.ts'
 import { pollForOutput } from './wait-output.ts'
+import { refusePaneZoom } from './zoom.ts'
 
 /**
  * cmux backend — detected via `$CMUX_WORKSPACE_ID`. Drives cmux's CLI through `cmux <verb> …`
@@ -85,6 +86,11 @@ import { pollForOutput } from './wait-output.ts'
  *   pane a `pane:*` split lands beside — is honored by FOCUSING that surface first, the sole way to
  *   choose the split target. That is a real focus move, and the honest cost of getting the RIGHT
  *   pane split.
+ * - **No pane zoom at any CLI or socket layer.** cmux binds "Toggle Pane Zoom" to ⌘⇧↩ in the GUI and
+ *   exposes it nowhere a program can reach: no zoom verb in the CLI, no `pane.zoom` among the socket's
+ *   nine pane methods, and no zoom field in the pane listing. `setPaneZoom` refuses BY NAME and
+ *   `isPaneZoomed` answers `undefined` (never `false` — the user can zoom by hand). The tmux-compat
+ *   `resize-pane -Z` is the trap: it parses, does nothing, and exits 0. See `setPaneZoom`.
  * - **No pane geometry adapter.** Neither `list-panes` nor `list-panels` reports position, so `regions`
  *   (`describeRegion`/`describeWorkspace`) is not implementable. `template save` refuses on cmux by
  *   naming the backend, the same optional-absence it handles for wezterm.
@@ -346,6 +352,53 @@ export function createCmuxAdapter(deps: { workspace?: string | undefined }): Mux
 			const found = listCmuxSurfaces(exec).find((s) => s.id === target.id)
 			if (!found) return undefined
 			return found.focused === true
+		},
+
+		/**
+		 * REFUSED BY NAME — cmux has no pane-zoom verb, so there is nothing to drive and nothing
+		 * truthful to substitute. No `canZoomPanes` above is the declaration; this is the enforcement,
+		 * the same pairing `'pane:float'` uses.
+		 *
+		 * Read from cmux's Swift source at HEAD `ae18c88`, NOT from a live binary, which is this whole
+		 * file's standing disclaimer — but the read here is exhaustive rather than a failure to find
+		 * something. A case-insensitive scan of `CLI/` for `zoom|maximi[sz]e|fullscreen` returns only
+		 * `cmux canvas zoom` (viewport magnification) and `cmux browser zoom` (web page zoom); the flat
+		 * verb table in `CMUXCLI+CommandSuggestions.swift` carries thirteen `*-pane` verbs and no zoom;
+		 * and the control socket's pane methods are exactly nine (`pane.break` `pane.create`
+		 * `pane.focus` `pane.join` `pane.last` `pane.list` `pane.resize` `pane.surfaces` `pane.swap`),
+		 * with no `pane.zoom` at any layer. The capability exists only as a GUI keybinding
+		 * (`ShortcutAction.toggleSplitZoom`, ⌘⇧↩) and a command-palette entry, neither of which the
+		 * socket exposes. Upstream issue #351 asked for the CLI verb and was closed on the keybinding
+		 * alone; PR #353, which would add it, is still unmerged, and issue #2100 is still open.
+		 *
+		 * **Emulating it through the tmux-compat shim is the specific trap this refusal exists for.**
+		 * `cmux resize-pane -Z -t <pane>` looks like it should work and is a SILENT NO-OP: `-Z` is not
+		 * in that verb's `boolFlags`, `parseTmuxArguments` pushes an unrecognized short flag into
+		 * `positional` rather than erroring, and the resize dispatch chain has no final `else`. So it
+		 * resolves the pane, does nothing, and exits 0 — a green that zoomed nothing. Refusing by name
+		 * is the only answer that tells the caller the truth.
+		 */
+		setPaneZoom() {
+			refusePaneZoom('cmux')
+		},
+
+		/**
+		 * `undefined` — cmux cannot be ASKED, which is not the same as "not zoomed", and the difference
+		 * is real here rather than pedantic: a user can zoom a pane with ⌘⇧↩ this instant and no cmux
+		 * CLI or socket call would report it. `paneListPayload` emits `id ref index focused surface_ids
+		 * surface_refs selected_surface_id selected_surface_ref surface_count pixel_frame columns rows
+		 * cell_width_px cell_height_px cell_width_points cell_height_points dock_scope` and no zoom key;
+		 * `window_zoomed_flag` appears nowhere in the CLI or socket sources (its only hits are
+		 * `RemoteTmuxWindowMirror*`, where cmux CONSUMES a remote tmux server's zoom state as a tmux
+		 * client rather than exposing its own).
+		 *
+		 * So this answers `undefined` on every surface, `isPaneFocused`'s wezterm shape — never `false`,
+		 * which would be a confident lie about a pane the user has zoomed by hand. Contrast
+		 * `LivePane.floating`, which IS `false` by construction on the backends that cannot float,
+		 * because those backends genuinely have only tiled panes.
+		 */
+		isPaneZoomed() {
+			return undefined
 		},
 
 		listPanes(exec): LivePane[] {

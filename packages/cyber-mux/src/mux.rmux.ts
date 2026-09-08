@@ -88,6 +88,16 @@ export const rmuxMuxAdapter: MuxAdapter = {
 	 * directly, so rmux never has to VISIT a pane to choose it. And no third route to cover — rmux has
 	 * no `new-pane`, so `pane:float` is refused before any command is issued.
 	 */
+	/**
+	 * `true` — `resize-pane -Z`, inherited from tmux's command language along with the rest of it, and
+	 * verified live on 0.10.0 rather than assumed from the resemblance: `resize-pane (resizep)
+	 * [-DLMRTUZ] …` in the usage line, and driving `-Z` against a three-pane window on an isolated
+	 * socket flipped `#{window_zoomed_flag}` and grew `#{pane_width}` from 40 to 80. `-Z` on a window
+	 * already zoomed on a DIFFERENT pane just unzooms it, exactly as tmux's does, which is why
+	 * `setPaneZoom` selects the pane first.
+	 */
+	canZoomPanes: true,
+
 	opensWithoutStealingFocus: true,
 
 	open(exec, opts) {
@@ -341,6 +351,50 @@ export const rmuxMuxAdapter: MuxAdapter = {
 		if (!line) return undefined
 		const [, paneActive, windowActive, sessionAttached] = line.split(' ')
 		return paneActive === '1' && windowActive === '1' && sessionAttached !== '0' && sessionAttached !== undefined
+	},
+
+	/**
+	 * `resize-pane -Z`, tmux's toggle under tmux's name — so this is `mux.tmux.ts`'s `setPaneZoom`
+	 * verbatim in shape, and every step of it was re-measured on a live rmux 0.10.0 rather than carried
+	 * over: with `%1` zoomed, `resize-pane -Z -t %2` left every pane at `z=0` and `%1` still active
+	 * (the zoom follows the ACTIVE pane, not the named one), while `select-pane -t %2` unzoomed the
+	 * window and moved the active pane, after which `-Z -t %2` zoomed `%2` to the full 80 columns.
+	 *
+	 * The state is read first because the seam's member is absolute and rmux's verb is a toggle; the
+	 * unzoom path needs no `select-pane`, since the guard has already established that this pane is
+	 * the zoomed one and therefore the active one.
+	 */
+	setPaneZoom(exec, target, zoomed) {
+		if (rmuxMuxAdapter.isPaneZoomed(exec, target) === zoomed) return
+		if (zoomed && exec('rmux', ['select-pane', '-t', target.id]) === null) {
+			throw new Error(withReason(exec, `rmux could not select pane ${target.id}`))
+		}
+		if (exec('rmux', ['resize-pane', '-Z', '-t', target.id]) === null) {
+			throw new Error(withReason(exec, `rmux could not ${zoomed ? 'zoom' : 'unzoom'} pane ${target.id}`))
+		}
+	},
+
+	/**
+	 * `#{window_zoomed_flag}` AND `#{pane_active}`, for tmux's reason and confirmed on rmux 0.10.0
+	 * rather than inherited: the flag is per WINDOW and read `1` on all three panes of a zoomed window,
+	 * so the pane that is actually big is the window's ACTIVE one and the per-pane answer is the
+	 * conjunction.
+	 *
+	 * Read out of the `list-panes -a` listing `isPaneFocused` already uses rather than
+	 * `display-message -p -t <pane>`, which answers a pane that no longer exists with a blank line and
+	 * exit code 0 — indistinguishable from a real answer whose fields did not expand. A missing LINE is
+	 * unambiguous, and `undefined` is then the honest report rather than a false `false`.
+	 *
+	 * `#{session_attached}` is deliberately not part of this, unlike `isPaneFocused`'s answer: a pane
+	 * is zoomed in its window whether or not any client is looking.
+	 */
+	isPaneZoomed(exec, target) {
+		const out = exec('rmux', ['list-panes', '-a', '-F', '#{pane_id} #{window_zoomed_flag} #{pane_active}'])
+		if (!out) return undefined
+		const line = out.split('\n').find((l) => l.split(' ')[0] === target.id)
+		if (!line) return undefined
+		const [, zoomedFlag, paneActive] = line.split(' ')
+		return zoomedFlag === '1' && paneActive === '1'
 	},
 
 	/**
