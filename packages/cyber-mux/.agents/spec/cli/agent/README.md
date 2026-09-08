@@ -5,8 +5,9 @@ concept: [cyber-mux, agent-lifecycle, cli]
 
 # cli/agent — the CLI agent-lifecycle surface
 
-> The **library contract** these verbs drive — the `AgentLifecycle` capability, herdr's binding of
-> it, and the `deriveAgentWait` refusal orchestrator — lives in [`agent/`](../../agent/README.md).
+> The **library contract** these verbs drive — the `AgentLifecycle` capability, the herdr and otty
+> bindings of it, and the `deriveAgentWait` refusal orchestrator — lives in
+> [`agent/`](../../agent/README.md).
 > This node owns the **CLI surface**: the `cyber-mux agent status` / `agent wait` verbs, agent-first
 > (no interactive prompt, every option a flag), their stdout shape and exit codes, and how the
 > `backend-unsupported` refusal renders.
@@ -15,7 +16,9 @@ concept: [cyber-mux, agent-lifecycle, cli]
 
 The `cyber-mux agent` command group, mirroring `send` / `worktree` / `template` as its own top-level
 group: `agent status <pane>` (a snapshot read, never a refusal) and `agent wait <pane>` (a blocking
-drive of herdr's native wait, refused cleanly on every backend without the primitive). Both verbs
+drive of the backend's native wait — herdr's `agent wait`, otty's `pane wait` — refused cleanly on
+every backend without the primitive). **The two verbs do not cover the same backends**: only herdr
+feeds the snapshot, while herdr and otty both have the wait. Both verbs
 address their pane through the shared id/label resolution ladder
 ([`mux/lookup/`](../../mux/lookup/README.md)) like every other pane-taking verb.
 
@@ -44,7 +47,7 @@ address their pane through the shared id/label resolution ladder
   prints the pane, with `agentStatus` absent (empty in the bare form, the key omitted or `null` under
   `--format json`) — exit **0**. Degrading truthfully, not refusing, is deliberate: a caller asking
   "what pane is this" should never be turned away because the backend cannot also say "and what is
-  its agent doing" — the two are independent facts, and only the second is herdr-only.
+  its agent doing" — the two are independent facts. The snapshot is herdr-only; the wait is not.
 
 - **`agent wait <pane> [--until <status>…] [--timeout <ms>]`** (`agentWaitCommand`) — resolve the
   pane through the shared ladder, then **drive** herdr's blocking wait through `deriveAgentWait`
@@ -53,8 +56,19 @@ address their pane through the shared id/label resolution ladder
   `--timeout <ms>` bounds the wait (indefinite when omitted). Unlike `agent status`, this **is** a
   refusal surface: `deriveAgentWait` throws `AgentLifecycleUnsupportedError` on tmux, wezterm, and
   zellij, and this verb catches it and re-raises the CLI's own `backend-unsupported` coded error —
-  exit **1**, `help` naming the herdr-only constraint — the exact mirror of how `template save`
+  exit **1**, `help` naming the backends that have the wait — the exact mirror of how `template save`
   surfaces `CaptureUnsupportedError` as its own `backend-unsupported`.
+
+  **On otty the same verb drives `otty pane wait`**, so the millisecond `--timeout` the CLI takes
+  becomes otty's whole `--timeout-secs`, and the reached state is always `idle`.
+
+- **A second, separate refusal: an `--until` the backend's native wait cannot end on.** otty's wait
+  ends on `idle` alone, so `agent wait --until blocked` there raises
+  `AgentWaitStatesUnsupportedError` and this verb re-raises it as `backend-unsupported` (exit **1**)
+  too — with a **different fix hint**: narrow `--until`, not "go run it on herdr". Kept as its own
+  arm rather than folded into the capability refusal precisely so the hint stays actionable. It is
+  exit 1 rather than 2 because the invocation is well-formed and every `--until` value is a legal
+  `AgentStatus`; what is missing is the backend's ability to end a wait there.
 
   **The refusal outranks a missing pane argument (CR 95).** The shared error contract now answers a
   missing `<pane>` by listing the live panes as candidates
@@ -90,7 +104,9 @@ graph TD
   RES -->|"ambiguous or not found"| ERR["the shared error contract (mux/lookup)"]
   RES -->|"resolves"| DW["deriveAgentWait(adapter, exec, target, opts)"]
   DW -->|"WT1: herdr"| WT1["waits, then prints the reached AgentStatus; exit 0"]
-  DW -->|"WT2: tmux, wezterm, or zellij"| WT2["AgentLifecycleUnsupportedError caught and re-raised as backend-unsupported: exit 1, help naming the herdr-only constraint"]
+  DW -->|"WT4: otty"| WT4["drives otty pane wait --pane; prints idle; exit 0"]
+  DW -->|"WT5: otty, --until it cannot end on"| WT5["AgentWaitStatesUnsupportedError caught and re-raised as backend-unsupported: exit 1, help saying to narrow --until"]
+  DW -->|"WT2: tmux, wezterm, or zellij"| WT2["AgentLifecycleUnsupportedError caught and re-raised as backend-unsupported: exit 1, help naming the backends that have the wait"]
 ```
 
 ## Scenario map
@@ -106,10 +122,12 @@ capability and refusal decision these verbs drive is in [`agent/`](../../agent/R
 | S1 `--format json` → `{ pane, agentStatus }` | the same herdr pane, `--format json` | `agent status --format json emits pane and agentStatus as a structured payload` |
 | S3 no-feed backend → the pane printed, status absent, exit 0 | a tmux pane | `agent status on a backend with no agent-state feed prints the pane with no status, and exits 0` |
 
-### `agent wait` — drives herdr's capability, or refuses naming the backend
+### `agent wait` — drives the backend's capability, or refuses naming the backend
 
 | Edge | Path (Given) | Scenario |
 |---|---|---|
 | WT1 herdr → drives the wait, prints the reached state | `agent wait <pane> --until idle --timeout 5000` on herdr | `agent wait drives the capability on herdr and reports the reached state` |
+| WT4 otty → drives `otty pane wait`, prints `idle` | `agent wait <pane> --timeout 5000` on otty | `agent wait drives the capability on otty and reports idle` |
+| WT5 an `--until` the backend cannot end on → `backend-unsupported`, exit 1, a narrow-`--until` hint | `agent wait <pane> --until blocked` on otty | `agent wait refuses an --until the backend's native wait cannot end on` |
 | WT2 tmux, wezterm, or zellij → `backend-unsupported`, exit 1 | `agent wait <pane>` on each non-herdr backend | `agent wait refuses with backend-unsupported on a backend with no agent-lifecycle capability` |
 | WT3 no pane on a non-herdr backend → the refusal outranks the missing pane | `agent wait` with no pane argument, on each non-herdr backend | `an agent-lifecycle-incapable backend is refused for the backend, not for a missing pane` |

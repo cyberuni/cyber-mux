@@ -4454,6 +4454,47 @@ describe('spec:cyber-mux/cli/agent', () => {
 		])
 	})
 
+	it('cli-agent-wait-drives-otty', async () => {
+		// otty is the SECOND backend with the capability, and it drives a different primitive:
+		// `otty pane wait --pane <id>`, not herdr's `agent wait`. A satisfied wait prints nothing, so the
+		// runner answers '' — which must still be a success, not a failure.
+		const calls: string[][] = []
+		const program = buildProgram({
+			env: { CYBER_MUX: 'otty', CYBER_MUX_PANE: 'pane:7' },
+			exec: (_cmd, args) => {
+				calls.push(args)
+				return args.slice(0, 2).join(' ') === 'pane wait' ? '' : null
+			},
+		})
+		await run(program, ['agent', 'wait', 'pane:7', '--timeout', '5000'])
+		expect(logs.join('\n')).toContain('idle')
+		expect(calls.find((c) => c[0] === 'pane' && c[1] === 'wait')).toEqual([
+			'pane',
+			'wait',
+			'--pane',
+			'pane:7',
+			'--timeout-secs',
+			'5',
+		])
+	})
+
+	it('cli-agent-wait-states-unsupported-refused', async () => {
+		// A backend that HAS the wait but cannot end it where the caller asked. backend-unsupported at
+		// exit 1 like its sibling, but the fix hint is the REAL one — narrow --until, not "use herdr".
+		catchExit()
+		const program = buildProgram({
+			env: { CYBER_MUX: 'otty', CYBER_MUX_PANE: 'pane:7' },
+			exec: () => null,
+		})
+		await expect(run(program, ['agent', 'wait', 'pane:7', '--until', 'blocked'])).rejects.toThrow('exit:1')
+		const out = logs.join('\n')
+		expect(out).toContain('backend-unsupported')
+		expect(out).toContain('otty can only end an agent wait on idle')
+		expect(out).toContain('--until idle')
+		// Not the no-capability hint — that would send the caller to the wrong backend entirely.
+		expect(out).not.toContain('run agent wait on herdr or otty')
+	})
+
 	it('cli-agent-wait-unsupported-refused', async () => {
 		// The outline's three rows — every backend with no agent-lifecycle capability is refused with
 		// backend-unsupported at exit 1, the help line naming the herdr-only constraint. The refusal is

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { AgentLifecycleUnsupportedError, agentApi, deriveAgentWait } from './agent.ts'
 import type { Exec } from './exec.ts'
+import { herdrMuxAdapter } from './mux.herdr.ts'
+import { ottyMuxAdapter } from './mux.otty.ts'
 import { tmuxMuxAdapter } from './mux.tmux.ts'
 import type { MuxAdapter } from './mux.ts'
 import { weztermMuxAdapter } from './mux.wezterm.ts'
@@ -65,13 +67,35 @@ describe('spec:cyber-mux/agent', () => {
 		return { exec, calls }
 	}
 
+	it('agent-lifecycle-present-with-primitive', () => {
+		// The other half of the absence outline, and the one that would have caught this CR's gap: a
+		// backend WITH a native per-pane agent wait carries the capability. herdr binds `herdr agent
+		// wait`, otty binds `otty pane wait`.
+		for (const adapter of [herdrMuxAdapter, ottyMuxAdapter] as MuxAdapter[]) {
+			expect(adapter.agentLifecycle).toBeDefined()
+			expect(typeof adapter.agentLifecycle?.waitForState).toBe('function')
+		}
+	})
+
 	it('agent-api-supported-reflects-backend', () => {
-		// herdr carries the agentLifecycle capability; tmux/wezterm/zellij do not. supported() reads that
-		// presence directly and never touches the exec, so an exploding runner proves it stays untouched.
-		expect(agentApi({ CYBER_MUX: 'herdr' }, { exec: explodingExec }).supported()).toBe(true)
+		// herdr and otty carry the agentLifecycle capability; tmux/wezterm/zellij do not. supported() reads
+		// that presence directly and never touches the exec, so an exploding runner proves it stays
+		// untouched.
+		for (const backend of ['herdr', 'otty']) {
+			expect(agentApi({ CYBER_MUX: backend }, { exec: explodingExec }).supported()).toBe(true)
+		}
 		for (const backend of ['tmux', 'wezterm', 'zellij']) {
 			expect(agentApi({ CYBER_MUX: backend }, { exec: explodingExec }).supported()).toBe(false)
 		}
+	})
+
+	it('agent-api-supported-and-status-part-on-otty', () => {
+		// The two members are independent, and otty is where that stops being academic: it can BLOCK on
+		// its own agent state and exposes no documented CLI read of it, so supported() is true while
+		// status() stays undefined. Nothing before otty could tell the members apart.
+		const api = agentApi({ CYBER_MUX: 'otty' }, { exec: () => JSON.stringify([{ pane_id: 'p1' }]) })
+		expect(api.supported()).toBe(true)
+		expect(api.status({ id: 'p1' })).toBeUndefined()
 	})
 
 	it('agent-api-status-reads-snapshot', () => {

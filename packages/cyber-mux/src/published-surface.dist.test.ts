@@ -48,6 +48,9 @@ describe('spec:cyber-mux/library — published surface', () => {
 			expect(typeof agent.deriveAgentWait).toBe('function')
 			expect(typeof agent.agentApi).toBe('function')
 			expect(typeof agent.AgentLifecycleUnsupportedError).toBe('function')
+			expect(typeof agent.AgentWaitStatesUnsupportedError).toBe('function')
+			expect(typeof agent.agentWaitStatesSatisfiable).toBe('function')
+			expect(typeof agent.refuseAgentWaitStates).toBe('function')
 			// The refusal error is real and names the backend it refused.
 			expect(new agent.AgentLifecycleUnsupportedError('tmux').backend).toBe('tmux')
 		})
@@ -187,7 +190,14 @@ describe('spec:cyber-mux/library — published surface', () => {
 		it('./agent exports the agent-lifecycle orchestrator and its refusal (types carry no runtime name)', () => {
 			// Only the runtime VALUES appear in Object.keys — the AgentStatus/AgentLifecycle/AgentWaitOptions
 			// types ride the surface via `mux.ts` on the `.` barrel and produce no runtime export here.
-			expect(Object.keys(agent).sort()).toEqual(['AgentLifecycleUnsupportedError', 'agentApi', 'deriveAgentWait'])
+			expect(Object.keys(agent).sort()).toEqual([
+				'AgentLifecycleUnsupportedError',
+				'AgentWaitStatesUnsupportedError',
+				'agentApi',
+				'agentWaitStatesSatisfiable',
+				'deriveAgentWait',
+				'refuseAgentWaitStates',
+			])
 		})
 	})
 

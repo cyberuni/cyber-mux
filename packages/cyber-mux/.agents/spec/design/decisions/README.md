@@ -1786,7 +1786,6 @@ Decisions (`153-remote-async` — does driving a pane on a REMOTE machine force 
   is a code change and this CR is a decision.
   ISSUE: https://github.com/cyberuni/cyber-mux/issues/153
 
-
 Decisions (`143-pane-relocation` — the move and break-out seam members, issue #143):
 
 - **TWO members, `movePane` and `breakPane`, not one** — DECIDED, with the issue. They take
@@ -1886,6 +1885,91 @@ Decisions (`143-pane-relocation` — the move and break-out seam members, issue 
   INVENTORY the refusal rests on, so a zellij that ever grows one of these verbs turns that row red
   rather than leaving a stale refusal standing.
   ISSUE: https://github.com/cyberuni/cyber-mux/issues/143
+
+Decisions (`otty-agent-lifecycle-implemented` — issue #134, the second `AgentLifecycle` binding):
+
+- **The earlier `otty-agent-lifecycle` verdict above is OVERTURNED, and it is overturned by a page
+  its own sweep never opened.** That entry is correct about everything it measured and is left
+  standing unedited; what it missed is that `otty watch:<agent>` is not otty's only wait.
+  `otty pane wait` is, and it fits `waitForState` exactly. The corrected sweep was mechanical and is
+  repeatable: all **141** URLs in `docs.otty.sh/sitemap.xml` fetched and grepped 2026-09-08. `watch:`
+  occurs on six pages, and the earlier read covered four of them — the two it did not open are
+  `/agents/orchestration` and `/terminal-features/notifications`. `/agents/orchestration` is the one
+  that carries the answer, in a capability table: *"Block until a build, a pane, a tab or another
+  agent is idle | `otty pane wait` / `otty watch:<agent>`"*. This is the SECOND time that exact page
+  has overturned a conclusion about this file (#163's `--cwd`), which is now a pattern rather than an
+  accident: it demonstrates commands and flags `/reference/cli` omits entirely.
+
+- **DECIDED: `agentLifecycle` is PRESENT on otty, bound to `otty pane wait --pane <id>`.** The gate
+  the issue set is met by that command and not by the one the issue named. It is pane-selected with
+  the same `--pane <id|index>` every other pane verb takes; it blocks; and the state it blocks on is
+  the agent's own, not the shell's: *"It exits 0 as soon as the pane is idle. For a pane running a
+  coding agent, idle is what the agent reports — an agent owns its terminal for its whole life, so
+  'back at a shell prompt' never happens there."* (`/workflows/cli-usage`). `/agents/skills` says the
+  same in prose. So this is otty's own state derivation, not a `read()`-polling lookalike, and #94's
+  refusal rule is honored rather than bent.
+
+- **`otty watch:<agent>` is STILL not used, and the reason is unchanged.** Its positional is an agent
+  session id, its flag table has no pane selector, and the agent kind is spelled into the verb — with
+  no documented CLI read mapping a pane id to either. Recorded so a later reader does not "fix" this
+  binding into the command the issue proposed.
+
+- **`until` is refused BY NAME rather than narrowed, and it gets its own error class.** `pane wait`
+  has no `--until` and ends on `idle` alone, so `AgentWaitStatesUnsupportedError(backend, requested,
+  supported)` (`src/agent-states.ts`) is thrown before any exec for any non-empty set that is not
+  exactly `['idle']`. Narrowing to idle silently is the plausible-wrong-answer shape: the wait would
+  end, return a state, and be wrong about which question it answered. It is deliberately a DIFFERENT
+  class from `AgentLifecycleUnsupportedError` — that one means *no wait here at all* and its honest
+  fix hint is "use herdr"; this one means *this wait, not those states* and its fix hint is "narrow
+  `--until`". One class would have shipped the wrong hint on otty. An omitted or empty `until` sends
+  no flag, so otty's own default applies and the seam does not restate it, matching herdr.
+
+- **A bounded `timeoutMs` NEVER becomes `--timeout-secs 0`.** otty's flag is whole seconds and
+  `--timeout-secs 0` is its spelling for *wait forever* — which is what OMITTING `timeoutMs` already
+  means at the seam. So the conversion is `Math.max(1, Math.ceil(ms / 1000))`: rounding up costs at
+  most 999ms of extra patience, rounding down costs the caller's bound entirely, and reaching 0 turns
+  a bounded wait into an unbounded one inside a blocking command. The `Math.max` is load-bearing for
+  exactly one input (`timeoutMs: 0`) and the suite pins that input specifically — dropping the `ceil`
+  alone leaves it green, which is how the gap was found.
+
+- **Satisfied vs not survives the `Exec` seam; WHICH failure it was does not, and that is stated
+  rather than faked.** otty distinguishes satisfied (exit 0), no-reportable-state (6), no-such-pane
+  (4) and timeout (9) by exit code alone, and `Exec` is `(cmd, args) => string | null` with no code.
+  So the binding returns `idle` for non-null and throws once, naming the pane, for null — with otty's
+  own sentence appended by `withReason`. **Nothing branches on `exec.lastError`**: it is documented
+  diagnostic-only, a runner is free never to set it, and a guard keyed on it is the live no-op this
+  repo already paid for once. Widening `Exec` to carry an exit code would rewrite every call site and
+  every fake on seven adapters for one backend's diagnostics; not done here, and noted as the reason
+  the timeout/no-signal distinction is unavailable rather than merely unimplemented.
+
+- **The trap in this binding, and it is `!out`.** A satisfied `otty pane wait` prints nothing
+  documented, so the runner hands back `''` — falsy, and NOT the failure sentinel. Guarding with
+  `!out` instead of `out === null` turns every successful wait into a throw. The suite pins an
+  empty-stdout success on its own; reverting the check to `!out` reddens six rows.
+
+- **The limit that could NOT be guarded, stated because it is a real divergence from herdr.** A pane
+  with no agent answers `idle` as soon as its shell is at a prompt, where herdr's `agent wait`
+  reports `agent_not_found` and throws. Guarding needs a per-pane agent read, and the *"see every
+  window, tab and pane, and which agent sits in which — `otty pane list`"* row on
+  `/agents/orchestration` is the only claim of one anywhere: no output schema for `otty panes --json`
+  or `otty pane list` is documented on any of the 141 pages, so there is no field to check. Accepted
+  and documented at the binding rather than traded for keeping the capability absent — the wait is
+  real, and a caller reaching `waitForState` has said the pane runs an agent.
+
+- **`LivePane.agentStatus` on otty STAYS `undefined`, and this is now the case that proves the two
+  members are independent.** The snapshot read remains undocumented (the earlier entry's finding,
+  unchanged), so otty is the first backend where `agentApi.supported()` is `true` while
+  `agentApi.status()` is `undefined`. Before otty every backend answered both the same way, which is
+  why the distinction had never been exercised; a scenario now pins it.
+
+- **NOTHING here was verified against a live binary, and no comment in the delivered code claims
+  otherwise.** otty is a GUI-only app with no binary on this machine, and `live-backends` cannot
+  exercise it (#128). Every argv assertion is a mocked `Exec`. Concretely unverified: that
+  `pane wait` accepts `--timeout-secs` (only `--pane`, `--tab`, `--window` and `--timeout-secs` appear
+  in doc EXAMPLES; the command has no flag table on `/reference/cli` at all), that it prints nothing
+  on success, and that exit 0 on an agent pane means the agent reported idle rather than something
+  else. One `otty pane wait --help` on a Mac settles all three.
+  ISSUE: https://github.com/cyberuni/cyber-mux/issues/134
 
 Decisions (`limux-adapter` — #157, whether to adapt `am-will/limux`):
 
