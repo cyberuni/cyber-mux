@@ -565,7 +565,23 @@ export interface WorktreeWorkspaceCapability {
 	 * Close the workspace, releasing the binding WITHOUT touching the checkout on disk — the worktree
 	 * is left for `git worktree remove` to take under cyber-mux's own gates.
 	 */
-	releaseWorkspace(exec: Exec, workspace: string): void
+	releaseWorkspace(exec: Exec, workspace: string, opts?: ReleaseWorkspaceOptions | undefined): void
+}
+
+/**
+ * How far a `releaseWorkspace` reaches when the workspace is a PRIMARY one that still has worktree
+ * workspaces open on it. Only herdr models that group at all, which is why this rides the
+ * backend-specific worktree capability rather than any shared seam member.
+ */
+export interface ReleaseWorkspaceOptions {
+	/**
+	 * Release the whole worktree GROUP, not just the workspace named. Defaults to `true`, because
+	 * cascading is what `releaseWorkspace` has always meant: herdr cascaded implicitly through 0.8.2,
+	 * and 0.9.0 put that same reach behind `workspace close --group`. Defaulting to `false` would
+	 * silently narrow the verb for every caller who never asked for a change — the group would just
+	 * stay open. Pass `false` to release only the named workspace and leave its worktree workspaces up.
+	 */
+	group?: boolean | undefined
 }
 
 /**

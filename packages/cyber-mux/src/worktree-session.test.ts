@@ -259,7 +259,9 @@ describe('spec:cyber-mux/mux/worktree', () => {
 			const removed = calls.findIndex((c) => c[0] === 'git' && c[3] === 'worktree' && c[4] === 'remove')
 			expect(closed).toBeGreaterThanOrEqual(0)
 			expect(closed).toBeLessThan(removed)
-			expect(calls[closed]).toEqual(['herdr', 'workspace', 'close', 'w21'])
+			// `--group` rides along because releasing a binding means releasing the whole worktree group —
+			// see `ReleaseWorkspaceOptions`. On a worktree's own (non-primary) workspace it changes nothing.
+			expect(calls[closed]).toEqual(['herdr', 'workspace', 'close', 'w21', '--group'])
 		})
 
 		it('worktree remove refuses uncommitted changes BEFORE releasing the workspace', () => {

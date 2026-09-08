@@ -481,6 +481,28 @@ Feature: mux placement — where a new pane opens, and what open reports back
     # left for a tag to add. Coarser than herdr's (per-WINDOW, since every tab in a window already
     # shares its workspace, and there is no move-tab-to-workspace primitive), but the same answer.
 
+  @id:placement-cmux-group-id-workspace-group
+  Scenario: a backend with a tier ABOVE its workspace groups there instead of ignoring the id
+    Given a caller opening a workspace through the cmux adapter, with a workspace group id
+    When open runs
+    Then the workspace is added to a cmux workspace group carrying that id
+    And the id reaches cmux verbatim, as both the group's name and its idempotency key
+    # cmux is the case that splits "has a real workspace tier" from "has nothing left to add". Its
+    # workspace tier does group every surface in it -- herdr's and wezterm's answer -- but cmux ALSO has
+    # a tier above it, a named collapsible section grouping multiple top-level WORKSPACES, and that is
+    # the tier this flag targets. The id cannot BE the group: cmux mints its own group ids, so the
+    # opaque id rides the idempotency key, which is what makes a repeat call find the group rather than
+    # mint a second one
+
+  @id:placement-cmux-group-only-the-workspace-route
+  Scenario: a tab or split is not grouped into the caller's own workspace
+    Given a caller opening a tab through the cmux adapter, with a workspace group id
+    When open runs
+    Then no grouping command reaches cmux
+    # a tab and a split both land in the workspace the caller is already in, and grouping that would
+    # group a space the caller never opened -- the same line tmux draws when a split creates no window
+    # of its own to tag
+
   @id:placement-group-id-not-invented
   Scenario: a group id is never invented for a caller that did not ask for one
     Given a caller opening a tab through the tmux adapter, with no workspace group id

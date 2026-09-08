@@ -1275,10 +1275,100 @@ describe('herdrMuxAdapter — capabilities without an owned node in this file', 
 		expect(worktree().bindings(() => out, { primaryRoot: '/repo' }).size).toBe(0)
 	})
 
-	it('worktree.releaseWorkspace() closes the workspace without touching the checkout', () => {
+	it('worktree.releaseWorkspace() closes the whole worktree group by default', () => {
 		const calls: string[][] = []
 		const exec = fakeExec(calls, { 'workspace close': '' })
 		worktree().releaseWorkspace(exec, 'w21')
+		// `--group` is the default because it is what the verb has always DONE: herdr cascaded
+		// implicitly through 0.8.2, and 0.9.0 put that same reach behind the flag. Without it a 0.9.0
+		// server closes only the primary and silently leaves the group open (issue #154).
+		expect(calls).toEqual([['workspace', 'close', 'w21', '--group']])
+	})
+
+	it('worktree.releaseWorkspace({ group: false }) closes only the workspace named', () => {
+		const calls: string[][] = []
+		const exec = fakeExec(calls, { 'workspace close': '' })
+		worktree().releaseWorkspace(exec, 'w21', { group: false })
+		expect(calls).toEqual([['workspace', 'close', 'w21']])
+	})
+
+	it('worktree.releaseWorkspace({ group: true }) is the default spelled out', () => {
+		const calls: string[][] = []
+		const exec = fakeExec(calls, { 'workspace close': '' })
+		worktree().releaseWorkspace(exec, 'w21', { group: true })
+		expect(calls).toEqual([['workspace', 'close', 'w21', '--group']])
+	})
+
+	it('worktree.releaseWorkspace() retries bare when the --group call fails, for pre-0.9.0 herdr', () => {
+		// Pre-0.9.0 herdr parses `--group` client-side and answers its usage line WITHOUT contacting the
+		// server (measured on 0.8.0: `usage: herdr workspace close <workspace_id>` on stderr, exit 2),
+		// so nothing was closed. There the bare verb already cascades — retrying it is what keeps one
+		// observable behavior across 0.8.x and 0.9.0. This is the case CI actually runs: the
+		// live-backends suite pins herdr v0.8.0.
+		const calls: string[][] = []
+		const exec: Exec = (_cmd, args) => {
+			calls.push(args)
+			return args.includes('--group') ? null : ''
+		}
+		worktree().releaseWorkspace(exec, 'w21')
+		expect(calls).toEqual([
+			['workspace', 'close', 'w21', '--group'],
+			['workspace', 'close', 'w21'],
+		])
+	})
+
+	it('worktree.releaseWorkspace() retries on the null sentinel ALONE, never on exec.lastError', () => {
+		// The regression this pins: keying the retry on the usage TEXT read through `exec.lastError`
+		// made the adapter work against some `Exec` implementations and silently not others. `lastError`
+		// is documented as a diagnostic a runner may never set, and the live-herdr integration suite's
+		// own runner discards stderr entirely — so against it the retry never fired and the close became
+		// a no-op on herdr 0.8.0. `null` is the ONE failure sentinel the seam guarantees, so it is the
+		// only thing this retry may read. This runner sets no `lastError` at all, exactly like that one.
+		const calls: string[][] = []
+		const exec: Exec = (_cmd, args) => {
+			calls.push(args)
+			return args.includes('--group') ? null : ''
+		}
+		worktree().releaseWorkspace(exec, 'w21')
+		expect(exec.lastError).toBeUndefined()
+		expect(calls).toEqual([
+			['workspace', 'close', 'w21', '--group'],
+			['workspace', 'close', 'w21'],
+		])
+	})
+
+	it('worktree.releaseWorkspace() sends nothing further once --group succeeds', () => {
+		// The retry is reachable ONLY through the null sentinel, so a successful group close is one call.
+		const calls: string[][] = []
+		const exec = fakeExec(calls, { 'workspace close': '' })
+		worktree().releaseWorkspace(exec, 'w21')
+		expect(calls).toEqual([['workspace', 'close', 'w21', '--group']])
+	})
+
+	it('worktree.releaseWorkspace() retrying a SERVER refusal cannot narrow the close', () => {
+		// A server-side refusal (`workspace_not_found`, `server_not_running`) fails the bare verb
+		// identically — herdr rejects the id or is not there at all, whichever flags are passed. So the
+		// retry cannot turn a failed group close into a silent primary-only one: it changes the outcome
+		// in exactly the one case it exists for, an argument rejection that never reached the server.
+		const calls: string[][] = []
+		const exec: Exec = (_cmd, args) => {
+			calls.push(args)
+			return null
+		}
+		worktree().releaseWorkspace(exec, 'w21')
+		expect(calls).toEqual([
+			['workspace', 'close', 'w21', '--group'],
+			['workspace', 'close', 'w21'],
+		])
+	})
+
+	it('worktree.releaseWorkspace({ group: false }) never retries with the flag', () => {
+		const calls: string[][] = []
+		const exec: Exec = (_cmd, args) => {
+			calls.push(args)
+			return null
+		}
+		worktree().releaseWorkspace(exec, 'w21', { group: false })
 		expect(calls).toEqual([['workspace', 'close', 'w21']])
 	})
 

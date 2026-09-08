@@ -20,6 +20,7 @@ import type {
 	OpenedPane,
 	OpenWorktreeWorkspaceOptions,
 	RegionPane,
+	ReleaseWorkspaceOptions,
 	WorkspaceTab,
 	WorktreeWorkspace,
 } from './mux.ts'
@@ -104,7 +105,7 @@ export interface BoundWorktreeWorkspaceCapability {
 	createInWorkspace(opts: CreateWorktreeWorkspaceOptions, deps?: MuxDeps | undefined): WorktreeWorkspace
 	openInWorkspace(opts: OpenWorktreeWorkspaceOptions, deps?: MuxDeps | undefined): WorktreeWorkspace
 	bindings(opts: { primaryRoot: string }, deps?: MuxDeps | undefined): Map<string, string>
-	releaseWorkspace(workspace: string, deps?: MuxDeps | undefined): void
+	releaseWorkspace(workspace: string, opts?: ReleaseWorkspaceOptions | undefined, deps?: MuxDeps | undefined): void
 }
 
 /** The region-inspection capability with its `Exec` bound — see `MuxSession`. */
@@ -214,7 +215,7 @@ function bindWorktree(
 		createInWorkspace: (opts, d) => wt.createInWorkspace(pick(d), opts),
 		openInWorkspace: (opts, d) => wt.openInWorkspace(pick(d), opts),
 		bindings: (opts, d) => wt.bindings(pick(d), opts),
-		releaseWorkspace: (workspace, d) => wt.releaseWorkspace(pick(d), workspace),
+		releaseWorkspace: (workspace, opts, d) => wt.releaseWorkspace(pick(d), workspace, opts),
 	}
 }
 

@@ -120,8 +120,12 @@ Or reach it raw, off the exec-first [`MuxAdapter`](/cyber-mux/api/mux-adapter/#t
   in a bound workspace (the remedy that groups a worktree plain git created earlier).
 - **`bindings({ primaryRoot }, deps?)`** / **`bindings(exec, { primaryRoot })`** → `Map<path, workspace>`
   — which workspace each worktree is open in; the one fact git cannot answer.
-- **`releaseWorkspace(workspace, deps?)`** / **`releaseWorkspace(exec, workspace)`** — close the
-  workspace, releasing the binding **without** touching the checkout on disk.
+- **`releaseWorkspace(workspace, opts?, deps?)`** / **`releaseWorkspace(exec, workspace, opts?)`** —
+  close the workspace, releasing the binding **without** touching the checkout on disk. When the
+  workspace is a *primary* one that still has worktree workspaces open on it, the close reaches the
+  whole group: `opts.group` defaults to `true`, which herdr 0.9.0 spells `workspace close --group`
+  (it cascaded implicitly through 0.8.2). Pass `{ group: false }` to release only the workspace named
+  and leave its worktree workspaces up.
 
 Every member here *opens* a workspace; none is a route for a bare worktree add — that is always plain
 git. On tmux (`mux.worktree`/`adapter.worktree === undefined`) callers fall back to plain git plus a
