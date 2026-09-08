@@ -76,6 +76,13 @@ import { pollForOutput } from './wait-output.ts'
  *   readiness gate for the second. So the older claim that every verb but `--direction` works against
  *   a client-less session is wrong: the listing is silent there, and everything in this file that
  *   resolves an id reads the listing.
+ * - **A `zellij action` can fail its own PRE-FLIGHT and never reach the server at all**, while the
+ *   session is up and answers correctly a millisecond later. Driven on a live 0.45.0 under CPU
+ *   contention: 2 bad answers in 600 `list-clients` calls — one exit-1 `There is no active session!`
+ *   with an explicit `--session` naming that live session, one that exited **0 printing nothing** —
+ *   and both correct on an immediate re-ask. `zellij list-sessions` polled 400 times against an idle
+ *   server never missed, which is what makes this the busy-server probe rather than a stale socket.
+ *   `ACTION_ATTEMPTS` is what this file does about it, and issue #115 is what it cost before that.
  *
  * Real capability shape that fell out of the probe:
  *
@@ -263,7 +270,7 @@ export function createZellijAdapter(deps: { session?: string | undefined }): Mux
 			// split lands beside, and for a float how it lands over the caller's REGION rather than the one
 			// the user is looking at. That focus move is now UNDONE at the end of this branch rather than
 			// left standing, which is the whole of what changed.
-			if (opts.from) adapter.focus(exec, opts.from)
+			if (opts.from) focusClientOn(exec, opts.from.id)
 			// `--floating` and `--direction` are mutually exclusive by construction: a float sits above the
 			// layout, so there is no side of anything for it to be on. `ratio` is dropped on BOTH paths
 			// here — a tiled split cannot be sized at all (see `canSizeSplits`), and a float has no
@@ -292,7 +299,7 @@ export function createZellijAdapter(deps: { session?: string | undefined }): Mux
 			// cross tabs. It also reads a focus history one entry deep, and the sequence here makes two
 			// moves, so even within one tab it would land on `from` rather than on the caller. An explicit
 			// id has neither limit, and it is a primitive already driven against a live 0.44.3.
-			if (restoreTo) exec('zellij', ['action', 'focus-pane-id', restoreTo])
+			if (restoreTo) focusClientOn(exec, restoreTo)
 			runLaunch(adapter, exec, opened, opts.env, opts.launch)
 			return opened
 		},
@@ -301,12 +308,12 @@ export function createZellijAdapter(deps: { session?: string | undefined }): Mux
 			if (tier === 'tab') {
 				// `rename-tab-by-id` names a tab by id without visiting it — the read-only side effects a
 				// rename promises. (`rename-tab` alone would target the focused tab.)
-				exec('zellij', ['action', 'rename-tab-by-id', target.id, name])
+				zellijAction(exec, ['action', 'rename-tab-by-id', target.id, name])
 				return
 			}
 			// `rename-pane --pane-id` names a specific pane by id — no focus move, unlike the bare
 			// `rename-pane` which renames the focused pane.
-			exec('zellij', ['action', 'rename-pane', '--pane-id', target.id, name])
+			zellijAction(exec, ['action', 'rename-pane', '--pane-id', target.id, name])
 		},
 
 		group() {
@@ -323,7 +330,7 @@ export function createZellijAdapter(deps: { session?: string | undefined }): Mux
 			// `write-chars` types the literal characters with NO trailing newline — the literal-text-no-
 			// Enter guarantee. Literal means literal: text that names a key (`Enter`) is typed as those
 			// characters, never pressed. That is why this is its own verb, not a mode of `sendKeys`.
-			exec('zellij', ['action', 'write-chars', '--pane-id', target.id, text])
+			zellijAction(exec, ['action', 'write-chars', '--pane-id', target.id, text])
 		},
 
 		sendKeys(exec, target, keys) {
@@ -332,7 +339,7 @@ export function createZellijAdapter(deps: { session?: string | undefined }): Mux
 			// anything outside the core is forwarded verbatim — the seam's passthrough — reaching a
 			// backend-specific key at the cost of portability. `Enter` is a key like any other here: this
 			// presses it because the caller asked; it never ADDS one (that is `submit`'s job).
-			exec('zellij', ['action', 'send-keys', '--pane-id', target.id, ...keys.map(toZellijKey)])
+			zellijAction(exec, ['action', 'send-keys', '--pane-id', target.id, ...keys.map(toZellijKey)])
 		},
 
 		submit(exec, target, text) {
@@ -355,23 +362,23 @@ export function createZellijAdapter(deps: { session?: string | undefined }): Mux
 			// `--full` IS Zellij's all-history spelling, so an unbounded window is its own primitive rather
 			// than a trimmed one — and nothing was omitted from it by construction.
 			if (opts?.lines === 'all') {
-				const text = exec('zellij', ['action', 'dump-screen', '--pane-id', target.id, '--full']) ?? ''
+				const text = zellijAction(exec, ['action', 'dump-screen', '--pane-id', target.id, '--full']) ?? ''
 				return opts.truncation ? { text, truncated: false } : { text }
 			}
 			if (opts?.lines != null) {
-				const full = exec('zellij', ['action', 'dump-screen', '--pane-id', target.id, '--full']) ?? ''
+				const full = zellijAction(exec, ['action', 'dump-screen', '--pane-id', target.id, '--full']) ?? ''
 				const text = lastLines(full, opts.lines)
 				// The one backend whose truncation answer costs NO extra query: a `lines` read already holds
 				// the whole scrollback, and the rows this dropped off the top are exactly the rows omitted.
 				// Same rule as everywhere else (`isReadTruncated`), just with the deeper read already in hand.
 				return opts.truncation ? { text, truncated: isReadTruncated(text, full) } : { text }
 			}
-			const text = exec('zellij', ['action', 'dump-screen', '--pane-id', target.id]) ?? ''
+			const text = zellijAction(exec, ['action', 'dump-screen', '--pane-id', target.id]) ?? ''
 			if (!opts?.truncation) return { text }
 			// A bare read is the viewport, so the deeper read is the full scrollback — Zellij has no
 			// "viewport plus one row" form, and taking the whole dump answers the same question: more rows
 			// than the viewport means rows sit above it.
-			const full = exec('zellij', ['action', 'dump-screen', '--pane-id', target.id, '--full']) ?? ''
+			const full = zellijAction(exec, ['action', 'dump-screen', '--pane-id', target.id, '--full']) ?? ''
 			return { text, truncated: isReadTruncated(text, full) }
 		},
 
@@ -386,11 +393,11 @@ export function createZellijAdapter(deps: { session?: string | undefined }): Mux
 		focus(exec, target) {
 			// `focus-pane-id` focuses a specific pane by id, crossing tabs to reach it — the one primitive
 			// whose name is exactly this method's intent (added in 0.44.1).
-			exec('zellij', ['action', 'focus-pane-id', target.id])
+			zellijAction(exec, ['action', 'focus-pane-id', target.id])
 		},
 
 		teardown(exec, target) {
-			exec('zellij', ['action', 'close-pane', '--pane-id', target.id])
+			zellijAction(exec, ['action', 'close-pane', '--pane-id', target.id])
 		},
 
 		paneExists(exec, target) {
@@ -446,8 +453,8 @@ export function createZellijAdapter(deps: { session?: string | undefined }): Mux
 			// cannot tell those apart, so gating on it would throw on the commonest case — zooming the
 			// pane the user is already on. The `toggle-fullscreen` below is the call that reports a real
 			// failure: a pane zellij cannot resolve fails there, by name, and is thrown from there.
-			if (zoomed) exec('zellij', ['action', 'focus-pane-id', target.id])
-			if (exec('zellij', ['action', 'toggle-fullscreen', '-p', target.id]) === null) {
+			if (zoomed) focusClientOn(exec, target.id)
+			if (zellijAction(exec, ['action', 'toggle-fullscreen', '-p', target.id]) === null) {
 				throw new Error(`zellij could not ${zoomed ? 'zoom' : 'unzoom'} pane ${target.id}`)
 			}
 		},
@@ -608,6 +615,53 @@ const LIST_PANES_ATTEMPTS = 3
 const OPEN_RESOLVE_ATTEMPTS = 10
 
 /**
+ * How many times a `zellij action` that came back with NOTHING AT ALL is re-issued — the second half
+ * of the same lossiness `LIST_PANES_ATTEMPTS` stands in front of, and the one that made this backend's
+ * real-boundary suite flaky (issue #115).
+ *
+ * The failure is zellij's own PRE-FLIGHT, not the action. `zellij action` enters
+ * `send_action_to_session`, which calls `get_active_session()` **before** it honors `--session`
+ * (v0.45.0 `src/commands.rs`). That walks the socket dir and probes every session with
+ * `assert_socket` — connect, send `ClientToServerMsg::ConnStatus`, and require a `Connected` message
+ * back; `None | Some((_, _)) => false` (v0.45.0 `zellij-utils/src/sessions.rs`), so a reply that is
+ * late, lost, or simply something else drops a LIVE session off the list. An empty list is
+ * `ActiveSession::None`, and the CLI prints `There is no active session!` and exits 1 — with an
+ * explicit `--session` naming a session that is up and answering a millisecond later.
+ *
+ * Measured against a live 0.45.0 under CPU contention (40 spinners on 16 cores, the shape a loaded CI
+ * runner has): 2 bad answers in 600 `list-clients` calls — one that exit-1 `There is no active
+ * session!`, one that exited **0 printing nothing at all** — and BOTH answered correctly when the same
+ * command was re-asked immediately. `zellij list-sessions` polled 400 times against an idle server
+ * never missed, which is what says this is the busy-server probe rather than a stale socket file.
+ *
+ * So a re-ask here is not a retry that waits out an assertion: a command that failed its pre-flight
+ * never reached the server and therefore did not happen, and re-issuing it COMPLETES one operation
+ * rather than repeating one. That is also why it is safe on `rename-pane`, `focus-pane-id`,
+ * `close-pane`, `write-chars` and `toggle-fullscreen` alike — including the one verb that is a
+ * TOGGLE, which a repeat would otherwise undo.
+ *
+ * Deliberately NOT used on `new-pane`/`new-tab`, the only verbs that CREATE. The argument above says
+ * nothing was created when the client exited nonzero, but "probably nothing" is not good enough for a
+ * verb whose repeat leaves a stray pane behind, and those two already fail LOUDLY by name rather than
+ * as a plausible wrong answer — the failure shape this file is built to prefer.
+ */
+const ACTION_ATTEMPTS = 3
+
+/**
+ * One `zellij action`, re-issued while it answers nothing at all — see `ACTION_ATTEMPTS` for the
+ * pre-flight failure this stands in front of and for why re-issuing is sound.
+ *
+ * `null` only when every attempt came back `null`, which is then a real failure the caller reports.
+ */
+function zellijAction(exec: Exec, args: string[]): string | null {
+	for (let attempt = 1; attempt <= ACTION_ATTEMPTS; attempt++) {
+		const out = exec('zellij', args)
+		if (out !== null) return out
+	}
+	return null
+}
+
+/**
  * One `zellij action list-panes --json` read, parsed defensively — `undefined` for output that is not
  * a pane array, so a caller can tell "zellij did not answer" from "zellij answered, with no panes".
  * Every id is QUALIFIED on the way out (see `zellijPaneId`), so what this returns — and therefore
@@ -682,13 +736,58 @@ function paneIdSet(exec: Exec): ReadonlySet<string> {
  * carries no client qualifier any more than it carries a session one), and with several attached
  * there is no "the caller's client" for it to prefer.
  *
- * `undefined` on an empty or unparseable answer — a session no client has ever attached to reports
- * exactly that. Nothing to restore then, and nothing was stolen either, so the caller issues no
- * focus verb rather than inventing one.
+ * `undefined` means "zellij answered, and NO client is attached" — never "zellij did not answer". The
+ * two used to collapse onto the same value, and that is the bug behind issue #115's focus-restore
+ * failure: an `open({ from })` reads this to learn where to put focus back, so a lost answer read as
+ * "no client" made the restore silently do nothing and left the client on the pane the open created.
+ * Observed on CI as `expected 'terminal_5' to be 'terminal_0'` — a plausible wrong answer, which is
+ * the worst shape this file can produce.
+ *
+ * The two are told apart by SHAPE. A `list-clients` answer is a `CLIENT_ID`-headed table; anything
+ * else — the empty string a dropped reply prints, or another command's output — is not an answer at
+ * all and is re-asked (`ACTION_ATTEMPTS`). A well-formed table with no rows under the header IS an
+ * answer, and it says nothing is attached, so it returns `undefined` on the first read without
+ * spending a re-ask on a session that is genuinely client-less.
  */
 function clientPane(exec: Exec): string | undefined {
-	const row = (exec('zellij', ['action', 'list-clients']) ?? '').split('\n')[1]
-	return row?.trim().split(/\s+/)[1] || undefined
+	for (let attempt = 1; attempt <= ACTION_ATTEMPTS; attempt++) {
+		const out = exec('zellij', ['action', 'list-clients'])
+		// Not a clients table: a dropped reply, or one delivered from a different command. Both were
+		// seen live (`ACTION_ATTEMPTS`), and neither carries an answer to reject or believe.
+		if (out === null || !/^CLIENT_ID\b/.test(out)) continue
+		const row = out.split('\n')[1]
+		// Header only — the real "no client attached", which the caller must not re-ask its way past.
+		if (row === undefined) return undefined
+		const id = row.trim().split(/\s+/)[1]
+		if (id) return id
+	}
+	return undefined
+}
+
+/**
+ * Focus a pane and CONFIRM the client got there, rather than trusting that the verb landed.
+ *
+ * `focus-pane-id` returns as soon as the server accepts it, and — per `ACTION_ATTEMPTS` — it may not
+ * reach the server at all. Its exit code cannot close the gap: measured on 0.45.0 it exits **2** both
+ * when the pane is ALREADY focused (a success for this purpose) and when the pane does not exist, so
+ * `setPaneZoom` documents why it goes unchecked. `list-clients` is the observable that does answer,
+ * and this is where the two callers whose CORRECTNESS depends on the focus having landed read it.
+ *
+ * Why those two need it: a `--direction` split issued while the client still sits on the old pane
+ * splits the wrong pane — or, if that old pane is a plugin pane, fails SILENTLY (this file's header).
+ * And `toggle-fullscreen -p <id>` on a pane the client is not on, in a tab that already has a
+ * fullscreen pane, simply LEAVES fullscreen and reports success — issue #115's
+ * `expected 'false' to be 'true'`, after a 15s poll that never had anything to wait for.
+ *
+ * A client-less session answers `undefined` and this returns immediately: there is no client to move,
+ * nothing could have been stolen, and every caller here degrades to today's fire-and-forget.
+ */
+function focusClientOn(exec: Exec, id: string): void {
+	for (let attempt = 1; attempt <= ACTION_ATTEMPTS; attempt++) {
+		zellijAction(exec, ['action', 'focus-pane-id', id])
+		const on = clientPane(exec)
+		if (on === undefined || samePane(on, id)) return
+	}
 }
 
 /**

@@ -2280,3 +2280,69 @@ Decisions (`152-focus-gaps` — the focus-reporting and focus-on-open gaps, issu
   ends where they started.
 
 ISSUE: https://github.com/cyberuni/cyber-mux/issues/152
+
+Decisions (`115-zellij-lossy-action` — why the zellij real-boundary suite flaked, issue #115):
+
+- **The cause is zellij's own PRE-FLIGHT, not any assertion in the suite.** `zellij action` enters
+  `send_action_to_session`, which calls `get_active_session()` **before** it honors `--session`
+  (v0.45.0 `src/commands.rs:404-413`). That walks the socket dir and probes every session with
+  `assert_socket` — connect, send `ClientToServerMsg::ConnStatus`, and require a `Connected` message
+  back, where `None | Some((_, _)) => false` (v0.45.0 `zellij-utils/src/sessions.rs:148-168`). A
+  reply that is late, lost, or simply something else drops a **live** session off the list; an empty
+  list is `ActiveSession::None`, and the CLI prints `There is no active session!` and exits 1 with an
+  explicit `--session` naming a session that answers correctly a millisecond later.
+- **Measured, not inferred.** Driven against a live 0.45.0 under CPU contention (40 spinners on 16
+  cores — the shape a loaded CI runner has): **2 bad answers in 600 `list-clients` calls**, one
+  exit-1 `There is no active session!` and one that **exited 0 printing nothing at all**, and **both
+  answered correctly on an immediate re-ask**. `zellij list-sessions` polled 400 times against an
+  IDLE server never missed, which is what says this is the busy-server probe rather than a stale
+  socket file. Reply MISDELIVERY was measured too, in the same shape the file header already claimed:
+  a `list-clients` that returned the previous `list-panes --json` payload, and a `new-tab` that
+  returned the previous `list-clients` table.
+- **One cause, three faithful consequences** — which is why the issue read as three unrelated bugs.
+  `clientPane` conflated "zellij did not answer" with "no client is attached", so `open({ from })`
+  skipped its restore and left the client on the pane it had just made (CI: `expected 'terminal_5' to
+  be 'terminal_0'`). `setPaneZoom` issued `focus-pane-id` unchecked, and `toggle-fullscreen -p <id>`
+  on a pane the client is NOT on, in a tab that already has a fullscreen pane, simply LEAVES
+  fullscreen and reports success (CI: `expected 'false' to be 'true'` after a 15s poll with nothing
+  to wait for). And a dropped `rename-pane` never happened at all, so the row polling for the name
+  could never go green (reproduced locally: `expected 'Pane #1' to be 'cm-renamed'`).
+- **A re-ask here is not a retry that waits out an assertion.** A command that failed its pre-flight
+  never reached the server and therefore did not happen; re-issuing it COMPLETES one operation rather
+  than repeating one. That is also what makes it sound on `toggle-fullscreen`, the one verb that is a
+  TOGGLE and whose repeat would otherwise undo itself. `ACTION_ATTEMPTS` is 3, bounded, and a real
+  failure still surfaces by name.
+- **What is deliberately NOT re-asked: `new-pane` and `new-tab`, the only verbs that CREATE.** The
+  argument above says nothing was created when the client exited nonzero, but "probably nothing" is
+  not good enough for a verb whose repeat leaves a stray pane behind. Those two keep failing LOUDLY
+  by name, which is the failure shape this backend prefers over a plausible wrong answer. **Accepted
+  cost, stated rather than hidden:** a pre-flight drop on an open still reds the suite. It did not
+  occur in 40 post-fix runs, and if it ever does it reports as `zellij action new-pane failed`, which
+  names itself.
+- **The two reads whose CORRECTNESS depends on a focus having LANDED now confirm it** —
+  `open({ from })` before it splits, and `setPaneZoom` before it toggles (`focusClientOn`). This is
+  the ordering assumption the issue asked for: `focus-pane-id` returns when the server accepts it,
+  not when the client has moved, and its exit code cannot close the gap (measured on 0.45.0 it exits
+  **2** both when the pane is already focused — a success here — and when the pane does not exist).
+  `list-clients` is the observable that answers, so it is read. A client-less session answers and is
+  believed on the first look, so nothing here polls for a client to appear.
+- **"No client attached" and "no answer" are told apart by SHAPE, not by retrying until something
+  shows.** A `list-clients` answer is a `CLIENT_ID`-headed table; anything else is not an answer and
+  is re-asked. A well-formed table with no rows under the header IS an answer and returns immediately.
+- **Proven by reproduction count, before and after.** Across three measurement sets on a live 0.45.0
+  under deliberate CPU contention, the unmodified tree failed **6 of 60** runs and the fixed tree
+  **0 of 40**. Two of the three sets INTERLEAVED the trees run by run — swap files, run, swap back,
+  run — so any other load on the box landed on both halves rather than on whichever ran first:
+  25 pairs at moderate contention (before 24/25, after 25/25) and 15 pairs at heavy contention
+  (before 13/15, after 15/15). The failures were the issue's exact signature — SIX different
+  assertions, never the same one twice: `open() at pane:right`, `open() at pane:float`, `open() with
+  no from` (`expected '' to be 'terminal_0'`), `rename()` (`expected 'Pane #1' to be 'cm-renamed'`),
+  `setPaneZoom(false)` (`zellij could not zoom pane terminal_19`), and the harness gate itself
+  (`the client would not park on the terminal pane terminal_0, it is on ""`) — that last one being
+  `clientPane` losing its answer, reported as a session that never came up.
+  Each half of the fix was also reverted in turn and the new unit rows watched go red: three mutants,
+  three distinct red sets.
+- **Untested, and stated as such:** only zellij 0.45.0 was driven, on Linux. The pre-flight code path
+  cited above was read out of the v0.45.0 source tree; the BEHAVIOR it explains was measured.
+
+ISSUE: https://github.com/cyberuni/cyber-mux/issues/115

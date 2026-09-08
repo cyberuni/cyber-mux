@@ -82,11 +82,19 @@ function herdrExec(calls: string[][]): Exec {
  */
 function zellijExec(calls: string[][], listings: string[], client?: string): Exec {
 	const queued = [...listings]
+	// The client MOVES when a focus lands, the way a real one does. Modeled rather than frozen because
+	// `open` now CONFIRMS its focus against `list-clients` before it splits (see `focusClientOn` in
+	// `mux.zellij.ts`): a fake whose client never moves would report a focus that never lands and send
+	// the adapter round its bounded re-ask, which is a fake artifact rather than anything about `open`.
+	let on = client
 	return (_cmd, args) => {
 		calls.push(args)
 		if (args[1] === 'list-panes') return queued.length > 1 ? queued.shift()! : (queued[0] ?? '[]')
-		if (args[1] === 'list-clients')
-			return client ? `CLIENT_ID PANE_ID RUNNING\n1 ${client} zsh` : 'CLIENT_ID PANE_ID RUNNING'
+		if (args[1] === 'list-clients') return on ? `CLIENT_ID PANE_ID RUNNING\n1 ${on} zsh` : 'CLIENT_ID PANE_ID RUNNING'
+		if (args[1] === 'focus-pane-id') {
+			if (on) on = args[2]
+			return ''
+		}
 		if (args[1] === 'new-pane') return 'terminal_9'
 		if (args[1] === 'new-tab') return '2'
 		return ''
@@ -270,9 +278,13 @@ describe('spec:cyber-mux/mux/placement', () => {
 				['list-panes', '--json'],
 				['list-clients', undefined],
 				['focus-pane-id', 'terminal_5'],
+				// Each focus is CONFIRMED against the client before anything is built on it — a split
+				// issued while the client has not moved yet splits the wrong pane.
+				['list-clients', undefined],
 				['new-pane', '--direction'],
 				['list-panes', '--json'],
 				['focus-pane-id', 'terminal_3'],
+				['list-clients', undefined],
 			])
 		})
 

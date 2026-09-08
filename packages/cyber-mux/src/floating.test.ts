@@ -169,6 +169,9 @@ describe('spec:cyber-mux/mux/placement', () => {
 			const exec = fakeZellijExec(calls, {
 				'new-pane': 'terminal_9',
 				'list-panes': [ZELLIJ_LIST_NONE, ZELLIJ_LIST_ONE],
+				// The client is already on `terminal_3`, so the focus confirms on its first look.
+				'list-clients': 'CLIENT_ID PANE_ID RUNNING\n1 terminal_3 zsh',
+				'focus-pane-id': '',
 			})
 			zellijMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:float', from: { id: 'terminal_3' } })
 			// `new-pane` has no target flag beyond `--tab-id`, so focusing is the only anchor available.
@@ -178,7 +181,9 @@ describe('spec:cyber-mux/mux/placement', () => {
 			expect(calls[0]).toEqual(['action', 'list-panes', '--json'])
 			expect(calls[1]).toEqual(['action', 'list-clients'])
 			expect(calls[2]).toEqual(['action', 'focus-pane-id', 'terminal_3'])
-			expect(calls[3]).toEqual(['action', 'new-pane', '--floating', '--cwd', '/unit'])
+			// The focus is confirmed landed before the float is opened over it.
+			expect(calls[3]).toEqual(['action', 'list-clients'])
+			expect(calls[4]).toEqual(['action', 'new-pane', '--floating', '--cwd', '/unit'])
 		})
 
 		it('names the float at birth with --name, and reports the ambient session as its workspace', () => {

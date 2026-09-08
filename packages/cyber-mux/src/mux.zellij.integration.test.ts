@@ -72,9 +72,25 @@ describe.skipIf(!hasZellij() || !hasScript())('spec:cyber-mux/mux', () => {
 		 * tiled pane under it — so that flag answers "focused within its layer", not "where the client
 		 * is". `new-pane --direction` cares about the client, so this row of `list-clients` is the only
 		 * signal that means the precondition.
+		 *
+		 * SHAPE-CHECKED and re-asked, the same rule `mux.zellij.ts`'s own `clientPane` follows and for
+		 * the same measured reason (see `ACTION_ATTEMPTS` there): a `zellij action` can lose its
+		 * pre-flight against a busy server and print nothing at all while the session is up. Read once,
+		 * that answered `''` here and the row asserting the client had not moved failed with
+		 * `expected '' to be 'terminal_0'` — a harness artifact reported as an adapter defect, which is
+		 * issue #115's whole complaint. Only a `CLIENT_ID`-headed table is an answer; anything else is
+		 * re-asked, and a header with no rows under it stays `''` because that is a real answer.
 		 */
 		function clientPane(): string {
-			return (exec('zellij', ['action', 'list-clients']) ?? '').split('\n')[1]?.trim().split(/\s+/)[1] ?? ''
+			for (let attempt = 1; attempt <= 3; attempt++) {
+				const out = exec('zellij', ['action', 'list-clients'])
+				if (out === null || !/^CLIENT_ID\b/.test(out)) continue
+				const row = out.split('\n')[1]
+				if (row === undefined) return ''
+				const id = row.trim().split(/\s+/)[1]
+				if (id) return id
+			}
+			return ''
 		}
 
 		/**
