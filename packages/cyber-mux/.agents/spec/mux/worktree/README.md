@@ -66,19 +66,50 @@ business; the worktree **binding** is a different question and neither answers f
 
 - **Disposability is a determination over git facts, computed here** — the binding says only what is
   currently *holding* a worktree, so a free one is either finished or merely idle. Two further git
-  facts close that gap: **merged** (the branch's tip is an ancestor of the repo's default branch, so
-  its work has landed) and **dirty** (the checkout has uncommitted changes). The default branch is
-  **resolved, never assumed** — the remote-tracking ref first, because "merged" means landed *upstream*
-  in the workflow this serves, then the primary checkout's own branch, which is the trunk for a
-  local-only repo. `isWorktreeRemovable` composes merged **and** clean **and** unoccupied into the one
-  predicate provision and prune share.
+  facts close that gap: **merged** (the branch's work has landed on the repo's default branch) and
+  **dirty** (the checkout has uncommitted changes). The default branch is **resolved, never assumed** —
+  the remote-tracking ref first, because "merged" means landed *upstream* in the workflow this serves,
+  then the primary checkout's own branch, which is the trunk for a local-only repo.
+  `isWorktreeRemovable` composes merged **and** clean **and** unoccupied into the one predicate
+  provision and prune share.
 
   Every signal degrades to an **absent field, never `false`**: a detached HEAD has no branch to ask
   about, a vanished checkout no working tree to read, a repo with no resolvable default branch nothing
   to measure against. Undeterminable must never count as safe to delete, so `isWorktreeRemovable`
-  demands the positive facts rather than the absence of negative ones. A **squash** merge rewrites the
-  commits and so reads unmerged — the signal errs toward "still needed", because under-reporting a
-  candidate costs the reader one check while over-reporting costs them work.
+  demands the positive facts rather than the absence of negative ones.
+
+- **The landed signal is LAYERED, in cost order, and every layer is positive-only** — git's own
+  `--merged` is structurally blind to a **squash** merge, because the squash commit on the target is a
+  rewritten tip with no ancestry link back to the branch. Left there, a squash-merging repo
+  under-reports every reusable worktree and a pool built on `provision` never recycles — it only ever
+  creates. Three layers are **added** to the ancestry answer rather than replacing it:
+
+  | Layer | Reads | Sees a squash | Cost |
+  |---|---|---|---|
+  | `ancestor` | `git branch --merged <target>` | no | one call for the whole repo |
+  | `upstream-gone` | `%(upstream:track)` is `[gone]` | yes, and rebase and merge commits alike | one call for the whole repo, offline |
+  | `squash-patch` | `commit-tree <branch>^{tree} -p <merge-base>`, then `git cherry` | yes, when the squash landed unedited | three calls per unresolved branch, offline |
+  | `forge` | the forge's own word on a merged PR for the head branch | yes, authoritatively | network + auth, **opt-in only** |
+
+  `mergedSignal` reports **which** layer spoke, because the layers do not carry the same authority and
+  a caller auditing a reclaim needs to see whether it rested on git's proof or on a heuristic.
+
+  The composition rule is the whole correctness argument. Only layer 1 may report a **negative**;
+  every later layer is **positive-only**, so the composite is a monotone OR and two layers can never
+  contradict each other. A squash that was conflict-resolved or hand-edited produces a different patch,
+  does not match, and therefore degrades to **"not reusable"** rather than to a false positive. The
+  only disagreement that can arise is between a landed signal and a **guard** — dirty, occupied,
+  stale, primary — and there the guard always wins.
+
+  `upstream-gone` is read, never refreshed: the listing does not run `git fetch --prune` on the
+  caller's behalf, because a report must not reach for the network or move the repo's refs as a side
+  effect. The signal is exactly as fresh as the caller's last fetch.
+
+  What a wrong positive can and cannot cost is the reason this is safe to layer at all: **neither
+  `provision` nor `worktree remove` deletes the branch ref.** Prune removes the checkout; provision
+  repoints it to a fresh branch. Either way the old branch still names its commits, so **committed
+  work outlives a wrong answer**. The only thing at risk is **uncommitted** work, which the `dirty`
+  guard refuses outright.
 
   The library **reports; it never acts.** `listWorktreesFromGit` is a pure read; `removeWorktreeSafely`
   keeps exactly the gates it always had and consults no disposability signal. Removability is a fact
@@ -106,6 +137,12 @@ graph TD
   PAVAIL -->|"no"| CREATE["create a fresh checkout with plain git; report created"]
   PAVAIL -.->|"gate is a PARAMETER, default isWorktreeRemovable; a host may inject its own"| GATE["the primary checkout is filtered out before the gate ever runs"]
   SV -->|"listWorktreesFromGit"| GITF["path, branch, linked, prunable, merged, dirty from git; only the binding from the backend"]
+  GITF --> LAYERS{"the landed signal, in cost order"}
+  LAYERS -->|"ancestry clears it"| LANDED["merged true, attributed to the layer that spoke"]
+  LAYERS -->|"remote-tracking ref is gone"| LANDED
+  LAYERS -->|"collapsed branch already applied by patch-id"| LANDED
+  LAYERS -->|"opt-in forge says the PR merged"| LANDED
+  LAYERS -->|"no layer matched"| DEGRADE
   GITF --> DEGRADE["a signal git cannot determine is an ABSENT field, never false"]
   SV -->|"isWorktreeRemovable"| COMPOSITE["merged AND clean AND unoccupied; an undeterminable signal never clears"]
   SV -->|"removeWorktreeSafely"| GATES{"gates"}
@@ -140,6 +177,18 @@ Every scenario in [`worktree.feature`](./worktree.feature), one row each, groupe
 | `list` → every worktree fact from git, never the backend's | a backend that also enumerates worktrees | `the library reads every worktree fact from git, whatever the backend` |
 | the default branch is resolved, never assumed | a repo whose default branch is not `main` | `the default branch merged is measured against is resolved, never assumed` |
 | an undeterminable signal → absent, never `false`, and never removable | a detached HEAD and a vanished checkout | `a disposability signal git cannot determine is absent, never false` |
+
+### the landed signal is layered, in cost order, and positive-only
+
+| Edge | Path (Given) | Scenario |
+|---|---|---|
+| layers add to ancestry rather than replacing it, and name which one spoke | a squash merge, a gone upstream, and a merge commit | `the landed signal layers cheaper signals over git ancestry, and names which one spoke` |
+| cost order → cheap layers batched once, cleared branches skip the rest | worktrees cleared by different layers | `the layers run in cost order and the cheap ones are read once for the whole repo` |
+| a signal that cannot match → "not reusable", never a false positive | a hand-edited squash, and work continued after landing | `every layer is positive-only, so a signal that cannot match degrades to "not reusable"` |
+| a landed signal never outranks a guard | a cleared worktree that is dirty, and one that is occupied | `a landed signal never outranks a guard — disagreement resolves to "not disposable"` |
+| the forge layer is opt-in; everything else works offline | a caller that injects no forge probe | `the forge layer is opt-in and every other layer works offline` |
+| the layers reach provision → a squash-merging pool finally recycles | a clean, unoccupied, squash-merged worktree | `provision recycles a squash-merged worktree instead of only ever creating` |
+| the layers reach prune → every cleared worktree removed, the rest skipped with a reason | gone-upstream and squash-patch worktrees beside an unlanded one | `prune removes every worktree the layered signal clears, and says why it skipped the rest` |
 
 ### removal is the library's own gates + git; disposability is read, never acted on
 

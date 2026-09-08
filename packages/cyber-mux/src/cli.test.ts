@@ -572,7 +572,7 @@ describe('spec:cyber-mux/cli/worktree', () => {
 			expect(payload.removed).toHaveLength(1)
 			expect(payload.skipped).toHaveLength(1)
 			expect(payload.skipped[0].root).toBe('/repo.worktrees/open')
-			expect(payload.skipped[0].reason).toMatch(/not merged/)
+			expect(payload.skipped[0].reason).toMatch(/has not landed/)
 		})
 	})
 
