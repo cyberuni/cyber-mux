@@ -23,8 +23,12 @@ jobs:
   # BLOCKING. It was `continue-on-error: true` while herdr-with-no-attached-client was unproven here,
   # and that flag outlived its reason: because the job could not fail the run, a red real-boundary
   # suite reported as a green run, and a false green landed on PR #114. The last thing keeping the
-  # flag on was the zellij suite's own flakiness, fixed in #115 — a lost or misdelivered `zellij
-  # action` reply read as an empty session — so a failure here is now a real one and says so.
+  # flag on was the zellij suite's own flakiness (#115) — so a failure here is now a real one and
+  # says so. That flake was a `zellij action` losing its OWN pre-flight against a busy server:
+  # `send_action_to_session` resolves the session list before it honors `--session`, and a probe reply
+  # lost under load drops a live session, so the command exits having done nothing. See the
+  # `115-zellij-lossy-action` ADR for the measurement and `ACTION_ATTEMPTS` in `mux.zellij.ts` for
+  # what the adapter does about it.
   live-backends:
     runs-on: ubuntu-latest
     env:

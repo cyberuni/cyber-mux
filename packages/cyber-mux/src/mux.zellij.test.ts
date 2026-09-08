@@ -113,16 +113,25 @@ describe('spec:cyber-mux/mux/placement', () => {
 
 		it('open() with a `from` focuses that pane first — the only way to choose the split target', () => {
 			const calls: string[][] = []
-			const exec = fakeExec(calls, { 'new-pane': 'terminal_9', 'list-panes': [LIST_NONE, LIST_ONE] })
+			const exec = fakeExec(calls, {
+				'new-pane': 'terminal_9',
+				'list-panes': [LIST_NONE, LIST_ONE],
+				// The client is on `terminal_3` from the first read on, so the focus is confirmed landed
+				// on its first look and the sequence carries no re-ask.
+				'list-clients': 'CLIENT_ID ZELLIJ_PANE_ID RUNNING_COMMAND\n1         terminal_3    N/A',
+				'focus-pane-id': '',
+			})
 			zellijMuxAdapter.open(exec, { cwd: '/unit', at: 'pane:right', from: { id: 'terminal_3' } })
 			// Two reads come FIRST, both before the focus move: the pane listing (the open's BEFORE side)
 			// and `list-clients` (where focus has to be put back). The second is only the right answer
-			// while the move has not happened yet. This fake answers `list-clients` with null, so there
-			// is no restore to assert here — `focus-on-open.test.ts` covers that.
+			// while the move has not happened yet.
 			expect(calls[0]).toEqual(['action', 'list-panes', '--json'])
 			expect(calls[1]).toEqual(['action', 'list-clients'])
 			expect(calls[2]).toEqual(['action', 'focus-pane-id', 'terminal_3'])
-			expect(calls[3]).toEqual(['action', 'new-pane', '--direction', 'right', '--cwd', '/unit'])
+			// The focus is CONFIRMED rather than assumed before the split is issued — a `--direction`
+			// split against a client that has not moved yet splits the wrong pane, or fails silently.
+			expect(calls[3]).toEqual(['action', 'list-clients'])
+			expect(calls[4]).toEqual(['action', 'new-pane', '--direction', 'right', '--cwd', '/unit'])
 		})
 
 		it('open() drops a ratio — a tiled split is always even', () => {
@@ -214,13 +223,13 @@ describe('spec:cyber-mux/mux/placement', () => {
 
 		it('rename() on a tab uses rename-tab-by-id', () => {
 			const calls: string[][] = []
-			zellijMuxAdapter.rename(fakeExec(calls), { id: '2' }, 'tab', 'ledger')
+			zellijMuxAdapter.rename(fakeExec(calls, { 'rename-tab-by-id': '' }), { id: '2' }, 'tab', 'ledger')
 			expect(calls).toEqual([['action', 'rename-tab-by-id', '2', 'ledger']])
 		})
 
 		it('rename() on a pane uses rename-pane --pane-id', () => {
 			const calls: string[][] = []
-			zellijMuxAdapter.rename(fakeExec(calls), { id: 'terminal_9' }, 'pane', 'worker')
+			zellijMuxAdapter.rename(fakeExec(calls, { 'rename-pane': '' }), { id: 'terminal_9' }, 'pane', 'worker')
 			expect(calls).toEqual([['action', 'rename-pane', '--pane-id', 'terminal_9', 'worker']])
 		})
 
@@ -247,19 +256,24 @@ describe('spec:cyber-mux/mux/driving', () => {
 	describe('zellijMuxAdapter', () => {
 		it('sendText writes literal characters with write-chars, pressing no Enter', () => {
 			const calls: string[][] = []
-			zellijMuxAdapter.sendText(fakeExec(calls), { id: 'terminal_9' }, 'Enter')
+			zellijMuxAdapter.sendText(fakeExec(calls, { 'write-chars': '' }), { id: 'terminal_9' }, 'Enter')
 			expect(calls).toEqual([['action', 'write-chars', '--pane-id', 'terminal_9', 'Enter']])
 		})
 
 		it('sendKeys renames core keys to Zellij spellings and forwards the rest verbatim', () => {
 			const calls: string[][] = []
-			zellijMuxAdapter.sendKeys(fakeExec(calls), { id: 'terminal_9' }, ['C-c', 'Escape', 'Up', 'Zzz'])
+			zellijMuxAdapter.sendKeys(fakeExec(calls, { 'send-keys': '' }), { id: 'terminal_9' }, [
+				'C-c',
+				'Escape',
+				'Up',
+				'Zzz',
+			])
 			expect(calls).toEqual([['action', 'send-keys', '--pane-id', 'terminal_9', 'Ctrl c', 'Esc', 'Up', 'Zzz']])
 		})
 
 		it('submit with text writes it literally then presses Enter, two calls', () => {
 			const calls: string[][] = []
-			zellijMuxAdapter.submit(fakeExec(calls), { id: 'terminal_9' }, 'hello')
+			zellijMuxAdapter.submit(fakeExec(calls, { 'write-chars': '', 'send-keys': '' }), { id: 'terminal_9' }, 'hello')
 			expect(calls).toEqual([
 				['action', 'write-chars', '--pane-id', 'terminal_9', 'hello'],
 				['action', 'send-keys', '--pane-id', 'terminal_9', 'Enter'],
@@ -268,7 +282,7 @@ describe('spec:cyber-mux/mux/driving', () => {
 
 		it('driving-submit-no-text-bare-enter', () => {
 			const calls: string[][] = []
-			zellijMuxAdapter.submit(fakeExec(calls), { id: 'terminal_9' })
+			zellijMuxAdapter.submit(fakeExec(calls, { 'send-keys': '' }), { id: 'terminal_9' })
 			expect(calls).toEqual([['action', 'send-keys', '--pane-id', 'terminal_9', 'Enter']])
 		})
 
@@ -342,7 +356,7 @@ describe('spec:cyber-mux/mux/driving', () => {
 
 		it('teardown closes the pane', () => {
 			const calls: string[][] = []
-			zellijMuxAdapter.teardown(fakeExec(calls), { id: 'terminal_9' })
+			zellijMuxAdapter.teardown(fakeExec(calls, { 'close-pane': '' }), { id: 'terminal_9' })
 			expect(calls).toEqual([['action', 'close-pane', '--pane-id', 'terminal_9']])
 		})
 	})
@@ -352,7 +366,7 @@ describe('spec:cyber-mux/mux/lookup', () => {
 	describe('zellijMuxAdapter', () => {
 		it('focus drives focus-pane-id', () => {
 			const calls: string[][] = []
-			zellijMuxAdapter.focus(fakeExec(calls), { id: 'terminal_9' })
+			zellijMuxAdapter.focus(fakeExec(calls, { 'focus-pane-id': '' }), { id: 'terminal_9' })
 			expect(calls).toEqual([['action', 'focus-pane-id', 'terminal_9']])
 		})
 
@@ -579,6 +593,7 @@ describe('spec:cyber-mux/mux/driving', () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, {
 				'list-panes': listing('terminal_1'),
+				'list-clients': 'CLIENT_ID ZELLIJ_PANE_ID RUNNING_COMMAND\n1         terminal_2    N/A',
 				'focus-pane-id': '',
 				'toggle-fullscreen': '',
 			})
@@ -586,6 +601,8 @@ describe('spec:cyber-mux/mux/driving', () => {
 			expect(calls).toEqual([
 				['action', 'list-panes', '--json'],
 				['action', 'focus-pane-id', 'terminal_2'],
+				// The focus is confirmed landed before the toggle — see the lossy-boundary rows for why.
+				['action', 'list-clients'],
 				['action', 'toggle-fullscreen', '-p', 'terminal_2'],
 			])
 		})
@@ -633,3 +650,140 @@ describe('spec:cyber-mux/mux/driving', () => {
 		})
 	})
 })
+
+/**
+ * The lossy-boundary rows — issue #115.
+ *
+ * A `zellij action` can come back with NOTHING while the session is up and healthy: it enters
+ * `send_action_to_session`, which resolves the session list BEFORE it honors `--session`, and that
+ * resolution probes every socket and drops a live session whose `ConnStatus` reply is late under
+ * load. Measured on a live 0.45.0 under CPU contention: 2 bad answers in 600 `list-clients` calls
+ * (one exit-1 `There is no active session!`, one exit-0 printing nothing), both correct on an
+ * immediate re-ask. See `ACTION_ATTEMPTS` in `mux.zellij.ts`.
+ *
+ * What each row pins is the DECISION the adapter makes about such an answer, which is a pure adapter
+ * fact a fake can settle. That a real binary produces those answers at all is not a claim any fake
+ * can carry, and is not made here — `mux.zellij.integration.test.ts` is where that lives.
+ */
+describe('spec:cyber-mux/mux/driving', () => {
+	describe('zellijMuxAdapter — a zellij action that answered nothing', () => {
+		const CLIENTS = (pane: string) => `CLIENT_ID ZELLIJ_PANE_ID RUNNING_COMMAND\n1         ${pane}    N/A`
+		/** A `list-clients` that answered, with no client attached — a header and no rows under it. */
+		const CLIENTS_NONE = 'CLIENT_ID ZELLIJ_PANE_ID RUNNING_COMMAND'
+
+		it('re-issues a rename the pre-flight dropped, rather than losing it silently', () => {
+			const calls: string[][] = []
+			zellijMuxAdapter.rename(fakeExec(calls, { 'rename-pane': [null, ''] }), { id: 'terminal_1' }, 'pane', 'nm')
+			expect(calls).toEqual([
+				['action', 'rename-pane', '--pane-id', 'terminal_1', 'nm'],
+				['action', 'rename-pane', '--pane-id', 'terminal_1', 'nm'],
+			])
+		})
+
+		it('re-issues a teardown the pre-flight dropped', () => {
+			const calls: string[][] = []
+			zellijMuxAdapter.teardown(fakeExec(calls, { 'close-pane': [null, ''] }), { id: 'terminal_1' })
+			expect(calls).toHaveLength(2)
+		})
+
+		it('gives up after a bounded number of attempts rather than looping on a real failure', () => {
+			const calls: string[][] = []
+			zellijMuxAdapter.teardown(fakeExec(calls, { 'close-pane': null }), { id: 'terminal_1' })
+			expect(calls).toHaveLength(3)
+		})
+
+		/**
+		 * The focus-restore defect this issue was reopened for. A lost `list-clients` used to read as
+		 * "no client attached", so `open({ from })` skipped the restore and left the client on the pane
+		 * it had just created — CI saw `expected 'terminal_5' to be 'terminal_0'`.
+		 */
+		it('still restores focus when the list-clients read behind it answered nothing first', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, {
+				'new-pane': 'terminal_9',
+				'list-panes': [LIST_NONE, LIST_ONE],
+				'list-clients': [null, CLIENTS('terminal_0')],
+				'focus-pane-id': '',
+			})
+			zellijMuxAdapter.open(exec, { cwd: '/w', at: 'pane:right', from: { id: 'terminal_1' } })
+			expect(calls.filter((c) => c[1] === 'focus-pane-id').map((c) => c[2])).toContain('terminal_0')
+		})
+
+		/**
+		 * And the other half, which is what keeps the row above from being a retry-until-something-shows:
+		 * a session that ANSWERED, with no client attached, is not re-asked past and invents no restore.
+		 */
+		it('invents no focus restore when list-clients answers that nothing is attached', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, {
+				'new-pane': 'terminal_9',
+				'list-panes': [LIST_NONE, LIST_ONE],
+				'list-clients': CLIENTS_NONE,
+				'focus-pane-id': '',
+			})
+			zellijMuxAdapter.open(exec, { cwd: '/w', at: 'pane:right', from: { id: 'terminal_1' } })
+			// Only the `from` focus, never a restore.
+			expect(calls.filter((c) => c[1] === 'focus-pane-id').map((c) => c[2])).toEqual(['terminal_1'])
+			// TWO list-clients reads, not six: one for the restore target and one confirming the `from`
+			// focus, each answered on its FIRST look. A client-less session is an answer, so neither read
+			// spends a re-ask on it — which is what keeps this from being a poll that waits for a client
+			// to show up.
+			expect(calls.filter((c) => c[1] === 'list-clients')).toHaveLength(2)
+		})
+
+		/**
+		 * The zoom-transfer defect. `toggle-fullscreen -p <id>` on a pane the client is NOT on, in a tab
+		 * that already has a fullscreen pane, leaves fullscreen and reports success — so the focus that
+		 * precedes it has to be CONFIRMED, not assumed. CI saw `expected 'false' to be 'true'` after a
+		 * 15s poll with nothing to wait for.
+		 */
+		it('confirms the client actually reached the pane before it toggles fullscreen', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, {
+				'list-panes': listingOf('terminal_1'),
+				// The first focus did not land — the client is still on the sibling.
+				'list-clients': [CLIENTS('terminal_1'), CLIENTS('terminal_2')],
+				'focus-pane-id': '',
+				'toggle-fullscreen': '',
+			})
+			zellijMuxAdapter.setPaneZoom(exec, { id: 'terminal_2' }, true)
+			expect(calls.filter((c) => c[1] === 'focus-pane-id')).toHaveLength(2)
+			expect(calls.at(-1)).toEqual(['action', 'toggle-fullscreen', '-p', 'terminal_2'])
+		})
+
+		it('stops confirming as soon as the client is on the pane', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, {
+				'list-panes': listingOf('terminal_1'),
+				'list-clients': CLIENTS('terminal_2'),
+				'focus-pane-id': '',
+				'toggle-fullscreen': '',
+			})
+			zellijMuxAdapter.setPaneZoom(exec, { id: 'terminal_2' }, true)
+			expect(calls.filter((c) => c[1] === 'focus-pane-id')).toHaveLength(1)
+		})
+
+		/**
+		 * The one verb deliberately left alone: `new-pane` CREATES, and a repeat would leave a stray
+		 * pane behind. It fails loudly by name instead, which is the shape this backend prefers.
+		 */
+		it('never re-issues a create — new-pane is asked exactly once and the failure is loud', () => {
+			const calls: string[][] = []
+			const exec = fakeExec(calls, { 'new-pane': null, 'list-panes': LIST_NONE })
+			expect(() => zellijMuxAdapter.open(exec, { cwd: '/w', at: 'pane:right' })).toThrow(/new-pane failed/)
+			expect(calls.filter((c) => c[1] === 'new-pane')).toHaveLength(1)
+		})
+	})
+})
+
+/** The zoom rows' listing, lifted so the lossy-boundary block can reuse it. */
+function listingOf(fullscreen: string | null): string {
+	return JSON.stringify(
+		['terminal_1', 'terminal_2'].map((id) => ({
+			id: Number(id.split('_')[1]),
+			is_plugin: false,
+			is_focused: id === fullscreen,
+			is_fullscreen: id === fullscreen,
+		})),
+	)
+}
