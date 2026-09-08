@@ -15,10 +15,10 @@ supports and what cyber-mux does when it falls short.
 | --------------------- | ----------------------- | ----------------------- | ----------------------- | ----------------------- | ----------------------- | ----------------------- | ----------------------- |
 | Workspace tier        | ✗ (collapses to window) | ✗ (collapses to window) | ✓                       | ✓ (a real Window/Workspace split) | ✗ (placement collapses to tab, but occupancy is reported) | ✓ (Window/Workspace) | ✓ (Window) |
 | Worktree binding      | ✗                       | ✗                       | ✓                       | ✗                       | ✗                       | ✗                       | ✗                       |
-| Name a pane           | —                       | —                       | ✓                       | ✗ (throws / warns)      | ✓                       | ✓ (names its surface)   | ✓                       |
+| Name a pane           | —                       | —                       | ✓                       | ✗ (throws / warns)      | ✓                       | ✓ (names its surface)   | ✗ (throws / warns)      |
 | Report focused pane   | best-effort             | best-effort             | best-effort             | ✗ (always `unknown`)    | ✓ (`list-panes --json`) | ✓                       | ✓                       |
 | Knows the running harness | ✗                   | ✗                       | ✓                       | ✗                       | ✗                       | ✗                       | ✗                       |
-| Size splits           | ✓                       | ✓                       | ✓                       | ✓                       | ✗                       | ✗                       | ✗                       |
+| Size splits           | ✓                       | ✓                       | ✓                       | ✓                       | ✗                       | ✗                       | ✓ (`--size`, 10–90%)    |
 | Floating pane         | ✓ (tmux 3.7+, `new-pane`) | ✗ (refused by name)   | ✗ (refused by name)     | ✗ (refused by name)     | ✓ (`new-pane --floating`) | ✗ (refused by name)   | ✗ (refused by name)     |
 | Opens without stealing focus | ✓ (`-d`)          | ✓ (`-d`)                | ✓ (`--no-focus`)        | ✗                       | ✓ (Zellij 0.45+)        | ✗                       | ✗                       |
 | Resize an open pane   | ✓                       | ✓                       | ✓                       | ✗ (refused by name)     | ✗ (refused by name)     | ✗ (refused by name)     | ✗ (refused by name)     |
@@ -295,7 +295,8 @@ was driven against:
 
 - **Has a real workspace tier.** otty's hierarchy is Windows > Tabs > Splits > Panes. `--at workspace`
   maps to a new window (`otty open`, which always opens one — it takes no `--new-window`, and names
-  the window at birth with `--title`); `--at tab` maps to a new tab; `--at pane:*` maps to a split,
+  the window at birth with `--title`); `--at tab` maps to a new tab (`otty tab new --title`, which
+  likewise names it at birth); `--at pane:*` maps to a split,
   `otty pane split --direction right|down`.
 - **Never binds a git worktree.** Its CLI has no `worktree` subcommand, so — like the other GUI-based
   backends — it falls back to plain git plus `open()`.
@@ -306,12 +307,18 @@ was driven against:
   degrades to a warning instead, exactly as on WezTerm.
 - **Reports focused pane.** `panes --json` carries an `is_focused` field, so `isPaneFocused` answers
   `true`/`false` rather than `unknown`.
-- **Cannot size a split.** Split sizing is not available via the CLI; a requested `ratio` is dropped.
+- **Can size a split.** `pane split --size` sizes the **new** pane, so `ratio` — the fraction kept by
+  the *original* — is inverted (same as tmux, WezTerm, and cmux). otty's unit is a whole **percent**
+  over a documented **10–90** range, so the fraction is scaled and rounded, and a ratio outside that
+  range (say `0.95`, a 5% new pane) is clamped into it with a warning on stderr rather than sent as a
+  size otty would reject.
 - **Atomic send-keys.** `pane send-keys` can mix literal text and `key:` tokens in one call — cyber-mux
   composes `sendText` and `sendKeys` from this.
 - **No region introspection.** Pane geometry is not reported, so `template save` refuses on otty.
   `otty pane resize --right N` exists but counts **cells**, and with no pane positions there is no
   split extent to take a fraction of, so `resizePane` — which takes a ratio — is refused as well.
+  That is the contrast with `pane split --size` above: a *share* needs no extent to be expressed in,
+  a *cell count* does.
 - **macOS/Windows desktop app.**
 
 ## GNU Screen — detected, not driven
