@@ -1,4 +1,4 @@
-import { envFallback, shellQuote } from './env-fallback.ts'
+import { launchFallback } from './env-fallback.ts'
 import { type Exec, withReason } from './exec.ts'
 import { refuseFloatingPane } from './floating.ts'
 import { refusePaneMove } from './move.ts'
@@ -686,11 +686,10 @@ function openedSurface(surfaceId: string, paneRef: string | undefined, workspace
  * Run the caller's launch command in the freshly opened surface, carrying whatever the route could
  * not set natively.
  *
- * `cwd` is passed ONLY by the `pane:*` route, the one route with no `--cwd` flag to send. It rides as
- * a `cd` on the command line — the same last-resort shape `envFallback` uses for env, and unlike env
- * it needs no command to ride, so a split with a cwd and no launch still lands in the right directory.
- * The env prefix goes INSIDE the `cd`'s `&&`, never outside it: `env K=V cd '/x' && cmd` would set the
- * variables on `cd` and leave `cmd` without them.
+ * `cwd` is passed ONLY by the `pane:*` route, the one route with no `--cwd` flag to send. Both
+ * compensations — the env prefix and the `cd` — and the order they compose in are `launchFallback`'s
+ * (`env-fallback.ts`); this route hands it what it lost and submits what comes back. `mux.otty.ts`
+ * calls the same function for the same reason, which is why the rule lives there and not here.
  */
 function runLaunch(
 	adapter: MuxAdapter,
@@ -700,23 +699,14 @@ function runLaunch(
 	launch: string | undefined,
 	cwd?: string | undefined,
 ) {
-	const fallback = envFallback(env, launch)
+	const fallback = launchFallback(env, launch, cwd)
 	if (fallback.kind === 'dropped') {
 		process.stderr.write(
 			`env (${fallback.variables.join(', ')}) could not be set on this cmux surface — ` +
 				'cmux has no --env flag on new-pane/new-surface, and its workspace --env is not adopted yet\n',
 		)
-		if (cwd) adapter.submit(exec, target, `cd ${shellQuote(cwd)}`)
-		return
 	}
-	const command = cwd ? cdPrefixed(cwd, fallback.command) : fallback.command
-	if (command !== undefined) adapter.submit(exec, target, command)
-}
-
-/** `cd <dir>` on its own, or chained ahead of the command that must run in that directory. */
-function cdPrefixed(cwd: string, command: string | undefined): string {
-	const cd = `cd ${shellQuote(cwd)}`
-	return command === undefined ? cd : `${cd} && ${command}`
+	if (fallback.command !== undefined) adapter.submit(exec, target, fallback.command)
 }
 
 /**

@@ -8,6 +8,20 @@ decisions log.
 Backfilled narrow: only entries touched by the `send-submit-realign` change are captured; expand by
 demand.
 
+## Locality — the seam is local by construction, and staying that way is a decision
+
+Every `MuxAdapter` member but `waitForOutput` is synchronous, because `Exec` is an `execFileSync`
+wrapper; detection is local for a second reason, reading this process's own environment and ancestry.
+Both are deliberate, and neither is a placeholder for a remote concept: a pane reference names a pane
+on THIS machine, and no member takes, reports, or resolves a host.
+
+Reaching a pane on another machine is therefore not a new adapter — it is a change to what the seam
+is. The `153-remote-async` block in [`decisions/`](./decisions/README.md) settles the gating question
+(a blocking `ssh` transport does NOT force async; the requirement that one unreachable machine not
+block the others does), names the migration shape, and carries the recheck triggers. Until that
+migration lands as its own major, adapter work stays synchronous on purpose — a partly async seam is
+the one shape that cannot be codemodded.
+
 ## Test binding — the SDD scenario-bridge `@id:` convention
 
 Every acceptance `Scenario:` in this corpus carries a stable **`@id:<slug>`** tag, and the test that

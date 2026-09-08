@@ -1619,6 +1619,174 @@ Decisions (`142-pane-zoom` — the zoom seam member, issue #142):
   it red while every mocked row stays green, which is the whole argument for where this was tested.
   ISSUE: https://github.com/cyberuni/cyber-mux/issues/142
 
+Decisions (`173-extract-cd-fallback` — the cwd `cd`-fallback lives with the env prefix):
+
+- **The `cd` fallback moves into `env-fallback.ts` as `launchFallback`, and the two compensations
+  become ONE function** — DECIDED, not two functions side by side. A route that lost both env and cwd
+  must compose them in one order (`cd '/x' && env K=V cmd`, the env INSIDE the `&&`), so any shape
+  that lets a caller apply them separately leaves the ordering at the call site, which is exactly
+  where the second copy got written. `launchFallback(env, launch, cwd)` returns the finished command
+  line; the caller submits it and, on `kind: 'dropped'`, writes its own backend-named warning. The
+  warning text stays per-adapter because it names that backend's missing flags; nothing else does.
+
+- **`kind: 'dropped'` now carries a `command`** — DECIDED, and it is the reason the union was kept
+  rather than flattened. Dropped means ENV was lost for want of a command to ride; the `cd` needs no
+  command, so the directory survives and must still be submitted. Both prior copies got this right by
+  hand (`if (cwd) adapter.submit(…)` before the early `return`); the extracted shape makes it
+  structural instead of remembered. A flat `{ command, droppedEnv }` was rejected: a caller could
+  submit the command and never read `droppedEnv`, silently swallowing the warning — the failure mode
+  this whole module exists to prevent.
+
+- **An empty `cwd` is treated as none.** `MuxOpenOptions.cwd` is a REQUIRED string, so a caller with
+  no directory to name passes `''`. Both copies tested it with a truthiness check; the extraction
+  keeps that rather than `cwd === undefined`, which would emit `cd ''`.
+
+- **No other adapter silently drops `cwd`** — the issue's "while you are there" check, run over every
+  creating route in all seven adapters and answered from the SOURCE, not from a docs page. tmux
+  (`new-pane`/`new-window`/`split-window` `-c`), rmux (`new-window`/`split-window` `-c`), herdr
+  (`workspace create`/`tab create`/`pane split --cwd`), zellij (`new-tab`/`new-pane --cwd`), wezterm
+  (`cli spawn`/`spawn --new-window`/`split-pane --cwd`), cmux's `workspace`/`new-surface` and otty's
+  `open` positional and `pane split --cwd` all pass it natively; cmux `new-pane` and otty `tab new`
+  are the two fallback routes and are now the two callers of `launchFallback`. There is no third
+  route to wire, and no route that accepts a cwd and discards it. This is the answer as of this
+  commit — a NEW adapter, or a new route on an existing one, has to answer it again.
+
+- **Pure refactor, proven by mutation rather than asserted.** Behavior is unchanged and no changeset
+  was added. Three mutations of the extracted function were each run and each went red: env moved
+  OUTSIDE the `&&` (5 failures — the new unit row plus both adapters' argv rows), the `cd` withheld on
+  the dropped-env path (2), and the shell-quote removed (10). Nothing was driven live: cmux and otty
+  have no binary on any CI runner (#128), which is why both call sites are pinned by mocked-`Exec`
+  argv assertions and why those assertions are what the mutations had to break.
+  ISSUE: https://github.com/cyberuni/cyber-mux/issues/173
+
+Decisions (`153-remote-async` — does driving a pane on a REMOTE machine force the seam async, issue
+#153):
+
+- **The issue's premise is half wrong, and which half matters.** #153 states *"Every adapter method is
+  synchronous today. Remote transport forces async."* Both clauses were measured and both need
+  correcting. `waitForOutput` has been `Promise<MuxWaitResult>` since it landed, and every consumer
+  already awaits it, so the seam is not uniformly sync — it is sync **except where time is the
+  subject**. And transport does not force async at all: a blocking `ssh host -- <cmd>` is an
+  `execFileSync` like any other, so `Exec`'s signature already fits it. **DRIVEN, not argued** — a
+  throwaway `sshd` on loopback plus a throwaway `tmux -L` server, and `tmuxMuxAdapter.listPanes`
+  called with an `Exec` whose body is `execFileSync('ssh', [...opts, host, '--', ...argv])`: a real
+  `LivePane` came back off a real remote tmux, with **zero adapter changes**. What forces async is the
+  ACCEPTANCE CRITERION, not the wire.
+
+- **Async is REQUIRED — by concurrency, and by nothing else.** DECIDED. #153's own acceptance says
+  *"An unreachable machine reports unavailable without blocking operations on other machines."* No
+  `Exec` shape can satisfy that, because a synchronous child process freezes the whole runtime.
+  Measured against a blackholed address (`10.255.255.1`), with `execFileSync`'s own `timeout: 20_000`
+  set: **21,893 ms wall and 0 event-loop ticks** from a 100 ms interval that should have fired ~219
+  times. One unreachable machine is not "one slow call" — it is every other machine stopped too, and a
+  `SIGTERM` kill is the only exit. `nodeExec` sets no `timeout` at all today, so the real blocking is
+  unbounded. That single measurement is the whole decision; the transport arguments below only say
+  what a sync route would ALSO cost if the criterion were dropped.
+
+- **A sync `ssh` route is real, and ships two silent corruptions. NOT RECOMMENDED even for one
+  machine.** Both were driven, and both are the failure mode this repo keeps paying for — a wrong
+  answer, not an error:
+  - **argv is re-parsed by the remote shell.** `ssh` joins its command words with spaces and the far
+    side runs them through a login shell, so `execFileSync`'s array safety is gone. The tmux adapter's
+    own `listPanes` format begins `#{pane_id}`, and `#` opens a comment at word start: the remote
+    shell ate the format, tmux answered `command list-panes: -F expects an argument` and exited 1,
+    `Exec` mapped that to `null`, and **`listPanes` returned `[]`** — a machine full of panes reported
+    as empty. Per-argument shell quoting at the transport fixes it (measured: quoted, the same call
+    returns the record).
+  - **the far side inherits no locale, and tmux's output depends on one.** A non-interactive `ssh`
+    command session exports neither `LANG` nor `LC_ALL` (measured: both empty). Under `LANG=C` or an
+    empty environment, tmux renders the TAB in a `-F` format as `_`; under `C.UTF-8` it emits the tab.
+    Isolated with `env -i` vs `env -i LANG=C.UTF-8` against the SAME binary, so it is the locale and
+    not the version. `listPanes` splits on `\t`, so over `ssh` it parsed **one** pane whose `id` was
+    the entire line — `%0_zsh_/home/unional_zeta_zeta_` — and every later call on that id failed
+    against a pane that never existed. Nothing threw.
+  So a remote `Exec` is not "the same signature with a different body": it is a transport that must
+  quote every argument and normalize the far side's environment. Neither is `Exec`'s job today, and
+  neither is visible to a mocked test.
+
+- **Connection reuse is a real cost but not a deciding one.** Measured on LOOPBACK, where network
+  latency is zero: local `execFileSync` **1.9 ms/call**, a fresh `ssh` connection **184.4 ms/call**
+  (~97×), and `ControlMaster`/`ControlPersist` multiplexing **7.5 ms/call** (~4×). The seam is chatty
+  by design — `setPaneZoom` reads before it writes, `focus` walks workspace and tab — and
+  `pollForOutput` reads every `DEFAULT_WAIT_POLL_MS` (150 ms), so an unmultiplexed remote wait polls
+  at the transport's cadence rather than its own. Reuse is a transport concern that a sync route could
+  also carry; it argues for a connection-owning transport object, not for async.
+
+- **What herdr actually offers today: a machine REGISTRY, and no remote control path.** DRIVEN on the
+  installed **herdr 0.9.0** with its server running, not read off the issue:
+  - `herdr machine {list,add,rename,remove,enable,disable}` — "Manage saved SSH machines". `machine
+    add --label <L> <SSH_TARGET>` "prepare[s] the remote Herdr server and save[s] an SSH machine".
+    `herdr machine list --json` answers `[]` here, so nothing below was probed against a real peer.
+  - **The socket API has no machine concept at all.** `herdr api schema --json` (protocol 22, 275 KB,
+    ~100 methods from `agent.*` to `worktree.*`) contains **zero** occurrences of `machine`, `ssh`,
+    `host`, or `profile` — the only `remote` hits are plugin-update fields. Every method is scoped to
+    the local socket.
+  - **`--remote` is attach-only.** `herdr --remote <target> pane list` answers `error: --remote can
+    only be used with the default launch command`, exit 2. It attaches the TUI through SSH; it does
+    not carry a control subcommand.
+  - `--session <name>` DOES compose with control verbs, and selects a different **unix** socket
+    (`~/.config/herdr/sessions/<name>/herdr.sock`), failing loudly and structurally when nothing is
+    there (`{"error":{"code":"server_not_running", ...}}`, exit 1). A unix socket is local by
+    construction, so this is a second-server axis, not a remote one.
+  - **Therefore the issue's inference does not hold.** #153 reads herdr's machine support as *"the
+    multiplexer can already span hosts while cyber-mux cannot"*. The herdr **app** spans hosts; its
+    **control API** does not. The only route to a remote herdr pane today is `ssh host -- herdr pane
+    …` — the generic transport route, with herdr's registry buying cyber-mux nothing it would not have
+    to build anyway.
+
+- **When async does land: a hard breaking change with a major. NOT a dual surface, NOT a generic.**
+  DECIDED in shape only; **this CR changes no signature.**
+  - *Dual sync/async surface* — rejected. Seven adapters × ~25 members written twice, and the sync
+    half can never serve a remote target, so the type system would carry a permanent lie about which
+    calls are addressable.
+  - *Generic over the return type* (`MuxAdapter<'sync' | 'async'>`) — rejected. The color leaks into
+    every shared helper above the adapters (`wait-output`, `zoom`, `resize`, `nudge`, `template-*`),
+    each of which would need the same conditional return, and every reader pays for it forever.
+  - *Hard break* — chosen. The edit is mechanical and codemod-shaped (`async` + `await`), which is
+    exactly what the other two are not. Blast radius, counted: **151 `exec(` call sites across 9
+    non-test source files** (herdr 31, tmux 26, rmux 26, zellij 17, worktree 14, cmux 13, wezterm 12,
+    otty 11, mux-probe 1), **31 test files** driving a fake `Exec`, and three published entry points
+    (`.`, `/worktree`, `/template`) whose barrels re-export 16 modules.
+  - **Named downstream, not hypothetical:** `cyberlegion` imports `cyber-mux` and `cyber-mux/worktree`
+    and calls into them from **19 sites across 8 non-test files** — `session.ts` 7, `identity.ts` 3,
+    `runtime/inject-inbox.ts` 2, `console/doorbell.ts` 2, `cli.ts` 2, `paths.ts`, `mux-select.ts`,
+    `decommission.ts`. All but one sit inside a plain SYNCHRONOUS exported function: `spawn` (six of
+    them), `resolveSelfId`, `claimPresence`, `resolveProjectLocalRoot`, `decommission`; only
+    `nudgeUnit` is already `async`. The await colors each of those and then their callers
+    transitively, so the downstream cost is an identity/session-layer rewrite, not nineteen `await`s.
+
+- **Ordering, and what concurrent adapter work should do RIGHT NOW: stay sync.** DECIDED, and it is
+  the opposite of what #153 proposed ("landing async-tolerant signatures up front"). A codemod over a
+  uniformly sync seam is one pass; a seam where some members were written "async-tolerant" ahead of
+  time is neither sync nor async and cannot be codemodded at all. The sequence is: (1) the async major
+  as its OWN CR touching signatures and nothing else, (2) remote target addressing, (3) per-machine
+  capability reporting. Nothing in (2) or (3) is startable before (1), which is why #153's first work
+  item is the gate it says it is.
+
+- **Nothing is implemented here, deliberately.** No `Exec`, `MuxAdapter`, or adapter signature is
+  touched by this entry; three pods were editing adapters while it was written, and an async rewrite
+  landing under them destroys their work for no delivered capability.
+
+- **RECHECK TRIGGERS** — any one of these reopens the decision:
+  - **herdr's socket API grows a machine-scoped address.** The check is mechanical: `herdr api schema
+    --json | grep -ci machine` is **0** at protocol 22. A non-zero answer, or `herdr --remote <host>
+    pane list` no longer refusing with `--remote can only be used with the default launch command`,
+    means the remote target becomes herdr's own and cyber-mux may need addressing without transport.
+  - **#153's multi-machine acceptance is relaxed to one machine at a time.** The concurrency argument
+    is the only one that forces async; drop it and the quoted, locale-normalized `ssh` route becomes
+    viable, at the two silent-corruption costs measured above.
+  - **A cancelable synchronous child process appears in Node.** It has not and will not; recorded so
+    the argument is falsifiable rather than rhetorical.
+
+- **Found while probing, out of this CR's scope: `listPanes` is locale-sensitive on tmux and rmux.**
+  Under `LANG=C` or an empty environment, tmux emits `_` where the adapter's `-F` format asked for a
+  TAB, so the tab split yields one bogus record instead of N real ones — reproduced locally with `env
+  -i`, no SSH involved. Reachable today by any caller launched without a locale (a systemd unit, a
+  cron job), not only by a future remote one. Recorded here rather than fixed, because a parse change
+  is a code change and this CR is a decision.
+  ISSUE: https://github.com/cyberuni/cyber-mux/issues/153
+
+
 Decisions (`143-pane-relocation` — the move and break-out seam members, issue #143):
 
 - **TWO members, `movePane` and `breakPane`, not one** — DECIDED, with the issue. They take
