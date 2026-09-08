@@ -4,7 +4,7 @@ description: The one contract over every multiplexer — resolving a session, an
 ---
 
 `MuxAdapter` is the contract the whole library exists to provide: one set of verbs that means the
-same thing on tmux, rmux, herdr, WezTerm, and Zellij. You rarely touch it directly — you *resolve* a
+same thing on tmux, rmux, herdr, WezTerm, Zellij, cmux, and otty. You rarely touch it directly — you *resolve* a
 `MuxSession` for the multiplexer you are inside, with its `Exec` already bound, and call its methods.
 
 Import from the main entry:
@@ -22,12 +22,12 @@ import {
 ### `resolveMux(env, deps?)` → `MuxSession`
 
 Run the [probe](/cyber-mux/api/probe/), pick the matching adapter (`tmux` / `rmux` / `herdr` /
-`wezterm` / `zellij`), and return it as a `MuxSession` with `Exec` **bound**. Throws if the process is in no
+`wezterm` / `zellij` / `cmux` / `otty`), and return it as a `MuxSession` with `Exec` **bound**. Throws if the process is in no
 supported multiplexer.
 
 ```ts
 const mux = resolveMux(process.env)
-mux.name // 'tmux' | 'rmux' | 'herdr' | 'wezterm' | 'zellij'
+mux.name // 'tmux' | 'rmux' | 'herdr' | 'wezterm' | 'zellij' | 'cmux' | 'otty'
 ```
 
 `deps.exec` (default `nodeExec`) is both the runner the detection probe uses AND the default every
@@ -79,7 +79,7 @@ placement decides which:
 | --- | --- |
 | `'tab'` (default) | A new tab in the current (or `within`) workspace. |
 | `'pane:right'` / `'pane:down'` | A split of the `from` pane. |
-| `'pane:float'` | A floating pane above the layout, resizing nothing. **tmux 3.7+ and zellij only** — wezterm, rmux, and herdr throw `FloatingPanesUnsupportedError`; ask `adapter.canFloatPanes` first. |
+| `'pane:float'` | A floating pane above the layout, resizing nothing. **tmux 3.7+ and zellij only** — wezterm, rmux, herdr, cmux, and otty throw `FloatingPanesUnsupportedError`; ask `adapter.canFloatPanes` first. |
 | `'workspace'` | A genuinely separate workspace/session, leaving the caller's untouched. |
 
 Key `MuxOpenOptions` fields:
@@ -138,6 +138,11 @@ const pane = mux.open({
   at `lines: 'all'`, where an unbounded window omitted nothing by construction. Opt-in because `read`
   is the hottest verb on this seam; the CLI, one invocation per process, always asks
   ([`read`](/cyber-mux/cli/read/)).
+- **`mux.waitForOutput(target, opts, deps?)`** → `Promise<MuxWaitResult>` — block until the pane's
+  output matches, or the deadline passes. `opts` carries the pattern (`match` literal or `regex`),
+  `timeoutMs`, and the same `lines` window `read` takes; the result says whether it matched and
+  carries the output either way, so a caller that guessed the wrong pattern still sees what the pane
+  said. The one asynchronous method on the seam.
 - **`mux.focus(target, deps?)`** — beam the attached client to the pane, across workspace and tab.
 - **`mux.nudge(target, message, opts?, deps?)`** — `submit` with a receipt; see
   [`nudge`](/cyber-mux/api/nudge/).
@@ -155,18 +160,35 @@ const pane = mux.open({
 
 ## Optional capabilities
 
-Two members are present only on backends that support the underlying concept — check for them before
-use. Both are reached bound, the same way as the rest of the session (methods take `deps?`, no
+Three members are present only on backends that support the underlying concept — check for them
+before use. All are reached bound, the same way as the rest of the session (methods take `deps?`, no
 `Exec`):
 
 - **`mux.worktree?`** — a [`BoundWorktreeWorkspaceCapability`](/cyber-mux/api/worktree/#binding-a-worktree-to-a-workspace),
-  present on herdr. On tmux, rmux, WezTerm, and Zellij it is `undefined`; fall back to plain git plus
-  [`mux.open`](#opening-panes).
+  present on herdr. On tmux, rmux, WezTerm, Zellij, cmux, and otty it is `undefined`; fall back to
+  plain git plus [`mux.open`](#opening-panes).
 - **`mux.regions?`** — geometry introspection (`describeRegion` / `describeWorkspace`), present on
-  tmux, rmux, and herdr, absent on WezTerm and Zellij. Backs `template save`.
+  tmux, rmux, and herdr, absent on WezTerm, Zellij, cmux, and otty. Backs `template save`. The raw
+  `RegionInspector` carries a third member, `resizePane(exec, target, ratio)`, which the bound form
+  does not expose.
+- **`mux.agentLifecycle?`** — the native per-pane agent-state wait (`waitForState`), present on herdr
+  and otty and absent everywhere else. See [Agent](/cyber-mux/api/agent/), which is where the
+  emulate-or-refuse decision lives.
+
+Then the capability **flags** — static declarations, not methods:
 
 - **`mux.canSizeSplits?`** — whether the backend honors `ratio`; `false`/absent means a requested
-  ratio degrades to the backend's own even split.
+  ratio degrades to the backend's own even split. The one flag the bound session carries; the four
+  below are read from the raw adapter.
+- **`adapter.canFloatPanes?`** — whether `pane:float` opens a real floating pane. tmux 3.7+ and
+  Zellij declare it; everywhere else a float is refused by name rather than substituted with a split.
+- **`adapter.canZoomPanes?`** — whether a pane can be zoomed to fill its tab (`setPaneZoom` /
+  `isPaneZoomed`).
+- **`adapter.canMovePanes?`** — whether `movePane` can move a pane beside another.
+- **`adapter.canBreakPanes?`** — whether `breakPane` can break a pane out to its own tab or workspace.
+
+Ask the flag *before* opening rather than catching the refusal after: that is the whole reason these
+are declarations.
 - **`mux.focusOnOpen`** → `'preserved' | 'restored' | 'stolen'` — what `open()` does to the caller's
   focus. Unlike the two flags above this one is **required**, so every adapter answers it.
   `'preserved'` (tmux, rmux, herdr) means nothing moves at any instant, on any route. `'restored'`
@@ -194,12 +216,12 @@ import { resolveMuxAdapter, callerPane, nodeExec, withReason, type MuxAdapter, t
 ### `resolveMuxAdapter(env, exec?)` → `MuxAdapter`
 
 Run the [probe](/cyber-mux/api/probe/) and return the matching raw adapter (`tmux` / `rmux` /
-`herdr` / `wezterm` / `zellij`). Throws if the process is in no supported multiplexer. `exec` defaults to
+`herdr` / `wezterm` / `zellij` / `cmux` / `otty`). Throws if the process is in no supported multiplexer. `exec` defaults to
 `nodeExec`; `resolveMux` calls this internally and binds the result into a `MuxSession`.
 
 ```ts
 const adapter = resolveMuxAdapter(process.env)
-adapter.name // 'tmux' | 'rmux' | 'herdr' | 'wezterm' | 'zellij'
+adapter.name // 'tmux' | 'rmux' | 'herdr' | 'wezterm' | 'zellij' | 'cmux' | 'otty'
 ```
 
 ### `callerPane(adapter, env)`
@@ -212,10 +234,26 @@ own pane as a `MuxTarget` the adapter can address.
 Every `MuxSession` method above has a raw counterpart that takes `exec` first and drops `deps`:
 `open(exec, opts)`, `rename(exec, target, tier, name)`, `group(exec, target, group, name?)`,
 `sendText(exec, target, text)`, `sendKeys(exec, target, keys)`, `submit(exec, target, text?)`,
-`read(exec, target, opts?)`, `focus(exec, target)`, `teardown(exec, target)`,
-`paneExists(exec, target)`, `isPaneFocused(exec, target)`, `listPanes(exec)`. The optional
-capabilities are reached the same way, exec-first: `adapter.worktree` (see
-[Worktree](/cyber-mux/api/worktree/#binding-a-worktree-to-a-workspace)) and `adapter.regions`. The
+`read(exec, target, opts?)`, `waitForOutput(exec, target, opts)`, `focus(exec, target)`,
+`teardown(exec, target)`, `paneExists(exec, target)`, `isPaneFocused(exec, target)`,
+`listPanes(exec)`. The optional capabilities are reached the same way, exec-first:
+`adapter.worktree` (see [Worktree](/cyber-mux/api/worktree/#binding-a-worktree-to-a-workspace)),
+`adapter.regions`, and `adapter.agentLifecycle` (see [Agent](/cyber-mux/api/agent/)).
+
+**Four methods live only here**, with no bound counterpart on `MuxSession` — pane geometry the
+session surface deliberately does not carry:
+
+- `setPaneZoom(exec, target, zoomed)` — zoom a pane to fill its tab, or restore it. **Absolute, not a
+  toggle**: a caller that had to read the current state first could not act on a backend that cannot
+  report one.
+- `isPaneZoomed(exec, target)` → `boolean | undefined` — the read side, three-valued like
+  `isPaneFocused`.
+- `movePane(exec, target, destination, side)` → `OpenedPane` — move a pane beside another
+  (`'right' | 'down'`).
+- `breakPane(exec, target, at)` → `OpenedPane` — break a pane out into its own `'tab'` or
+  `'workspace'`.
+
+Each is gated by the matching `can*` flag above; a backend without it refuses by name. The
 semantics of every method are identical to its bound counterpart described above — only the calling
 convention differs.
 
