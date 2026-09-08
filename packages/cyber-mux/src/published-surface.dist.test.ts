@@ -65,6 +65,10 @@ describe('spec:cyber-mux/library — published surface', () => {
 				'DEFAULT_WAIT_POLL_MS',
 				'FULL_SCROLLBACK_LINES',
 				'FloatingPanesUnsupportedError',
+				// The break-out and move refusals, beside the float and zoom ones and for their reason: the
+				// verbs they refuse are core pane control, on the surface everybody gets.
+				'PaneBreakUnsupportedError',
+				'PaneMoveUnsupportedError',
 				'PaneResizeUnsupportedError',
 				'PaneZoomUnsupportedError',
 				'RMUX_TAB_NAME_OPTION',
@@ -73,7 +77,11 @@ describe('spec:cyber-mux/library — published surface', () => {
 				'TMUX_WORKSPACE_GROUP_OPTION',
 				'assertWaitPattern',
 				'callerPane',
+				'canBreakPanes',
 				'canFloatPanes',
+				// `canMovePanes` and `canBreakPanes` are TWO reads rather than one, because cmux has exactly
+				// one of the two capabilities — see `move.ts`.
+				'canMovePanes',
 				// The zoom declaration read, beside `canFloatPanes` and for its reason: a caller asks BEFORE
 				// zooming through one spelling rather than reaching into an optional member itself.
 				'canZoomPanes',
@@ -99,6 +107,10 @@ describe('spec:cyber-mux/library — published surface', () => {
 				'refuseFloatingPane',
 				// And the zoom refusal helper, for `refuseFloatingPane`'s reason exactly: an out-of-tree adapter
 				// that cannot zoom needs the one spelling of the refusal, not a second message that can drift.
+				// The two relocation refusal helpers, for `refuseFloatingPane`'s reason: an out-of-tree adapter
+				// that cannot move or break out a pane needs the one spelling of each refusal.
+				'refusePaneBreak',
+				'refusePaneMove',
 				'refusePaneZoom',
 				'resolveMux',
 				'resolveMuxAdapter',

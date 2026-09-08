@@ -1240,3 +1240,67 @@ describe('spec:cyber-mux/mux/driving', () => {
 		expect(() => tmuxMuxAdapter.setPaneZoom(exec, { id: '%2' }, true)).toThrow(/could not zoom pane %2/)
 	})
 })
+
+describe('spec:cyber-mux/mux/driving', () => {
+	// The listing `movePane` re-reads through, because `move-pane` has no `-P`/`-F` of its own.
+	const AFTER_MOVE = '%0 @0\n%1 @1\n%2 @1'
+
+	it('movePane() sends -d and the side flag, then re-reads the window the pane landed in', () => {
+		const calls: string[][] = []
+		const exec = fakeExec(calls, { 'move-pane': '', 'list-panes': AFTER_MOVE })
+		expect(tmuxMuxAdapter.movePane(exec, { id: '%2' }, { id: '%1' }, 'right')).toEqual({ id: '%2', tab: '@1' })
+		expect(calls).toEqual([
+			['move-pane', '-d', '-h', '-s', '%2', '-t', '%1'],
+			['list-panes', '-a', '-F', '#{pane_id} #{window_id}'],
+		])
+	})
+
+	it("movePane('down') sends -v — the flag that lands the pane BELOW the destination", () => {
+		const calls: string[][] = []
+		const exec = fakeExec(calls, { 'move-pane': '', 'list-panes': AFTER_MOVE })
+		tmuxMuxAdapter.movePane(exec, { id: '%2' }, { id: '%1' }, 'down')
+		expect(calls[0]).toEqual(['move-pane', '-d', '-v', '-s', '%2', '-t', '%1'])
+	})
+
+	it('movePane() throws when tmux refuses, rather than re-reading a move that never happened', () => {
+		// `move-pane` unanswered — the `Exec` seam's spelling for a command that failed.
+		const calls: string[][] = []
+		const exec = fakeExec(calls, { 'list-panes': AFTER_MOVE })
+		expect(() => tmuxMuxAdapter.movePane(exec, { id: '%2' }, { id: '%1' }, 'right')).toThrow(
+			/tmux could not move pane %2 to %1/,
+		)
+		expect(calls).toHaveLength(1)
+	})
+
+	it('movePane() throws when the pane is gone from the listing afterwards — a silent loss is not a success', () => {
+		const exec = fakeExec([], { 'move-pane': '', 'list-panes': '%0 @0' })
+		expect(() => tmuxMuxAdapter.movePane(exec, { id: '%2' }, { id: '%1' }, 'right')).toThrow(
+			/tmux could not resolve pane %2 after the move/,
+		)
+	})
+
+	it('breakPane() reports the new window from break-pane’s own -P -F, with no second read', () => {
+		const calls: string[][] = []
+		const exec = fakeExec(calls, { 'break-pane': '%2 @3' })
+		expect(tmuxMuxAdapter.breakPane(exec, { id: '%2' }, 'tab')).toEqual({ id: '%2', tab: '@3' })
+		expect(calls).toEqual([['break-pane', '-d', '-s', '%2', '-P', '-F', '#{pane_id} #{window_id}']])
+	})
+
+	// The tier collapse `open` already makes: tmux has no workspace, so both tiers are a new Window and
+	// the returned pane reports NO workspace rather than a false one.
+	it.each(['tab', 'workspace'] as const)('breakPane(%s) sends the same command and reports no workspace', (at) => {
+		const calls: string[][] = []
+		const opened = tmuxMuxAdapter.breakPane(fakeExec(calls, { 'break-pane': '%2 @3' }), { id: '%2' }, at)
+		expect(opened.workspace).toBeUndefined()
+		expect(calls[0]).toEqual(['break-pane', '-d', '-s', '%2', '-P', '-F', '#{pane_id} #{window_id}'])
+	})
+
+	it('breakPane() throws when tmux refuses, and when it reports a partial line', () => {
+		expect(() => tmuxMuxAdapter.breakPane(fakeExec([]), { id: '%2' }, 'tab')).toThrow(
+			/tmux could not break out pane %2/,
+		)
+		expect(() => tmuxMuxAdapter.breakPane(fakeExec([], { 'break-pane': '%2' }), { id: '%2' }, 'tab')).toThrow(
+			/tmux break-pane did not report the pane and window of %2/,
+		)
+	})
+})
