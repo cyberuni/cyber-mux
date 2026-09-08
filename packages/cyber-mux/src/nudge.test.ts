@@ -31,6 +31,12 @@ function fakeAdapter(
 		group: () => {
 			throw new Error('nudge groups no space — it takes turns in one that already exists')
 		},
+		movePane: () => {
+			throw new Error('nudge moves no pane — it takes turns in one that already exists')
+		},
+		breakPane: () => {
+			throw new Error('nudge breaks out no pane — it takes turns in one that already exists')
+		},
 		setPaneZoom: () => {
 			throw new Error('nudge zooms nothing — it takes turns, it does not resize the screen')
 		},

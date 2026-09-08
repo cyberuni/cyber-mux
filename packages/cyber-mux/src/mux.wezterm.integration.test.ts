@@ -199,6 +199,112 @@ describe.skipIf(!hasWezterm() || !hasMuxServer())('spec:cyber-mux/mux', () => {
 			expect(weztermMuxAdapter.isPaneZoomed(exec, target)).toBeUndefined()
 		})
 
+		/**
+		 * The relocation rows. Two things here are only knowable from the binary: that
+		 * `split-pane --move-pane-id` really relocates the pane rather than opening a second one, and
+		 * that `move-pane-to-new-tab` prints NOTHING on success — which is why the adapter checks
+		 * `=== null` instead of falsiness. Every row below would fail on a falsiness check, so the whole
+		 * block is that guard's test.
+		 */
+		// Every fixture below opens its own WORKSPACE rather than a tab, because a headless
+		// `wezterm cli spawn` with no `--window-id` has no current pane to anchor to and fails outright
+		// (`--pane-id was not specified and $WEZTERM_PANE is not set`). The workspace route spawns its own
+		// window and so needs no anchor — and it makes the move cross a window boundary, which is the
+		// harder case anyway.
+		let relocationSpaces = 0
+		function relocationSpace(): string {
+			relocationSpaces += 1
+			return `cm-reloc-${process.pid}-${relocationSpaces}`
+		}
+
+		function paneRow(id: string) {
+			const raw = exec('wezterm', ['cli', 'list', '--format', 'json'])
+			const rows = JSON.parse(raw ?? '[]') as {
+				pane_id: number
+				tab_id: number
+				window_id: number
+				workspace: string
+				left_col: number
+				top_row: number
+			}[]
+			const row = rows.find((r) => String(r.pane_id) === id)
+			if (!row) throw new Error(`wezterm no longer reports pane ${id}`)
+			return row
+		}
+
+		it('movePane() relocates the live pane into the destination’s tab rather than opening a new one', () => {
+			const home = weztermMuxAdapter.open(exec, { cwd, at: 'workspace', label: relocationSpace() })
+			const traveller = weztermMuxAdapter.open(exec, { cwd, at: 'pane:right', from: home })
+			const destination = weztermMuxAdapter.open(exec, { cwd, at: 'workspace', label: relocationSpace() })
+			const before = weztermMuxAdapter.listPanes(exec).length
+
+			const moved = weztermMuxAdapter.movePane(exec, traveller, destination, 'down')
+
+			// wezterm pane ids are server-wide, so the id survives the move.
+			expect(moved.id).toBe(traveller.id)
+			expect(moved.tab).toBe(destination.tab)
+			// Nothing was CREATED — the point of `--move-pane-id` over a plain split.
+			expect(weztermMuxAdapter.listPanes(exec)).toHaveLength(before)
+		})
+
+		it.each([
+			{ side: 'right', axis: 'left_col' },
+			{ side: 'down', axis: 'top_row' },
+		] as const)('movePane(%s) really lands the pane on that side of the destination', ({ side, axis }) => {
+			const home = weztermMuxAdapter.open(exec, { cwd, at: 'workspace', label: relocationSpace() })
+			const traveller = weztermMuxAdapter.open(exec, { cwd, at: 'pane:right', from: home })
+			const destination = weztermMuxAdapter.open(exec, { cwd, at: 'workspace', label: relocationSpace() })
+
+			const moved = weztermMuxAdapter.movePane(exec, traveller, destination, side)
+
+			// wezterm has no `regions` capability, so the geometry is read straight off its own listing —
+			// `--right` and `--bottom` are only names until a binary places them.
+			expect(paneRow(moved.id)[axis]).toBeGreaterThan(paneRow(destination.id)[axis])
+		})
+
+		it('movePane() throws on a destination the real wezterm cannot resolve', () => {
+			const home = weztermMuxAdapter.open(exec, { cwd, at: 'workspace', label: relocationSpace() })
+			expect(() => weztermMuxAdapter.movePane(exec, home, { id: '9999' }, 'right')).toThrow(
+				/wezterm could not move pane/,
+			)
+		})
+
+		it("breakPane('tab') gives the pane its own tab in the same window, and reports nothing on stdout", () => {
+			const home = weztermMuxAdapter.open(exec, { cwd, at: 'workspace', label: relocationSpace() })
+			const traveller = weztermMuxAdapter.open(exec, { cwd, at: 'pane:right', from: home })
+
+			const broken = weztermMuxAdapter.breakPane(exec, traveller, 'tab')
+
+			expect(broken.id).toBe(traveller.id)
+			expect(broken.tab).not.toBe(traveller.tab)
+			// Same WINDOW — the tier below the one `'workspace'` reaches for.
+			expect(paneRow(broken.id).window_id).toBe(paneRow(home.id).window_id)
+		})
+
+		it("breakPane('workspace') takes a new window into a freshly MINTED workspace", () => {
+			const home = weztermMuxAdapter.open(exec, { cwd, at: 'workspace', label: relocationSpace() })
+			const traveller = weztermMuxAdapter.open(exec, { cwd, at: 'pane:right', from: home })
+			const homeWorkspace = paneRow(home.id).workspace
+
+			const broken = weztermMuxAdapter.breakPane(exec, traveller, 'workspace')
+
+			// `--workspace` defaults to "default", so a minted name is the only way this is a NEW space.
+			expect(broken.workspace).toMatch(/^cyber-mux-[0-9a-f]{8}$/)
+			expect(broken.workspace).not.toBe(homeWorkspace)
+			expect(paneRow(broken.id).workspace).toBe(broken.workspace)
+			expect(paneRow(broken.id).window_id).not.toBe(paneRow(home.id).window_id)
+		})
+
+		/** wezterm is in herdr's family, not tmux's: a lone pane still gets a brand new tab. */
+		it("breakPane('tab') on a pane that is already alone still mints a new tab", () => {
+			const alone = weztermMuxAdapter.open(exec, { cwd, at: 'workspace', label: relocationSpace() })
+
+			const broken = weztermMuxAdapter.breakPane(exec, alone, 'tab')
+
+			expect(broken.id).toBe(alone.id)
+			expect(broken.tab).not.toBe(alone.tab)
+		})
+
 		it('open({ at: pane:float }) refuses rather than substituting a split', () => {
 			const before = weztermMuxAdapter.listPanes(exec).length
 			expect(() => weztermMuxAdapter.open(exec, { cwd, at: 'pane:float' })).toThrow()

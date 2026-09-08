@@ -544,3 +544,55 @@ describe('spec:cyber-mux/mux/lookup', () => {
 		})
 	})
 })
+
+describe('spec:cyber-mux/mux/driving', () => {
+	// The `pane.break` envelope, keyed the way cmux's default `--id-format refs` emits it.
+	const BROKEN = JSON.stringify({
+		window_ref: 'window:1',
+		workspace_ref: 'workspace:9',
+		pane_ref: 'pane:4',
+		surface_ref: 'surface:7',
+	})
+
+	it('breakPane() always names the surface, because a flagless pane.break breaks the FOCUSED one', () => {
+		const calls: string[][] = []
+		const exec = fakeExec(calls, { 'break-pane': BROKEN })
+		expect(cmuxMuxAdapter.breakPane(exec, { id: 'surface:7' }, 'workspace')).toEqual({
+			id: 'surface:7',
+			tab: 'pane:4',
+			workspace: 'workspace:9',
+		})
+		expect(calls).toEqual([['--json', 'break-pane', '--surface', 'surface:7', '--focus', 'false']])
+	})
+
+	// `at` collapses UPWARD on cmux — a surface IS a tab, so the only break it has lands the surface
+	// alone in a fresh workspace. The returned pane reports that workspace rather than pretending a tab.
+	it.each(['tab', 'workspace'] as const)('breakPane(%s) sends the same command and reports the new workspace', (at) => {
+		const opened = cmuxMuxAdapter.breakPane(fakeExec([], { 'break-pane': BROKEN }), { id: 'surface:7' }, at)
+		expect(opened.workspace).toBe('workspace:9')
+	})
+
+	it('breakPane() carries the bound workspace as the SOURCE context, exactly as teardown does', () => {
+		const calls: string[][] = []
+		workspaceAdapter.breakPane(fakeExec(calls, { 'break-pane': BROKEN }), { id: 'surface:7' }, 'workspace')
+		expect(calls[0]).toEqual([
+			'--json',
+			'break-pane',
+			'--surface',
+			'surface:7',
+			'--focus',
+			'false',
+			'--workspace',
+			'workspace:1',
+		])
+	})
+
+	it('breakPane() throws on a refusal, and on an envelope with no surface ref', () => {
+		expect(() => cmuxMuxAdapter.breakPane(fakeExec([]), { id: 'surface:7' }, 'tab')).toThrow(
+			/cmux could not break out surface surface:7 into its own tab/,
+		)
+		expect(() => cmuxMuxAdapter.breakPane(fakeExec([], { 'break-pane': '{}' }), { id: 'surface:7' }, 'tab')).toThrow(
+			/cmux break-pane did not report the surface ref/,
+		)
+	})
+})

@@ -532,3 +532,68 @@ describe('spec:cyber-mux/mux/driving', () => {
 		})
 	})
 })
+
+describe('spec:cyber-mux/mux/driving', () => {
+	const LIST_AFTER = JSON.stringify([
+		{ window_id: 1, tab_id: 7, pane_id: 1, workspace: 'default' },
+		{ window_id: 1, tab_id: 7, pane_id: 2, workspace: 'default' },
+	])
+
+	it('movePane() rides split-pane’s --move-pane-id, naming the DESTINATION as the pane being split', () => {
+		const calls: string[][] = []
+		const exec = fakeExec(calls, { 'split-pane': '1', list: LIST_AFTER })
+		expect(weztermMuxAdapter.movePane(exec, { id: '1' }, { id: '2' }, 'down')).toEqual({
+			id: '1',
+			tab: '7',
+			workspace: 'default',
+		})
+		expect(calls[0]).toEqual(['cli', 'split-pane', '--pane-id', '2', '--bottom', '--move-pane-id', '1'])
+	})
+
+	it("movePane('right') sends --right", () => {
+		const calls: string[][] = []
+		weztermMuxAdapter.movePane(
+			fakeExec(calls, { 'split-pane': '1', list: LIST_AFTER }),
+			{ id: '1' },
+			{ id: '2' },
+			'right',
+		)
+		expect(calls[0]).toEqual(['cli', 'split-pane', '--pane-id', '2', '--right', '--move-pane-id', '1'])
+	})
+
+	it('movePane() throws when wezterm refuses', () => {
+		expect(() =>
+			weztermMuxAdapter.movePane(fakeExec([], { list: LIST_AFTER }), { id: '1' }, { id: '2' }, 'right'),
+		).toThrow(/wezterm could not move pane 1 to 2/)
+	})
+
+	// `move-pane-to-new-tab` prints NOTHING on success (measured on 20240203), so an empty string is a
+	// SUCCESS and only `null` is a failure. A falsiness check here would throw on every real break.
+	it('breakPane() treats empty output as success, because this verb reports nothing', () => {
+		const calls: string[][] = []
+		const exec = fakeExec(calls, { 'move-pane-to-new-tab': '', list: LIST_AFTER })
+		expect(weztermMuxAdapter.breakPane(exec, { id: '1' }, 'tab')).toEqual({ id: '1', tab: '7', workspace: 'default' })
+		expect(calls[0]).toEqual(['cli', 'move-pane-to-new-tab', '--pane-id', '1'])
+	})
+
+	it('breakPane(workspace) takes a new WINDOW and mints the workspace name, since --workspace defaults to "default"', () => {
+		const calls: string[][] = []
+		const adapter = createWeztermAdapter({ newId: () => 'abcdef0123456789' })
+		adapter.breakPane(fakeExec(calls, { 'move-pane-to-new-tab': '', list: LIST_AFTER }), { id: '1' }, 'workspace')
+		expect(calls[0]).toEqual([
+			'cli',
+			'move-pane-to-new-tab',
+			'--pane-id',
+			'1',
+			'--new-window',
+			'--workspace',
+			'cyber-mux-abcdef01',
+		])
+	})
+
+	it('breakPane() throws when wezterm refuses', () => {
+		expect(() => weztermMuxAdapter.breakPane(fakeExec([], { list: LIST_AFTER }), { id: '1' }, 'tab')).toThrow(
+			/wezterm could not break out pane 1 into its own tab/,
+		)
+	})
+})

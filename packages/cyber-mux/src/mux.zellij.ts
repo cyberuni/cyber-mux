@@ -1,5 +1,6 @@
 import { envFallback } from './env-fallback.ts'
 import { type Exec, withReason } from './exec.ts'
+import { refusePaneBreak, refusePaneMove } from './move.ts'
 import type { LivePane, MuxAdapter, MuxReadOptions, OpenedPane } from './mux.ts'
 import { isReadTruncated } from './read-window.ts'
 import { pollForOutput } from './wait-output.ts'
@@ -168,6 +169,23 @@ export function createZellijAdapter(deps: { session?: string | undefined }): Mux
 		 * That combination is what the flag actually claims — see `mux.tmux.ts`'s note.
 		 */
 		canZoomPanes: true,
+
+		// No `canMovePanes` and no `canBreakPanes`: zellij 0.45.0 has NEITHER verb, and this is the
+		// finding that overturned issue #143's "real-everywhere" premise for the move. Read off the
+		// pinned binary's OWN command inventory rather than a docs page — `zellij action --help` on
+		// 0.45.0 lists `move-pane [-p <id>] [DIRECTION]`, which ROTATES a pane inside its own tab
+		// (`Change the location of the focused pane in the specified direction or rotate forwards`),
+		// and `move-pane-backwards`, which rotates the other way. Neither takes a destination of any
+		// kind, and the whole inventory carries no `break-pane` under that or any other spelling: the
+		// only cross-tab verbs are `move-tab`, `go-to-tab*` and `close-tab*`, all of which move the
+		// TAB or the focus and never a pane between tabs.
+		//
+		// So both members refuse BY NAME below. The absence IS the declaration, as it is for
+		// `canFloatPanes` on the backends that lack floats.
+		//
+		// RECHECK TRIGGER: a zellij release that adds a pane-to-tab verb. The floor this adapter
+		// declares is 0.45.0 and the pin in `pull-request.yml` is the same, so this claim covers
+		// exactly the binary the live suite drives and nothing newer.
 
 		opensWithoutStealingFocus: true,
 
@@ -425,6 +443,26 @@ export function createZellijAdapter(deps: { session?: string | undefined }): Mux
 			const found = listZellijPanes(exec).find((p) => samePane(p.id, target.id))
 			if (!found) return undefined
 			return found.is_fullscreen === true
+		},
+
+		/**
+		 * Refused BY NAME. zellij can rotate a pane within its tab and cannot send one to another tab
+		 * at all, so there is nothing here to render a destination with — see the declaration above for
+		 * the inventory read that settles it.
+		 *
+		 * Emulating it would mean opening a fresh pane at the destination and closing this one, which
+		 * loses the process, the scrollback and the identity the caller was moving — the substitution
+		 * `MuxAdapter.movePane` exists to refuse. `canMovePanes`'s absence is the declaration; this is
+		 * the enforcement, and both are needed for the reason `open`'s float refusal spells out: a
+		 * pre-flight check is not on the path a library caller takes.
+		 */
+		movePane() {
+			refusePaneMove('zellij')
+		},
+
+		/** Refused BY NAME, for `movePane`'s reason — 0.45.0 has no break-out verb at any spelling. */
+		breakPane() {
+			refusePaneBreak('zellij')
 		},
 
 		listPanes(exec): LivePane[] {
