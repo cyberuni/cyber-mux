@@ -98,6 +98,15 @@ export const rmuxMuxAdapter: MuxAdapter = {
 	 */
 	canZoomPanes: true,
 
+	/**
+	 * `true` for both, and re-measured on a live rmux 0.10.0 rather than inherited from the command
+	 * language it shares with tmux: `move-pane -d -h -s %1 -t %2` carried %1 into @1 and left the
+	 * client on @0, and `break-pane -d -s %1 -P -F` answered `@2 %1`. The `-s` source is honored as
+	 * named on both — no ACTIVE-pane trap, unlike `resize-pane -Z`.
+	 */
+	canMovePanes: true,
+	canBreakPanes: true,
+
 	opensWithoutStealingFocus: true,
 
 	open(exec, opts) {
@@ -398,6 +407,43 @@ export const rmuxMuxAdapter: MuxAdapter = {
 	},
 
 	/**
+	 * `move-pane -s <src> -t <dst>` with `-h`/`-v` for the side — tmux's spelling, driven on rmux
+	 * 0.10.0 rather than assumed from it. `-d` keeps the attached client where it is; measured, a
+	 * `-d` move left both the client's window and the destination's active pane untouched, while
+	 * without it rmux follows the pane.
+	 *
+	 * The re-read afterwards is `mux.tmux.ts`'s, for the same reason: rmux's `move-pane` has no
+	 * `-P`/`-F`, so the window the pane landed in must be asked for, and asking confirms the pane
+	 * survived.
+	 */
+	movePane(exec, target, destination, side) {
+		if (
+			exec('rmux', ['move-pane', '-d', side === 'down' ? '-v' : '-h', '-s', target.id, '-t', destination.id]) === null
+		) {
+			throw new Error(withReason(exec, `rmux could not move pane ${target.id} to ${destination.id}`))
+		}
+		return rmuxPaneLocation(exec, target.id, 'move')
+	},
+
+	/**
+	 * `break-pane -s <src> -P -F`, which reports the pane and its new window in one call. Driven on
+	 * 0.10.0: `break-pane -d -s %1` answered `@1 %1`, and a second break of the now-lone %1 answered
+	 * `@1 %1` again — the same no-op tmux makes, which is why the seam declares that difference from
+	 * herdr and wezterm rather than normalizing it.
+	 *
+	 * `at` is ignored for tmux's reason and not as an oversight: rmux has no workspace tier, so both
+	 * tiers collapse onto a new Window, and the returned `OpenedPane` reports no `workspace` so a
+	 * caller sees the collapse.
+	 */
+	breakPane(exec, target, _at) {
+		const out = exec('rmux', ['break-pane', '-d', '-s', target.id, '-P', '-F', '#{pane_id} #{window_id}'])
+		if (!out) throw new Error(withReason(exec, `rmux could not break out pane ${target.id}`))
+		const [pane, window] = out.trim().split(' ')
+		if (!pane || !window) throw new Error(`rmux break-pane did not report the pane and window of ${target.id}`)
+		return { id: pane, tab: window }
+	},
+
+	/**
 	 * Tab-separated, not space — the same rule `describeRmuxRegion` follows, and for the same reason:
 	 * `pane_current_path` and `pane_title` can both contain spaces, so a space-separated format makes
 	 * both fields unrecoverable (`my worker` and `/repo/my dir` cannot be told apart by a space). A tab
@@ -619,6 +665,24 @@ function splitOpenReport(out: string, command: string): [string, string] {
 	const [pane, windowId] = out.split('\t')
 	if (!pane || !windowId) throw new Error(`rmux ${command} did not report the new pane's id and window id`)
 	return [pane, windowId]
+}
+
+/**
+ * Where a pane lives NOW, as the `OpenedPane` a relocation has to answer with — the read `move-pane`
+ * cannot give, because rmux's has no `-P`/`-F` to report through. `mux.tmux.ts`'s `tmuxPaneLocation`
+ * one binary over.
+ *
+ * Server-wide `list-panes -a` rather than `display-message -p`, which answers a pane that no longer
+ * exists with a blank line and exit code 0 — a move that silently lost its pane would read as a
+ * successful one. A missing LINE is unambiguous and throws.
+ */
+function rmuxPaneLocation(exec: Exec, id: string, verb: string): OpenedPane {
+	const out = exec('rmux', ['list-panes', '-a', '-F', '#{pane_id} #{window_id}'])
+	const line = (out ?? '').split('\n').find((l) => l.split(' ')[0] === id)
+	if (!line) throw new Error(`rmux could not resolve pane ${id} after the ${verb}`)
+	const [, windowId] = line.split(' ')
+	if (!windowId) throw new Error(`rmux did not report a window for pane ${id} after the ${verb}`)
+	return { id, tab: windowId }
 }
 
 /**

@@ -82,6 +82,21 @@ export const herdrMuxAdapter: MuxAdapter = {
 	 */
 	canZoomPanes: true,
 
+	/**
+	 * `true` for both, and herdr is the one backend that spells them as a SINGLE verb: `herdr pane
+	 * move <PANE_ID>`, whose own usage prints three mutually exclusive forms —
+	 * `--tab <id> --split right|down [--target-pane <id>]`, `--new-tab [--workspace <id>]`, and
+	 * `--new-workspace`. Driven live on 0.9.0 in a throwaway workspace for all three.
+	 *
+	 * Pinned to the 0.8.0 CI pin against that binary directly rather than by a version guess: the
+	 * v0.8.0 release binary's `pane move --help` lists exactly the same option set (`--tab --split
+	 * --target-pane --ratio --new-tab --workspace --new-workspace --label --tab-label
+	 * --focus --no-focus`), so neither member depends on a herdr newer than the one
+	 * `pull-request.yml` drives.
+	 */
+	canMovePanes: true,
+	canBreakPanes: true,
+
 	opensWithoutStealingFocus: true,
 
 	open(exec, opts) {
@@ -407,6 +422,70 @@ export const herdrMuxAdapter: MuxAdapter = {
 		} catch {
 			return undefined
 		}
+	},
+
+	/**
+	 * `pane move <src> --tab <dst tab> --split <side> --target-pane <dst> --no-focus`.
+	 *
+	 * The DESTINATION PANE's tab has to be resolved first, because `--tab` is not optional: herdr
+	 * refuses the command outright without it (its usage line is `move <pane_id> --tab <tab_id>
+	 * --split right|down …`, and the flagless form printed usage and did nothing on 0.9.0). The seam's
+	 * destination is a pane, so `pane get <dst>` supplies the tab and the pane rides along as
+	 * `--target-pane` — which is what makes the placement the caller's rather than herdr's, since
+	 * `--tab` alone splits whichever pane that tab happens to have focused.
+	 *
+	 * `--no-focus` for the reason every other route here passes it: a driver moving a pane should not
+	 * drag the human's view along. Measured on 0.9.0 — the destination tab's own focused pane was
+	 * unchanged afterwards.
+	 *
+	 * herdr NO-OPS a move into the tab the pane is already in, `--target-pane` or not
+	 * (`{"changed":false}` on 0.9.0, with the pane left exactly where it was). That is reported as it
+	 * happened: the returned `OpenedPane` is the pane's real, unchanged location rather than the one
+	 * the caller asked for.
+	 */
+	movePane(exec, target, destination, side) {
+		const { tabId } = parsePaneRecord(exec('herdr', ['pane', 'get', destination.id]))
+		if (!tabId) throw new Error(`herdr could not resolve the tab of destination pane ${destination.id}`)
+		const out = exec('herdr', [
+			'pane',
+			'move',
+			target.id,
+			'--tab',
+			tabId,
+			'--split',
+			side,
+			'--target-pane',
+			destination.id,
+			'--no-focus',
+		])
+		if (!out) throw new Error(withReason(exec, `herdr could not move pane ${target.id} to ${destination.id}`))
+		return parseMovedPane(out, 'herdr pane move')
+	},
+
+	/**
+	 * `pane move <src> --new-tab|--new-workspace --no-focus` — the same verb as `movePane`, a disjoint
+	 * flag set, which is why the seam keeps them as two members rather than one.
+	 *
+	 * **`--new-workspace` REWRITES THE PANE ID**, and this is the backend that forced `breakPane` to
+	 * return an `OpenedPane` at all: herdr ids are workspace-scoped, so on 0.9.0 `pane move wRT:p2
+	 * --new-workspace` answered with the same terminal carrying the id `wRV:p1`. The old id keeps
+	 * resolving as an alias and disappears from `pane list` — see `parseMovedPane`. `--new-tab` keeps
+	 * the id and changes only the tab.
+	 *
+	 * Both forms mint a fresh space even when the pane is ALREADY alone in its tab — measured, a
+	 * second `--new-tab` moved `wRD:t3` to `wRD:t4` — which is where herdr differs from tmux's no-op,
+	 * a difference `MuxAdapter.breakPane` declares rather than hides.
+	 */
+	breakPane(exec, target, at) {
+		const out = exec('herdr', [
+			'pane',
+			'move',
+			target.id,
+			at === 'workspace' ? '--new-workspace' : '--new-tab',
+			'--no-focus',
+		])
+		if (!out) throw new Error(withReason(exec, `herdr could not break out pane ${target.id} into its own ${at}`))
+		return parseMovedPane(out, 'herdr pane move')
 	},
 
 	listPanes(exec): LivePane[] {
@@ -1029,9 +1108,25 @@ function parseOpenedPane(out: string, label: string, key: 'pane' | 'root_pane'):
 	} catch {
 		throw new Error(`${label} returned unparseable output: ${out.slice(0, 200)}`)
 	}
+	return openedPaneFromRecord(pane, out, label, key)
+}
+
+/**
+ * The `OpenedPane` inside one herdr pane record, split out of `parseOpenedPane` so the relocation
+ * routes can reuse the validation without reusing the PATH: `pane move` reports its pane one level
+ * deeper (`result.move_result.pane`) than every creating route does. `path` names where the record
+ * came from so a failure says which field was missing, and `out` is carried only to quote the
+ * envelope back.
+ */
+function openedPaneFromRecord(
+	pane: { pane_id?: unknown | undefined; tab_id?: unknown | undefined; workspace_id?: unknown | undefined } | undefined,
+	out: string,
+	label: string,
+	path: string,
+): OpenedPane {
 	const paneId = pane?.pane_id
 	if (typeof paneId !== 'string' || paneId === '') {
-		throw new Error(`${label} output had no result.${key}.pane_id: ${out.slice(0, 200)}`)
+		throw new Error(`${label} output had no result.${path}.pane_id: ${out.slice(0, 200)}`)
 	}
 	// The pane's OWN tab, carried in the same envelope on every route — a created tab reports itself,
 	// a created workspace reports its root tab, a split reports the tab it landed in. Read here rather
@@ -1044,10 +1139,33 @@ function parseOpenedPane(out: string, label: string, key: 'pane' | 'root_pane'):
 	// caller a rename target it could only get wrong.
 	const tab = pane?.tab_id
 	if (typeof tab !== 'string' || tab === '') {
-		throw new Error(`${label} output had no result.${key}.tab_id: ${out.slice(0, 200)}`)
+		throw new Error(`${label} output had no result.${path}.tab_id: ${out.slice(0, 200)}`)
 	}
 	const workspace = pane?.workspace_id
 	return typeof workspace === 'string' && workspace !== '' ? { id: paneId, tab, workspace } : { id: paneId, tab }
+}
+
+/**
+ * The pane a `herdr pane move` answers with, at `result.move_result.pane` — the relocated pane's
+ * CURRENT identity, which on herdr is not always the one that went in.
+ *
+ * Reading it is not bookkeeping: herdr pane ids are WORKSPACE-SCOPED, so a move that crosses a
+ * workspace boundary rewrites the id (measured live on 0.9.0 — `pane move wRE:p1 --tab wRD:t1`
+ * answered `wRD:p4`). The old id still RESOLVES afterwards, as an alias that reports the new one, so
+ * a caller holding it is not obviously broken — it is simply absent from `pane list` (measured),
+ * which is what makes a stale handle fail silently rather than loudly. This envelope is the only
+ * place the new id appears.
+ */
+function parseMovedPane(out: string, label: string): OpenedPane {
+	let pane:
+		| { pane_id?: unknown | undefined; tab_id?: unknown | undefined; workspace_id?: unknown | undefined }
+		| undefined
+	try {
+		pane = JSON.parse(out)?.result?.move_result?.pane
+	} catch {
+		throw new Error(`${label} returned unparseable output: ${out.slice(0, 200)}`)
+	}
+	return openedPaneFromRecord(pane, out, label, 'move_result.pane')
 }
 
 /**

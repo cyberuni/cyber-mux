@@ -1,6 +1,7 @@
 import { launchFallback } from './env-fallback.ts'
 import { type Exec, withReason } from './exec.ts'
 import { refuseFloatingPane } from './floating.ts'
+import { refusePaneBreak, refusePaneMove } from './move.ts'
 import type { LivePane, MuxAdapter, MuxReadOptions, OpenedPane } from './mux.ts'
 import { assertRatioInRange } from './ratio.ts'
 import { pollForOutput } from './wait-output.ts'
@@ -338,6 +339,34 @@ export function createOttyAdapter(deps: { window?: string | undefined }): MuxAda
 		 */
 		isPaneZoomed() {
 			return undefined
+		},
+
+		/**
+		 * Refused BY NAME, and this is `setPaneZoom`'s refusal one member over rather than a claim that
+		 * otty cannot relocate panes. It plainly can — the docs publish it as a MOUSE GESTURE ("drag a
+		 * pane onto the tab strip to move it out into its own new tab", "drag it outside the window to
+		 * tear it off") and as a right-click menu item ("Move Tab to New Window"). What they do not
+		 * publish is a way for a program to ask.
+		 *
+		 * The CLI reference names `move` for the TAB tier only — "Common subcommands across the three:
+		 * `show`, `list`, `new`, `close`, `focus`, `rename` (window/tab), `move` (tab)" — with no flag
+		 * list, no example, and no destination grammar anywhere in the corpus; `/agents/orchestration`,
+		 * the one page that carries flags the reference drops (`--cwd`, `--no-focus`), names neither
+		 * verb. So the write vocabulary is unknown and there is no read to verify a guess landed
+		 * against. A blind guess at a destination flag is exactly what a refusal is for: otty's parser
+		 * would either fail or, worse, ignore it.
+		 *
+		 * RECHECK TRIGGER: `otty tab move --help` and `otty pane --help` on a machine with otty — see
+		 * issue #128 for the missing real-boundary suite. Absence from a docs page is not evidence a
+		 * verb does not exist, and this refusal claims only that nothing publishes how to drive one.
+		 */
+		movePane() {
+			refusePaneMove('otty')
+		},
+
+		/** Refused BY NAME, for `movePane`'s reason: the break-out is a GUI gesture with no CLI spelling. */
+		breakPane() {
+			refusePaneBreak('otty')
 		},
 
 		listPanes(exec): LivePane[] {

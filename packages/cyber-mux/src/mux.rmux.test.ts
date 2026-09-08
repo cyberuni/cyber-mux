@@ -1252,3 +1252,64 @@ describe('spec:cyber-mux/mux/driving', () => {
 		expect(() => rmuxMuxAdapter.setPaneZoom(exec, { id: '%2' }, true)).toThrow(/could not zoom pane %2/)
 	})
 })
+
+describe('spec:cyber-mux/mux/driving', () => {
+	const AFTER_MOVE = '%0 @0\n%1 @1\n%2 @1'
+
+	it('movePane() sends tmux’s own argv with rmux in front of it, then re-reads the window', () => {
+		const calls: string[][] = []
+		const exec = fakeExec(calls, { 'move-pane': '', 'list-panes': AFTER_MOVE })
+		expect(rmuxMuxAdapter.movePane(exec, { id: '%2' }, { id: '%1' }, 'right')).toEqual({ id: '%2', tab: '@1' })
+		expect(calls).toEqual([
+			['move-pane', '-d', '-h', '-s', '%2', '-t', '%1'],
+			['list-panes', '-a', '-F', '#{pane_id} #{window_id}'],
+		])
+	})
+
+	it("movePane('down') sends -v", () => {
+		const calls: string[][] = []
+		rmuxMuxAdapter.movePane(
+			fakeExec(calls, { 'move-pane': '', 'list-panes': AFTER_MOVE }),
+			{ id: '%2' },
+			{ id: '%1' },
+			'down',
+		)
+		expect(calls[0]).toEqual(['move-pane', '-d', '-v', '-s', '%2', '-t', '%1'])
+	})
+
+	it('movePane() throws rather than reporting a false success', () => {
+		const exec = fakeExec([], { 'list-panes': AFTER_MOVE })
+		expect(() => rmuxMuxAdapter.movePane(exec, { id: '%2' }, { id: '%1' }, 'right')).toThrow(
+			/rmux could not move pane %2 to %1/,
+		)
+		expect(() =>
+			rmuxMuxAdapter.movePane(
+				fakeExec([], { 'move-pane': '', 'list-panes': '%0 @0' }),
+				{ id: '%2' },
+				{ id: '%1' },
+				'right',
+			),
+		).toThrow(/rmux could not resolve pane %2 after the move/)
+	})
+
+	it('breakPane() reads the new window out of break-pane’s own report', () => {
+		const calls: string[][] = []
+		const exec = fakeExec(calls, { 'break-pane': '%2 @3' })
+		expect(rmuxMuxAdapter.breakPane(exec, { id: '%2' }, 'tab')).toEqual({ id: '%2', tab: '@3' })
+		expect(calls).toEqual([['break-pane', '-d', '-s', '%2', '-P', '-F', '#{pane_id} #{window_id}']])
+	})
+
+	it.each(['tab', 'workspace'] as const)('breakPane(%s) collapses onto a new window and reports no workspace', (at) => {
+		const opened = rmuxMuxAdapter.breakPane(fakeExec([], { 'break-pane': '%2 @3' }), { id: '%2' }, at)
+		expect(opened.workspace).toBeUndefined()
+	})
+
+	it('breakPane() throws when rmux refuses, and when it reports a partial line', () => {
+		expect(() => rmuxMuxAdapter.breakPane(fakeExec([]), { id: '%2' }, 'tab')).toThrow(
+			/rmux could not break out pane %2/,
+		)
+		expect(() => rmuxMuxAdapter.breakPane(fakeExec([], { 'break-pane': '%2' }), { id: '%2' }, 'tab')).toThrow(
+			/rmux break-pane did not report the pane and window of %2/,
+		)
+	})
+})

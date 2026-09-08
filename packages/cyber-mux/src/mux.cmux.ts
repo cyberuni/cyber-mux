@@ -1,6 +1,7 @@
 import { launchFallback } from './env-fallback.ts'
 import { type Exec, withReason } from './exec.ts'
 import { refuseFloatingPane } from './floating.ts'
+import { refusePaneMove } from './move.ts'
 import type { LivePane, MuxAdapter, MuxReadOptions, OpenedPane } from './mux.ts'
 import { pollForOutput } from './wait-output.ts'
 import { refusePaneZoom } from './zoom.ts'
@@ -130,6 +131,19 @@ export function createCmuxAdapter(deps: { workspace?: string | undefined }): Mux
 		// No `canSizeSplits`: `new-pane` has no size flag at all and `resize-pane` is cell-based, so
 		// there is nothing to render a fractional `ratio` with. Its absence is what callers degrade on
 		// — zellij's answer exactly. This used to be `true`, backed by a `--size` flag cmux never had.
+
+		/**
+		 * `canBreakPanes` alone, and the split between the two flags is cmux's whole contribution to the
+		 * shape of this member: it HAS a break-out (`break-pane` → `pane.break`, which detaches a surface
+		 * into its own workspace) and has nothing that puts a surface beside a NAMED pane on a NAMED
+		 * side, so `canMovePanes` is omitted and `movePane` refuses by name. One `canRelocatePanes` would
+		 * have had to answer `false` here and throw away the half cmux really does.
+		 *
+		 * Declared on a SOURCE read at `ae18c88`, never on a live drive — the caveat every capability in
+		 * this file carries, and the reason it is stated here rather than assumed from the pattern the
+		 * other adapters set, where these flags are backed by a driven binary.
+		 */
+		canBreakPanes: true,
 
 		/**
 		 * `false`, and cmux needs BOTH halves to be true to say otherwise. No creating verb documents a
@@ -399,6 +413,68 @@ export function createCmuxAdapter(deps: { workspace?: string | undefined }): Mux
 		 */
 		isPaneZoomed() {
 			return undefined
+		},
+
+		/**
+		 * Refused BY NAME, and NOT because cmux cannot move a pane — it has two container moves, and
+		 * neither one takes this member's destination.
+		 *
+		 * - `move-surface --surface <s> --pane <p>` moves a surface into another PANE CONTAINER, where it
+		 *   lands as one of that container's TABS, ordered by `--before`/`--after`/`--index`. There is no
+		 *   side, because nothing is split: the destination pane keeps its geometry and gains a tab.
+		 * - `split-off` / `drag-surface-to-split --surface <s> <left|right|up|down>` DOES split, and takes
+		 *   no destination at all — it splits the surface off inside its own pane, wherever that is.
+		 *
+		 * So "beside pane X, on side S" is the one thing cmux's move verbs cannot spell between them.
+		 * Substituting either would satisfy the caller's id and violate the placement they asked for,
+		 * which is the trade `MuxAdapter.movePane` refuses. Read from cmux's Swift source at HEAD
+		 * `ae18c88` (`CLI/cmux.swift`, `CLI/CMUXCLI+MoveTabToNewWorkspace.swift`), never driven — the
+		 * standing caveat this whole header carries.
+		 *
+		 * RECHECK TRIGGER: a cmux verb that names a destination surface AND a split direction. #128 is
+		 * the missing real-boundary suite.
+		 */
+		movePane() {
+			refusePaneMove('cmux')
+		},
+
+		/**
+		 * `break-pane --surface <id> --focus false` → the socket's `pane.break`, which detaches a surface
+		 * into a NEW WORKSPACE (`sourceWorkspace.detachSurface(...)` then
+		 * `tabManager.addWorkspace(fromDetachedSurface:)`, with rollback on failure) and answers
+		 * `{window_*, workspace_*, pane_*, surface_*}` — every id this member needs.
+		 *
+		 * **`at` collapses UPWARD here, the mirror of tmux's downward collapse, and the seam's own
+		 * `open` already makes both kinds.** A cmux surface IS a tab, so there is no "give this surface
+		 * its own tab" to ask for; `pane.break` is the only break cmux has, and it always lands the
+		 * surface alone in a fresh workspace — which satisfies `'tab'` by over-delivering rather than by
+		 * failing. The returned `OpenedPane` reports the new workspace, so a caller that asked for a tab
+		 * sees exactly where it landed rather than being told a comfortable lie.
+		 *
+		 * `--surface` is passed ALWAYS and that is load-bearing: with neither `--pane` nor `--surface`,
+		 * `pane.break` breaks out the FOCUSED surface — a silent wrong-pane break for any library caller
+		 * whose focus is not where it thinks. `--workspace` is the SOURCE context (it is what `--surface`
+		 * is resolved within, not a destination), so it rides only when this adapter is bound to one,
+		 * exactly as `teardown` sends it.
+		 *
+		 * `--focus false` is explicit even though cmux's own default is `false`: `runTmuxCompatCommand`
+		 * validates no unknown flag, so nothing here would report a typo, and the explicit value is what
+		 * makes the intent auditable.
+		 *
+		 * Read from cmux's Swift source at `ae18c88` — the CLI dispatch (`cmux.swift:27398`), the
+		 * coordinator (`ControlCommandCoordinator+Pane.swift`, the `.broken` case) and the app path —
+		 * and NEVER DRIVEN, like every other cmux member. That is why `canBreakPanes` is declared on a
+		 * source read and says so, rather than on the live evidence the other four capable backends
+		 * carry.
+		 */
+		breakPane(exec, target, at) {
+			const args = ['--json', 'break-pane', '--surface', target.id, '--focus', 'false']
+			if (deps.workspace) args.push('--workspace', deps.workspace)
+			const out = exec('cmux', args)
+			if (!out) throw new Error(withReason(exec, `cmux could not break out surface ${target.id} into its own ${at}`))
+			const parsed = parseCmuxOutput(out)
+			if (!parsed.surface_ref) throw new Error('cmux break-pane did not report the surface ref')
+			return openedSurface(parsed.surface_ref, parsed.pane_ref, parsed.workspace_ref)
 		},
 
 		listPanes(exec): LivePane[] {

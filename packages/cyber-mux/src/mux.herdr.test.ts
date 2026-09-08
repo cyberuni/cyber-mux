@@ -1837,3 +1837,81 @@ describe('spec:cyber-mux/mux/driving', () => {
 		expect(() => herdrMuxAdapter.setPaneZoom(exec, { id: 'w1:p2' }, true)).toThrow(/could not zoom pane w1:p2/)
 	})
 })
+
+describe('spec:cyber-mux/mux/driving', () => {
+	const paneGet = (id: string, tab: string, workspace: string) =>
+		JSON.stringify({ result: { pane: { pane_id: id, tab_id: tab, workspace_id: workspace } } })
+	const moved = (id: string, tab: string, workspace: string) =>
+		JSON.stringify({
+			result: { move_result: { changed: true, pane: { pane_id: id, tab_id: tab, workspace_id: workspace } } },
+		})
+
+	it('movePane() resolves the DESTINATION pane’s tab first, because --tab is not optional', () => {
+		const calls: string[][] = []
+		const exec = fakeExec(calls, {
+			'pane get': paneGet('wA:p1', 'wA:t1', 'wA'),
+			'pane move': moved('wA:p2', 'wA:t1', 'wA'),
+		})
+		expect(herdrMuxAdapter.movePane(exec, { id: 'wA:p2' }, { id: 'wA:p1' }, 'right')).toEqual({
+			id: 'wA:p2',
+			tab: 'wA:t1',
+			workspace: 'wA',
+		})
+		expect(calls).toEqual([
+			['pane', 'get', 'wA:p1'],
+			['pane', 'move', 'wA:p2', '--tab', 'wA:t1', '--split', 'right', '--target-pane', 'wA:p1', '--no-focus'],
+		])
+	})
+
+	it('movePane() reports the pane id herdr ANSWERS with, not the one it was given', () => {
+		// herdr pane ids are workspace-scoped, so a cross-workspace move renames the pane — measured live
+		// on 0.9.0. This is the whole reason the member returns an `OpenedPane` instead of `void`.
+		const exec = fakeExec([], {
+			'pane get': paneGet('wB:p1', 'wB:t1', 'wB'),
+			'pane move': moved('wB:p4', 'wB:t1', 'wB'),
+		})
+		expect(herdrMuxAdapter.movePane(exec, { id: 'wA:p3' }, { id: 'wB:p1' }, 'down')).toEqual({
+			id: 'wB:p4',
+			tab: 'wB:t1',
+			workspace: 'wB',
+		})
+	})
+
+	it('movePane() throws when the destination cannot be resolved, before any move is issued', () => {
+		const calls: string[][] = []
+		expect(() => herdrMuxAdapter.movePane(fakeExec(calls), { id: 'wA:p2' }, { id: 'wA:p9' }, 'right')).toThrow(
+			/herdr could not resolve the tab of destination pane wA:p9/,
+		)
+		expect(calls).toHaveLength(1)
+	})
+
+	it('movePane() throws when herdr refuses the move', () => {
+		const exec = fakeExec([], { 'pane get': paneGet('wA:p1', 'wA:t1', 'wA') })
+		expect(() => herdrMuxAdapter.movePane(exec, { id: 'wA:p2' }, { id: 'wA:p1' }, 'right')).toThrow(
+			/herdr could not move pane wA:p2 to wA:p1/,
+		)
+	})
+
+	it.each([
+		['tab', '--new-tab'],
+		['workspace', '--new-workspace'],
+	] as const)('breakPane(%s) sends %s on the same verb', (at, flag) => {
+		const calls: string[][] = []
+		const exec = fakeExec(calls, { 'pane move': moved('wE:p1', 'wE:t1', 'wE') })
+		expect(herdrMuxAdapter.breakPane(exec, { id: 'wD:p3' }, at)).toEqual({ id: 'wE:p1', tab: 'wE:t1', workspace: 'wE' })
+		expect(calls).toEqual([['pane', 'move', 'wD:p3', flag, '--no-focus']])
+	})
+
+	it('breakPane() throws on a refusal, and on an envelope with no pane in it', () => {
+		expect(() => herdrMuxAdapter.breakPane(fakeExec([]), { id: 'wD:p3' }, 'tab')).toThrow(
+			/herdr could not break out pane wD:p3 into its own tab/,
+		)
+		expect(() =>
+			herdrMuxAdapter.breakPane(
+				fakeExec([], { 'pane move': JSON.stringify({ result: { move_result: {} } }) }),
+				{ id: 'wD:p3' },
+				'tab',
+			),
+		).toThrow(/output had no result\.move_result\.pane\.pane_id/)
+	})
+})
