@@ -1,5 +1,15 @@
 # cyber-mux
 
+## 0.7.1
+
+### Patch Changes
+
+- 31dea02: `mode`'s own `--help` line said it reports "tmux / herdr / none", three backends behind the seven it
+  actually resolves. It now names them all, and says it reports the *drivable* backend — which is why a
+  recognized-but-undrivable mux (GNU screen) answers `none` here while `doctor` still names it.
+- 80c6687: Ship a readme with the package — the repository readme now lives in `packages/cyber-mux/` (symlinked
+  from the repo root), so npm shows the badges, backend list, and command table instead of nothing.
+
 ## 0.7.0
 
 ### Minor Changes
