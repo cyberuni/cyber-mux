@@ -1,5 +1,29 @@
 # cyber-mux
 
+## 0.8.0
+
+### Minor Changes
+
+- e8c4b28: The CLI now runs on clibuilder instead of commander, and ships as a clibuilder plugin: a host CLI that
+  lists `cyber-mux/plugin` in its `plugins` config gets every verb under `mux` (`<host> mux list`).
+  
+  Usage errors behave differently in a few places:
+  
+  - A malformed value (`--at bogus`, `--lines abc`, `--env NOEQUALS`) is now a coded `invalid-value`
+    error on stdout with exit 2. It used to exit 1 with commander's own text on stderr.
+  - A missing `--branch` on `worktree add` or `worktree provision` is now a coded `missing-argument`
+    error with exit 2.
+  - `--help` exits 0 as before. The help layout is clibuilder's.
+  - `--version` reports the package version instead of `0.0.0`.
+
+### Patch Changes
+
+- 31dea02: `mode`'s own `--help` line said it reports "tmux / herdr / none", three backends behind the seven it
+  actually resolves. It now names them all, and says it reports the *drivable* backend — which is why a
+  recognized-but-undrivable mux (GNU screen) answers `none` here while `doctor` still names it.
+- 80c6687: Ship a readme with the package — the repository readme now lives in `packages/cyber-mux/` (symlinked
+  from the repo root), so npm shows the badges, backend list, and command table instead of nothing.
+
 ## 0.7.0
 
 ### Minor Changes
