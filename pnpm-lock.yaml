@@ -76,8 +76,8 @@ importers:
   packages/cyber-mux:
     dependencies:
       clibuilder:
-        specifier: ^11.2.1
-        version: 11.2.1(typescript@6.0.3)
+        specifier: ^11.2.2
+        version: 11.2.2(typescript@6.0.3)
     devDependencies:
       '@types/node':
         specifier: ^24.10.1
@@ -1784,8 +1784,8 @@ packages:
     resolution: {integrity: sha512-77PSwercCZU2Fc4sX94eF8k8Pxte6JAwL4/ICZLFjJLqegs7kCuAsqqj/70NQF6TvDpgFjkubQB2FW2ZZddvQg==}
     engines: {node: '>=8'}
 
-  clibuilder@11.2.1:
-    resolution: {integrity: sha512-5ZwGx3UNcg5XzggB2dF4c+bWHnNDBRg5MJMFo/Kjgm0Vfj87YSUGTl5MR+LBs9gM6l+MQiylycYoVA6o54HDQQ==}
+  clibuilder@11.2.2:
+    resolution: {integrity: sha512-Z4JQcOdCdKDi21T20jwDr26JwCUyF3cGKhJ/B4+zKSVL73QYgzFaR8YAlK5bROIZ/mbxiYCJgWUB+yf1oJpPdA==}
     engines: {node: '>= 20.19'}
 
   cliui@8.0.1:
@@ -5192,7 +5192,7 @@ snapshots:
 
   ci-info@4.4.0: {}
 
-  clibuilder@11.2.1(typescript@6.0.3):
+  clibuilder@11.2.2(typescript@6.0.3):
     dependencies:
       find-installed-packages: 4.0.1
       js-yaml: 4.3.0

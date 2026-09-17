@@ -2361,9 +2361,10 @@ Decisions (`clibuilder-mux-plugin` — replace commander with clibuilder, and mo
 - **a malformed value is a coded usage error** — DECIDED: `--at bogus`, `--lines abc`, and a bad
   `--env` pair exit `2` with code `invalid-value`, where commander exited `1` with its own text on
   stderr. The fix is a different invocation, which is what exit 2 means.
-- **no parser `default` on an option a caller can set falsy** — DECIDED: `wait --timeout` and
-  `open --cwd` apply their defaults in `run`. clibuilder 11.2 replaces a passed falsy value with the
-  declared default (clibuilder#620), which turned `--timeout 0` into a 30-second wait.
+- **defaults live on the option** — DECIDED: `wait --timeout` and `open --cwd` declare their defaults
+  in the option, so help shows them. That needs clibuilder 11.2.2: earlier 11.2 releases replaced a
+  passed falsy value with the declared default (clibuilder#620), which turned `--timeout 0` into a
+  30-second wait.
 - **the plugin is a subpath** — DECIDED: `activate` ships from `cyber-mux/plugin`, not the package
   root, so importing the library never loads clibuilder. The plugin mounts the same `muxCommands()`
   list the binary mounts, under `mux`, and names the host in every usage-error fix.
@@ -2371,5 +2372,6 @@ Decisions (`clibuilder-mux-plugin` — replace commander with clibuilder, and mo
   standard-log binds once per process, so no in-process spy observes it. The bare-group and `--help`
   output is asserted against the built bin in `cli.dist.test.ts`. The unit suite asserts only their
   exit status.
-- **clibuilder 11.2.1, not 11.2.0** — DECIDED: 11.2.0 left `esm/invocation/argv.internal.js` out of
-  its tarball and could not be imported (clibuilder#617, fixed in 11.2.1).
+- **clibuilder 11.2.2 at minimum** — DECIDED: 11.2.0 left `esm/invocation/argv.internal.js` out of
+  its tarball and could not be imported (clibuilder#617, fixed in 11.2.1), and 11.2.1 still dropped
+  falsy values (#620, fixed in 11.2.2).

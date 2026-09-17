@@ -13,4 +13,3 @@ Usage errors behave differently in a few places:
   error with exit 2.
 - `--help` exits 0 as before. The help layout is clibuilder's.
 - `--version` reports the package version instead of `0.0.0`.
-- `wait --timeout 0` takes a single look at the pane, as documented.

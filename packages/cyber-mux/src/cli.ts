@@ -1170,10 +1170,7 @@ function openCommand(deps: Deps): MuxCommand {
 		options: {
 			launch: { description: 'Command line to run in the new pane', type: z.optional(z.string()) },
 			template: TEMPLATE_OPTION,
-			cwd: {
-				description: 'Working directory for the new pane (default: the current directory)',
-				type: z.optional(z.string()),
-			},
+			cwd: { description: 'Working directory for the new pane', type: z.optional(z.string()), default: process.cwd() },
 			at: AT_OPTION,
 			env: ENV_OPTION,
 			label: LABEL_OPTION,
@@ -1442,11 +1439,10 @@ function waitCommand(deps: Deps): MuxCommand {
 				type: z.optional(z.string()),
 				conflicts: ['match'],
 			},
-			// No `default` here: clibuilder replaces a falsy passed value with it (clibuilder#620), which would turn `--timeout 0`
-			// into the full default wait. The default is applied in `run` instead.
 			timeout: {
-				description: `Give up after this many milliseconds (default ${DEFAULT_WAIT_TIMEOUT_MS})`,
+				description: 'Give up after this many milliseconds',
 				type: z.optional(z.number()),
+				default: DEFAULT_WAIT_TIMEOUT_MS,
 			},
 			lines: {
 				description: 'Restrict the searched snapshot to this many trailing lines',
