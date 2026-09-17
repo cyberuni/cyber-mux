@@ -93,7 +93,7 @@ matches `Exec`'s existing convention, so the resolution chain is a plain `??` wa
 **JSON.** Reasoning, in order of weight:
 
 1. **Zero new dependency.** `packages/cyber-mux/package.json` has exactly one runtime dependency:
-   `commander`. There is no YAML or TOML parser anywhere in the monorepo, and Node ships neither —
+   `commander` (since replaced by `clibuilder`). There is no YAML or TOML parser anywhere in the monorepo, and Node ships neither —
    verified on the pinned 24.15.0, not merely assumed from the `>=22` engine floor. YAML would add a
    parser to the *published* dependency tree, which every consumer of a package whose whole pitch is
    being a narrow, thin CLI would inherit — for a config file most users write once. This reason
@@ -349,7 +349,7 @@ stdout rather than writing a file, so the author edits before it lands anywhere.
 **There is no `layout apply`.** Applying is not a layout-group concern — it is what `open` and
 `worktree add` already do, told to build N panes instead of one. `--layout <name>` is the exact
 sibling of `--launch <command>`: both answer *"what runs in the space you are opening"*, one for a
-single pane and one for a pool. They are **mutually exclusive**; commander rejects the pair.
+single pane and one for a pool. They are **mutually exclusive**; the CLI parser rejects the pair.
 
 ```bash
 cyber-mux open --layout agent-pool-3 --cwd <path> --at workspace

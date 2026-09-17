@@ -1,7 +1,6 @@
 import { homedir } from 'node:os'
-import type { Command } from 'commander'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { buildProgram } from './cli.ts'
+import { buildProgram, type MuxCli, muxCommands } from './cli.ts'
 import type { Exec } from './exec.ts'
 import { tmuxMuxAdapter } from './mux.tmux.ts'
 import type { PaneRect } from './mux.ts'
@@ -12,8 +11,23 @@ import type { TemplateStore } from './template-store.ts'
 /** No ancestry available — forces every probe onto the env fast-path/hint, deterministic in CI. */
 const noAncestry: Exec = () => null
 
-function run(program: Command, args: string[]) {
-	return program.parseAsync(args, { from: 'user' })
+/**
+ * Drive the CLI the way the bin does. A coded failure calls `process.exit`, which would take the test
+ * runner down with it, so it is stubbed to throw `exit:<code>` unless the test already stubbed it. A
+ * status clibuilder records instead of exiting on (a bare group's usage error) is surfaced the same way,
+ * so every non-zero exit reads alike to the assertions.
+ */
+async function run(program: MuxCli, args: string[]): Promise<void> {
+	if (!vi.isMockFunction(process.exit)) {
+		vi.spyOn(process, 'exit').mockImplementation((code) => {
+			throw new Error(`exit:${code}`)
+		})
+	}
+	process.exitCode = undefined
+	await program.parse(['node', 'cyber-mux', ...args])
+	const code = process.exitCode
+	process.exitCode = undefined
+	if (code) throw new Error(`exit:${code}`)
 }
 
 /**
@@ -119,6 +133,16 @@ describe('spec:cyber-mux/cli/worktree', () => {
 		await expect(run(program, ['worktree', 'remove', '/repo'])).rejects.toThrow()
 	})
 
+	it('worktree-add-requires-branch', async () => {
+		const calls: string[][] = []
+		const program = buildProgram({ env: {}, exec: fakeGitExec(calls) })
+		await expect(run(program, ['worktree', 'add'])).rejects.toThrow('exit:2')
+		expect(logs.join('\n')).toContain('missing-argument')
+		expect(logs.join('\n')).toContain('--branch')
+		// Refused before git is asked anything.
+		expect(calls).toEqual([])
+	})
+
 	it('worktree-add-bare-opens-nothing', async () => {
 		const calls: string[][] = []
 		// env: {} — no backend at all. A bare add must still work; it is a git operation.
@@ -212,10 +236,11 @@ describe('spec:cyber-mux/cli/worktree', () => {
 		})
 
 		it('worktree-provision-no-predicate-injection', () => {
-			const program = buildProgram({ env: {}, exec: () => null })
-			const worktree = program.commands.find((c) => c.name() === 'worktree')!
-			const provision = worktree.commands.find((c) => c.name() === 'provision')!
-			const flags = provision.options.map((o) => o.long)
+			const worktree = muxCommands({ env: {}, exec: () => null }).find((c) => c.name === 'worktree')
+			expect(worktree).toBeDefined()
+			const provision = worktree?.commands?.find((c) => c.name === 'provision')
+			expect(provision).toBeDefined()
+			const flags = Object.keys(provision?.options ?? {}).map((o) => `--${o}`)
 			expect(flags).toEqual(['--branch', '--base', '--path', '--format'])
 			// The surface divergence: no flag reaches the seam's injectable `available` predicate.
 			expect(flags.some((f) => /avail|predicate|gate|exclude/i.test(f ?? ''))).toBe(false)
@@ -2659,7 +2684,7 @@ describe('spec:cyber-mux/cli/detection', () => {
 
 	it('@id:detection-mode-none', async () => {
 		const program = buildProgram({ env: { CYBER_MUX: 'none' }, exec: noAncestry })
-		await expect(run(program, ['mode'])).resolves.toBeDefined()
+		await run(program, ['mode'])
 		expect(logs).toEqual(['none'])
 	})
 })
@@ -2698,22 +2723,15 @@ describe('spec:cyber-mux/cli/driving', () => {
 
 	it('@id:driving-send-bare-group', async () => {
 		const calls: string[][] = []
-		const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: fakeTmuxExec(calls) })
 		vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
-		const out: string[] = []
-		vi.spyOn(process.stdout, 'write').mockImplementation((line) => {
-			out.push(String(line))
-			return true
-		})
+		const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: fakeTmuxExec(calls) })
 		vi.spyOn(process, 'exit').mockImplementation((code) => {
 			throw new Error(`exit:${code}`)
 		})
-		// Help naming text and keys as its subcommands is written to stdout, and it exits 2 — the status
-		// that separates bad input from a failed operation.
+		// A bare group exits 2 — the status that separates bad input from a failed operation — having
+		// driven nothing. That the help it prints names text and keys on stdout is asserted against the
+		// built bin (`cli.dist.test.ts`): clibuilder's console is out of reach of an in-process spy.
 		await expect(run(program, ['send'])).rejects.toThrow('exit:2')
-		const help = out.join('')
-		expect(help).toContain('text')
-		expect(help).toContain('keys')
 		expect(calls).toEqual([])
 	})
 
@@ -3455,6 +3473,24 @@ describe('spec:cyber-mux/cli/lookup', () => {
 		expect(calls).toEqual([])
 	})
 
+	it('a value flag before the pane takes only its own value', async () => {
+		const calls: string[][] = []
+		await run(buildProgram({ env: TMUX, exec: paneServer(calls, THREE) }), ['read', '--lines', '5', '%1'])
+		expect(drives(calls)).toContainEqual(['capture-pane', '-p', '-t', '%1', '-S', '-5'])
+	})
+
+	it('a malformed value is a coded usage error naming what the flag takes', async () => {
+		const calls: string[][] = []
+		catchExit()
+		await expect(
+			run(buildProgram({ env: TMUX, exec: paneServer(calls, THREE) }), ['read', '%1', '--lines', 'many']),
+		).rejects.toThrow('exit:2')
+		const out = logs.join('\n')
+		expect(out).toContain('invalid-value')
+		expect(out).toContain('--lines takes: Trailing lines to capture')
+		expect(drives(calls)).toEqual([])
+	})
+
 	it('@id:lookup-unknown-flag-lists-valid', async () => {
 		const calls: string[][] = []
 		const errExit = catchExit()
@@ -3471,16 +3507,11 @@ describe('spec:cyber-mux/cli/lookup', () => {
 	it('@id:lookup-help-never-unknown-flag', async () => {
 		const errExit = catchExit()
 		captureStderr()
-		const out: string[] = []
-		vi.spyOn(process.stdout, 'write').mockImplementation((line) => {
-			out.push(String(line))
-			return true
-		})
-		await expect(run(buildProgram({ env: TMUX, exec: paneServer([], THREE) }), ['list', '--help'])).rejects.toThrow(
-			'exit:0',
-		)
-		expect(errExit).toHaveBeenCalledWith(0)
-		expect(`${out.join('')}${logs.join('\n')}`).not.toContain('unknown')
+		// Asking for help is not an error: it exits 0 without ever calling exit, and reports no unknown flag.
+		// The help text itself is asserted against the built bin (`cli.dist.test.ts`).
+		await run(buildProgram({ env: TMUX, exec: paneServer([], THREE) }), ['list', '--help'])
+		expect(errExit).not.toHaveBeenCalled()
+		expect(logs.join('\n')).not.toContain('unknown')
 	})
 
 	it('@id:lookup-error-honors-format-json', async () => {

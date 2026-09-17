@@ -19,7 +19,7 @@ cyber-mux open [--launch <cmd>] [--template <name>] [--cwd <path>] \
 - `--template <name>` — build a whole named pool in the opened space instead of a single pane, from a
   resolvable [template](/cyber-mux/concepts/templates/). Resolved and validated **before**
   anything opens, so a typo in the name leaves nothing behind. Conflicts with both `--launch` and
-  `--env` (a template owns everything in the panes it declares); rejected by commander (exit 2) if
+`--env` (a template owns everything in the panes it declares); rejected as a usage error (exit 2) if
   combined with either.
 - `--cwd <path>` — working directory for the new pane; defaults to the caller's own `cwd`.
 - `--at <placement>` — one of `pane:right`, `pane:down`, `pane:float`, `tab` (default), or
