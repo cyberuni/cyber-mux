@@ -1442,7 +1442,7 @@ function waitCommand(deps: Deps): MuxCommand {
 				type: z.optional(z.string()),
 				conflicts: ['match'],
 			},
-			// No `default` here: clibuilder replaces a falsy passed value with it, which would turn `--timeout 0`
+			// No `default` here: clibuilder replaces a falsy passed value with it (clibuilder#620), which would turn `--timeout 0`
 			// into the full default wait. The default is applied in `run` instead.
 			timeout: {
 				description: `Give up after this many milliseconds (default ${DEFAULT_WAIT_TIMEOUT_MS})`,

@@ -78,6 +78,6 @@
 		"provenance": true
 	},
 	"dependencies": {
-		"clibuilder": "^11.2.0"
+		"clibuilder": "^11.2.1"
 	}
 }
