@@ -22,4 +22,9 @@ allowBuilds:
 # it out or pinning an older mature version; an exclusion is a dated exception that
 # should carry its reason and the date it becomes removable.
 minimumReleaseAge: 1440 # 1 day
+minimumReleaseAgeExclude:
+  # clibuilder 11.2.2 (published 2026-09-17T03:00Z) carries the parser fixes the commander ->
+  # clibuilder migration needs (clibuilder#606-609, #617 import fix, #620 falsy defaults).
+  # Removable once it clears the soak: 2026-09-18.
+  - clibuilder@11.2.2
 minimumReleaseAgeStrict: true

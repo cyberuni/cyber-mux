@@ -2484,3 +2484,32 @@ Decisions (`190-cow-clone-provisioning` — a copy-on-write clone instead of a g
   The numbers above are pinned to `61b9a61`; a re-ask should re-measure rather than cite them.
 
 ISSUE: https://github.com/cyberuni/cyber-mux/issues/190
+
+Decisions (`clibuilder-mux-plugin` — replace commander with clibuilder, and mount the verbs as a `mux` plugin):
+
+- **clibuilder replaces commander, after four upstream fixes** — DECIDED: the CLI is built on
+  `clibuilder`. Migrating clibuilder 11.1 as it stood would have broken the CLI in four ways, each filed
+  and fixed upstream before the move: a scalar option took every following token, so `read --lines 5
+  <pane>` became a usage error (clibuilder#606); parser rejections printed clibuilder's own text, not
+  this CLI's coded stdout error (#607, now `onUsageError`); there was no mutually-exclusive option
+  (#608, now `conflicts`); a bare group exited `0` (#609). With those, the coded error surface
+  (`unknown-flag`, `missing-argument`, `usage-error`, exit 2) holds at the parser. Two cases the parser
+  still does not cover are checked in `run`, before any side effect: a required option (`worktree add
+  --branch`) and the `KEY=VALUE` shape of each `--env`.
+- **a malformed value is a coded usage error** — DECIDED: `--at bogus`, `--lines abc`, and a bad
+  `--env` pair exit `2` with code `invalid-value`, where commander exited `1` with its own text on
+  stderr. The fix is a different invocation, which is what exit 2 means.
+- **defaults live on the option** — DECIDED: `wait --timeout` and `open --cwd` declare their defaults
+  in the option, so help shows them. That needs clibuilder 11.2.2: earlier 11.2 releases replaced a
+  passed falsy value with the declared default (clibuilder#620), which turned `--timeout 0` into a
+  30-second wait.
+- **the plugin is a subpath** — DECIDED: `activate` ships from `cyber-mux/plugin`, not the package
+  root, so importing the library never loads clibuilder. The plugin mounts the same `muxCommands()`
+  list the binary mounts, under `mux`, and names the host in every usage-error fix.
+- **help text is verified out of process** — DECIDED: clibuilder prints help through a console that
+  standard-log binds once per process, so no in-process spy observes it. The bare-group and `--help`
+  output is asserted against the built bin in `cli.dist.test.ts`. The unit suite asserts only their
+  exit status.
+- **clibuilder 11.2.2 at minimum** — DECIDED: 11.2.0 left `esm/invocation/argv.internal.js` out of
+  its tarball and could not be imported (clibuilder#617, fixed in 11.2.1), and 11.2.1 still dropped
+  falsy values (#620, fixed in 11.2.2).

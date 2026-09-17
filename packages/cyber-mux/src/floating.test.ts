@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { buildProgram } from './cli.ts'
+import { buildProgram, type MuxCli } from './cli.ts'
 import type { Exec } from './exec.ts'
 import { canFloatPanes, FloatingPanesUnsupportedError } from './floating.ts'
 import { cmuxMuxAdapter } from './mux.cmux.ts'
@@ -10,6 +10,24 @@ import type { MuxAdapter } from './mux.ts'
 import { weztermMuxAdapter } from './mux.wezterm.ts'
 import { createZellijAdapter, zellijMuxAdapter } from './mux.zellij.ts'
 
+/**
+ * Drive the CLI the way the bin does. A coded failure calls `process.exit`, which would take the test
+ * runner down with it, so it is stubbed to throw `exit:<code>` unless the test already stubbed it. A
+ * status clibuilder records instead of exiting on (a bare group's usage error) is surfaced the same way,
+ * so every non-zero exit reads alike to the assertions.
+ */
+async function run(program: MuxCli, args: string[]): Promise<void> {
+	if (!vi.isMockFunction(process.exit)) {
+		vi.spyOn(process, 'exit').mockImplementation((code) => {
+			throw new Error(`exit:${code}`)
+		})
+	}
+	process.exitCode = undefined
+	await program.parse(['node', 'cyber-mux', ...args])
+	const code = process.exitCode
+	process.exitCode = undefined
+	if (code) throw new Error(`exit:${code}`)
+}
 /**
  * The `'pane:float'` placement — the seam's one NON-universal placement, and so the one whose whole
  * story is worth reading in a single file: the two backends that realize it natively, the two that
@@ -268,7 +286,7 @@ describe('spec:cyber-mux/cli/placement', () => {
 		const calls: string[][] = []
 		const exec = fakeTmuxExec(calls, { 'new-pane': '%9\t@1' })
 		const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec })
-		await program.parseAsync(['open', '--at', 'pane:float'], { from: 'user' })
+		await run(program, ['open', '--at', 'pane:float'])
 		expect(calls[0]?.[0]).toBe('new-pane')
 	})
 
@@ -277,7 +295,7 @@ describe('spec:cyber-mux/cli/placement', () => {
 			logs.length = 0
 			catchExit()
 			const program = buildProgram({ env: { CYBER_MUX: backend }, exec: noAncestry })
-			await expect(program.parseAsync(['open', '--at', 'pane:float'], { from: 'user' })).rejects.toThrow('exit:1')
+			await expect(run(program, ['open', '--at', 'pane:float'])).rejects.toThrow('exit:1')
 			const out = logs.join('\n')
 			// A genuine operation failure (exit 1), not a usage error: `pane:float` is legal input here.
 			expect(out).toContain('backend-unsupported')
@@ -296,12 +314,12 @@ describe('spec:cyber-mux/cli/placement', () => {
 			return null
 		}
 		const program = buildProgram({ env: { CYBER_MUX: 'herdr' }, exec })
-		await expect(program.parseAsync(['open', '--at', 'pane:float'], { from: 'user' })).rejects.toThrow('exit:1')
+		await expect(run(program, ['open', '--at', 'pane:float'])).rejects.toThrow('exit:1')
 		expect(calls).toEqual([])
 	})
 
 	it('@id:placement-at-restricted-values — the choice list is still closed', async () => {
 		const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: noAncestry })
-		await expect(program.parseAsync(['open', '--at', 'pane:floating'], { from: 'user' })).rejects.toThrow()
+		await expect(run(program, ['open', '--at', 'pane:floating'])).rejects.toThrow()
 	})
 })

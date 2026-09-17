@@ -19,7 +19,25 @@ handed straight to the backend as an id and takes that verb's own not-found path
 
 **Exit codes**, consistent across every verb: `0` success, `1` a well-formed operation that failed
 (no pane, no multiplexer, a refused removal), `2` a usage error (missing argument, unknown flag,
-conflicting flags) — the fix is a different invocation, not a retry.
+conflicting flags, a malformed value) — the fix is a different invocation, not a retry. A group run
+without a subcommand (`cyber-mux send`) prints its help and exits `2`; `--help` exits `0`.
+
+**Flags and positionals** can come in any order. A flag that takes a value takes exactly one
+(`read --lines 5 <pane>`); a repeatable flag (`--env`, `--set`, `--until`) takes every value up to the
+next flag, so put positionals before it or repeat the flag (`--env A=1 --env B=2`).
+
+## Mounting the verbs in another CLI
+
+`cyber-mux` also ships as a [clibuilder](https://github.com/clibuilder/clibuilder) plugin, so a CLI
+built on clibuilder can offer every verb under `mux` — `<host> mux list` is `cyber-mux list`. Install
+`cyber-mux` beside the host and list the plugin in the host's config:
+
+```json
+{ "plugins": ["cyber-mux/plugin"] }
+```
+
+The verbs, flags, output, and exit codes are the same as the standalone binary's. A usage error
+spells its fix through the host (`provide path: <host> mux worktree open <path>`).
 
 ## Diagnostics
 

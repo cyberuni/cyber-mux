@@ -71,7 +71,8 @@ pnpm + turbo monorepo.
 - `worktree.ts` — the git-worktree adapter
 - `nudge.ts` — send-and-verify-turn-taken helper
 - `exec.ts` — the synchronous `Exec` command-runner seam every adapter takes
-- `cli.ts` — commander entry; `output.ts` / `cli-options.ts` — shared output + option conventions
+- `cli.ts` — clibuilder command tree + standalone entry; `plugin.ts` — the `mux` clibuilder plugin
+  (`cyber-mux/plugin`); `output.ts` / `cli-options.ts` — shared output + option conventions
 
 **Environment contract:** `CYBER_MUX` (override: `tmux|herdr|wezterm|screen|none`) and
 `CYBER_MUX_PANE` (pane id) form the fast-path; otherwise detection walks the process ancestry,

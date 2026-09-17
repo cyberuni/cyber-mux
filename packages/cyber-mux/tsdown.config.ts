@@ -1,15 +1,16 @@
 import { defineConfig } from 'tsdown'
 
 export default defineConfig({
-	// Five entries: the CLI bin, the library barrel (`.`), and the three subpath surfaces. Each emits a
-	// `.mjs` plus a `.d.ts` (dts: true). The CLI stays a separate entry so importing the library never
-	// pulls the commander/`console.log`/`process.exit` machinery.
+	// Six entries: the CLI bin, the library barrel (`.`), the three subpath surfaces, and the clibuilder
+	// `mux` plugin. Each emits a `.mjs` plus a `.d.ts` (dts: true). The CLI and the plugin stay separate
+	// entries so importing the library never pulls the clibuilder/`console.log`/`process.exit` machinery.
 	entry: {
 		cli: 'src/cli.ts',
 		index: 'src/index.ts',
 		worktree: 'src/worktree.ts',
 		template: 'src/template.ts',
 		agent: 'src/agent.ts',
+		plugin: 'src/plugin.ts',
 	},
 	outDir: 'dist',
 	format: 'esm',
