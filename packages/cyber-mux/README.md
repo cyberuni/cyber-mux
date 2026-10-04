@@ -12,6 +12,8 @@ send, read, focus, and close panes without caring which multiplexer you are insi
 `cyber-mux` is the mux seam used by [`cyberlegion`](https://github.com/cyberuni/cyberplace), kept
 deliberately narrow: it drives panes and nothing else.
 
+Part of [cyber-civitas](https://cyber-civitas.github.io), a self-contained system for running AI coding agents. This package is its pane control beneath the runtime layer.
+
 ## Install
 
 ```bash

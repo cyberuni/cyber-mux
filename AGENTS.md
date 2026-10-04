@@ -53,6 +53,12 @@ and integrates its result.
 - `add-changeset` skill — adding a changeset for a published-package change
 - `init-commit-discipline` skill — regenerate these rules and hooks
 
+## System context
+
+This repo is one package of [cyber-civitas](https://cyber-civitas.github.io), the system its sibling packages compose into. The [layer architecture](https://cyber-civitas.github.io/architecture/layers/) and the [cross-package decisions](https://cyber-civitas.github.io/decisions/) are recorded there; a decision inside this repo cites them rather than restating them.
+
+- Its worktree surface is reached only through the runtime's workspace adapter, so a change to it touches one adapter and nothing above ([0003](https://cyber-civitas.github.io/decisions/0003-worktrees-through-the-runtime/)). Keep that surface stable and covered by contract tests on a backend with native worktree binding and one without.
+
 ## Architecture
 
 pnpm + turbo monorepo.
