@@ -29,4 +29,6 @@ minimumReleaseAgeExclude:
   - clibuilder@11.2.2
   # min-release-age: lift @cyberuni/agent-harness@0.6.0 until 2026-10-07T09:00:00Z
   - '@cyberuni/agent-harness@0.6.0'
+  # Renovate security update: vitest@4.1.11
+  - vitest@4.1.11
 minimumReleaseAgeStrict: true
