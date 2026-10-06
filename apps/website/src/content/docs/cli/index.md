@@ -5,8 +5,8 @@ description: The cyber-mux verb surface — conventions shared by every command.
 
 Every command runs against the multiplexer the current process is inside (resolved by
 [detection](/cyber-mux/concepts/detection/)). Commands that produce data accept `--format
-text|json|agent` — human table by default, machine-readable with `--format json` or `--format
-agent`. Every failure is a structured error on **stdout** with a stable `code` and an actionable
+text|json|agent` — human table by default, machine-readable with `--format json` (JSON) or `--format
+agent` ([TOON](https://github.com/toon-format/toon), the cheaper read for an agent). Every failure is a structured error on **stdout** with a stable `code` and an actionable
 `help:` line — see [AXI](/cyber-mux/concepts/axi/) for the full output contract, exit codes, and
 pane-addressing rules.
 

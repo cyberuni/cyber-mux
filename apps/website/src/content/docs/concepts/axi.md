@@ -7,6 +7,13 @@ description: The shared output contract every cyber-mux command follows.
 shared output contract — [AXI](https://github.com/kunchenguid/axi) (Agent Experience Interface) — that
 treats an agent's token budget as a first-class constraint.
 
+## Output formats
+
+`--format` takes `text` (the default, a human table), `json`, or `agent`. The two machine forms are
+encoded by [`@clibuilder/axi`](https://github.com/clibuilder/clibuilder/tree/main/packages/axi), the
+output package the clibuilder CLIs share: `json` is compact JSON for a pipe into `jq`, and `agent` is
+[TOON](https://github.com/toon-format/toon), the same payload in fewer tokens.
+
 ## Exit codes
 
 - **`0`** — success, including a no-op.
@@ -50,7 +57,7 @@ ambiguity.
 
 ## What's still catching up
 
-TOON as the default output format, `--fields`, truncation with a size hint on `--full`, and the
+TOON as the *default* output format (it ships today behind `--format agent`), `--fields`, truncation with a size hint on `--full`, and the
 no-argument home view are contract principles this bin has not yet built against. The structured
 error surface (stdout, exit codes, `help:`), the two `help[N]:` suggestion sites, and translated
 backend-failure text are shipped.
