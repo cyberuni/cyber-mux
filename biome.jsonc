@@ -2,7 +2,7 @@
 	"$schema": "https://biomejs.dev/schemas/2.5.3/schema.json",
 	"extends": ["@repobuddy/biome/recommended"],
 	"files": {
-		"includes": ["!**/bin", "!**/dist", "!**/node_modules", "!.turbo", "!apps"]
+		"includes": ["!**/bin", "!**/dist", "!**/node_modules", "!.turbo", "!apps", "!.github/scripts/min-release-age.mjs"]
 	},
 	"overrides": [
 		{
