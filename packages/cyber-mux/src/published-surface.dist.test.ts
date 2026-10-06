@@ -150,22 +150,48 @@ describe('spec:cyber-mux/library — published surface', () => {
 			}
 		})
 
-		it('./worktree exports the git-worktree adapter and its seam', () => {
+		it('./worktree exports the git-worktree adapter, its seam, and the leased pool', () => {
 			expect(Object.keys(wt).sort()).toEqual([
+				'AcquireError',
+				'LEASE_LIBRARY',
+				'WORKTREE_INCLUDE',
 				'WorktreeGitError',
+				'acquire',
 				'assertDistinctFromPrimary',
+				'claimLease',
+				'classifyOwner',
+				'explain',
 				'ghForgeMergedProbe',
 				'gitWorktreeAdapter',
+				'gitWorktreeCreator',
+				'holdsLease',
 				'isWorktreeRemovable',
+				'leaseFile',
+				'listWorktrees',
 				'listWorktreesFromGit',
+				'muxWorktreeCreator',
+				'nodeLeaseFs',
+				'nodeSeedFs',
 				'nodeWorktreeFs',
 				'normalizeWorktreePath',
+				'occupants',
+				'parseLeaseReason',
+				'primaryRoot',
+				'probeProcesses',
+				'procfsProcessSource',
 				'provisionWorktree',
 				'pruneWorktrees',
+				'readDirty',
+				'release',
 				'removeWorktreeSafely',
 				'resolvePrimaryRoot',
 				'resolveWorktreePath',
+				'seedWorktree',
+				'slotNumber',
+				'slotPath',
+				'toHarnessExec',
 				'worktreeApi',
+				'worktreesDir',
 			])
 		})
 

@@ -19,6 +19,47 @@ import {
 } from 'cyber-mux/worktree'
 ```
 
+## Leased pool — `@cyberuni/agent-harness/worktrees`
+
+The worktree logic now lives in
+[`@cyberuni/agent-harness/worktrees`](https://github.com/cyberuni/agent-harness), and
+`cyber-mux/worktree` re-exports it: `acquire` / `release` / `explain` with a git-lock lease,
+`primaryRoot`, `listWorktrees`, `readDirty`, `classifyOwner`, `probeProcesses` / `occupants`,
+`seedWorktree`, and the slot naming (`slotPath`, `<repo>.worktrees/<repo>-<n>`). The library is
+async. Three of its names (`pruneWorktrees`, `normalizeWorktreePath`, `ghForgeMergedProbe`) collide
+with the older synchronous helpers on this page and keep their cyber-mux meaning here; import the
+library's from `@cyberuni/agent-harness/worktrees`. Its colliding types are re-exported as
+`HarnessWorktreeEntry`, `HarnessForgeMergedProbe`, and `HarnessExec`.
+
+cyber-mux adds the one piece the library leaves to the caller, the multiplexer binding:
+
+```ts
+import { resolveMuxAdapter } from 'cyber-mux'
+import { acquire, muxWorktreeCreator, release } from 'cyber-mux/worktree'
+
+const adapter = resolveMuxAdapter(process.env)
+const lease = await acquire({
+  holder: 'my-agent',
+  branch: 'feat/x',
+  create: muxWorktreeCreator(adapter, { label: 'feat-x', onBound: (bound) => { /* bound.workspace */ } }),
+})
+// ... work in lease.worktree ...
+await release(lease)
+```
+
+- **`muxWorktreeCreator(adapter, options?)`** → `WorktreeCreator` — creates the checkout with the
+  library's `gitWorktreeCreator`, then, on a backend that binds worktrees (herdr), opens it through
+  [`openInWorkspace`](#binding-a-worktree-to-a-workspace) so the binding is recorded. On any other
+  backend it only creates the checkout. `options` takes `exec`, `launch`, `env`, `label`, and
+  `onBound`.
+- **`toHarnessExec(exec)`** — lifts cyber-mux's synchronous `Exec` onto the library's async one, so one
+  runner (or one fake) drives both.
+
+`resolvePrimaryRoot`, `listWorktreesFromGit`, `isWorktreeRemovable`, `resolveWorktreePath`,
+`pruneWorktrees`, `provisionWorktree`, `ghForgeMergedProbe`, `normalizeWorktreePath`, and the matching
+`worktreeApi` methods are **deprecated** in favor of the library. `gitWorktreeAdapter`,
+`removeWorktreeSafely`, and `assertDistinctFromPrimary` have no library equivalent and stay.
+
 ## Bound facade — `worktreeApi`
 
 The ergonomic surface: `worktreeApi(deps?)` binds `Exec` + `WorktreeFs` once (defaulting to

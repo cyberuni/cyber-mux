@@ -4,6 +4,10 @@ import { type Exec, nodeExec } from './exec.ts'
 
 /** Generic worktree seam — no host-specific concepts. */
 
+// The leased pool from `@cyberuni/agent-harness/worktrees`, and the mux binding offered to it as its
+// creator. The synchronous helpers below predate it; those it replaces are marked `@deprecated`.
+export * from './worktree-pool.ts'
+
 /**
  * The filesystem half of the worktree adapter — the one seam here that is NOT `Exec`, exactly as
  * `TemplateStore` is for templates. `normalizeWorktreePath` and the remove gate reach for the disk,
@@ -165,6 +169,8 @@ export const gitWorktreeAdapter: WorktreeAdapter = {
 }
 
 /**
+ * @deprecated Use `primaryRoot({ exec })` from `@cyberuni/agent-harness/worktrees` (re-exported here).
+ *
  * Resolve the primary checkout's root regardless of whether the caller's cwd is the primary
  * checkout or a linked worktree — `--git-common-dir` always points at the main repo's `.git`.
  */
@@ -175,6 +181,8 @@ export function resolvePrimaryRoot(exec: Exec): string {
 }
 
 /**
+ * @deprecated Use `normalizeWorktreePath` from `@cyberuni/agent-harness/worktrees` (async).
+ *
  * The single normalization point for every path that gets MATCHED against another — a multiplexer
  * reports its own checkout paths, and those only line up with git's if both sides are resolved the
  * same way (a symlinked repo, or macOS's `/tmp` → `/private/tmp`, otherwise silently fails to
@@ -189,6 +197,9 @@ export function normalizeWorktreePath(path: string, fs: WorktreeFs = nodeWorktre
 }
 
 /**
+ * @deprecated Use `listWorktrees({ primaryRoot, exec })` from `@cyberuni/agent-harness/worktrees`
+ * (re-exported here), which adds `head`, `detached`, and `locked`.
+ *
  * Every worktree of the repo, straight from git. These are the facts — path, branch, linked,
  * prunable — on EVERY backend: a multiplexer that also happens to enumerate worktrees is only
  * re-reading git, so reading them here is what keeps two backends from ever disagreeing about the
@@ -440,6 +451,8 @@ function resolveOriginSlug(exec: Exec, primaryRoot: string): string | undefined 
 }
 
 /**
+ * @deprecated Use `ghForgeMergedProbe` from `@cyberuni/agent-harness/worktrees` (async).
+ *
  * A `ForgeMergedProbe` backed by the GitHub CLI — the layer-4 implementation for repos hosted there,
  * offered rather than imposed: it is not wired in anywhere, and a caller opts in by passing it as
  * `signals.forge`.
@@ -491,6 +504,9 @@ function readDirty(exec: Exec, worktreeRoot: string): boolean | undefined {
 }
 
 /**
+ * @deprecated Use `explain()` or `pruneWorktrees()` from `@cyberuni/agent-harness/worktrees`, which
+ * give a skip reason per worktree and also check leases, ownership, and live agent sessions.
+ *
  * The disposability composite — "the work has landed and nothing is holding this checkout", the single
  * thing `worktree list` compresses to a `(removable)` marker on BRANCH.
  *
@@ -531,6 +547,9 @@ export function assertDistinctFromPrimary(worktreeRoot: string, primaryRoot: str
 }
 
 /**
+ * @deprecated The library assigns the path: `slotPath(primaryRoot, n)` (re-exported here), chosen by
+ * `acquire`.
+ *
  * Default worktree location — a sibling of the primary checkout (`<parent>/<repo>.worktrees/<name>`),
  * never nested inside the primary's own working tree (an untracked-but-present nested worktree
  * pollutes `git status` in the primary and confuses tools that walk the tree expecting only the
@@ -621,6 +640,9 @@ function worktreePruneSkipReason(entry: WorktreeEntry): string {
 }
 
 /**
+ * @deprecated Use `pruneWorktrees` from `@cyberuni/agent-harness/worktrees`, which also skips leased,
+ * foreign, and busy worktrees and runs `git worktree prune`.
+ *
  * The bulk remove — every worktree `isWorktreeRemovable` clears, gone in one call. No new git
  * plumbing: this composes `listWorktreesFromGit`, `isWorktreeRemovable`, and `removeWorktreeSafely`,
  * the same primitives `worktree list`'s `(removable)` marker and `worktree remove` already use, so
@@ -681,6 +703,9 @@ export interface WorktreeProvisionResult {
 }
 
 /**
+ * @deprecated Use `acquire({ holder, branch, create: muxWorktreeCreator(adapter) })` (re-exported
+ * here), which leases the worktree so two callers cannot recycle the same one.
+ *
  * Reuse a free worktree instead of creating a fresh one — the mirror of `pruneWorktrees`. Prune
  * REMOVES every disposable worktree; provision RECYCLES one, and both ask the same question through the
  * same predicate, so they can never disagree about which worktrees are free.
@@ -767,16 +792,16 @@ export interface RemoveWorktreeOptions {
  * `assertDistinctFromPrimary` — stay free functions.
  */
 export interface WorktreeApi {
-	/** The primary checkout's root — `resolvePrimaryRoot` bound. */
+	/** @deprecated Use `primaryRoot`. The primary checkout's root — `resolvePrimaryRoot` bound. */
 	primaryRoot(): string
-	/** Every worktree git reports; `primaryRoot` defaults to `primaryRoot()` — `listWorktreesFromGit` bound.
+	/** @deprecated Use `listWorktrees`. Every worktree git reports; `primaryRoot` defaults to `primaryRoot()` — `listWorktreesFromGit` bound.
 	 * `signals` carries the opt-in forge layer; layers 1–3 run either way. */
 	list(primaryRoot?: string | undefined, signals?: WorktreeSignalOptions | undefined): WorktreeEntry[]
 	/** Create a worktree — `gitWorktreeAdapter.add` bound. */
 	add(opts: WorktreeAddOptions): Worktree
 	/** Remove a worktree under cyber-mux's gates — `removeWorktreeSafely` bound (its `fs` supplied). */
 	removeSafely(path: string, opts: RemoveWorktreeOptions): void
-	/** Remove every disposable worktree; `primaryRoot` defaults to `primaryRoot()` — `pruneWorktrees` bound. */
+	/** @deprecated Use the library's `pruneWorktrees`. Remove every disposable worktree; `primaryRoot` defaults to `primaryRoot()` — `pruneWorktrees` bound. */
 	prune(
 		opts?:
 			| {
@@ -787,6 +812,8 @@ export interface WorktreeApi {
 			| undefined,
 	): WorktreePruneResult
 	/**
+	 * @deprecated Use `acquire`.
+	 *
 	 * Reuse a free worktree or create a fresh one; `primaryRoot` defaults to `primaryRoot()` —
 	 * `provisionWorktree` bound. `available` defaults to `isWorktreeRemovable`; a host injects its own to
 	 * add a live-session check (or to loosen occupancy).
@@ -797,7 +824,7 @@ export interface WorktreeApi {
 		available?: ((entry: WorktreeEntry) => boolean) | undefined
 		signals?: WorktreeSignalOptions | undefined
 	}): WorktreeProvisionResult
-	/** Symlink-resolved, native-cased path — `normalizeWorktreePath` bound. */
+	/** @deprecated Use the library's `normalizeWorktreePath`. Symlink-resolved, native-cased path — `normalizeWorktreePath` bound. */
 	normalizePath(path: string): string
 }
 
