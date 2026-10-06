@@ -1,4 +1,4 @@
-import { isJsonOutput } from './output.ts'
+import { isMachineOutput, printMachine } from './output.ts'
 
 /**
  * The error surface — AXI's #6, made concrete.
@@ -108,15 +108,15 @@ export class MissingPaneError extends CliError {
 /**
  * The ONE renderer — every coded failure reaches stdout through here, and exits.
  *
- * `--format json` emits the machine form: a single `{ error: { code, message, help, ...extra } }`
- * object, the stable code first, no free-text prose beside it. The readable form leads its human line
+ * `--format json|agent` emits the machine form: a single `{ error: { code, message, help, ...extra } }`
+ * object (JSON or TOON), the stable code first, no free-text prose beside it. The readable form leads its human line
  * with the same `code` token a script branches on — so a person scanning the terminal sees exactly
  * what a `--format json` consumer matches on — then the `help` line, then (for an ambiguity) one line
  * per candidate: `<id>  <label>  <cwd>`, the id-first shape whose first column is the retry.
  */
 export function reportError(e: CliError): never {
-	if (isJsonOutput()) {
-		console.log(JSON.stringify({ error: { code: e.code, message: e.message, help: e.help, ...e.extra } }, null, 2))
+	if (isMachineOutput()) {
+		printMachine({ error: { code: e.code, message: e.message, help: e.help, ...e.extra } })
 	} else {
 		// The code leads the human line too: the stable token is the point of the whole surface, so it
 		// belongs where a person reads as much as where a script matches — not hidden in the JSON alone.

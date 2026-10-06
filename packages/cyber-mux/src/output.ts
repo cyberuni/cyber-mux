@@ -1,5 +1,6 @@
 import { homedir } from 'node:os'
 import { sep } from 'node:path'
+import { encodeResult } from '@clibuilder/axi'
 
 /**
  * A path with the caller's home directory collapsed to `~` — for HUMAN output only. Every worktree
@@ -17,10 +18,6 @@ export function tildify(path: string, home: string = homedir()): string {
 		if (path.startsWith(home + s)) return `~${path.slice(home.length)}`
 	}
 	return path
-}
-
-function printJson(data: unknown) {
-	console.log(JSON.stringify(data, null, 2))
 }
 
 export function printFields(fields: Record<string, string | null | undefined>): void {
@@ -75,22 +72,41 @@ function getFormat(): string | undefined {
 }
 
 /**
+ * The `@clibuilder/axi` format a machine-readable `--format` maps to, or `undefined` for the human
+ * `text` default. cyber-mux keeps its own `text | json | agent` surface (text the default) and borrows
+ * only axi's encoders: `json` is axi's JSON, `agent` is axi's TOON — the cheaper read for an agent.
+ */
+function machineFormat(): 'json' | 'toon' | undefined {
+	const fmt = getFormat()
+	if (fmt === 'json') return 'json'
+	if (fmt === 'agent') return 'toon'
+	return undefined
+}
+
+/**
  * Whether the caller asked for machine-readable output. Exported because `output()` is not the only
  * writer that owes it: a structured ERROR is rendered by `reportError` (`cli-error.ts`) rather than
- * through `output()`, and it has to honor `--format json` exactly as the success path does. Both write
- * stdout — AXI's stream for everything the agent consumes, errors included.
+ * through `output()`, and it has to honor `--format json|agent` exactly as the success path does. Both
+ * write stdout — AXI's stream for everything the agent consumes, errors included.
  */
-export function isJsonOutput(): boolean {
-	return getFormat() === 'json'
+export function isMachineOutput(): boolean {
+	return machineFormat() !== undefined
 }
 
 // True when the caller is a script or agent — suppress interactive prompts.
 export function isAutomatedOutput(): boolean {
-	const fmt = getFormat()
-	return fmt === 'json' || fmt === 'agent'
+	return isMachineOutput()
 }
 
-export function output(data: unknown, readable: () => void): void {
-	if (isJsonOutput()) printJson(data)
+/**
+ * Write `data` in the machine format the caller asked for. Goes through `console.log` rather than
+ * axi's `writeResult`, so every stdout line — success and error alike — leaves through one writer.
+ */
+export function printMachine(data: object): void {
+	console.log(encodeResult(data, machineFormat() ?? 'json'))
+}
+
+export function output(data: object, readable: () => void): void {
+	if (isMachineOutput()) printMachine(data)
 	else readable()
 }

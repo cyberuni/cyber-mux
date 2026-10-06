@@ -78,6 +78,7 @@
 		"provenance": true
 	},
 	"dependencies": {
+		"@clibuilder/axi": "^0.1.0",
 		"clibuilder": "^11.2.2"
 	}
 }

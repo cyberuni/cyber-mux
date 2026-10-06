@@ -1,7 +1,10 @@
 import { z } from 'clibuilder'
 import { CliError } from './cli-error.ts'
 
-/** Output format shared by every command: `text` (human), `json`, or `agent`. */
+/**
+ * Output format shared by every command: `text` (human, the default), `json`, or `agent` (TOON). The
+ * machine forms are encoded by `@clibuilder/axi` (see `output.ts`).
+ */
 export const FORMAT_OPTION: { description: string; type: z.ZodOptional<z.ZodEnum<['text', 'json', 'agent']>> } = {
 	description: 'Output format',
 	type: z.optional(z.enum(['text', 'json', 'agent'])),
