@@ -34,7 +34,7 @@ own CLI (`tmux`, `herdr`, …) instead of cyber-mux.
    elif { [ -f bun.lock ] || [ -f bun.lockb ]; } && bunx cyber-mux --version >/dev/null 2>&1; then
      CMD="bunx cyber-mux"
    else
-     CMD="npx --yes cyber-mux@0.9.0"
+     CMD="npx --yes cyber-mux@0.9.1"
    fi
    ```
 
