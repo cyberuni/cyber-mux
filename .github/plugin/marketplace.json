@@ -1,0 +1,21 @@
+{
+	"name": "cyberuni-cyber-mux-local",
+	"owner": {
+		"name": "unional"
+	},
+	"metadata": {
+		"displayName": "cyberuni-cyber-mux-local"
+	},
+	"plugins": [
+		{
+			"name": "cyber-mux",
+			"source": "./packages/cyber-mux",
+			"description": "Cross-multiplexer pane control: open, send, read, focus, and close panes over tmux, herdr, wezterm, and more.",
+			"version": "0.8.0",
+			"homepage": "https://cyberuni.github.io/cyber-mux/",
+			"repository": "https://github.com/cyberuni/cyber-mux",
+			"license": "MIT",
+			"keywords": ["tmux", "herdr", "multiplexer", "terminal", "pane", "agent"]
+		}
+	]
+}

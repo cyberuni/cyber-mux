@@ -50,7 +50,13 @@
 		"bin",
 		"dist",
 		"src",
-		"!**/*.{spec,test,unit,accept,integrate,system,perf,stress,stories,study}.*"
+		"!**/*.{spec,test,unit,accept,integrate,system,perf,stress,stories,study}.*",
+		"plugin.json",
+		"skills/",
+		".claude-plugin/plugin.json",
+		".cursor-plugin/plugin.json",
+		".codex-plugin/plugin.json",
+		"com.github.copilot/"
 	],
 	"scripts": {
 		"build": "tsdown",

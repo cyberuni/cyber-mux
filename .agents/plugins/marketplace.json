@@ -1,0 +1,21 @@
+{
+	"name": "cyberuni-cyber-mux-local",
+	"interface": {
+		"displayName": "cyberuni-cyber-mux-local"
+	},
+	"plugins": [
+		{
+			"name": "cyber-mux",
+			"source": {
+				"source": "local",
+				"path": "./packages/cyber-mux"
+			},
+			"policy": {
+				"installation": "AVAILABLE",
+				"authentication": "ON_INSTALL"
+			},
+			"category": "Productivity",
+			"version": "0.8.0"
+		}
+	]
+}

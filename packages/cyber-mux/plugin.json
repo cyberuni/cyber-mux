@@ -1,0 +1,23 @@
+{
+	"$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+	"name": "cyber-mux",
+	"version": "0.8.0",
+	"description": "Cross-multiplexer pane control: open, send, read, focus, and close panes over tmux, herdr, wezterm, and more.",
+	"author": { "name": "unional", "email": "homawong@gmail.com" },
+	"homepage": "https://cyberuni.github.io/cyber-mux/",
+	"repository": "https://github.com/cyberuni/cyber-mux",
+	"license": "MIT",
+	"keywords": ["tmux", "herdr", "multiplexer", "terminal", "pane", "agent"],
+	"extensions": {
+		"org.cyberuni.universal-plugin": {
+			"vendors": ["claude-code", "cursor", "codex", "copilot-cli"],
+			"skills": "./skills/",
+			"harnesses": {
+				"claude-code": {},
+				"cursor": {},
+				"codex": { "interface": { "displayName": "cyber-mux" } },
+				"copilot-cli": {}
+			}
+		}
+	}
+}
