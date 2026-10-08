@@ -8,6 +8,10 @@ hero:
     - text: Get Started
       link: /cyber-mux/getting-started/introduction/
       icon: right-arrow
+    - text: Agent Plugin
+      link: /cyber-mux/getting-started/agent-plugin/
+      icon: puzzle
+      variant: minimal
     - text: CLI Reference
       link: /cyber-mux/cli/
       icon: open-book
@@ -51,3 +55,14 @@ cyber-mux maps onto the closest thing it has and reports honestly what it could 
 | Size splits | ✓ | ✓ | ✓ | ✓ | ✗ | ✗ | ✓ |
 
 See [Multiplexers](/cyber-mux/multiplexers/) for what each backend does — and does not — support.
+
+## From your coding agent
+
+The `cyber-mux` agent plugin brings the same commands into **Claude Code**, **Cursor**, **Codex**, and
+**GitHub Copilot CLI**. Its `mux` skill runs the CLI for the agent, so `/cyber-mux:mux open --at
+pane:right` opens a pane from inside the session.
+
+<CardGrid>
+  <LinkCard title="Agent plugin" href="/cyber-mux/getting-started/agent-plugin/" description="Install the plugin in your coding agent." />
+  <LinkCard title="The mux skill" href="/cyber-mux/getting-started/mux-skill/" description="Drive panes with /mux: commands, CLI resolution, and examples." />
+</CardGrid>
