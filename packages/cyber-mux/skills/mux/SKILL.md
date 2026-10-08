@@ -1,34 +1,72 @@
 ---
 name: mux
-description: Run the cyber-mux CLI to drive terminal multiplexer panes (tmux, herdr, wezterm, and others) — detect the multiplexer, open, send to, read, focus, and close panes, nudge a peer, or open a git worktree. Use when the user invokes /mux or asks to control a pane through cyber-mux.
+description: Use this skill when the user runs /mux or asks to drive a terminal pane (open, send, read, close) via cyber-mux.
 argument-hint: "<command> [options] | --help"
 ---
 
 # mux
 
-Pass the invocation through to the `cyber-mux` CLI and report what it printed.
+Pass the invocation through to the `cyber-mux` CLI and report the result.
 
-## Read the arguments
+## When to use
 
-Take the arguments from the invocation. Claude Code appends them as `ARGUMENTS: <value>`; other
-runtimes pass them as the text after the skill name.
+- The user invokes `/mux` (`/cyber-mux:mux`), with or without arguments.
+- The user asks to detect the multiplexer, or to open, send to, read, wait on, focus, list, or close a
+  pane, nudge a peer pane, or open a git worktree in a new pane, through cyber-mux.
 
-## Run
+Out of scope: editing cyber-mux source, configuring a multiplexer, and driving a multiplexer with its
+own CLI (`tmux`, `herdr`, …) instead of cyber-mux.
 
-| Arguments | Run |
-| --- | --- |
-| none, `--help`, or `-h` | `npx -y cyber-mux --help` |
-| `<command> --help` or `<command> -h` | `npx -y cyber-mux <command> --help` |
-| anything else | `npx -y cyber-mux <arguments>` |
+## Workflow
 
-Pass the arguments verbatim, quoted as the user wrote them. Do not invent flags or commands; if
-the user's intent is unclear, run `npx -y cyber-mux --help` and pick from what it lists.
+1. **Read the arguments.** Claude Code appends them as `ARGUMENTS: <value>`; other runtimes pass the
+   text after the skill name. No text means no arguments.
+2. **Resolve the CLI once.** Use the first command that succeeds for every later call:
 
-Commands: `doctor`, `mode`, `open`, `send`, `submit`, `read`, `wait`, `focus`, `close`, `list`,
-`exists`, `worktree`, `template`, `agent`. Add `--format json` when you need to parse the output.
+   ```bash
+   if command -v cyber-mux >/dev/null 2>&1 && cyber-mux --version >/dev/null 2>&1; then
+     CMD="cyber-mux"
+   elif [ -f pnpm-lock.yaml ] && pnpm exec cyber-mux --version >/dev/null 2>&1; then
+     CMD="pnpm exec cyber-mux"
+   elif [ -f yarn.lock ] && yarn exec cyber-mux --version >/dev/null 2>&1; then
+     CMD="yarn exec cyber-mux"
+   elif { [ -f bun.lock ] || [ -f bun.lockb ]; } && bunx cyber-mux --version >/dev/null 2>&1; then
+     CMD="bunx cyber-mux"
+   else
+     CMD="npx --yes cyber-mux@0.8.0"
+   fi
+   ```
 
-## Report
+3. **Choose the command.**
 
-- For `--help`, show the help text as printed.
-- Otherwise, summarize the result in a line or two, and quote any error verbatim.
-- A `screen` backend error is expected: GNU Screen is detected but not drivable.
+   | Arguments | Run |
+   | --- | --- |
+   | none, `--help`, or `-h` | `$CMD --help` |
+   | `<command> --help` or `<command> -h` | `$CMD <command> --help` |
+   | a request in words, not CLI arguments | `$CMD --help`, then `$CMD <command> --help`, then build the call from the flags it lists |
+   | anything else | `$CMD <arguments>` |
+
+4. **Run it** with the arguments verbatim, in the user's quoting. Add `--format json` only when a
+   later step parses the output.
+5. **Report.**
+   - Help: show the text as printed.
+   - Success: summarize the result in one or two lines; name any pane id it returned.
+   - Failure: quote the error verbatim with the exit code. Do not retry with altered flags unless
+     the error names the fix.
+
+## Anti-patterns
+
+- Inventing a command or flag that `--help` does not list.
+- Calling `tmux`, `herdr`, or another multiplexer CLI directly in place of cyber-mux.
+- Treating the `screen` backend error as a failure to fix: GNU Screen is detected but not drivable.
+
+## Validate
+
+- Every command run starts with the resolved `$CMD`; none calls a multiplexer binary directly.
+- Every flag in a run command appears in `$CMD --help` or `$CMD <command> --help` output.
+- With no arguments, `--help`, or `-h`, the only command run is `$CMD --help`.
+- A failed run's report contains the CLI's error text unchanged.
+
+## References
+
+- cyber-mux docs: <https://cyberuni.github.io/cyber-mux/>
