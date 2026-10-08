@@ -78,7 +78,7 @@
 		"provenance": true
 	},
 	"dependencies": {
-		"@clibuilder/axi": "^0.1.0",
+		"@clibuilder/axi": "^0.2.0",
 		"@cyberuni/agent-harness": "^0.6.0",
 		"clibuilder": "^11.2.2"
 	}
