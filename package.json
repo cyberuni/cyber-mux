@@ -14,7 +14,7 @@
 		"test": "turbo test",
 		"typecheck": "turbo typecheck",
 		"verify": "turbo verify",
-		"version": "changeset version",
+		"version": "changeset version && universal-plugin publish sync-version --root packages/cyber-mux && node scripts/sync-skill-pins.mjs && biome format --write packages/cyber-mux .claude-plugin .cursor-plugin .agents/plugins .github/plugin",
 		"web": "pnpm run --filter=website"
 	},
 	"devDependencies": {
@@ -28,7 +28,8 @@
 		"@types/node": "^24.12.4",
 		"husky": "^9.1.7",
 		"turbo": "^2.9.14",
-		"typescript": "^6.0.0"
+		"typescript": "^6.0.0",
+		"universal-plugin": "^0.12.1"
 	},
 	"packageManager": "pnpm@11.0.0",
 	"engines": {
