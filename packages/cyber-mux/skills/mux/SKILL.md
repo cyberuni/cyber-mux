@@ -2,6 +2,7 @@
 name: mux
 description: Use this skill when the user runs /mux or asks to drive a terminal pane (open, send, read, close) via cyber-mux.
 argument-hint: "<command> [options] | --help"
+compatibility: Requires Node.js 22+ and a POSIX shell.
 ---
 
 # mux
@@ -46,11 +47,11 @@ own CLI (`tmux`, `herdr`, …) instead of cyber-mux.
    | a request in words, not CLI arguments | `$CMD --help`, then `$CMD <command> --help`, then build the call from the flags it lists |
    | anything else | `$CMD <arguments>` |
 
-4. **Run it** with the arguments verbatim, in the user's quoting. Add `--format json` only when a
-   later step parses the output.
+4. **Run it** with the arguments verbatim, in the user's quoting. When the command's `--help` lists
+   `--format` and the user gave none, add `--format agent`.
 5. **Report.**
    - Help: show the text as printed.
-   - Success: summarize the result in one or two lines; name any pane id it returned.
+   - Success: summarize the output (the `--format agent` form when added) in one or two lines; name any pane id it returned.
    - Failure: quote the error verbatim with the exit code. Do not retry with altered flags unless
      the error names the fix.
 
