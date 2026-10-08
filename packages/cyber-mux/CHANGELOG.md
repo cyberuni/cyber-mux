@@ -1,5 +1,13 @@
 # cyber-mux
 
+## 0.9.0
+
+### Minor Changes
+
+- 901317d: Encode `--format json` and `--format agent` with `@clibuilder/axi`, the output package the clibuilder CLIs share. `--format agent` now writes [TOON](https://github.com/toon-format/toon) instead of the human table, on success and on structured errors; `--format json` is now compact JSON (same payload, no indentation). `text` stays the default.
+- ed43ce2: Ship cyber-mux as an agent plugin for Claude Code, Cursor, Codex, and Copilot CLI, with a `mux` skill (`/cyber-mux:mux <command> | --help`) that drives the CLI.
+- 8cb77a5: `cyber-mux/worktree` now re-exports the leased worktree pool from `@cyberuni/agent-harness/worktrees` (`acquire`, `release`, `explain`, `primaryRoot`, `listWorktrees`, `slotPath`, and the rest) and adds `muxWorktreeCreator`, the library's injectable creator that binds a new worktree to a herdr workspace, plus `toHarnessExec` to drive the library with cyber-mux's `Exec`. The synchronous helpers the library replaces (`resolvePrimaryRoot`, `listWorktreesFromGit`, `isWorktreeRemovable`, `resolveWorktreePath`, `pruneWorktrees`, `provisionWorktree`, `ghForgeMergedProbe`, `normalizeWorktreePath`) are deprecated; they keep working unchanged.
+
 ## 0.8.0
 
 ### Minor Changes
