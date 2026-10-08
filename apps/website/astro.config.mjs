@@ -47,6 +47,7 @@ export default defineConfig({
           items: [
             { label: "Introduction", slug: "getting-started/introduction" },
             { label: "Agent plugin", slug: "getting-started/agent-plugin" },
+            { label: "The mux skill", slug: "getting-started/mux-skill" },
           ],
         },
         {

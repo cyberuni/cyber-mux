@@ -27,12 +27,9 @@ For the current version, see npm or the
 - Node.js 22 or later, and a POSIX shell.
 - A supported multiplexer to drive. See [Multiplexers](/cyber-mux/multiplexers/).
 
-You do not need to install the CLI first. The skill finds `cyber-mux` in this order:
-
-1. `cyber-mux` on your `PATH`.
-2. The repository's package manager (`pnpm exec`, `yarn exec`, or `bunx`), when the lockfile is
-   present and the package is installed.
-3. `npx --yes cyber-mux@<version>`, pinned to the plugin's own version.
+You do not need to install the CLI first. The skill finds `cyber-mux` on your `PATH`, through the
+repository's package manager, or through `npx`. See
+[How the skill finds the CLI](/cyber-mux/getting-started/mux-skill/#how-the-skill-finds-the-cli).
 
 ## Install
 
@@ -93,48 +90,19 @@ project or user scope. See [Plugins](https://cursor.com/docs/plugins).
 ## Use the `mux` skill
 
 In Claude Code, invoke the skill as `/cyber-mux:mux <command> [options]`. Other runtimes load the same
-skill under the name `mux`; call it the way that runtime calls skills, or ask in plain words. List
-the commands with:
+skill under the name `mux`, or you can ask in plain words. The skill passes your arguments to the CLI,
+adds `--format agent` where the command supports it, and reports the result:
 
 ```text
 /cyber-mux:mux --help
-```
-
-The skill passes your arguments to the CLI unchanged:
-
-- With no arguments, `--help`, or `-h`, it prints the CLI help.
-- With `<command> --help`, it prints that command's help.
-- Otherwise it runs `cyber-mux <arguments>`. When the command accepts `--format` and you gave none,
-  it adds `--format agent`, the compact [AXI](/cyber-mux/concepts/axi/) output for agents.
-
-The skill summarizes a successful run in a line or two and names any pane id it returned. When a
-command fails, it quotes the CLI's error and exit code verbatim and does not retry with different
-flags.
-
-### Examples
-
-Report which multiplexer the session is inside (see [`mode`](/cyber-mux/cli/mode/)):
-
-```text
-/cyber-mux:mux mode
-```
-
-Open a pane to the right that runs the test watcher, then read its output (see
-[`open`](/cyber-mux/cli/open/) and [`read`](/cyber-mux/cli/read/)):
-
-```text
 /cyber-mux:mux open --at pane:right --label tests --launch "pnpm test --watch"
-/cyber-mux:mux read tests --lines 20
 ```
 
-You can also ask in plain words, such as "open a pane on the right and run the tests". The agent loads
-the skill, reads `--help` for the command it needs, and builds the call from the flags the help lists.
-
-The skill only runs `cyber-mux`. It never calls `tmux`, `herdr`, or another multiplexer's own CLI. Inside
-GNU Screen, commands that drive a pane fail with a named `screen` error. Screen is detected but
-cannot be driven, so the skill reports that error rather than trying to fix it.
+See [The mux skill](/cyber-mux/getting-started/mux-skill/) for the argument forms, every command, how
+the skill finds the CLI, and more examples.
 
 ## Next steps
 
+- [The mux skill](/cyber-mux/getting-started/mux-skill/): invocation, commands, and examples.
 - [CLI Reference](/cyber-mux/cli/): every command and flag the skill can pass through.
 - [AXI](/cyber-mux/concepts/axi/): the output contract behind `--format agent`.
