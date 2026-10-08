@@ -48,6 +48,12 @@ npx cyber-mux mode
 `doctor` reports the detected multiplexer, your current pane, and a fast-path pin you can export to
 skip detection entirely.
 
+## Use it from an agent
+
+`cyber-mux` also ships as an agent plugin for Claude Code, Cursor, Codex, and GitHub Copilot CLI. Its
+`mux` skill runs the CLI from inside an agent session, such as `/cyber-mux:mux mode`. See
+[Agent plugin](/cyber-mux/getting-started/agent-plugin/) to install it.
+
 ## Where next
 
 - [Multiplexers](/cyber-mux/multiplexers/) — the tmux, rmux, herdr, WezTerm, Zellij, cmux, and otty
@@ -59,3 +65,5 @@ skip detection entirely.
 - [AXI](/cyber-mux/concepts/axi/) — the agent-facing output contract every command follows.
 - [Library API](/cyber-mux/api/) — import the core directly instead of shelling out to the CLI.
 - [CLI Reference](/cyber-mux/cli/) — the full verb surface, one page per command.
+- [Agent plugin](/cyber-mux/getting-started/agent-plugin/) — drive panes from Claude Code, Cursor,
+  Codex, or GitHub Copilot CLI through the `mux` skill.

@@ -20,6 +20,18 @@ Part of [cyber-civitas](https://cyber-civitas.github.io), a self-contained syste
 npx cyber-mux mode
 ```
 
+### Agent plugin
+
+`cyber-mux` also ships as an agent plugin for Claude Code, Cursor, Codex, and GitHub Copilot CLI. Its
+`mux` skill drives panes from inside an agent session (`/cyber-mux:mux --help`). In Claude Code:
+
+```text
+/plugin marketplace add cyberuni/cyber-mux
+/plugin install cyber-mux@cyberuni-cyber-mux-local
+```
+
+Other runtimes and usage: <https://cyberuni.github.io/cyber-mux/getting-started/agent-plugin/>
+
 ## What it does
 
 - **Detects** the multiplexer you are running under — env fast-path (`CYBER_MUX` / `CYBER_MUX_PANE`),
