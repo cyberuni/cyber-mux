@@ -96,9 +96,10 @@ than driven (GNU Screen has no stable per-pane identity for driver-created panes
 ## CI
 
 `pull-request` and `release` delegate to reusable workflows shared across the org from
-`cyberuni/.github`. Those `uses:` references are pinned to the `@v1` tag — never repoint them to
-`@main`, which would make every shared-workflow change land here unreviewed. Breaking changes to the
-shared workflows arrive as a new major tag to opt into.
+`cyberuni/.github`. Those `uses:` references are pinned to a major tag (`pnpm-verify` at `@v1`,
+`pnpm-release-changeset` at `@v2`, whose `changesets/action` v2 matches the Changesets CLI v3 this repo
+uses) — never repoint them to `@main`, which would make every shared-workflow change land here
+unreviewed. Breaking changes to the shared workflows arrive as a new major tag to opt into.
 
 ## Validation After Changes
 
