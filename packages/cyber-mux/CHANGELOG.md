@@ -1,5 +1,12 @@
 # cyber-mux
 
+## 0.9.1
+
+### Patch Changes
+
+- b0d9d4b: Fix the `mux` skill's frontmatter, which failed to parse as YAML, and list the CLI commands in its argument hint.
+- d6f15d5: Report the package version in the agent plugin manifests and the `mux` skill's `npx` fallback; 0.9.0 shipped them at 0.8.0.
+
 ## 0.9.0
 
 ### Minor Changes

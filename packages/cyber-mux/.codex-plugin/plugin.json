@@ -1,6 +1,6 @@
 {
 	"name": "cyber-mux",
-	"version": "0.9.0",
+	"version": "0.9.1",
 	"description": "Cross-multiplexer pane control: open, send, read, focus, and close panes over tmux, herdr, wezterm, and more.",
 	"author": {
 		"name": "unional",
