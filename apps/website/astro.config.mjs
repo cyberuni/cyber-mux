@@ -6,6 +6,11 @@ import { defineConfig } from "astro/config";
 export default defineConfig({
   site: "https://cyberuni.github.io",
   base: "/cyber-mux/",
+  // The agent plugin pages moved out of Getting Started into their own group; keep the old URLs.
+  redirects: {
+    "/getting-started/agent-plugin": "/cyber-mux/plugin/",
+    "/getting-started/mux-skill": "/cyber-mux/plugin/mux-skill/",
+  },
   // Astro 7's native Markdown processor applies GitHub-Flavored Markdown by default for both `.md`
   // and `.mdx`, so pipe tables render the same in every page without an explicit remark-gfm plugin.
   // (The old `markdown.remarkPlugins: [remarkGfm]` workaround is deprecated in v7 and no longer needed.)
@@ -46,8 +51,6 @@ export default defineConfig({
           label: "Getting Started",
           items: [
             { label: "Introduction", slug: "getting-started/introduction" },
-            { label: "Agent plugin", slug: "getting-started/agent-plugin" },
-            { label: "The mux skill", slug: "getting-started/mux-skill" },
           ],
         },
         {
@@ -84,6 +87,13 @@ export default defineConfig({
             { label: "agent", slug: "cli/agent" },
             { label: "worktree", slug: "cli/worktree" },
             { label: "template", slug: "cli/template" },
+          ],
+        },
+        {
+          label: "Agent Plugin",
+          items: [
+            { label: "Overview", slug: "plugin" },
+            { label: "The mux skill", slug: "plugin/mux-skill" },
           ],
         },
         {

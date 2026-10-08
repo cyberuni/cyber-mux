@@ -29,7 +29,7 @@ For the current version, see npm or the
 
 You do not need to install the CLI first. The skill finds `cyber-mux` on your `PATH`, through the
 repository's package manager, or through `npx`. See
-[How the skill finds the CLI](/cyber-mux/getting-started/mux-skill/#how-the-skill-finds-the-cli).
+[How the skill finds the CLI](/cyber-mux/plugin/mux-skill/#how-the-skill-finds-the-cli).
 
 ## Install
 
@@ -98,11 +98,11 @@ adds `--format agent` where the command supports it, and reports the result:
 /cyber-mux:mux open --at pane:right --label tests --launch "pnpm test --watch"
 ```
 
-See [The mux skill](/cyber-mux/getting-started/mux-skill/) for the argument forms, every command, how
+See [The mux skill](/cyber-mux/plugin/mux-skill/) for the argument forms, every command, how
 the skill finds the CLI, and more examples.
 
 ## Next steps
 
-- [The mux skill](/cyber-mux/getting-started/mux-skill/): invocation, commands, and examples.
+- [The mux skill](/cyber-mux/plugin/mux-skill/): invocation, commands, and examples.
 - [CLI Reference](/cyber-mux/cli/): every command and flag the skill can pass through.
 - [AXI](/cyber-mux/concepts/axi/): the output contract behind `--format agent`.
