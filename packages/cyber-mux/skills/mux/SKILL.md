@@ -1,6 +1,6 @@
 ---
 name: mux
-description: Use this skill when the user runs /mux or asks to drive a terminal pane (open, send, read, close) via cyber-mux.
+description: Drive terminal multiplexer panes with the cyber-mux CLI: /mux <command>, /mux --help, or a request to open, send to, read, or close a pane.
 argument-hint: "<command> [options] | --help"
 compatibility: Requires Node.js 22+ and a POSIX shell.
 ---
@@ -51,7 +51,8 @@ own CLI (`tmux`, `herdr`, …) instead of cyber-mux.
    `--format` and the user gave none, add `--format agent`.
 5. **Report.**
    - Help: show the text as printed.
-   - Success: summarize the output (the `--format agent` form when added) in one or two lines; name any pane id it returned.
+   - Success: summarize the output (the `--format agent` form when added) in one or two lines; name
+     any pane id it returned.
    - Failure: quote the error verbatim with the exit code. Do not retry with altered flags unless
      the error names the fix.
 
