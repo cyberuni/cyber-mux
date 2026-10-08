@@ -3,7 +3,7 @@ title: The mux skill
 description: Drive multiplexer panes from a coding agent with the /mux skill — invocation, argument forms, commands, CLI resolution, output, and examples.
 ---
 
-The `mux` skill is the one skill in the [cyber-mux agent plugin](/cyber-mux/getting-started/agent-plugin/).
+The `mux` skill is the one skill in the [cyber-mux agent plugin](/cyber-mux/plugin/).
 It passes what you type to the `cyber-mux` CLI, runs it, and reports the result. The skill adds
 nothing of its own: every command and flag it uses comes from the CLI's `--help`.
 

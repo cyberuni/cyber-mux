@@ -30,7 +30,7 @@ npx cyber-mux mode
 /plugin install cyber-mux@cyberuni-cyber-mux-local
 ```
 
-Other runtimes and usage: <https://cyberuni.github.io/cyber-mux/getting-started/agent-plugin/>
+Other runtimes and usage: <https://cyberuni.github.io/cyber-mux/plugin/>
 
 ## What it does
 
