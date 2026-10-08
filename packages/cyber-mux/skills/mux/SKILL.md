@@ -1,7 +1,7 @@
 ---
 name: mux
-description: Drive terminal multiplexer panes with the cyber-mux CLI: /mux <command>, /mux --help, or a request to open, send to, read, or close a pane.
-argument-hint: "<command> [options] | --help"
+description: "Drive terminal multiplexer panes with the cyber-mux CLI: /mux <command>, /mux --help, or a request to open, send to, read, or close a pane."
+argument-hint: "<doctor|mode|open|send|submit|read|wait|focus|close|list|exists|worktree|template|agent> [args] [options] | <command> --help | --help"
 compatibility: Requires Node.js 22+ and a POSIX shell.
 ---
 
