@@ -27,6 +27,4 @@ minimumReleaseAgeExclude:
   # clibuilder migration needs (clibuilder#606-609, #617 import fix, #620 falsy defaults).
   # Removable once it clears the soak: 2026-09-18.
   - clibuilder@11.2.2
-  # min-release-age: lift @cyberuni/agent-harness@0.6.0 until 2026-10-07T09:00:00Z
-  - '@cyberuni/agent-harness@0.6.0'
 minimumReleaseAgeStrict: true
