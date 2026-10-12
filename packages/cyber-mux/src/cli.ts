@@ -1,11 +1,11 @@
 import { join } from 'node:path'
-import { cli, z } from 'clibuilder'
+import { cli, t as ct } from 'clibuilder'
 import pkg from '../package.json' with { type: 'json' }
 import { AgentLifecycleUnsupportedError, deriveAgentWait } from './agent.ts'
 import { AgentWaitStatesUnsupportedError } from './agent-states.ts'
 import { callerPane, resolveMuxAdapter } from './backend.ts'
 import { AmbiguousPaneError, CliError, MissingPaneError, reportError } from './cli-error.ts'
-import { AT_OPTION, ENV_OPTION, FORMAT_OPTION, LABEL_OPTION, parseEnv } from './cli-options.ts'
+import { AT_OPTION, ENV_OPTION, LABEL_OPTION, parseEnv } from './cli-options.ts'
 import { type Exec, nodeExec } from './exec.ts'
 import { canFloatPanes, FloatingPanesUnsupportedError } from './floating.ts'
 import type { AgentStatus, LivePane, MuxAdapter, MuxPlacement, MuxTarget } from './mux.ts'
@@ -104,7 +104,7 @@ export type MuxCommand = cli.Command
  * because clibuilder only ever calls `run` with the arguments the same declaration describes.
  */
 function muxCommand<AName extends string, A extends cli.Command.Argument<AName>[], O extends cli.Command.Options>(
-	cmd: cli.Command<Record<string, never>, z.ZodTypeAny, A, O>,
+	cmd: cli.Command<Record<string, never>, cli.ConfigSchema, A, O>,
 ): MuxCommand {
 	return cmd as unknown as MuxCommand
 }
@@ -384,7 +384,7 @@ function reportOpenedWorktree(opened: OpenedWorktree, regroupCommand: string): v
  */
 const TEMPLATE_OPTION = {
 	description: 'Named template to build in the opened space',
-	type: z.optional(z.string()),
+	type: ct.string().optional(),
 	conflicts: ['launch', 'env'],
 }
 
@@ -494,7 +494,6 @@ function templateListCommand(deps: Deps): MuxCommand {
 	return muxCommand({
 		name: 'list',
 		description: 'Every template resolvable from here, with its source and pane count',
-		options: { format: FORMAT_OPTION },
 		run(args) {
 			guarded(args, () => {
 				const dirs = templateDirs(deps.exec, deps.env)
@@ -527,9 +526,9 @@ function templateShowCommand(deps: Deps): MuxCommand {
 	return muxCommand({
 		name: 'show',
 		description: 'Print a resolved template as JSON',
-		arguments: [{ name: 'name', description: 'Template name', type: z.optional(z.string()) }],
+		arguments: [{ name: 'name', description: 'Template name', type: ct.string().optional() }],
 		options: {
-			file: { description: 'Read this path instead, skipping resolution entirely', type: z.optional(z.string()) },
+			file: { description: 'Read this path instead, skipping resolution entirely', type: ct.string().optional() },
 			desugar: { description: 'Print the canonical tree panes/arrange expands to — exactly what apply builds' },
 		},
 		run(args) {
@@ -554,9 +553,9 @@ function templateValidateCommand(deps: Deps): MuxCommand {
 	return muxCommand({
 		name: 'validate',
 		description: 'Validate a template — exit 0 valid, 1 invalid, every error at once with a JSON path',
-		arguments: [{ name: 'name', description: 'Template name', type: z.optional(z.string()) }],
+		arguments: [{ name: 'name', description: 'Template name', type: ct.string().optional() }],
 		options: {
-			file: { description: 'Validate this path instead, skipping resolution entirely', type: z.optional(z.string()) },
+			file: { description: 'Validate this path instead, skipping resolution entirely', type: ct.string().optional() },
 		},
 		run(args) {
 			guarded(args, ({ name, ...opts }) => {
@@ -617,17 +616,16 @@ function templateSaveCommand(deps: Deps): MuxCommand {
 		options: {
 			from: {
 				description: "Pane whose region to capture; defaults to this process's own pane",
-				type: z.optional(z.string()),
+				type: ct.string().optional(),
 			},
 			workspace: { description: "Capture every tab of the caller's workspace, as a tabs template" },
-			description: { description: 'Description to record in the template', type: z.optional(z.string()) },
+			description: { description: 'Description to record in the template', type: ct.string().optional() },
 			to: {
 				description: 'Which templates directory to write to',
-				type: z.optional(z.enum(['repo', 'user'])),
+				type: ct.enum(['repo', 'user']).optional(),
 				default: 'repo',
 			},
 			force: { description: 'Overwrite an existing template of this name' },
-			format: FORMAT_OPTION,
 		},
 		run(args) {
 			guarded(args, ({ name, to = 'repo', ...opts }) => {
@@ -822,12 +820,12 @@ function templateEditCommand(deps: Deps): MuxCommand {
 			'  cyber-mux template edit pool-4 --set 2="pnpm dev" --set 3=          # set two, clear one\n' +
 			'  cyber-mux template edit pool-4 --field label --set 1=planner\n' +
 			'  cyber-mux template edit pool-4 --interactive          # one prompt per pane',
-		arguments: [{ name: 'name', description: 'Template name', type: z.optional(z.string()) }],
+		arguments: [{ name: 'name', description: 'Template name', type: ct.string().optional() }],
 		options: {
-			file: { description: 'Edit this path instead, skipping resolution entirely', type: z.optional(z.string()) },
+			file: { description: 'Edit this path instead, skipping resolution entirely', type: ct.string().optional() },
 			set: {
 				description: 'Set the field on a pane, e.g. --set 1=claude (repeatable; empty value clears)',
-				type: z.optional(z.array(z.string())),
+				type: ct.array(ct.string()).optional(),
 			},
 			interactive: {
 				description: 'Ask one question per pane instead, pre-filling the current value',
@@ -835,11 +833,10 @@ function templateEditCommand(deps: Deps): MuxCommand {
 			},
 			field: {
 				description: 'Which field --set and --interactive write',
-				type: z.optional(z.enum(['command', 'label'])),
+				type: ct.enum(['command', 'label']).optional(),
 				default: 'command',
 			},
 			'dry-run': { description: 'Print the edited template instead of writing it' },
-			format: FORMAT_OPTION,
 		},
 		async run(args) {
 			await guardedAsync(args, async ({ name, set = [], field = 'command', 'dry-run': dryRun, ...rest }) => {
@@ -1113,7 +1110,6 @@ function doctorCommand(deps: Deps): MuxCommand {
 	return muxCommand({
 		name: 'doctor',
 		description: 'Probe the multiplexer, self pane, and backend; print fast-path pins',
-		options: { format: FORMAT_OPTION },
 		run() {
 			const probe = probeMultiplexer(deps.exec, deps.env)
 			const self = currentPane(deps.env)
@@ -1150,7 +1146,6 @@ function modeCommand(deps: Deps): MuxCommand {
 	return muxCommand({
 		name: 'mode',
 		description: 'Report the detected drivable backend (tmux / rmux / herdr / wezterm / zellij / cmux / otty / none)',
-		options: { format: FORMAT_OPTION },
 		run() {
 			let name = 'none'
 			try {
@@ -1168,13 +1163,12 @@ function openCommand(deps: Deps): MuxCommand {
 		name: 'open',
 		description: 'Open a new pane/tab/workspace, optionally launching a command in it',
 		options: {
-			launch: { description: 'Command line to run in the new pane', type: z.optional(z.string()) },
+			launch: { description: 'Command line to run in the new pane', type: ct.string().optional() },
 			template: TEMPLATE_OPTION,
-			cwd: { description: 'Working directory for the new pane', type: z.optional(z.string()), default: process.cwd() },
+			cwd: { description: 'Working directory for the new pane', type: ct.string().optional(), default: process.cwd() },
 			at: AT_OPTION,
 			env: ENV_OPTION,
 			label: LABEL_OPTION,
-			format: FORMAT_OPTION,
 		},
 		run(args) {
 			guarded(args, ({ env, cwd = process.cwd(), ...rest }) => {
@@ -1244,10 +1238,9 @@ function sendCommand(deps: Deps): MuxCommand {
 				name: 'text',
 				description: 'Type literal text into a pane, pressing no Enter (a key-named word is typed, not pressed)',
 				arguments: [
-					{ name: 'pane', description: 'Target pane id', type: z.optional(z.string()) },
-					{ name: 'text', description: 'Literal text to type', type: z.optional(z.string()) },
+					{ name: 'pane', description: 'Target pane id', type: ct.string().optional() },
+					{ name: 'text', description: 'Literal text to type', type: ct.string().optional() },
 				],
-				options: { format: FORMAT_OPTION },
 				run(args) {
 					guarded(args, ({ pane, text }) => {
 						paneVerb(pane, () => {
@@ -1265,15 +1258,14 @@ function sendCommand(deps: Deps): MuxCommand {
 				name: 'keys',
 				description: 'Press named keys in a pane, typing nothing (Up, Enter, Escape, C-c, F1 …)',
 				arguments: [
-					{ name: 'pane', description: 'Target pane id', type: z.optional(z.string()) },
+					{ name: 'pane', description: 'Target pane id', type: ct.string().optional() },
 					{
 						name: 'keys',
 						description:
 							'Key names, in order — core vocabulary is portable, anything else is passed to the backend as-is',
-						type: z.optional(z.array(z.string())),
+						type: ct.array(ct.string()).optional(),
 					},
 				],
-				options: { format: FORMAT_OPTION },
 				run(args) {
 					guarded(args, ({ pane, keys = [] }) => {
 						paneVerb(pane, () => {
@@ -1294,14 +1286,13 @@ function submitCommand(deps: Deps): MuxCommand {
 		name: 'submit',
 		description: "Take a pane's turn: type the text if given, then always press Enter (no text = bare-Enter flush)",
 		arguments: [
-			{ name: 'pane', description: 'Target pane id', type: z.optional(z.string()) },
+			{ name: 'pane', description: 'Target pane id', type: ct.string().optional() },
 			{
 				name: 'text',
 				description: 'Text to type before Enter; omit to flush an already-staged buffer without retyping it',
-				type: z.optional(z.string()),
+				type: ct.string().optional(),
 			},
 		],
-		options: { format: FORMAT_OPTION },
 		run(args) {
 			guarded(args, ({ pane, text }) => {
 				paneVerb(pane, () => {
@@ -1353,11 +1344,10 @@ function readCommand(deps: Deps): MuxCommand {
 	return muxCommand({
 		name: 'read',
 		description: "Capture a pane's output",
-		arguments: [{ name: 'pane', description: 'Target pane id', type: z.optional(z.string()) }],
+		arguments: [{ name: 'pane', description: 'Target pane id', type: ct.string().optional() }],
 		options: {
-			lines: { description: 'Trailing lines to capture', type: z.optional(z.number().int()) },
+			lines: { description: 'Trailing lines to capture', type: ct.int().optional() },
 			full: { description: "Capture the pane's whole scrollback, however long", conflicts: ['lines'] },
-			format: FORMAT_OPTION,
 		},
 		run(args) {
 			guarded(args, ({ pane, ...opts }) => {
@@ -1431,24 +1421,23 @@ function waitCommand(deps: Deps): MuxCommand {
 	return muxCommand({
 		name: 'wait',
 		description: "Block until a pane's output matches, or the timeout elapses (exit 0 = matched, 1 = timed out)",
-		arguments: [{ name: 'pane', description: 'Target pane id', type: z.optional(z.string()) }],
+		arguments: [{ name: 'pane', description: 'Target pane id', type: ct.string().optional() }],
 		options: {
-			match: { description: 'Literal substring to wait for', type: z.optional(z.string()) },
+			match: { description: 'Literal substring to wait for', type: ct.string().optional() },
 			regex: {
 				description: 'Regular expression to wait for (backend dialect; prefer --match)',
-				type: z.optional(z.string()),
+				type: ct.string().optional(),
 				conflicts: ['match'],
 			},
 			timeout: {
 				description: 'Give up after this many milliseconds',
-				type: z.optional(z.number()),
+				type: ct.number().optional(),
 				default: DEFAULT_WAIT_TIMEOUT_MS,
 			},
 			lines: {
 				description: 'Restrict the searched snapshot to this many trailing lines',
-				type: z.optional(z.number().int()),
+				type: ct.int().optional(),
 			},
-			format: FORMAT_OPTION,
 		},
 		async run(args) {
 			await guardedAsync(args, async ({ pane, timeout = DEFAULT_WAIT_TIMEOUT_MS, ...rest }) => {
@@ -1538,8 +1527,7 @@ function focusCommand(deps: Deps): MuxCommand {
 	return muxCommand({
 		name: 'focus',
 		description: 'Beam the attached client to a pane',
-		arguments: [{ name: 'pane', description: 'Target pane id', type: z.optional(z.string()) }],
-		options: { format: FORMAT_OPTION },
+		arguments: [{ name: 'pane', description: 'Target pane id', type: ct.string().optional() }],
 		run(args) {
 			guarded(args, ({ pane }) => {
 				paneVerb(pane, () => {
@@ -1555,8 +1543,7 @@ function closeCommand(deps: Deps): MuxCommand {
 	return muxCommand({
 		name: 'close',
 		description: 'Close a pane',
-		arguments: [{ name: 'pane', description: 'Target pane id', type: z.optional(z.string()) }],
-		options: { format: FORMAT_OPTION },
+		arguments: [{ name: 'pane', description: 'Target pane id', type: ct.string().optional() }],
 		run(args) {
 			guarded(args, ({ pane }) => {
 				paneVerb(pane, () => {
@@ -1572,7 +1559,6 @@ function listCommand(deps: Deps): MuxCommand {
 	return muxCommand({
 		name: 'list',
 		description: 'Enumerate every live pane the current backend can see',
-		options: { format: FORMAT_OPTION },
 		run(args) {
 			guarded(args, () => {
 				const panes = adapter(deps).listPanes(deps.exec)
@@ -1604,8 +1590,7 @@ function existsCommand(deps: Deps): MuxCommand {
 	return muxCommand({
 		name: 'exists',
 		description: 'Probe whether a single pane is still live (exit 0 = live, 1 = gone)',
-		arguments: [{ name: 'pane', description: 'Target pane id', type: z.optional(z.string()) }],
-		options: { format: FORMAT_OPTION },
+		arguments: [{ name: 'pane', description: 'Target pane id', type: ct.string().optional() }],
 		run(args) {
 			guarded(args, ({ pane }) => {
 				const a = adapter(deps)
@@ -1681,8 +1666,7 @@ function agentStatusCommand(deps: Deps): MuxCommand {
 	return muxCommand({
 		name: 'status',
 		description: "Print a pane's agent-lifecycle status (herdr); degrades to no status on a backend with no feed",
-		arguments: [{ name: 'pane', description: 'Target pane id or label', type: z.optional(z.string()) }],
-		options: { format: FORMAT_OPTION },
+		arguments: [{ name: 'pane', description: 'Target pane id or label', type: ct.string().optional() }],
 		run(args) {
 			guarded(args, ({ pane }) => {
 				const a = adapter(deps)
@@ -1724,18 +1708,17 @@ function agentWaitCommand(deps: Deps): MuxCommand {
 			'rmux, wezterm, zellij and cmux are refused with backend-unsupported. otty ends a wait on idle\n' +
 			'alone, so any other --until is refused there too. Use agent status for a snapshot that works\n' +
 			'everywhere.',
-		arguments: [{ name: 'pane', description: 'Target pane id or label', type: z.optional(z.string()) }],
+		arguments: [{ name: 'pane', description: 'Target pane id or label', type: ct.string().optional() }],
 		options: {
 			until: {
 				description:
 					'Agent states any of which ends the wait (idle, working, blocked, done, unknown); omit for the backend’s default',
-				type: z.optional(z.array(z.string())),
+				type: ct.array(ct.string()).optional(),
 			},
 			timeout: {
 				description: 'Milliseconds before the wait gives up; omit to wait indefinitely',
-				type: z.optional(z.number()),
+				type: ct.number().optional(),
 			},
-			format: FORMAT_OPTION,
 		},
 		run(args) {
 			guarded(args, ({ pane, ...opts }) => {
@@ -1792,21 +1775,20 @@ function worktreeAddCommand(deps: Deps): MuxCommand {
 		name: 'add',
 		description: 'Create a git worktree, and open it when given a placement — grouped where the backend can',
 		options: {
-			branch: { description: 'Branch to create the worktree on (required)', type: z.optional(z.string()) },
+			branch: { description: 'Branch to create the worktree on (required)', type: ct.string().optional() },
 			path: {
 				description: 'Where to check out the worktree (default: a sibling of the primary checkout)',
-				type: z.optional(z.string()),
+				type: ct.string().optional(),
 			},
-			base: { description: 'Start point for the new branch (default: the current HEAD)', type: z.optional(z.string()) },
+			base: { description: 'Start point for the new branch (default: the current HEAD)', type: ct.string().optional() },
 			launch: {
 				description: 'Command to run in the opened pane; implies --at workspace',
-				type: z.optional(z.string()),
+				type: ct.string().optional(),
 			},
 			template: TEMPLATE_OPTION,
 			at: AT_OPTION,
 			env: ENV_OPTION,
 			label: LABEL_OPTION,
-			format: FORMAT_OPTION,
 		},
 		run({ branch, env, ...rest }) {
 			try {
@@ -1916,18 +1898,17 @@ function worktreeProvisionCommand(deps: Deps): MuxCommand {
 		options: {
 			branch: {
 				description: 'Branch the provisioned worktree ends up on (required)',
-				type: z.optional(z.string()),
+				type: ct.string().optional(),
 			},
 			base: {
 				description: 'Start point for the fresh branch (default: the resolved default branch, then HEAD)',
-				type: z.optional(z.string()),
+				type: ct.string().optional(),
 			},
 			path: {
 				description:
 					'Where a fresh checkout goes when none is free to reuse (default: a sibling of the primary checkout)',
-				type: z.optional(z.string()),
+				type: ct.string().optional(),
 			},
-			format: FORMAT_OPTION,
 		},
 		run({ branch, ...rest }) {
 			try {
@@ -1969,11 +1950,10 @@ function worktreeOpenCommand(deps: Deps): MuxCommand {
 		description: 'Open an existing git worktree — groups it with the repo where the backend can bind',
 		arguments: [{ name: 'path', description: 'Worktree path to open' }],
 		options: {
-			launch: { description: 'Command to run in the opened pane', type: z.optional(z.string()) },
+			launch: { description: 'Command to run in the opened pane', type: ct.string().optional() },
 			at: AT_OPTION,
 			env: ENV_OPTION,
 			label: LABEL_OPTION,
-			format: FORMAT_OPTION,
 		},
 		run({ path, env, ...rest }) {
 			try {
@@ -2005,7 +1985,6 @@ function worktreeListCommand(deps: Deps): MuxCommand {
 		name: 'list',
 		description:
 			'Every worktree of the repo, and the workspace each is open in — BRANCH is marked "(*)" for the primary checkout (every other row is a linked worktree) or "(removable)" when the worktree looks disposable (its branch is merged into the default branch, the checkout is clean, and nothing is open in it), and ROOT is marked "(gone)" when the checkout no longer exists on disk(git can prune it)',
-		options: { format: FORMAT_OPTION },
 		run() {
 			try {
 				const primaryRoot = resolvePrimaryRoot(deps.exec)
@@ -2073,7 +2052,6 @@ function worktreePruneCommand(deps: Deps): MuxCommand {
 			'Remove every disposable worktree in one call — the same gate `worktree list` marks "(removable)" with. Bare form previews the candidates;pass --force to actually remove them',
 		options: {
 			force: { description: 'Remove the candidates instead of only previewing them' },
-			format: FORMAT_OPTION,
 		},
 		run(opts) {
 			try {
@@ -2165,7 +2143,8 @@ function usageError(usage: string, errors: cli.UsageError[], command: MuxCommand
 	switch (e?.type) {
 		case 'invalid-key': {
 			const flag = flagName(e.key)
-			const valid = Object.keys(command.options ?? {}).map(flagName)
+			// `--format` is clibuilder's global option, so it is on no command's own list but valid on every one.
+			const valid = [...Object.keys(command.options ?? {}), 'format'].map(flagName)
 			return new CliError(
 				'unknown-flag',
 				`unknown flag ${flag} for ${command.name}`,
@@ -2286,12 +2265,31 @@ export interface MuxCli {
  * on stdout and exits 2, the status that separates bad input from a failed operation. An explicit
  * `--help` is not an error and exits 0. */
 export function buildProgram(cliDeps: CliDeps = DEFAULT_DEPS): MuxCli {
-	return cli({
+	const program = cli({
 		name: 'cyber-mux',
 		version: pkg.version,
 		description: DESCRIPTION,
+		// cyber-mux writes its own answers and errors (`output.ts`, `cli-error.ts`), so it keeps clibuilder 11's
+		// console mode, and `text` stays the default of the one global `--format`.
+		output: 'console',
+		format: 'text',
 		onUsageError: usageErrorHandler('cyber-mux'),
 	}).default({ commands: muxCommands(cliDeps) })
+	return { parse: (argv) => program.parse(normalizeFormatArgv(argv)) }
+}
+
+/**
+ * Spell the format flags the way clibuilder 12's global `--format <toon|json|text>` takes them. cyber-mux
+ * documents `--format agent` (TOON) and keeps a hidden `--json` alias; neither is a value or flag the
+ * global option knows, so they are rewritten here rather than rejected.
+ */
+export function normalizeFormatArgv(argv: string[]): string[] {
+	return argv.flatMap((arg, i) => {
+		if (arg === '--json') return ['--format', 'json']
+		if (arg === '--format=agent') return ['--format=toon']
+		if (arg === 'agent' && argv[i - 1] === '--format') return ['toon']
+		return [arg]
+	})
 }
 
 /** The command the `mux` plugin mounts its verbs under (`plugin.ts`). */

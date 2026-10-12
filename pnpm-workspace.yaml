@@ -23,10 +23,10 @@ allowBuilds:
 # should carry its reason and the date it becomes removable.
 minimumReleaseAge: 1440 # 1 day
 minimumReleaseAgeExclude:
-  # clibuilder 11.2.2 (published 2026-09-17T03:00Z) carries the parser fixes the commander ->
-  # clibuilder migration needs (clibuilder#606-609, #617 import fix, #620 falsy defaults).
-  # Removable once it clears the soak: 2026-09-18.
-  - clibuilder@11.2.2
+  # min-release-age: lift clibuilder@12.0.0 until 2026-10-13T01:00:00Z
+  - 'clibuilder@12.0.0'
+  # min-release-age: lift args-minus@0.2.0 until 2026-10-12T11:00:00Z
+  - 'args-minus@0.2.0'
   # min-release-age: lift @cyberuni/agent-harness@0.6.0 until 2026-10-07T09:00:00Z
   - '@cyberuni/agent-harness@0.6.0'
 minimumReleaseAgeStrict: true

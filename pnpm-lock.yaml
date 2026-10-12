@@ -78,15 +78,12 @@ importers:
 
   packages/cyber-mux:
     dependencies:
-      '@clibuilder/axi':
-        specifier: ^0.1.0
-        version: 0.1.0(clibuilder@11.2.2(typescript@6.0.3))
       '@cyberuni/agent-harness':
         specifier: ^0.6.0
         version: 0.6.0(typescript@6.0.3)
       clibuilder:
-        specifier: ^11.2.2
-        version: 11.2.2(typescript@6.0.3)
+        specifier: ^12.0.0
+        version: 12.0.0(js-yaml@4.3.0)
     devDependencies:
       '@types/node':
         specifier: ^24.10.1
@@ -927,9 +924,6 @@ packages:
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
 
-  '@just-func/types@0.6.0':
-    resolution: {integrity: sha512-5/nFEvX/QizdRCMXjo/VfW4qgBw2pX2+Sz5+aJ907d7NqXVXxEu1Hwu6k35A5INI2NtIOvplQnkm7uFqPGiL0w==}
-
   '@just-func/types@0.6.1':
     resolution: {integrity: sha512-uIE3xNCNcyIsM/YhOAEEh8xNwDhcT5KMM6F4R/aQGVijt6sMePjd7CDPeVrXd2XFks2nGiin/cEMTYhAIaXa6A==}
 
@@ -1745,6 +1739,10 @@ packages:
   argparse@2.0.1:
     resolution: {integrity: sha512-8+9WqebbFzpX9OR+Wa6O29asIogeRMzcGtAINdpMHHyAg10f05aSFVBbcEqGf/PXw1EjAZ+q2/bEBg3DvurK3Q==}
 
+  args-minus@0.2.0:
+    resolution: {integrity: sha512-WnIUyzhO4me3xx841rxfCU2C/PMpD+M1MraKb8hF2aGY4xS67bSV2EhpmegLlFM0UV11+hV9uHPbNHnH7ypL0w==}
+    engines: {node: '>=20'}
+
   argue-cli@3.1.0:
     resolution: {integrity: sha512-DhBpBfXL4SS2uC0N922MMajKR3CdrTG0u2or1PNYgXMsrSzViJrbtvT0nCLlLGUI0plam/ZZCs7aAauHtW9thw==}
     engines: {node: '>=22'}
@@ -1840,13 +1838,18 @@ packages:
     resolution: {integrity: sha512-77PSwercCZU2Fc4sX94eF8k8Pxte6JAwL4/ICZLFjJLqegs7kCuAsqqj/70NQF6TvDpgFjkubQB2FW2ZZddvQg==}
     engines: {node: '>=8'}
 
-  clibuilder@11.2.2:
-    resolution: {integrity: sha512-Z4JQcOdCdKDi21T20jwDr26JwCUyF3cGKhJ/B4+zKSVL73QYgzFaR8YAlK5bROIZ/mbxiYCJgWUB+yf1oJpPdA==}
-    engines: {node: '>= 20.19'}
-
   clibuilder@11.3.2:
     resolution: {integrity: sha512-W84b3U2iR1g4ZIRU3ckmfHrSR2LIKNggQgUY9Thuke7UJBle6/+Yo/RgFbheuyJxgTj+NroxtUBwYLlTkLCa3g==}
     engines: {node: '>= 20.19'}
+
+  clibuilder@12.0.0:
+    resolution: {integrity: sha512-k4scud2B6EFqzVmxmTVQMiW4xu9KzxV9+KVIPQVJeJFqg735a0H2iDMGFMIsHQVNdxwLqPjmNiK4CEUU5ZxNfA==}
+    engines: {node: '>= 20.19'}
+    peerDependencies:
+      js-yaml: ^4.1.0
+    peerDependenciesMeta:
+      js-yaml:
+        optional: true
 
   cliui@8.0.1:
     resolution: {integrity: sha512-BSeNnyus75C4//NQ9gQt1/csTXyo/8Sb+afLAkzAptFuMsod9HFokGNudZpi/oQV73hnVK+sR+5PVRMd+Dr7YQ==}
@@ -3037,18 +3040,10 @@ packages:
   stackback@0.0.2:
     resolution: {integrity: sha512-1XMJE5fQo1jGH6Y/7ebnwPOBEkIEnT4QF32d5R1+VXdXveM0IBMJt8zfaxX1P3QhVwrYe+576+jkANtSS2mBbw==}
 
-  standard-log-color@13.3.0:
-    resolution: {integrity: sha512-vS0pD5lF2pEknDHFkSfMjcPxQgitLbU1PNeeXlG8rom+URrNJzU0hbbujkKe1ghBiC3qhdMguJiBbKjW6Seoxw==}
-    peerDependencies:
-      standard-log: '>=11.0.1'
-
   standard-log-color@13.3.1:
     resolution: {integrity: sha512-CR++e1aHcpuq5bh0jFC2EbwchokUjd3L5EZ+HDl8AwXzOAtn899TkoSdIIR8CgVJX07cBlGOW8xXgZdj3mc9+Q==}
     peerDependencies:
       standard-log: '>=11.0.1'
-
-  standard-log@13.3.0:
-    resolution: {integrity: sha512-G2SVB/gcbCdQIeR+41ciB+Lr/Kp95vvl2jb1fIYwkAIUSKDcr2OR0uEMwfzUYEIlg7x9tzrz09lGfKtH4yEidA==}
 
   standard-log@13.3.1:
     resolution: {integrity: sha512-WcDZypKwq35deXwUV1/ttKodpijdGYSaRVVPHHGNtAIPbvS4rC6xIs1faPtXEUBD33W4RdtJKCZ7/oV1uIrQFw==}
@@ -3195,11 +3190,6 @@ packages:
   turbo@2.10.5:
     resolution: {integrity: sha512-07Y/C7OUp23l4P92PJoYtFNbHjLhftrZH5Ce7dbczS4kX2Re+wtbXvZLoxn/pUtzgsQaRCBaRuZPJp4zmAn0WQ==}
     hasBin: true
-
-  type-plus@8.0.0-beta.10:
-    resolution: {integrity: sha512-ZdhzmQg7f8oxt5Cbivslk8o3zef8L3ibpKIeGH1ESf73y8ZEY1z9fe4Z3fTxcjmFOb8ESE1TbW/MCgEvpeLC4w==}
-    peerDependencies:
-      typescript: '>= 5.6.0'
 
   type-plus@8.0.0-beta.12:
     resolution: {integrity: sha512-isf19V90L8JOn9VBWWwUfH8DU6G3dfPptr3R+JtraYWHqLAsXYI2f9x1HZVTkajrkSffdEbetXUXf7FcIjSIRg==}
@@ -4096,11 +4086,6 @@ snapshots:
       fast-wrap-ansi: 0.2.2
       sisteransi: 1.0.5
 
-  '@clibuilder/axi@0.1.0(clibuilder@11.2.2(typescript@6.0.3))':
-    dependencies:
-      '@toon-format/toon': 4.1.1
-      clibuilder: 11.2.2(typescript@6.0.3)
-
   '@clibuilder/axi@0.1.0(clibuilder@11.3.2(typescript@6.0.3))':
     dependencies:
       '@toon-format/toon': 4.1.1
@@ -4515,12 +4500,6 @@ snapshots:
     dependencies:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
-
-  '@just-func/types@0.6.0(typescript@6.0.3)':
-    dependencies:
-      type-plus: 8.0.0-beta.10(typescript@6.0.3)
-    transitivePeerDependencies:
-      - typescript
 
   '@just-func/types@0.6.1(typescript@6.0.3)':
     dependencies:
@@ -5159,6 +5138,8 @@ snapshots:
 
   argparse@2.0.1: {}
 
+  args-minus@0.2.0: {}
+
   argue-cli@3.1.0: {}
 
   aria-query@5.3.2: {}
@@ -5315,24 +5296,6 @@ snapshots:
 
   ci-info@4.4.0: {}
 
-  clibuilder@11.2.2(typescript@6.0.3):
-    dependencies:
-      find-installed-packages: 4.0.1
-      js-yaml: 4.3.0
-      jsonc-parser: 3.3.1
-      pad-right: 0.2.2
-      search-packages: 2.2.3
-      standard-log: 13.3.0(typescript@6.0.3)
-      standard-log-color: 13.3.0(standard-log@13.3.0(typescript@6.0.3))
-      tersify: 4.0.7
-      tmp: 0.2.7
-      tslib: 2.8.1
-      type-plus: 8.0.0-beta.10(typescript@6.0.3)
-      wordwrap: 1.0.0
-      zod: 3.25.76
-    transitivePeerDependencies:
-      - typescript
-
   clibuilder@11.3.2(typescript@6.0.3):
     dependencies:
       find-installed-packages: 4.0.1
@@ -5351,6 +5314,13 @@ snapshots:
       zod: 3.25.76
     transitivePeerDependencies:
       - typescript
+
+  clibuilder@12.0.0(js-yaml@4.3.0):
+    dependencies:
+      '@toon-format/toon': 4.1.1
+      args-minus: 0.2.0
+    optionalDependencies:
+      js-yaml: 4.3.0
 
   cliui@8.0.1:
     dependencies:
@@ -7020,28 +6990,12 @@ snapshots:
 
   stackback@0.0.2: {}
 
-  standard-log-color@13.3.0(standard-log@13.3.0(typescript@6.0.3)):
-    dependencies:
-      color-map: 2.2.0
-      standard-log: 13.3.0(typescript@6.0.3)
-      supports-color: 8.1.1
-      unpartial: 1.0.8
-
   standard-log-color@13.3.1(standard-log@13.3.1(typescript@6.0.3)):
     dependencies:
       color-map: 2.2.0
       standard-log: 13.3.1(typescript@6.0.3)
       supports-color: 8.1.1
       unpartial: 1.0.8
-
-  standard-log@13.3.0(typescript@6.0.3):
-    dependencies:
-      '@just-func/types': 0.6.0(typescript@6.0.3)
-      iso-error: 7.0.0
-      ms: 2.1.3
-      type-plus: 8.0.0-beta.10(typescript@6.0.3)
-    transitivePeerDependencies:
-      - typescript
 
   standard-log@13.3.1(typescript@6.0.3):
     dependencies:
@@ -7190,12 +7144,6 @@ snapshots:
       '@turbo/linux-arm64': 2.10.5
       '@turbo/windows-64': 2.10.5
       '@turbo/windows-arm64': 2.10.5
-
-  type-plus@8.0.0-beta.10(typescript@6.0.3):
-    dependencies:
-      tersify: 4.0.7
-      typescript: 6.0.3
-      unpartial: 1.0.8
 
   type-plus@8.0.0-beta.12(typescript@6.0.3):
     dependencies:

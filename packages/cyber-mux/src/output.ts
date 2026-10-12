@@ -1,6 +1,6 @@
 import { homedir } from 'node:os'
 import { sep } from 'node:path'
-import { encodeResult } from '@clibuilder/axi'
+import { encode } from 'clibuilder/axi'
 
 /**
  * A path with the caller's home directory collapsed to `~` — for HUMAN output only. Every worktree
@@ -67,19 +67,21 @@ function getFormat(): string | undefined {
 	const argv = process.argv
 	const fmtIdx = argv.indexOf('--format')
 	if (fmtIdx !== -1) return argv[fmtIdx + 1]
+	const joined = argv.find((arg) => arg.startsWith('--format='))
+	if (joined) return joined.slice('--format='.length)
 	if (argv.includes('--json')) return 'json' // hidden backward-compat alias
 	return undefined
 }
 
 /**
- * The `@clibuilder/axi` format a machine-readable `--format` maps to, or `undefined` for the human
+ * The `clibuilder/axi` format a machine-readable `--format` maps to, or `undefined` for the human
  * `text` default. cyber-mux keeps its own `text | json | agent` surface (text the default) and borrows
  * only axi's encoders: `json` is axi's JSON, `agent` is axi's TOON — the cheaper read for an agent.
  */
 function machineFormat(): 'json' | 'toon' | undefined {
 	const fmt = getFormat()
 	if (fmt === 'json') return 'json'
-	if (fmt === 'agent') return 'toon'
+	if (fmt === 'agent' || fmt === 'toon') return 'toon'
 	return undefined
 }
 
@@ -103,7 +105,7 @@ export function isAutomatedOutput(): boolean {
  * axi's `writeResult`, so every stdout line — success and error alike — leaves through one writer.
  */
 export function printMachine(data: object): void {
-	console.log(encodeResult(data, machineFormat() ?? 'json'))
+	console.log(encode(data, machineFormat() ?? 'json'))
 }
 
 export function output(data: object, readable: () => void): void {

@@ -241,7 +241,7 @@ describe('spec:cyber-mux/cli/worktree', () => {
 			const provision = worktree?.commands?.find((c) => c.name === 'provision')
 			expect(provision).toBeDefined()
 			const flags = Object.keys(provision?.options ?? {}).map((o) => `--${o}`)
-			expect(flags).toEqual(['--branch', '--base', '--path', '--format'])
+			expect(flags).toEqual(['--branch', '--base', '--path'])
 			// The surface divergence: no flag reaches the seam's injectable `available` predicate.
 			expect(flags.some((f) => /avail|predicate|gate|exclude/i.test(f ?? ''))).toBe(false)
 		})

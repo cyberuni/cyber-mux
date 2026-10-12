@@ -10,7 +10,7 @@ treats an agent's token budget as a first-class constraint.
 ## Output formats
 
 `--format` takes `text` (the default, a human table), `json`, or `agent`. The two machine forms are
-encoded by [`@clibuilder/axi`](https://github.com/clibuilder/clibuilder/tree/main/packages/axi), the
+encoded by [`clibuilder/axi`](https://clibuilder.github.io/clibuilder/), the
 output package the clibuilder CLIs share: `json` is compact JSON for a pipe into `jq`, and `agent` is
 [TOON](https://github.com/toon-format/toon), the same payload in fewer tokens.
 
