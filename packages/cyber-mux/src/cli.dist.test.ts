@@ -56,7 +56,9 @@ describe('spec:cyber-mux/cli — built bin', () => {
 	it('@id:lookup-help-never-unknown-flag — --help is help on stdout, exit 0', () => {
 		const r = cyberMux('list', '--help')
 		expect(r.status).toBe(0)
-		expect(r.stdout).toContain('--format')
+		expect(r.stdout).toContain('Usage: cyber-mux list')
+		// `--format` is clibuilder's global option: the root help lists it, a command's own help does not.
+		expect(cyberMux('--help').stdout).toContain('--format')
 		expect(`${r.stdout}${r.stderr}`).not.toContain('unknown')
 	})
 

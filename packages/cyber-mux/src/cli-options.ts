@@ -1,14 +1,7 @@
-import { z } from 'clibuilder'
+import { type Descriptor, t } from 'clibuilder'
 import { CliError } from './cli-error.ts'
 
-/**
- * Output format shared by every command: `text` (human, the default), `json`, or `agent` (TOON). The
- * machine forms are encoded by `@clibuilder/axi` (see `output.ts`).
- */
-export const FORMAT_OPTION: { description: string; type: z.ZodOptional<z.ZodEnum<['text', 'json', 'agent']>> } = {
-	description: 'Output format',
-	type: z.optional(z.enum(['text', 'json', 'agent'])),
-}
+type MuxPlacementName = 'pane:right' | 'pane:down' | 'pane:float' | 'tab' | 'workspace'
 
 /**
  * `--env KEY=VALUE`, repeatable — the CLI door to the seam's env option, on every verb that opens a
@@ -20,13 +13,9 @@ export const FORMAT_OPTION: { description: string; type: z.ZodOptional<z.ZodEnum
  * option as a string array. Each verb runs `parseEnv` FIRST, before any side effect, which is what keeps
  * "rejected before anything runs" true on every verb, worktree-creating ones included.
  */
-export const ENV_OPTION: {
-	description: string
-	type: z.ZodOptional<z.ZodArray<z.ZodString>>
-	conflicts: string[]
-} = {
+export const ENV_OPTION: { description: string; type: Descriptor<string[] | undefined, true>; conflicts: string[] } = {
 	description: 'Environment variable KEY=VALUE (repeatable)',
-	type: z.optional(z.array(z.string())),
+	type: t.array(t.string()).optional(),
 	conflicts: ['template'],
 }
 
@@ -63,12 +52,9 @@ export function parseEnv(pairs: string[] | undefined): Record<string, string> | 
  * answer, not a parse-time one. Gating the choice list on the detected backend would make `--help` say
  * different things in different panes and turn a truthful refusal into a usage error.
  */
-export const AT_OPTION: {
-	description: string
-	type: z.ZodOptional<z.ZodEnum<['pane:right', 'pane:down', 'pane:float', 'tab', 'workspace']>>
-} = {
+export const AT_OPTION: { description: string; type: Descriptor<MuxPlacementName | undefined, true> } = {
 	description: 'Where to place the new pane',
-	type: z.optional(z.enum(['pane:right', 'pane:down', 'pane:float', 'tab', 'workspace'])),
+	type: t.enum(['pane:right', 'pane:down', 'pane:float', 'tab', 'workspace']).optional(),
 }
 
 /**
@@ -76,7 +62,7 @@ export const AT_OPTION: {
  * workspace/tab/pane label, on tmux a window name (where `workspace` and `tab` both collapse to a
  * Window) or a pane title.
  */
-export const LABEL_OPTION: { description: string; type: z.ZodOptional<z.ZodString> } = {
+export const LABEL_OPTION: { description: string; type: Descriptor<string | undefined, true> } = {
 	description: 'Name for the opened workspace/tab/pane',
-	type: z.optional(z.string()),
+	type: t.string().optional(),
 }
