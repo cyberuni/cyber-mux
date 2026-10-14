@@ -11,7 +11,7 @@ Pass the invocation through to the `cyber-mux` CLI and report the result.
 
 ## When to use
 
-- The user invokes `/mux` (`/cyber-mux:mux`), with or without arguments.
+- The user invokes `/mux` (`/cyber-mux:mux` (pnpm install: `pnpm-cyber-mux-mux`)), with or without arguments.
 - The user asks to detect the multiplexer, or to open, send to, read, wait on, focus, list, or close a
   pane, nudge a peer pane, or open a git worktree in a new pane, through cyber-mux.
 
