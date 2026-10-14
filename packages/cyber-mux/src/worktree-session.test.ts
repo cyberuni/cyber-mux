@@ -92,19 +92,18 @@ describe('spec:cyber-mux/mux/worktree', () => {
 			expect(ran(calls, 'herdr', 'worktree', 'create')).toBe(false)
 		})
 
-		it.each([
-			'workspace',
-			'pane:right',
-			'tab',
-		] as const)('a backend that binds nothing falls back without reporting a lost grouping', (at) => {
-			const calls: string[][] = []
-			const exec = fakeExec(calls, { 'tmux split-window': '%9\t@1', 'tmux new-window': '%9\t@1' })
-			const opened = addAndOpenWorktree(exec, tmuxMuxAdapter, { ...addOpts, at })
+		it.each(['workspace', 'pane:right', 'tab'] as const)(
+			'a backend that binds nothing falls back without reporting a lost grouping',
+			(at) => {
+				const calls: string[][] = []
+				const exec = fakeExec(calls, { 'tmux split-window': '%9\t@1', 'tmux new-window': '%9\t@1' })
+				const opened = addAndOpenWorktree(exec, tmuxMuxAdapter, { ...addOpts, at })
 
-			expect(opened.workspace).toBeUndefined()
-			expect(opened.degraded).toBe(false)
-			expect(ran(calls, 'git', '-C', '/repo', 'worktree', 'add')).toBe(true)
-		})
+				expect(opened.workspace).toBeUndefined()
+				expect(opened.degraded).toBe(false)
+				expect(ran(calls, 'git', '-C', '/repo', 'worktree', 'add')).toBe(true)
+			},
+		)
 
 		it('passes a label through both routes — each backend names the tier it opened', () => {
 			// herdr, grouped: the label names the bound workspace.

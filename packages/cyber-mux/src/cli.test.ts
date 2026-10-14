@@ -1090,17 +1090,15 @@ describe('cyber-mux/mux — cli-driven library surface', () => {
 				// `pane run` IS herdr's atomic text-plus-Enter primitive.
 				expected: [['pane', 'run', 'w1:p1', 'echo hi']],
 			},
-		])("submit with text types the text and presses Enter, taking the pane's turn", async ({
-			backend,
-			pane,
-			makeExec,
-			expected,
-		}) => {
-			const calls: string[][] = []
-			const program = buildProgram({ env: { CYBER_MUX: backend }, exec: makeExec(calls) })
-			await run(program, ['submit', pane, 'echo hi'])
-			expect(drives(calls)).toEqual(expected)
-		})
+		])(
+			"submit with text types the text and presses Enter, taking the pane's turn",
+			async ({ backend, pane, makeExec, expected }) => {
+				const calls: string[][] = []
+				const program = buildProgram({ env: { CYBER_MUX: backend }, exec: makeExec(calls) })
+				await run(program, ['submit', pane, 'echo hi'])
+				expect(drives(calls)).toEqual(expected)
+			},
+		)
 
 		it('submit types its text literally, never interpreting it as a key', async () => {
 			const calls: string[][] = []
@@ -1288,25 +1286,22 @@ describe('cyber-mux/mux — cli-driven library surface', () => {
 				// Two roads to the same exit-1: the stem rule refuses most of these, while `-pool` never
 				// reaches it — commander rejects it as an unknown option first. Both exit 1 having read
 				// nothing, which is the property that matters: a name is a lookup key, never a path.
-				it.each([
-					'../../../etc/pwd',
-					'pool/../../out',
-					'Pool-4',
-					'-pool',
-					'pool_4',
-				])('refuses the name "%s" before any file is read', async (name) => {
-					catchExit()
-					const store = fakeStore({})
-					const program = buildProgram({ env: XDG, exec: repoExec([]), store })
-					const failure = await run(program, ['template', 'show', name]).catch((err: unknown) => err)
-					expect(failure).toBeInstanceOf(Error)
-					// A malformed name is a usage error now: the stem rule refuses most at exit 2
-					// (invalid-template-name), while `-pool` is rejected by commander as an unknown option — also
-					// exit 2, the usage-error family. Both exit 2 having read nothing.
-					const code = (failure as { exitCode?: number }).exitCode ?? (failure as Error).message
-					expect([2, 'exit:2']).toContain(code)
-					expect(store.reads).toEqual([])
-				})
+				it.each(['../../../etc/pwd', 'pool/../../out', 'Pool-4', '-pool', 'pool_4'])(
+					'refuses the name "%s" before any file is read',
+					async (name) => {
+						catchExit()
+						const store = fakeStore({})
+						const program = buildProgram({ env: XDG, exec: repoExec([]), store })
+						const failure = await run(program, ['template', 'show', name]).catch((err: unknown) => err)
+						expect(failure).toBeInstanceOf(Error)
+						// A malformed name is a usage error now: the stem rule refuses most at exit 2
+						// (invalid-template-name), while `-pool` is rejected by commander as an unknown option — also
+						// exit 2, the usage-error family. Both exit 2 having read nothing.
+						const code = (failure as { exitCode?: number }).exitCode ?? (failure as Error).message
+						expect([2, 'exit:2']).toContain(code)
+						expect(store.reads).toEqual([])
+					},
+				)
 
 				it('a name field that disagrees with the filename stem fails validation, naming both', async () => {
 					// The redundancy is the point: a copied file that kept its old name fails loudly.

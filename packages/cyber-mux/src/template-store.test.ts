@@ -119,18 +119,15 @@ describe('spec:cyber-mux/template/apply', () => {
 
 		// The stem rule is what makes traversal unreachable, and it must bite BEFORE a path is built
 		// from the name — otherwise the rejection is decoration over a read that already happened.
-		it.each([
-			'../../../etc/pwd',
-			'pool/../../out',
-			'Pool-4',
-			'-pool',
-			'pool_4',
-		])('apply-name-not-plain-stem-refused', (name) => {
-			const store = fakeStore({})
-			expect(() => resolveTemplate({ name, store, exec: gitExec, env: ENV })).toThrow(/invalid template name/)
-			expect(store.calls.reads).toEqual([])
-			expect(store.calls.lists).toEqual([])
-		})
+		it.each(['../../../etc/pwd', 'pool/../../out', 'Pool-4', '-pool', 'pool_4'])(
+			'apply-name-not-plain-stem-refused',
+			(name) => {
+				const store = fakeStore({})
+				expect(() => resolveTemplate({ name, store, exec: gitExec, env: ENV })).toThrow(/invalid template name/)
+				expect(store.calls.reads).toEqual([])
+				expect(store.calls.lists).toEqual([])
+			},
+		)
 
 		it('refuses a traversing name without even resolving the primary checkout', () => {
 			// Nothing at all runs first — not git, not the store.

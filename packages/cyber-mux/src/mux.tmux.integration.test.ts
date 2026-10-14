@@ -222,18 +222,16 @@ describe.skipIf(!hasTmux())('spec:cyber-mux/mux', () => {
 		// attached client is on the pane it started on. This is the row that would have caught the hole
 		// the `-d`-less `split-window` left, and it is a real-binary row because `-d` is a claim about
 		// what TMUX does with a flag, which no mocked `Exec` can answer.
-		it.each([
-			'tab',
-			'workspace',
-			'pane:right',
-			'pane:down',
-		] as const)('open({ at: %s }) does not move the attached client — backing focusOnOpen: preserved', (at) => {
-			const before = exec('tmux', ['display-message', '-p', '#{pane_id}'])
-			const opened = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at })
-			expect(opened.id).not.toBe(before)
-			expect(exec('tmux', ['display-message', '-p', '#{pane_id}'])).toBe(before)
-			tmuxMuxAdapter.teardown(exec, opened)
-		})
+		it.each(['tab', 'workspace', 'pane:right', 'pane:down'] as const)(
+			'open({ at: %s }) does not move the attached client — backing focusOnOpen: preserved',
+			(at) => {
+				const before = exec('tmux', ['display-message', '-p', '#{pane_id}'])
+				const opened = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at })
+				expect(opened.id).not.toBe(before)
+				expect(exec('tmux', ['display-message', '-p', '#{pane_id}'])).toBe(before)
+				tmuxMuxAdapter.teardown(exec, opened)
+			},
+		)
 
 		it('teardown() actually kills the real pane', () => {
 			const target = tmuxMuxAdapter.open(exec, { cwd, launch: 'sh', at: 'tab' })

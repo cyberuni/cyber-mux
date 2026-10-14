@@ -329,17 +329,15 @@ describe('spec:cyber-mux/mux/placement', () => {
 		// split-pane --help` on the pinned 20240203 build list no `--no-focus` and no `--focus`, and
 		// both verbs activate what they create (measured). So `'restored'` is the strongest value
 		// available, and this is the row that makes it a promise rather than a comment.
-		it.each([
-			'tab',
-			'workspace',
-			'pane:right',
-			'pane:down',
-		] as const)('wezterm open({ at: %s }) reads the client first and activates it back afterwards', (at) => {
-			const calls: string[][] = []
-			weztermMuxAdapter.open(weztermExec(calls, '7'), { cwd: '/u', at })
-			expect(calls[0]).toEqual(['cli', 'list-clients', '--format', 'json'])
-			expect(calls.at(-1)).toEqual(['cli', 'activate-pane', '--pane-id', '7'])
-		})
+		it.each(['tab', 'workspace', 'pane:right', 'pane:down'] as const)(
+			'wezterm open({ at: %s }) reads the client first and activates it back afterwards',
+			(at) => {
+				const calls: string[][] = []
+				weztermMuxAdapter.open(weztermExec(calls, '7'), { cwd: '/u', at })
+				expect(calls[0]).toEqual(['cli', 'list-clients', '--format', 'json'])
+				expect(calls.at(-1)).toEqual(['cli', 'activate-pane', '--pane-id', '7'])
+			},
+		)
 
 		// The restore is skipped, never guessed. A mux server with no client attached answers `[]`
 		// (measured) — nothing was stolen from anybody, so activating a pane picked by heuristic would
