@@ -19,7 +19,7 @@ import { assertRatioInRange } from './ratio.ts'
 import { capturedRows, FULL_SCROLLBACK_LINES, isReadTruncated } from './read-window.ts'
 import { type EnclosingSplit, enclosingSplit } from './region-tree.ts'
 import { assertWaitPattern } from './wait-output.ts'
-import { normalizeWorktreePath } from './worktree.ts'
+import { normalizeWorktreePathSync } from './worktree-path.ts'
 
 /**
  * herdr backend — detected via `$HERDR_ENV`. herdr (https://herdr.dev) is an agent-aware terminal
@@ -1235,7 +1235,7 @@ function parseWorktreeBindings(out: string | null): Map<string, string> {
 		const path = entry?.path
 		const workspace = entry?.open_workspace_id
 		if (typeof path === 'string' && path !== '' && typeof workspace === 'string' && workspace !== '') {
-			bindings.set(normalizeWorktreePath(path), workspace)
+			bindings.set(normalizeWorktreePathSync(path), workspace)
 		}
 	}
 	return bindings

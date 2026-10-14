@@ -1,35 +1,36 @@
 ---
 title: Worktree
-description: The cyber-mux/worktree entry — list, resolve, and remove git worktrees safely.
+description: The cyber-mux/worktree entry — the async worktree library, the mux binding, and the gated removal.
 ---
 
-The `cyber-mux/worktree` subpath is the git-worktree adapter: the read helpers that enumerate
-worktrees from git, the path resolution the whole capability keys on, and the gated removal. Worktree
-*facts* (path, branch, merged, dirty) are always read from git on every backend — a multiplexer only
-contributes the [workspace binding](#binding-a-worktree-to-a-workspace).
+The `cyber-mux/worktree` subpath is the git-worktree adapter. The worktree logic lives in
+[`@cyberuni/agent-harness/worktrees`](https://github.com/cyberuni/agent-harness) (v0.7.0 and later),
+and this entry re-exports it, then adds the multiplexer binding and cyber-mux's own removal gates.
+Worktree *facts* (path, branch, landed, dirty) are always read from git on every backend — a
+multiplexer only contributes the [workspace binding](#binding-a-worktree-to-a-workspace).
 
 ```ts
 import {
-  resolvePrimaryRoot,
-  listWorktreesFromGit,
+  acquire,
+  release,
+  listWorktrees,
+  pruneWorktrees,
+  muxWorktreeCreator,
   removeWorktreeSafely,
-  isWorktreeRemovable,
+  toHarnessExec,
   nodeExec,
-  type WorktreeEntry,
 } from 'cyber-mux/worktree'
 ```
 
-## Leased pool — `@cyberuni/agent-harness/worktrees`
+## The library — `@cyberuni/agent-harness/worktrees`
 
-The worktree logic now lives in
-[`@cyberuni/agent-harness/worktrees`](https://github.com/cyberuni/agent-harness), and
-`cyber-mux/worktree` re-exports it: `acquire` / `release` / `explain` with a git-lock lease,
-`primaryRoot`, `listWorktrees`, `readDirty`, `classifyOwner`, `probeProcesses` / `occupants`,
-`seedWorktree`, and the slot naming (`slotPath`, `<repo>.worktrees/<repo>-<n>`). The library is
-async. Three of its names (`pruneWorktrees`, `normalizeWorktreePath`, `ghForgeMergedProbe`) collide
-with the older synchronous helpers on this page and keep their cyber-mux meaning here; import the
-library's from `@cyberuni/agent-harness/worktrees`. Its colliding types are re-exported as
-`HarnessWorktreeEntry`, `HarnessForgeMergedProbe`, and `HarnessExec`.
+The library is async and takes its runner per call. Re-exported unchanged: `acquire` / `release` /
+`explain` with a git-lock lease, `primaryRoot`, `listWorktrees`, `pruneWorktrees`, `removeWorktree`,
+`readDirty`, `classifyOwner`, `probeProcesses` / `occupants`, `seedWorktree`, `normalizeWorktreePath`,
+`ghForgeMergedProbe`, the slot naming (`slotPath`, `<repo>.worktrees/<repo>-<n>`), and the types
+`WorktreeEntry`, `ForgeMergedProbe`, `RemoveWorktreeOptions`, and `WorktreeCreatorUndo`. The
+`HarnessWorktreeEntry` and `HarnessForgeMergedProbe` aliases remain but are deprecated; use the
+unprefixed names.
 
 cyber-mux adds the one piece the library leaves to the caller, the multiplexer binding:
 
@@ -55,92 +56,70 @@ await release(lease)
 - **`toHarnessExec(exec)`** — lifts cyber-mux's synchronous `Exec` onto the library's async one, so one
   runner (or one fake) drives both.
 
-`resolvePrimaryRoot`, `listWorktreesFromGit`, `isWorktreeRemovable`, `resolveWorktreePath`,
-`pruneWorktrees`, `provisionWorktree`, `ghForgeMergedProbe`, `normalizeWorktreePath`, and the matching
-`worktreeApi` methods are **deprecated** in favor of the library. `gitWorktreeAdapter`,
-`removeWorktreeSafely`, and `assertDistinctFromPrimary` have no library equivalent and stay.
+### Migrating from the removed helpers
+
+The synchronous helpers that duplicated the library are gone. This is a breaking change.
+
+| Removed | Use instead |
+| --- | --- |
+| `listWorktreesFromGit(exec, ...)` | `listWorktrees({ primaryRoot, exec })` |
+| `pruneWorktrees` (sync) | `pruneWorktrees({ primaryRoot, apply, exec })` |
+| `provisionWorktree` | `acquire({ primaryRoot, holder, branch, base, exec })`, then `release(lease)` |
+| `isWorktreeRemovable` | `explain()`, or a `pruneWorktrees` dry run |
+| `resolveWorktreePath` | the library's slot naming (`slotPath`) |
+| sync `ghForgeMergedProbe` | the library's async `ghForgeMergedProbe(exec, primaryRoot)` |
+| sync `normalizeWorktreePath` | the library's async `normalizeWorktreePath` |
+| `WorktreeMergedSignal`, `WorktreeSignalOptions`, `WorktreePruneSkip`, `WorktreePruneResult`, `WorktreeCreateSpec`, `WorktreeProvisionAction`, `WorktreeProvisionResult` | the library's equivalent types |
+
+`RemoveWorktreeOptions` for `worktreeApi().removeSafely` is now `RemoveWorktreeSafelyOptions`; the
+name `RemoveWorktreeOptions` is the library's.
 
 ## Bound facade — `worktreeApi`
 
-The ergonomic surface: `worktreeApi(deps?)` binds `Exec` + `WorktreeFs` once (defaulting to
-`nodeExec` / `nodeWorktreeFs`), returning a `WorktreeApi` whose methods drop the runner — mirroring
-how [`resolveMux`](/cyber-mux/api/mux-adapter/) binds the mux adapter.
+`worktreeApi(deps?)` binds `Exec` + `WorktreeFs` once (defaulting to `nodeExec` / `nodeWorktreeFs`),
+returning a `WorktreeApi` whose methods drop the runner — mirroring how
+[`resolveMux`](/cyber-mux/api/mux-adapter/) binds the mux adapter. It covers only the synchronous
+helpers that stay.
 
 ```ts
 import { worktreeApi } from 'cyber-mux/worktree'
 
 const wt = worktreeApi()                       // or worktreeApi({ exec, fs }) to inject
-const root = wt.primaryRoot()
-for (const entry of wt.list()) { /* ... */ }   // list() defaults its root to primaryRoot()
-wt.removeSafely(somePath, { primaryRoot: root })
+wt.removeSafely(somePath, { primaryRoot: '/path/to/primary' })
 ```
 
 | method | binds + wraps |
 | --- | --- |
-| `wt.primaryRoot()` | `resolvePrimaryRoot` |
-| `wt.list(root?, signals?)` | `listWorktreesFromGit` — `root` defaults to `primaryRoot()`; `signals` tunes the merged probe |
+| `wt.primaryRoot()` | `resolvePrimaryRoot` (deprecated) |
 | `wt.add(opts)` | `gitWorktreeAdapter.add` |
-| `wt.provision(opts)` | `provisionWorktree` — reuse a free worktree or create one; `available` defaults to `isWorktreeRemovable` |
-| `wt.prune(opts?)` | `pruneWorktrees` — remove every disposable worktree; `dryRun` reports without removing |
 | `wt.removeSafely(path, opts)` | `removeWorktreeSafely` — its `fs` supplied |
-| `wt.normalizePath(path)` | `normalizeWorktreePath` |
 
-`deps` is `WorktreeDeps { exec?, fs? }`. The functions below are the **raw seam** `worktreeApi` binds
-— call them directly to thread your own runner per call. Pure helpers (`isWorktreeRemovable`,
-`resolveWorktreePath`, `assertDistinctFromPrimary`) have no seam and stay free functions.
+`deps` is `WorktreeDeps { exec?, fs? }`. Listing, pruning, and reuse are the library's, not methods
+here.
 
-## Reading worktrees
+## Synchronous helpers
 
-### `resolvePrimaryRoot(exec)`
+These have no library equivalent and stay synchronous.
 
-The primary checkout's root, whether the caller's cwd is the primary checkout or a linked worktree
-(via `--git-common-dir`). This is the canonical anchor every other helper resolves against, so a
-worktree branched from an old commit sees the same answer as the primary.
-
-### `listWorktreesFromGit(exec, ...)` → `WorktreeEntry[]`
-
-Every worktree git reports. Each `WorktreeEntry` carries what listing must represent that creation
-cannot — a detached HEAD, the primary checkout itself, a stale entry:
-
-- **`root`** — absolute, normalized checkout path.
-- **`branch`** — absent for a detached HEAD or bare entry.
-- **`linked`** — `false` for the primary checkout, `true` for a linked worktree.
-- **`prunable`** — git considers the checkout gone from disk.
-- **`merged`** — the branch's work has landed on the default branch, established by four independent
-  positive signals: **ancestry**, an **upstream branch that is gone**, a **squash patch** match, and
-  an opt-in **forge** probe. Absent when undeterminable. A squash or rebase rewrites the tip, so
-  ancestry alone would miss it; the patch heuristic catches a clean squash, and one that was
-  conflict-resolved or hand-edited still reads `false` — the error is deliberately one-directional,
-  costing a manual check rather than lost work.
-- **`mergedSignal`** — which of the four proved it (`ancestor` | `upstream-gone` | `squash-patch` |
-  `forge`). Absent when `merged` is not `true`.
-- **`dirty`** — the checkout has uncommitted changes. A merged-but-dirty worktree is **not**
-  disposable.
-- **`workspace`** — the multiplexer workspace it is open in, joined in by the caller from a backend
-  [binding](#binding-a-worktree-to-a-workspace); absent otherwise.
-
-### `isWorktreeRemovable(entry)`
-
-Whether an entry is safe to dispose — the merged-and-clean predicate over the fields above.
-
-## Path helpers
-
-- **`normalizeWorktreePath(path, fs?)`** — symlink-resolved, native-cased path; the normalization
-  every matched path goes through.
-- **`resolveWorktreePath(primaryRoot, name)`** — where a worktree named `name` should be checked out.
+- **`resolvePrimaryRoot(exec)`** — the primary checkout's root, from the primary checkout or a linked
+  worktree (via `--git-common-dir`). Deprecated: use the library's async `primaryRoot`.
+- **`gitWorktreeAdapter`** — `add` creates a worktree at a caller-chosen path.
 - **`assertDistinctFromPrimary(worktreeRoot, primaryRoot)`** — throws if a worktree path is the
   primary checkout, the guard behind any removal.
-
-The `fs` parameter is a `WorktreeFs` seam (`exists` / `realpath`); `nodeWorktreeFs` is the default.
+- **`WorktreeFs` / `nodeWorktreeFs`** — the `exists` / `realpath` seam the remove gate reads the disk
+  through.
+- **`WorktreeGitError`** — thrown for a refused removal; its message is this CLI's own prose, safe to
+  surface verbatim.
 
 ## Removing a worktree
 
 ### `removeWorktreeSafely(exec, ...)`
 
-Removal is always cyber-mux's own gates plus `git worktree remove` — never delegated to a backend,
-so a destructive operation's safety never depends on whether a workspace happened to be open. A
-refused removal throws a `WorktreeGitError`, whose message is this CLI's own prose (safe to surface
-verbatim).
+cyber-mux's own gates plus `git worktree remove`: it refuses the primary checkout (always) and
+uncommitted changes unless `force`, and tolerates a path already gone. It is never delegated to a
+backend, so a destructive operation's safety never depends on whether a workspace happened to be
+open. The CLI's `worktree remove` goes through the library's `removeWorktree`, which also refuses a
+leased worktree and one where a live agent session works.
 
 ## Binding a worktree to a workspace
 

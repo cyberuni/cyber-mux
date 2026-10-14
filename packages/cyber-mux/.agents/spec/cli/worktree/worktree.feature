@@ -8,10 +8,14 @@ Feature: cyber-mux worktree — the CLI worktree surface
   # ── git worktree helpers — the checkout itself, plain git, no legion/unit-registry concepts ──
 
   @id:worktree-add-default-path
-  Scenario: worktree add defaults the path to a sibling of the primary checkout
+  Scenario: worktree add defaults the path to the next free library slot beside the primary checkout
     Given a caller running cyber-mux worktree add --branch <branch> with no --path
     When add runs
-    Then the worktree is checked out at <parent>/<repo>.worktrees/<branch>, never nested inside the primary checkout
+    Then the worktree is checked out at <parent>/<repo>.worktrees/<repo>-<n>, never nested inside the primary checkout
+    And <n> is the lowest slot no worktree of the repo holds and nothing occupies on disk
+    # The slot path is the library's (@cyberuni/agent-harness/worktrees slotPath), so its prune and
+    # reuse recognize the checkout as their own. The older <repo>.worktrees/<branch> naming is left to
+    # age out, not adopted (agent-harness#73 item 4).
 
   @id:worktree-add-explicit-path
   Scenario: worktree add honors an explicit --path
@@ -43,28 +47,38 @@ Feature: cyber-mux worktree — the CLI worktree surface
     When remove runs
     Then it removes the worktree without checking whether it is dirty
 
-  # ── worktree provision — reuse a free worktree, else create, through the DEFAULT gate only ──
-  # The verb wires the provisionWorktree seam with the DEFAULT availability gate (isWorktreeRemovable):
-  # it reuses a worktree prune would have removed, else creates a fresh checkout at the sibling path.
-  # It reports the action (reused|created), the worktree, and on reuse the recycled entry in full,
-  # exactly as the seam does — but the CLI CANNOT inject a host predicate; that is the surface
-  # divergence from the library seam in ../../mux/worktree (see the injectable-predicate scenario
-  # "provision never hands back a worktree the availability predicate excludes" there).
+  @id:worktree-remove-respects-lease-and-session
+  Scenario: worktree remove never removes a leased worktree or one a live agent session works in
+    Given a caller running cyber-mux worktree remove, with or without --force, against a worktree the library has leased or a live agent session works in
+    When remove runs
+    Then it refuses and removes nothing, naming why
+    And a workspace bound to that worktree stays open
+    # The removal is the library's removeWorktree; --force waives only the dirty check, never a lease
+    # or a live session. The caller named the worktree, so its branch need not have landed and it
+    # need not sit at a slot path.
+
+  # ── worktree provision — reuse an idle worktree, else create, through the library's acquire ──
+  # The verb wires @cyberuni/agent-harness/worktrees acquire with its default gates: it reuses one of the
+  # library's own slot worktrees that is unleased, idle, clean, and landed, else creates one at the
+  # next free slot. A one-shot verb has no later moment to release, so it gives the lease straight
+  # back. The CLI cannot inject a predicate or choose a path; a host needing either calls acquire.
 
   @id:worktree-provision-reuses-free
-  Scenario: worktree provision reuses a free worktree in the pool and reports the reclaim
-    Given a caller running cyber-mux worktree provision --branch <branch> with a merged, clean, unoccupied worktree in the pool
+  Scenario: worktree provision reuses an idle worktree in the pool and reports the reclaim
+    Given a caller running cyber-mux worktree provision --branch <branch> with an unleased, idle, clean, landed slot worktree in the pool
     When provision runs
-    Then it reuses that worktree — the free one prune would remove — rather than creating a new checkout
-    And the structured payload reports the action as reused, the worktree {root, branch}, and the recycled entry in full: its prior branch and the workspace it was open in
+    Then it reuses that worktree rather than creating a new checkout
+    And the structured payload reports the action as reused, the worktree {root, branch}, and the recycled worktree's root and prior branch
+    And the worktree is handed back unleased
     And it exits 0
 
   @id:worktree-provision-creates-fresh
   Scenario: worktree provision creates a fresh checkout when the pool holds no reusable worktree
     Given a caller running cyber-mux worktree provision --branch <branch> with no reusable worktree in the pool
     When provision runs
-    Then it creates a fresh checkout at the sibling path <parent>/<repo>.worktrees/<branch> with plain git
+    Then it creates a fresh checkout at the next free slot <parent>/<repo>.worktrees/<repo>-<n>
     And the structured payload reports the action as created, the worktree {root, branch}, and no recycled entry
+    And the worktree is handed back unleased
     And it exits 0
 
   @id:worktree-provision-base
@@ -73,19 +87,12 @@ Feature: cyber-mux worktree — the CLI worktree surface
     When provision runs
     Then the provisioned worktree's branch starts at <base> rather than the resolved default branch
 
-  @id:worktree-provision-path
-  Scenario: worktree provision --path lands a created checkout at the given path
-    Given a caller running cyber-mux worktree provision --branch <branch> --path <path> with no reusable worktree in the pool
-    When provision runs
-    Then the created checkout lands at <path> rather than the sibling default
-
   @id:worktree-provision-no-predicate-injection
-  Scenario: the worktree provision verb offers no availability-predicate injection, using only the default gate
+  Scenario: the worktree provision verb offers no predicate injection and no path choice
     Given a caller inspecting the flags cyber-mux worktree provision accepts
     When the caller reads the full flag set
-    Then the flags are --branch, --base, --path, and --format, and none of them injects a host availability predicate
-    And the verb wires provisionWorktree with the default gate isWorktreeRemovable and no other, so a merged, clean, unoccupied worktree is the only kind it reuses
-    And a host that must exclude a live-session worktree reaches for the provisionWorktree / WorktreeApi.provision seam in ../../mux/worktree, the only surface that takes an injected predicate
+    Then the flags are --branch, --base, and --format, and none of them injects an availability predicate or a path
+    And a host that must add its own availability check, or hold the lease, calls the library's acquire directly
 
   # ── worktree/workspace binding — only the backend that binds can group ──
   # A backend either binds a worktree to a workspace as a first-class record, or has no such concept.
@@ -233,10 +240,10 @@ Feature: cyber-mux worktree — the CLI worktree surface
 
   @id:worktree-list-marks-removable
   Scenario: worktree list answers whether a worktree is still needed, not only whether it is occupied
-    Given a repo with a worktree whose branch is merged into the default branch, whose checkout is clean, and which nothing is open in
+    Given a repo with a slot worktree whose branch is merged into the default branch, whose checkout is clean, and which nothing is open in
     When a caller runs cyber-mux worktree list and reads the human table
     Then that worktree's branch is marked (removable), meaning its work landed and nothing holds it
-    And a worktree failing any one of those three carries no marker, the three being one question
+    And a worktree failing any one of those carries no marker, the marker being exactly worktree prune's dry-run candidate set
     And the primary checkout is never marked, so the mark and (*) can never appear on one branch
 
   @id:worktree-list-no-composite-field
@@ -280,8 +287,9 @@ Feature: cyber-mux worktree — the CLI worktree surface
 
   # ── worktree prune — bulk remove of every (removable) candidate, the gate list marks with ──
   # The candidate set is EXACTLY what `worktree list` marks (removable), so prune and list can never
-  # disagree about which worktrees are free. The bare form PREVIEWS — the destructive default must be
-  # side-effect-free, so a caller can see what would go — and --force applies it.
+  # disagree about which worktrees are free. The library's pruneWorktrees decides, over the worktrees no
+  # workspace holds. The bare form PREVIEWS — the destructive default must be side-effect-free, so a
+  # caller can see what would go — and --force applies it.
 
   @id:worktree-prune-preview
   Scenario: worktree prune bare previews the removable candidates and removes nothing
@@ -298,3 +306,10 @@ Feature: cyber-mux worktree — the CLI worktree surface
     Then it removes exactly the candidates list marks (removable) — the free set — in one call
     And the worktree that fails the gate is skipped, reported with the reason it was kept
     And it exits 0
+
+  @id:worktree-prune-skips-foreign
+  Scenario: worktree prune leaves a worktree that is not one of the library's slots
+    Given a repo with a merged, clean worktree checked out at a path that is not a library slot, such as <parent>/<repo>.worktrees/<branch>
+    When a caller runs cyber-mux worktree prune --force
+    Then that worktree is skipped and reported with the reason it was kept
+    And it is never marked (removable) by worktree list

@@ -22,18 +22,16 @@ cyber-mux worktree add --branch <branch> [--path <path>] [--base <ref>] \
 ```
 
 - `--branch <branch>` — required; the branch the new worktree checks out.
-- `--path <path>` — defaults to `<parent>/<repo>.worktrees/<branch>`, a sibling of the primary
-  checkout, never nested inside it, on **every** backend — so a path means the same thing
-  everywhere.
+- `--path <path>` — where to check out. Without it, the worktree goes to the next free library slot,
+  `<parent>/<repo>.worktrees/<repo>-<n>` (the lowest `n` not used by a worktree and not on disk), a
+  sibling of the primary checkout, never nested inside it, on **every** backend.
 - `--base <ref>` — start point for the new branch; defaults to the current `HEAD`.
 - `--launch <cmd>` / `--env` — each **implies** `--at workspace`, the only placement a backend can
   bind a worktree to (asking for something *in* a pane is asking for the pane).
 - `--template <name>` — same rules as [`open --template`](/cyber-mux/cli/open/): resolved and validated
   before the worktree is created, and conflicts with `--launch`/`--env`.
-- `--label <name>` — names the opened workspace (see `open`'s label table). Worth knowing what you
-  get without it: because `worktree add` always passes `--path`, herdr labels the workspace after
-  the checkout path's **basename** — it would use the branch only if it chose the location itself.
-  So `--branch feat/deep/name` gives you a workspace named `name` unless you pass `--label`.
+- `--label <name>` — names the opened workspace (see `open`'s label table). Without it, herdr labels the
+  workspace after the checkout path's **basename**, such as `my-app-2`, not the branch.
 
 With **none of `--at`, `--launch`, or `--env`** this is plain git: it creates the checkout, opens
 nothing, and needs no multiplexer. Nothing was opened, so nothing is grouped — use `worktree open`
@@ -74,38 +72,32 @@ cyber-mux worktree add --branch feat/x --path ~/code/my-app.worktrees/feat-x --b
 
 ## `cyber-mux worktree provision`
 
-Get a worktree on the branch you name, reusing a free one before creating another. Prune removes
-every disposable worktree; provision **recycles** one. Both ask the same question through the same
-predicate, so they can never disagree about which worktrees are free — it is the gate `worktree
-list` marks `(removable)` with.
+Get a worktree on the branch you name, reusing an idle one before creating another. It runs the
+library's `acquire`, then releases the lease, so the worktree is handed back **unleased**.
 
 **Usage**
 
 ```bash
-cyber-mux worktree provision --branch <branch> [--base <ref>] [--path <path>]
+cyber-mux worktree provision --branch <branch> [--base <ref>] [--format <format>]
 ```
 
-`--base` is the start point for the branch, defaulting to the resolved default branch and then
-`HEAD`. `--path` is where a fresh checkout goes when nothing is free to reuse; by default a sibling
-of the primary checkout.
+`--branch` is required. `--base` is the start point for the branch; it defaults to the library's
+resolved default branch (`origin/HEAD`, then the primary checkout's branch). There is no `--path`:
+the library assigns paths.
 
-A recycled checkout is reset to a **pristine tree**: a fresh branch at `base`, then `reset --hard`,
-then `clean -fdx`. The `merged` clause in the gate has already proved the old branch's work landed,
-so repointing it destroys nothing the trunk does not hold — the same safety prune leans on to delete
-the checkout outright, spent here on reusing it instead. The primary checkout is filtered out before
-the gate runs and can never be handed back.
-
-The output reports which of the two happened, so a caller never has to infer it:
+`acquire` reuses a library slot worktree (`<repo>.worktrees/<repo>-<n>`) that is unleased, has no
+live agent session, is clean, and has landed. Otherwise it creates one at the next free slot. The
+output reports which happened, so a caller never has to infer it:
 
 ```
 action        reused
-root          ~/code/my-app.worktrees/search
+root          ~/code/my-app.worktrees/my-app-2
 branch        feat/next
 reused-from   feat/search
 ```
 
-`--format json` carries `action` (`reused` | `created`), `root`, `branch`, and `reused` — the
-recycled entry in full, including its prior branch and workspace, or `null` on a fresh checkout.
+`--format json` carries `action` (`reused` | `created`), `root`, `branch`, and, on reuse,
+`reused: { root, branch }`, where `branch` is the prior branch.
 
 **Example**
 
@@ -153,24 +145,29 @@ Markers ride on the column they are about, so no one-bit fact spends a column of
 | `(gone)` | `root` | the checkout no longer exists on disk; git can prune it |
 
 A `root` under your home directory is also shortened to `~/…`. Every marker and the shortening are
-**table-only**: `--format json` carries the raw `linked`, `prunable`, `merged`, and `dirty` booleans,
-`mergedSignal` (which of the four signals proved it landed), and the absolute `root`, unmarked.
+**table-only**: `--format json` carries the library's `WorktreeEntry` fields, unmarked, plus
+`workspace`: the absolute `root`, `branch`, `head`, `detached`, `locked` (when locked), and the raw
+`linked`, `prunable`, `merged`, `mergedSignal`, and `dirty` values.
 
 ### `(removable)` — is this worktree still needed?
 
-A worktree is marked `(removable)` when **all** of the following hold:
+A worktree is marked `(removable)` exactly when `worktree prune` would remove it in a dry run, so
+the two can never disagree. That means all of the following hold:
 
-1. its branch is **merged** into the repo's default branch — the work has landed, so removing the
-   checkout destroys nothing the trunk does not already have;
-2. the checkout is **clean** — no uncommitted changes, tracked or untracked;
-3. **nothing is open in it** — no `workspace` holds it.
+1. it is one of the library's own slot worktrees (`<repo>.worktrees/<repo>-<n>`); a worktree at any
+   other path, including the older `<repo>.worktrees/<branch>` naming, is never marked;
+2. it is **unleased** and **idle**: no live agent session works in it;
+3. its branch has **landed** on the repo's default branch, so removing the checkout destroys nothing
+   the trunk does not already have;
+4. the checkout is **clean**: no uncommitted changes, tracked or untracked;
+5. **nothing is open in it**: no multiplexer `workspace` holds it.
 
 The default branch is resolved, never assumed: `origin/HEAD` when it resolves, otherwise the branch
 checked out in the primary checkout. `main` is never hardcoded.
 
 Two things worth knowing:
 
-- `merged` is established by four independent signals, any one of which is enough: **ancestry**, a
+- Landing is established by four independent signals, any one of which is enough: **ancestry**, a
   **gone upstream** (the remote branch was deleted after its PR landed), a **squash patch** match, and
   an opt-in **forge** check. A squash or rebase merge rewrites the commits, so ancestry alone would
   miss it; the patch heuristic catches a clean squash, and one that was conflict-resolved or
@@ -186,11 +183,6 @@ Nothing is guessed and nothing fails.
 Path, branch, linked, prunable, merged, and dirty always come from **git**, on every backend — only
 the workspace binding comes from the multiplexer, so backends can never disagree about a worktree.
 Works outside a multiplexer, where every `workspace` is simply blank.
-
-**Cost.** One batched call answers `merged` for the whole repo at once. `dirty` is a property of a
-directory and git has no batched equivalent, so it costs one `git status` per checkout that is on
-disk — `4 + N` git calls in total. At ~20 worktrees the whole listing runs in well under half a
-second.
 
 **Example**
 
@@ -223,7 +215,7 @@ cyber-mux worktree list --format json | jq -r '
 
 ## `cyber-mux worktree remove`
 
-Remove a worktree, releasing its workspace if one is bound.
+Remove a worktree, closing its workspace if one is bound.
 
 **Usage**
 
@@ -231,11 +223,12 @@ Remove a worktree, releasing its workspace if one is bound.
 cyber-mux worktree remove <path> [--force]
 ```
 
-The gates are identical on every backend: it refuses the primary checkout (absolute — `--force` never
-overrides it), tolerates a checkout already gone from disk, and refuses to discard uncommitted
-changes unless `--force`. A refused removal has no side effect: the workspace stays open. When the
-gates pass, the workspace is closed *before* git removes the checkout, so none is ever left pointing
-at a directory that no longer exists.
+Removal goes through the library's `removeWorktree`. The gates are identical on every backend: it
+refuses the primary checkout (absolute — `--force` never overrides it), tolerates a checkout already
+gone from disk, and refuses to discard uncommitted changes unless `--force`. It also refuses a
+worktree leased by the library and one where a live agent session works, even with `--force`. A bound
+herdr workspace is closed *after* git removes the checkout, so a refused removal has no side effect:
+the workspace stays open.
 
 **Examples**
 
@@ -250,9 +243,9 @@ cyber-mux worktree remove ~/code/my-app.worktrees/feat-x --force
 
 ## `cyber-mux worktree prune`
 
-Remove every disposable worktree in one call — the same `(removable)` gate `worktree list` reports,
-applied. No new plumbing: prune composes the listing, the gate, and `worktree remove`, so it can
-never disagree with what the listing promised.
+Remove every disposable worktree in one call, using the library's `pruneWorktrees`. It removes only
+the library's own slot worktrees (`<repo>.worktrees/<repo>-<n>`) that are unleased, idle (no live
+agent session), clean, and landed. It is the same set `worktree list` marks `(removable)`.
 
 **Usage**
 
@@ -262,10 +255,14 @@ cyber-mux worktree prune [--force]
 
 **The bare form previews and removes nothing.** It prints the candidates under a `would remove`
 column and tells you the command that applies them; `--force` does the removal. Everything it
-declines is listed with the reason — open in a workspace, uncommitted changes, branch not landed,
-checkout already gone — so a skip is never silent.
+declines is listed with the reason, so a skip is never silent: open in a workspace (`open in
+workspace <id>`), uncommitted changes, branch not landed, leased, live session, or checkout already
+gone. Worktrees at other paths, including the older `<repo>.worktrees/<branch>` naming, are skipped
+as foreign and left alone.
 
 The primary checkout is not a candidate, not a skip, just absent.
+
+`--format json` prints `{ applied, removed: [{ root, branch }], skipped: [{ root, branch, reason }] }`.
 
 **Examples**
 

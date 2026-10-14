@@ -562,7 +562,7 @@ export interface WorktreeWorkspace {
  * Two things this deliberately does NOT own:
  *
  * - **The worktree facts.** Path, branch, linked, prunable are git's, read from git on every
- *   backend (`listWorktreesFromGit`). A backend that also enumerates worktrees is only re-reading
+ *   backend (the library's `listWorktrees`). A backend that also enumerates worktrees is only re-reading
  *   git; letting it answer would let two backends disagree about the same worktree's branch. The
  *   backend contributes `bindings` alone — the one fact git cannot know.
  * - **Removal.** herdr's `worktree remove` takes a workspace id, so it cannot even address an

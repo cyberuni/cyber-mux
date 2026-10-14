@@ -1,154 +1,23 @@
 @frozen
 Feature: worktree seam — the library git-worktree contract
-  The surface-independent worktree helpers a host links against: provisionWorktree / WorktreeApi,
-  listWorktreesFromGit, isWorktreeRemovable, and removeWorktreeSafely. git owns every worktree fact;
-  a backend contributes only the workspace binding, and removal is never delegated to it. This suite
-  is the LIBRARY seam only — the `cyber-mux worktree ...` CLI surface (verbs, flags, table rendering)
-  lives in ../../cli/worktree/worktree.feature.
-
-  # ── provision — reuse a free worktree instead of always creating one, the twin of prune ──
-  # prune REMOVES every disposable worktree; provision RECYCLES one, through the SAME default gate
-  # (isWorktreeRemovable), so the two can never disagree about which worktrees are free. Availability
-  # is an INJECTED predicate: the clean/landed/on-disk/unoccupied part is generic git and is the
-  # default here, but "no live agent session is attached" is a host concept this seam never knows —
-  # so it enters as a (entry) => boolean parameter, and injecting one is a LIBRARY-ONLY power.
-  # SURFACE: provision is the library seam provisionWorktree / WorktreeApi.provision (src/worktree.ts).
-  # The CLI surface — the `cyber-mux worktree provision` verb — lives in ../../cli/worktree and wires
-  # this seam with the DEFAULT gate only; it cannot inject a predicate. Each Given below names the
-  # seam; "When provision runs" stays surface-neutral (the operation, however it is reached).
-
-  @id:worktree-provision-reuses-free
-  Scenario: provision reuses a free worktree, resetting it to a pristine tree on a fresh branch
-    Given a caller invoking the provisionWorktree seam with a pool holding a merged, clean, unoccupied worktree
-    When provision runs
-    Then it reuses that worktree rather than creating a new checkout
-    And it resets it to a fresh branch at base, then reset --hard, then clean -fdx — a pristine tree
-    And it reports the action as reused, with the recycled worktree's prior branch and workspace
-
-  @id:worktree-provision-explicit-base
-  Scenario: provision branches a reused worktree from an explicit base
-    Given a caller invoking provisionWorktree with an explicit base <base> and a free worktree to reuse
-    When provision runs
-    Then the reused worktree's fresh branch starts at <base> rather than the resolved default branch
-
-  @id:worktree-provision-creates-fresh
-  Scenario: provision creates a fresh worktree when none is available
-    Given a caller invoking the provisionWorktree seam with a pool holding no available worktree
-    When provision runs
-    Then it creates a fresh checkout with plain git and recycles nothing
-    And it reports the action as created, with no recycled worktree
-
-  @id:worktree-provision-skips-unmerged
-  Scenario: provision never reuses an unmerged worktree under the default gate
-    Given a caller invoking the provisionWorktree seam with a pool whose only free-looking worktrees are unmerged
-    When provision runs with the default availability gate
-    Then it treats none of them as reusable and creates a fresh checkout instead
-
-  @id:worktree-provision-respects-predicate
-  Scenario: provision never hands back a worktree the availability predicate excludes
-    Given a host availability predicate — a LIBRARY-ONLY injected gate — that excludes the first candidate because a live session is bound to it
-    When provision runs
-    Then it skips that worktree and reuses the next free one, never the excluded one
-
-  @id:worktree-provision-skips-primary
-  Scenario: provision never reuses the primary checkout
-    Given an availability predicate that would clear every worktree, including the primary checkout
-    When provision runs
-    Then the primary checkout is filtered out before the gate and is never handed back
+  The surface-independent worktree helpers cyber-mux keeps: removeWorktreeSafely, the git worktree
+  adapter, and the worktreeApi built on them. git owns every worktree fact; a backend contributes only
+  the workspace binding, and removal is never delegated to it. Listing, the merged/dirty/landed
+  signals, reuse (acquire), and prune are now specified by @cyberuni/agent-harness/worktrees, which
+  cyber-mux/worktree re-exports. This suite is the LIBRARY seam only — the `cyber-mux worktree ...`
+  CLI surface (verbs, flags, table rendering) lives in ../../cli/worktree/worktree.feature.
 
   # ── the worktree facts are git's, computed by the library on every backend ──
-  # listWorktreesFromGit reads path/branch/linked/prunable/merged/dirty from git; a backend that also
+  # The session layer reads path/branch/linked/prunable/merged/dirty through the library's
+  # listWorktrees (git) and joins only the backend's binding by normalized path; a backend that also
   # enumerates worktrees is merely re-reading git, and contributes only the binding.
 
   @id:worktree-facts-from-git-not-backend
   Scenario: the library reads every worktree fact from git, whatever the backend
     Given a backend that also enumerates worktrees and reports a branch of its own
-    When listWorktreesFromGit / WorktreeApi.list reads the worktrees
+    When the session layer lists the worktrees
     Then every path, branch, linked, and prunable value it returns is git's answer, not the backend's
     And two backends can never yield a different branch for the same worktree — the backend contributes only the binding
-
-  @id:worktree-merged-against-resolved-default
-  Scenario: the default branch merged is measured against is resolved, never assumed
-    Given a repo whose default branch is not named main
-    When listWorktreesFromGit computes each worktree's merged signal
-    Then merged is measured against the branch the repo actually treats as its default
-    # The remote-tracking ref first, because "merged" means landed upstream in the workflow this
-    # serves; the primary checkout's own branch when there is no remote to ask, which is the trunk
-    # for a local-only repo and costs no extra read.
-    And a repo with no resolvable default branch yields no merged verdict rather than a guessed one
-
-  @id:worktree-disposability-absent-not-false
-  Scenario: a disposability signal git cannot determine is absent, never false
-    Given worktrees including one on a detached HEAD and one whose checkout is gone from disk
-    When listWorktreesFromGit reads each worktree and isWorktreeRemovable is asked of it
-    Then every worktree is still returned, the missing signal costing a field rather than the entry
-    And the undeterminable signal is absent from the entry rather than reported as a negative
-    And isWorktreeRemovable never clears such a worktree, because undeterminable must never count as safe to delete
-
-  # ── the landed signal is LAYERED, in cost order, and every layer is positive-only ──
-  # `git branch --merged` is structurally blind to a squash merge: the squash commit on the target is
-  # a rewritten tip with no ancestry link to the branch, so a squash-merging repo under-reports every
-  # reusable worktree and a pool built on provision only ever creates. Three more layers close that,
-  # each ADDED to the ancestry answer rather than replacing it, in cost order: the remote-tracking ref
-  # gone (`[gone]`, one batched read, offline, correct for squash/rebase/merge alike), the branch
-  # collapsed to one synthetic commit already applied by patch-id (`commit-tree` + `cherry`), and —
-  # opt-in only — the forge's own word on whether a merged PR exists for the head branch.
-
-  @id:worktree-landed-layered-signals
-  Scenario: the landed signal layers cheaper signals over git ancestry, and names which one spoke
-    Given a squash-merged branch, a branch whose remote-tracking ref is gone, and a merge-commit branch
-    When listWorktreesFromGit computes each worktree's landed verdict
-    Then a branch git's own ancestry clears is reported merged and attributed to the ancestor signal
-    And a branch whose upstream is gone is reported merged and attributed to the upstream-gone signal
-    And a squash-merged branch is reported merged and attributed to the squash-patch signal
-    And existing merge-commit and fast-forward behavior is unchanged by the added layers
-
-  @id:worktree-landed-signals-cost-order
-  Scenario: the layers run in cost order and the cheap ones are read once for the whole repo
-    Given a repo whose worktrees are cleared by different layers
-    When listWorktreesFromGit computes the landed verdicts
-    Then the ancestry set and the gone-upstream set are each read in ONE call for the whole repo
-    And a branch an earlier layer already cleared never pays for a later layer's per-branch plumbing
-
-  @id:worktree-landed-signal-positive-only
-  Scenario: every layer is positive-only, so a signal that cannot match degrades to "not reusable"
-    Given a squash that was conflict-resolved or hand-edited, and a branch whose work continued after it landed
-    When listWorktreesFromGit computes each worktree's landed verdict
-    Then neither is reported merged, because no layer's patch matched
-    And no layer can ever turn another layer's positive into a negative — the composite is a monotone OR
-    And a branch no layer can answer for at all leaves merged ABSENT rather than false
-
-  @id:worktree-landed-signal-guard-outranks
-  Scenario: a landed signal never outranks a guard — disagreement resolves to "not disposable"
-    Given a worktree a landed signal clears whose checkout is dirty, and one that is open in a workspace
-    When isWorktreeRemovable is asked of each
-    Then neither is removable, on any signal and however cheap the layer that cleared it
-    # The reason a wrong landed verdict is survivable at all: neither provision nor remove deletes the
-    # branch REF, so committed work outlives a wrong answer; only uncommitted work is ever at risk,
-    # and the dirty guard refuses that outright.
-
-  @id:worktree-landed-signal-forge-optional
-  Scenario: the forge layer is opt-in and every other layer works offline
-    Given a caller that injects no forge probe
-    When listWorktreesFromGit computes the landed verdicts
-    Then nothing reaches for a network or a forge, and the offline layers still answer
-    And a caller that DOES inject one has it asked only about branches the offline layers left unresolved
-    And a forge that cannot say — no auth, no network, a local-only branch — is not read as a negative
-
-  @id:worktree-landed-signals-reach-provision
-  Scenario: provision recycles a squash-merged worktree instead of only ever creating
-    Given a squash-merging repo whose pool holds a clean, unoccupied, squash-merged worktree
-    When provision runs with the default availability gate
-    Then it reuses that worktree and reports which layer cleared it
-    And the recycled branch's ref still names its commits after the reuse
-    And a pool whose worktrees no layer clears still creates a fresh checkout
-
-  @id:worktree-landed-signals-reach-prune
-  Scenario: prune removes every worktree the layered signal clears, and says why it skipped the rest
-    Given worktrees cleared by the gone-upstream and squash-patch layers beside one no layer clears
-    When prune runs
-    Then both cleared worktrees are removed in the one call
-    And the remaining one is skipped with a reason naming that no landed signal matched
 
   # ── removal is the library's own gates + git; disposability is read, never acted on ──
   # removeWorktreeSafely runs cyber-mux's gates, then a releaseBinding callback the host supplies,
@@ -156,10 +25,10 @@ Feature: worktree seam — the library git-worktree contract
 
   @id:worktree-remove-ignores-disposability-signal
   Scenario: the library's remove consults no disposability signal, and the listing never acts
-    Given a worktree isWorktreeRemovable would clear
+    Given a worktree the library's listing would report as merged, clean, and unoccupied
     When removeWorktreeSafely is called on it
-    Then it applies exactly the gates it always did, consulting no disposability signal — removability is reported, never a removal trigger
-    And listWorktreesFromGit is a pure read: nothing in the listing deletes or prunes a worktree of its own accord
+    Then it applies exactly its own gates, consulting no disposability signal — removability is reported, never a removal trigger
+    And the listing is a pure read: nothing in it deletes or prunes a worktree of its own accord
 
   @id:worktree-remove-refuses-dirty-before-release
   Scenario: removeWorktreeSafely refuses uncommitted changes BEFORE releasing the binding
