@@ -29,7 +29,7 @@
 		"husky": "^9.1.7",
 		"turbo": "^2.9.14",
 		"typescript": "^6.0.0",
-		"universal-plugin": "^0.12.1"
+		"universal-plugin": "^0.14.0"
 	},
 	"packageManager": "pnpm@11.0.0",
 	"engines": {
