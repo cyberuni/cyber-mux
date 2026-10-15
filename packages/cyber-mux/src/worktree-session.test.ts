@@ -1,4 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { execFileSync } from 'node:child_process'
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Exec } from './exec.ts'
 import { herdrMuxAdapter } from './mux.herdr.ts'
 import { tmuxMuxAdapter } from './mux.tmux.ts'
@@ -29,7 +33,7 @@ const GIT_PORCELAIN = [
 
 /**
  * Routes by binary name, so one fake serves a git call and a mux call in the same flow. Matching is on
- * the WHOLE invocation rather than its first two args, because `listWorktreesFromGit` runs four
+ * the WHOLE invocation rather than its first two args, because the library's `listWorktrees` runs several
  * different git commands against the same `-C <root>` — a two-arg key could not tell `worktree list`
  * from the `symbolic-ref`/`branch`/`status` reads behind the disposability signals. First match wins,
  * so a fixture lists its specific routes before any catch-all prefix.
@@ -145,10 +149,10 @@ describe('spec:cyber-mux/mux/worktree', () => {
 	})
 
 	describe('openExistingWorktree — the add-now-group-later remedy', () => {
-		it('worktree open groups a worktree that plain git created earlier', () => {
+		it('worktree open groups a worktree that plain git created earlier', async () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'herdr worktree open': HERDR_WORKTREE_OUT })
-			const opened = openExistingWorktree(exec, herdrMuxAdapter, {
+			const opened = await openExistingWorktree(exec, herdrMuxAdapter, {
 				primaryRoot: '/repo',
 				path: '/repo.worktrees/x',
 			})
@@ -160,19 +164,22 @@ describe('spec:cyber-mux/mux/worktree', () => {
 			expect(ran(calls, 'git', '-C', '/repo', 'worktree', 'add')).toBe(false)
 		})
 
-		it('defaults the placement to workspace — the only one that can bind', () => {
+		it('defaults the placement to workspace — the only one that can bind', async () => {
 			const calls: string[][] = []
-			openExistingWorktree(fakeExec(calls, { 'herdr worktree open': HERDR_WORKTREE_OUT }), herdrMuxAdapter, {
+			await openExistingWorktree(fakeExec(calls, { 'herdr worktree open': HERDR_WORKTREE_OUT }), herdrMuxAdapter, {
 				primaryRoot: '/repo',
 				path: '/repo.worktrees/x',
 			})
 			expect(ran(calls, 'herdr', 'worktree', 'open')).toBe(true)
 		})
 
-		it('falls back to a plain open on a backend that cannot bind, reading the branch from git', () => {
+		it('falls back to a plain open on a backend that cannot bind, reading the branch from git', async () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'tmux new-window': '%9\t@1', 'git -C /repo': GIT_PORCELAIN })
-			const opened = openExistingWorktree(exec, tmuxMuxAdapter, { primaryRoot: '/repo', path: '/repo.worktrees/x' })
+			const opened = await openExistingWorktree(exec, tmuxMuxAdapter, {
+				primaryRoot: '/repo',
+				path: '/repo.worktrees/x',
+			})
 
 			expect(opened.worktree).toEqual({ root: '/repo.worktrees/x', branch: 'feat/x' })
 			expect(opened.workspace).toBeUndefined()
@@ -194,29 +201,38 @@ describe('spec:cyber-mux/mux/worktree', () => {
 			{
 				root: '/repo',
 				branch: 'main',
+				detached: false,
 				linked: false,
 				prunable: false,
 				merged: true,
 				mergedSignal: 'ancestor',
 				dirty: false,
 			},
-			{ root: '/repo.worktrees/x', branch: 'feat/x', linked: true, prunable: false, merged: false, dirty: false },
+			{
+				root: '/repo.worktrees/x',
+				branch: 'feat/x',
+				detached: false,
+				linked: true,
+				prunable: false,
+				merged: false,
+				dirty: false,
+			},
 		]
 
-		it('worktree list reports which workspace each worktree is open in', () => {
+		it('worktree list reports which workspace each worktree is open in', async () => {
 			// Only the linked worktree is open in a workspace. The primary is open in NONE — which is
 			// the half of the scenario a fixture with every worktree bound could never show.
 			const listOut = JSON.stringify({
 				result: { worktrees: [{ path: '/repo.worktrees/x', open_workspace_id: 'w21' }] },
 			})
 			const exec = fakeExec([], { ...GIT_FACTS, 'herdr worktree list': listOut })
-			expect(listWorktrees(exec, herdrMuxAdapter, { primaryRoot: '/repo' })).toEqual([
+			expect(await listWorktrees(exec, herdrMuxAdapter, { primaryRoot: '/repo' })).toEqual([
 				{ ...GIT_ANSWER[0], workspace: undefined },
 				{ ...GIT_ANSWER[1], workspace: 'w21' },
 			])
 		})
 
-		it('worktree-facts-from-git-not-backend', () => {
+		it('worktree-facts-from-git-not-backend', async () => {
 			// herdr re-reads git and reports facts of its own — a stale branch, and a linked/prunable
 			// that disagree with git on every count. All of them are ignored, on purpose.
 			const listOut = JSON.stringify({
@@ -233,7 +249,7 @@ describe('spec:cyber-mux/mux/worktree', () => {
 				},
 			})
 			const exec = fakeExec([], { ...GIT_FACTS, 'herdr worktree list': listOut })
-			const entries = listWorktrees(exec, herdrMuxAdapter, { primaryRoot: '/repo' })
+			const entries = await listWorktrees(exec, herdrMuxAdapter, { primaryRoot: '/repo' })
 			// Path, branch, linked, prunable, merged and dirty are ALL git's answer — asserting the branch
 			// alone would leave the backend free to win on the rest. `workspace` is the one and only fact
 			// the backend contributes.
@@ -243,94 +259,136 @@ describe('spec:cyber-mux/mux/worktree', () => {
 			])
 		})
 
-		it('reports no workspace on a backend with no binding, and asks it nothing', () => {
+		it('reports no workspace on a backend with no binding, and asks it nothing', async () => {
 			const calls: string[][] = []
 			const exec = fakeExec(calls, { 'git -C /repo': GIT_PORCELAIN })
-			const entries = listWorktrees(exec, tmuxMuxAdapter, { primaryRoot: '/repo' })
+			const entries = await listWorktrees(exec, tmuxMuxAdapter, { primaryRoot: '/repo' })
 			expect(entries.every((e) => e.workspace === undefined)).toBe(true)
 			expect(calls.every((c) => c[0] === 'git')).toBe(true)
 		})
 
-		it('answers outside a multiplexer, where there is no adapter at all — listing is a git question', () => {
+		it('answers outside a multiplexer, where there is no adapter at all — listing is a git question', async () => {
 			const exec = fakeExec([], { 'git -C /repo': GIT_PORCELAIN })
-			expect(listWorktrees(exec, undefined, { primaryRoot: '/repo' }).map((e) => e.branch)).toEqual(['main', 'feat/x'])
+			expect((await listWorktrees(exec, undefined, { primaryRoot: '/repo' })).map((e) => e.branch)).toEqual([
+				'main',
+				'feat/x',
+			])
 		})
 	})
 
-	describe('removeWorktree — identical gates on every backend, the binding released only after they pass', () => {
-		// This module's own directory stands in for a worktree that exists on disk — existsSync is
-		// real, so the dirty-check path needs a real path; git itself is fully faked via exec.
-		const realExistingDir = new URL('.', import.meta.url).pathname
+	describe('removeWorktree — identical gates on every backend, the binding released only after git removed', () => {
+		// Real git in a throwaway repo: the removal is the library's, which reads git for itself. herdr
+		// stays faked, keyed by the first two args.
+		let parent: string
+		let repo: string
+		let wt: string
+		const gitEnv = {
+			...process.env,
+			GIT_AUTHOR_NAME: 'cyber-mux test',
+			GIT_AUTHOR_EMAIL: 'test@example.invalid',
+			GIT_COMMITTER_NAME: 'cyber-mux test',
+			GIT_COMMITTER_EMAIL: 'test@example.invalid',
+			GIT_CONFIG_GLOBAL: '/dev/null',
+			GIT_CONFIG_SYSTEM: '/dev/null',
+		}
+		const git = (cwd: string, ...args: string[]) =>
+			execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: gitEnv }).trim()
+		const repoExec =
+			(calls: string[][], herdr: Record<string, string> = {}): Exec =>
+			(cmd, args) => {
+				calls.push([cmd, ...args])
+				if (cmd !== 'git') return herdr[args.slice(0, 2).join(' ')] ?? ''
+				try {
+					return git(repo, ...args)
+				} catch {
+					return null
+				}
+			}
 		const bindingOut = (path: string) => JSON.stringify({ result: { worktrees: [{ path, open_workspace_id: 'w21' }] } })
 
-		it('worktree-remove-not-delegated-to-backend', () => {
-			const calls: string[][] = []
-			const exec = fakeExec(calls, { 'herdr worktree list': bindingOut(realExistingDir) })
-			removeWorktree(exec, herdrMuxAdapter, realExistingDir, { primaryRoot: '/repo' })
+		beforeEach(() => {
+			parent = realpathSync(mkdtempSync(join(tmpdir(), 'cyber-mux-session-wt-')))
+			repo = join(parent, 'repo')
+			wt = join(parent, 'repo.worktrees', 'repo-1')
+			mkdirSync(repo)
+			git(repo, 'init', '--quiet', '--initial-branch=main')
+			writeFileSync(join(repo, 'a.txt'), 'a\n')
+			git(repo, 'add', '-A')
+			git(repo, 'commit', '-m', 'init')
+			git(repo, 'worktree', 'add', '-b', 'feat/x', wt, 'main')
+		})
 
+		afterEach(() => rmSync(parent, { recursive: true, force: true }))
+
+		it('worktree-remove-not-delegated-to-backend', async () => {
+			const calls: string[][] = []
+			await removeWorktree(repoExec(calls, { 'worktree list': bindingOut(wt) }), herdrMuxAdapter, wt, {
+				primaryRoot: repo,
+			})
 			const closed = calls.findIndex((c) => c[0] === 'herdr' && c[1] === 'workspace' && c[2] === 'close')
-			const removed = calls.findIndex((c) => c[0] === 'git' && c[3] === 'worktree' && c[4] === 'remove')
-			expect(closed).toBeGreaterThanOrEqual(0)
-			expect(closed).toBeLessThan(removed)
+			const removed = calls.findIndex((c) => c[0] === 'git' && c.includes('worktree') && c.includes('remove'))
+			expect(existsSync(wt)).toBe(false)
+			// git removed the checkout; herdr was asked only to close the workspace, and only afterwards.
+			expect(removed).toBeGreaterThanOrEqual(0)
+			expect(closed).toBeGreaterThan(removed)
+			expect(calls.some((c) => c[0] === 'herdr' && c[1] === 'worktree' && c[2] === 'remove')).toBe(false)
 			// `--group` rides along because releasing a binding means releasing the whole worktree group —
 			// see `ReleaseWorkspaceOptions`. On a worktree's own (non-primary) workspace it changes nothing.
 			expect(calls[closed]).toEqual(['herdr', 'workspace', 'close', 'w21', '--group'])
 		})
 
-		it('worktree remove refuses uncommitted changes BEFORE releasing the workspace', () => {
+		it('worktree remove refuses uncommitted changes BEFORE releasing the workspace', async () => {
 			const calls: string[][] = []
-			const exec: Exec = (cmd, args) => {
-				calls.push([cmd, ...args])
-				if (cmd === 'herdr') return bindingOut(realExistingDir)
-				return args[2] === 'status' ? ' M some/file' : ''
-			}
+			writeFileSync(join(wt, 'b.txt'), 'b\n')
 			// The refusal must NAME --force as the way to discard them, not merely report the dirt.
-			expect(() => removeWorktree(exec, herdrMuxAdapter, realExistingDir, { primaryRoot: '/repo' })).toThrow(
-				/uncommitted changes[\s\S]*--force/,
-			)
+			await expect(
+				removeWorktree(repoExec(calls, { 'worktree list': bindingOut(wt) }), herdrMuxAdapter, wt, {
+					primaryRoot: repo,
+				}),
+			).rejects.toThrow(/uncommitted changes[\s\S]*--force/)
 			// A refused removal has no side effect — the workspace is still open.
 			expect(ran(calls, 'herdr', 'workspace', 'close')).toBe(false)
+			expect(existsSync(wt)).toBe(true)
 		})
 
-		it('refuses uncommitted changes identically on a backend with no binding', () => {
-			const exec: Exec = (_cmd, args) => (args[2] === 'status' ? ' M some/file' : '')
-			expect(() => removeWorktree(exec, tmuxMuxAdapter, realExistingDir, { primaryRoot: '/repo' })).toThrow(
+		it('refuses uncommitted changes identically on a backend with no binding', async () => {
+			writeFileSync(join(wt, 'b.txt'), 'b\n')
+			await expect(removeWorktree(repoExec([]), tmuxMuxAdapter, wt, { primaryRoot: repo })).rejects.toThrow(
 				/uncommitted changes/,
 			)
 		})
 
-		it('worktree remove refuses the primary checkout, even with --force', () => {
+		it('worktree remove refuses the primary checkout, even with --force', async () => {
 			for (const adapter of [herdrMuxAdapter, tmuxMuxAdapter, undefined] as (MuxAdapter | undefined)[]) {
 				const calls: string[][] = []
-				// A primary checkout that REALLY EXISTS on disk. A fake path would let the removal hide
-				// behind the not-on-disk early return, so "removes nothing" would hold for a reason that
-				// has nothing to do with the refusal — and a real primary always exists.
-				expect(() =>
-					removeWorktree(fakeExec(calls), adapter, realExistingDir, { primaryRoot: realExistingDir, force: true }),
-				).toThrow(/primary checkout/)
-				// "and removes nothing" — refusing while still having run the removal would satisfy a
-				// throw-only assertion, so pin that no git removal was ever issued.
+				await expect(
+					removeWorktree(repoExec(calls), adapter, repo, { primaryRoot: repo, force: true }),
+				).rejects.toThrow(/primary checkout/)
+				// "and removes nothing" — pin that no git removal was ever issued.
 				expect(calls.some((c) => c[0] === 'git' && c.includes('remove'))).toBe(false)
 			}
 		})
 
-		it('worktree remove releases the workspace of a checkout already gone from disk', () => {
+		it('worktree remove releases the workspace of a checkout already gone from disk', async () => {
 			const calls: string[][] = []
-			const gone = '/repo.worktrees/does-not-exist'
-			const exec = fakeExec(calls, { 'herdr worktree list': bindingOut(gone) })
-			removeWorktree(exec, herdrMuxAdapter, gone, { primaryRoot: '/repo' })
-
+			const gone = join(parent, 'repo.worktrees', 'does-not-exist')
+			await removeWorktree(repoExec(calls, { 'worktree list': bindingOut(gone) }), herdrMuxAdapter, gone, {
+				primaryRoot: repo,
+			})
 			expect(ran(calls, 'herdr', 'workspace', 'close')).toBe(true)
-			expect(ran(calls, 'git', '-C', '/repo', 'worktree', 'remove')).toBe(false)
+			expect(calls.some((c) => c[0] === 'git' && c.includes('remove'))).toBe(false)
 		})
 
-		it('removes an unbound worktree with plain git, asking the backend for nothing to close', () => {
+		it('removes an unbound worktree with plain git, asking the backend for nothing to close', async () => {
 			const calls: string[][] = []
-			const exec = fakeExec(calls, { 'herdr worktree list': JSON.stringify({ result: { worktrees: [] } }) })
-			removeWorktree(exec, herdrMuxAdapter, realExistingDir, { primaryRoot: '/repo' })
-
+			await removeWorktree(
+				repoExec(calls, { 'worktree list': JSON.stringify({ result: { worktrees: [] } }) }),
+				herdrMuxAdapter,
+				wt,
+				{ primaryRoot: repo },
+			)
 			expect(ran(calls, 'herdr', 'workspace', 'close')).toBe(false)
-			expect(ran(calls, 'git', '-C', '/repo', 'worktree', 'remove')).toBe(true)
+			expect(existsSync(wt)).toBe(false)
 		})
 	})
 })
@@ -370,7 +428,7 @@ describe('spec:cyber-mux/mux/placement', () => {
 	// `worktree create` takes no env param — so only that one route reports `envHonored: false`.
 	it.each<{
 		route: string
-		call: (exec: Exec) => { envHonored: boolean }
+		call: (exec: Exec) => { envHonored: boolean } | Promise<{ envHonored: boolean }>
 		responses: Record<string, string>
 		envHonored: boolean
 	}>([
@@ -410,8 +468,8 @@ describe('spec:cyber-mux/mux/placement', () => {
 			responses: { 'tmux new-window': '%9\t@1', 'git -C /repo': GIT_PORCELAIN },
 			envHonored: true,
 		},
-	])('placement-route-reports-env-carried', ({ call, responses, envHonored }) => {
-		const opened = call(fakeExec([], responses))
+	])('placement-route-reports-env-carried', async ({ call, responses, envHonored }) => {
+		const opened = await call(fakeExec([], responses))
 		expect(opened.envHonored).toBe(envHonored)
 	})
 })

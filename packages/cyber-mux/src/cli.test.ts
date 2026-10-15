@@ -1,4 +1,7 @@
-import { homedir } from 'node:os'
+import { execFileSync } from 'node:child_process'
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildProgram, type MuxCli, muxCommands } from './cli.ts'
 import type { Exec } from './exec.ts'
@@ -7,6 +10,7 @@ import type { PaneRect } from './mux.ts'
 import { collectPanes, resolveTree, type Template } from './template.ts'
 import { captureWorkspaceTemplate } from './template-capture.ts'
 import type { TemplateStore } from './template-store.ts'
+import { acquire, toHarnessExec } from './worktree-pool.ts'
 
 /** No ancestry available — forces every probe onto the env fast-path/hint, deterministic in CI. */
 const noAncestry: Exec = () => null
@@ -102,7 +106,11 @@ describe('spec:cyber-mux/cli/worktree', () => {
 	): Exec {
 		return (_cmd, args) => {
 			calls.push(args)
-			const key = args.includes('worktree') ? args[args.indexOf('worktree') + 1]! : args[0]!
+			const key = args.includes('--git-common-dir')
+				? 'rev-parse'
+				: args.includes('worktree')
+					? args[args.indexOf('worktree') + 1]!
+					: args[0]!
 			return responses[key] ?? ''
 		}
 	}
@@ -112,8 +120,8 @@ describe('spec:cyber-mux/cli/worktree', () => {
 		const exec = fakeGitExec(calls)
 		const program = buildProgram({ env: {}, exec })
 		await run(program, ['worktree', 'add', '--branch', 'my-feature'])
-		expect(calls.at(-1)).toEqual(['-C', '/repo', 'worktree', 'add', '-b', 'my-feature', '/repo.worktrees/my-feature'])
-		expect(logs.join('\n')).toContain('/repo.worktrees/my-feature')
+		expect(calls.at(-1)).toEqual(['-C', '/repo', 'worktree', 'add', '-b', 'my-feature', '/repo.worktrees/repo-1'])
+		expect(logs.join('\n')).toContain('/repo.worktrees/repo-1')
 	})
 
 	it('worktree-add-explicit-path', async () => {
@@ -148,7 +156,7 @@ describe('spec:cyber-mux/cli/worktree', () => {
 		// env: {} — no backend at all. A bare add must still work; it is a git operation.
 		const program = buildProgram({ env: {}, exec: fakeGitExec(calls) })
 		await run(program, ['worktree', 'add', '--branch', 'my-feature'])
-		expect(calls.every((c) => c.includes('worktree') || c[0] === 'rev-parse')).toBe(true)
+		expect(calls.every((c) => c.includes('worktree') || c.includes('--git-common-dir'))).toBe(true)
 		// Reports NEITHER a pane nor a workspace — with nothing opened there is nothing to group,
 		// so a workspace line would be claiming a binding that was never made.
 		expect(logs.join('\n')).not.toContain('pane')
@@ -162,96 +170,11 @@ describe('spec:cyber-mux/cli/worktree', () => {
 		expect(calls.at(-1)).toEqual(['-C', '/repo', 'worktree', 'add', '-b', 'b', '/x', 'origin/main'])
 	})
 
-	describe('worktree provision (the CLI verb over provisionWorktree, default gate only)', () => {
-		// Primary on main + one landed (merged, clean) linked worktree — the pool the verb recycles
-		// from. Routes by verb so the seam's internal list/merged/status reads and the recycle/add
-		// writes each get their own answer, plus the CLI's own rev-parse for the primary root.
-		const porcelain = [
-			'worktree /repo',
-			'branch refs/heads/main',
-			'',
-			'worktree /repo.worktrees/landed',
-			'branch refs/heads/feat/landed',
-			'',
-		].join('\n')
-		const provisionGit =
-			(calls: string[][], merged: string): Exec =>
-			(_cmd, args) => {
-				calls.push(args)
-				if (args[0] === 'rev-parse') return '/repo/.git'
-				if (args.includes('symbolic-ref')) return 'origin/main'
-				if (args.includes('--merged')) return merged
-				if (args[2] === 'status') return ''
-				if (args[2] === 'worktree' && args[3] === 'list') return porcelain
-				return ''
-			}
-
-		it('worktree-provision-reuses-free', async () => {
-			const calls: string[][] = []
-			const program = buildProgram({ env: {}, exec: provisionGit(calls, 'main\nfeat/landed') })
-			await withArgv(['worktree', 'provision', '--branch', 'feat/new', '--format', 'json'], () =>
-				run(program, ['worktree', 'provision', '--branch', 'feat/new', '--format', 'json']),
-			)
-			const payload = JSON.parse(logs.join('\n'))
-			expect(payload.action).toBe('reused')
-			expect(payload.branch).toBe('feat/new')
-			// The recycled entry in full: its prior branch and the workspace it was open in.
-			expect(payload.reused).toMatchObject({ root: '/repo.worktrees/landed', branch: 'feat/landed' })
-			expect(payload.reused).toHaveProperty('workspace')
-			// Reuse means NO new checkout, and a pristine reset of the recycled one.
-			expect(calls.some((c) => c[2] === 'worktree' && c[3] === 'add')).toBe(false)
-			expect(calls).toContainEqual(['-C', '/repo.worktrees/landed', 'switch', '-c', 'feat/new', 'origin/main'])
-		})
-
-		it('worktree-provision-creates-fresh', async () => {
-			const calls: string[][] = []
-			// Only the primary's own branch is merged — no linked worktree qualifies, so it creates.
-			const program = buildProgram({ env: {}, exec: provisionGit(calls, 'main') })
-			await withArgv(['worktree', 'provision', '--branch', 'feat/new', '--format', 'json'], () =>
-				run(program, ['worktree', 'provision', '--branch', 'feat/new', '--format', 'json']),
-			)
-			const payload = JSON.parse(logs.join('\n'))
-			expect(payload.action).toBe('created')
-			expect(payload.reused).toBeNull()
-			// Created at the sibling default, with plain git, recycling nothing.
-			expect(calls).toContainEqual(['-C', '/repo', 'worktree', 'add', '-b', 'feat/new', '/repo.worktrees/feat/new'])
-			expect(calls.some((c) => c[2] === 'switch')).toBe(false)
-		})
-
-		it('worktree-provision-base', async () => {
-			const calls: string[][] = []
-			const program = buildProgram({ env: {}, exec: provisionGit(calls, 'main\nfeat/landed') })
-			await run(program, ['worktree', 'provision', '--branch', 'feat/new', '--base', 'release/1.0'])
-			expect(calls).toContainEqual(['-C', '/repo.worktrees/landed', 'switch', '-c', 'feat/new', 'release/1.0'])
-		})
-
-		it('worktree-provision-path', async () => {
-			const calls: string[][] = []
-			// Nothing merged among linked worktrees → create, at the explicit --path rather than the sibling.
-			const program = buildProgram({ env: {}, exec: provisionGit(calls, 'main') })
-			await run(program, ['worktree', 'provision', '--branch', 'feat/new', '--path', '/custom/spot'])
-			// Create with no --base: git's own default (HEAD), no base arg — the resolved-default-branch
-			// fallback is the REUSE path's, not create's (see the worktree-provision ADR).
-			expect(calls).toContainEqual(['-C', '/repo', 'worktree', 'add', '-b', 'feat/new', '/custom/spot'])
-		})
-
-		it('worktree-provision-no-predicate-injection', () => {
-			const worktree = muxCommands({ env: {}, exec: () => null }).find((c) => c.name === 'worktree')
-			expect(worktree).toBeDefined()
-			const provision = worktree?.commands?.find((c) => c.name === 'provision')
-			expect(provision).toBeDefined()
-			const flags = Object.keys(provision?.options ?? {}).map((o) => `--${o}`)
-			expect(flags).toEqual(['--branch', '--base', '--path'])
-			// The surface divergence: no flag reaches the seam's injectable `available` predicate.
-			expect(flags.some((f) => /avail|predicate|gate|exclude/i.test(f ?? ''))).toBe(false)
-		})
-	})
-
 	/** herdr replies keyed by the first two args; git is answered on the same fake, by binary. */
 	function fakeRepoExec(calls: string[][], responses: Record<string, string | null> = {}): Exec {
 		return (cmd, args) => {
 			calls.push([cmd, ...args])
-			if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
+			if (cmd === 'git') return args.includes('--git-common-dir') ? '/repo/.git' : ''
 			return responses[args.slice(0, 2).join(' ')] ?? ''
 		}
 	}
@@ -335,7 +258,7 @@ describe('spec:cyber-mux/cli/worktree', () => {
 			signals: { commonDir?: string; originHead?: string; merged?: string; dirty?: (root: string) => string } = {},
 		): Exec =>
 		(_cmd, args) => {
-			if (args[0] === 'rev-parse') return signals.commonDir ?? '/repo/.git'
+			if (args.includes('--git-common-dir')) return signals.commonDir ?? '/repo/.git'
 			if (args.includes('symbolic-ref')) return signals.originHead ?? null
 			if (args.includes('branch')) return signals.merged ?? null
 			if (args.includes('status')) return signals.dirty?.(args[1]!) ?? null
@@ -447,169 +370,12 @@ describe('spec:cyber-mux/cli/worktree', () => {
 
 	// The disposability composite: `worktree list` answers "is this still NEEDED", not just
 	// "is it OCCUPIED", and compresses merged AND clean AND unoccupied to one BRANCH marker.
-	describe('worktree list marks a disposable worktree `(removable)`', () => {
-		const porcelain = [
-			'worktree /repo',
-			'branch refs/heads/main',
-			'',
-			'worktree /repo.worktrees/landed',
-			'branch refs/heads/feat/landed',
-			'',
-			'worktree /repo.worktrees/open',
-			'branch refs/heads/feat/open',
-			'',
-		].join('\n')
-		const disposable = { originHead: 'origin/main', merged: 'main\nfeat/landed', dirty: () => '' }
-
-		it('worktree-list-marks-removable', async () => {
-			const program = buildProgram({ env: {}, exec: gitListExec(porcelain, disposable) })
-			await run(program, ['worktree', 'list'])
-			const out = logs.join('\n')
-			expect(out).toContain('feat/landed (removable)')
-			// Unmerged work is not disposable, and the primary checkout is never disposable —
-			// `(removable)` and `(*)` are mutually exclusive, so BRANCH never carries two markers.
-			expect(out).not.toContain('feat/open (removable)')
-			expect(out).toContain('main (*)')
-			expect(out).not.toContain('main (removable)')
-		})
-
-		it('worktree-list-marks-removable', async () => {
-			const bindings = JSON.stringify({
-				result: { worktrees: [{ path: '/repo.worktrees/landed', open_workspace_id: 'w21' }] },
-			})
-			const gitExec = gitListExec(porcelain, disposable)
-			const exec: Exec = (cmd, args) =>
-				cmd === 'git' ? gitExec(cmd, args) : args.slice(0, 2).join(' ') === 'worktree list' ? bindings : ''
-			const program = buildProgram({ env: { CYBER_MUX: 'herdr' }, exec })
-			await run(program, ['worktree', 'list'])
-			expect(logs.join('\n')).not.toContain('(removable)')
-		})
-
-		it('worktree-list-marks-removable', async () => {
-			const exec = gitListExec(porcelain, {
-				...disposable,
-				dirty: (root) => (root.endsWith('landed') ? ' M a.ts' : ''),
-			})
-			await run(buildProgram({ env: {}, exec }), ['worktree', 'list'])
-			expect(logs.join('\n')).not.toContain('(removable)')
-		})
-
-		it('worktree-list-no-composite-field', async () => {
-			const program = buildProgram({ env: {}, exec: gitListExec(porcelain, disposable) })
-			await withArgv(['worktree', 'list', '--format', 'json'], () =>
-				run(program, ['worktree', 'list', '--format', 'json']),
-			)
-			const payload = JSON.parse(logs.join('\n'))
-			expect(payload.worktrees.map((w: { merged: boolean }) => w.merged)).toEqual([true, true, false])
-			expect(payload.worktrees.map((w: { dirty: boolean }) => w.dirty)).toEqual([false, false, false])
-			// The composite is the TABLE's compression, never a field — a consumer that wants a
-			// different policy (ignore occupancy, say) must not inherit this one from the payload.
-			expect(payload.worktrees.every((w: Record<string, unknown>) => !('removable' in w))).toBe(true)
-			expect(logs.join('\n')).not.toContain('(removable)')
-		})
-
-		it('worktree-list-undeterminable-not-removable', async () => {
-			// A detached HEAD, a prunable entry, and no origin/HEAD to measure against — the listing
-			// still renders, with no field guessed and no row wrongly marked disposable.
-			const awkward = [
-				'worktree /repo',
-				'detached',
-				'',
-				'worktree /repo.worktrees/spike',
-				'detached',
-				'',
-				'worktree /repo.worktrees/gone',
-				'branch refs/heads/old',
-				'prunable gitdir file points to non-existent location',
-				'',
-			].join('\n')
-			const program = buildProgram({ env: {}, exec: gitListExec(awkward) })
-			await run(program, ['worktree', 'list'])
-			const out = logs.join('\n')
-			expect(out).toContain('(detached)')
-			expect(out).toContain('/repo.worktrees/gone (gone)')
-			expect(out).not.toContain('(removable)')
-
-			logs.length = 0
-			await withArgv(['worktree', 'list', '--format', 'json'], () =>
-				run(program, ['worktree', 'list', '--format', 'json']),
-			)
-			const payload = JSON.parse(logs.join('\n'))
-			expect(payload.worktrees).toHaveLength(3)
-			expect(payload.worktrees.every((w: Record<string, unknown>) => w['merged'] === undefined)).toBe(true)
-			// The prunable row has no working tree to read, so `dirty` is absent rather than false.
-			expect(payload.worktrees[2].dirty).toBeUndefined()
-		})
-	})
-
 	it('worktree-list-answers-outside-mux', async () => {
 		const porcelain = ['worktree /repo', 'branch refs/heads/main', ''].join('\n')
 		const exec = gitListExec(porcelain)
 		const program = buildProgram({ env: {}, exec })
 		await run(program, ['worktree', 'list'])
 		expect(logs.join('\n')).toContain('main')
-	})
-
-	describe('worktree prune', () => {
-		// This module's own directory stands in for "a worktree that exists on disk" — the CLI's
-		// remove path checks existence for real (no injected fs at this boundary), so the removal
-		// half needs a real path; the primary and every git answer are still fully faked.
-		// realpathSync (which normalization runs through) strips the trailing slash `import.meta.url`
-		// leaves on a directory, so the normalized form is the one every later comparison uses.
-		const realExistingDir = new URL('.', import.meta.url).pathname.replace(/\/$/, '')
-
-		const porcelain = [
-			'worktree /repo',
-			'branch refs/heads/main',
-			'',
-			`worktree ${realExistingDir}`,
-			'branch refs/heads/feat/landed',
-			'',
-			'worktree /repo.worktrees/open',
-			'branch refs/heads/feat/open',
-			'',
-		].join('\n')
-		const disposable = { originHead: 'origin/main', merged: 'main\nfeat/landed', dirty: () => '' }
-
-		it('worktree-prune-preview', async () => {
-			const calls: string[][] = []
-			const gitExec = gitListExec(porcelain, disposable)
-			const exec: Exec = (cmd, args) => {
-				calls.push(args)
-				return gitExec(cmd, args)
-			}
-			const program = buildProgram({ env: {}, exec })
-			await run(program, ['worktree', 'prune'])
-			expect(logs.join('\n')).toContain('feat/landed')
-			expect(logs.join('\n')).not.toContain('feat/open')
-			expect(calls.some((args) => args.includes('remove'))).toBe(false)
-		})
-
-		it('worktree-prune-force-removes', async () => {
-			const calls: string[][] = []
-			const gitExec = gitListExec(porcelain, disposable)
-			const exec: Exec = (cmd, args) => {
-				calls.push(args)
-				return gitExec(cmd, args)
-			}
-			const program = buildProgram({ env: {}, exec })
-			await run(program, ['worktree', 'prune', '--force'])
-			expect(calls.at(-1)).toEqual(['-C', '/repo', 'worktree', 'remove', realExistingDir, '--force'])
-		})
-
-		it('worktree-prune-force-removes', async () => {
-			const exec = gitListExec(porcelain, disposable)
-			const program = buildProgram({ env: {}, exec })
-			await withArgv(['worktree', 'prune', '--format', 'json'], () =>
-				run(program, ['worktree', 'prune', '--format', 'json']),
-			)
-			const payload = JSON.parse(logs.join('\n'))
-			expect(payload.applied).toBe(false)
-			expect(payload.removed).toHaveLength(1)
-			expect(payload.skipped).toHaveLength(1)
-			expect(payload.skipped[0].root).toBe('/repo.worktrees/open')
-			expect(payload.skipped[0].reason).toMatch(/has not landed/)
-		})
 	})
 
 	// ── worktree add --env (CLI surface) ──
@@ -623,7 +389,7 @@ describe('spec:cyber-mux/cli/worktree', () => {
 				args = args.slice(1)
 			}
 			calls.push([cmd, ...args])
-			if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
+			if (cmd === 'git') return args.includes('--git-common-dir') ? '/repo/.git' : ''
 			if (cmd === 'tmux') return responses[args[0]!] ?? null
 			return responses[args.slice(0, 2).join(' ')] ?? null
 		}
@@ -656,37 +422,236 @@ describe('spec:cyber-mux/cli/worktree', () => {
 		await run(program, ['worktree', 'remove', '/nonexistent/gone/path/xyz'])
 		expect(calls.some((c) => c.includes('remove'))).toBe(false)
 	})
+	/**
+	 * The verbs whose decisions are the library's — provision, list's `(removable)`, prune, remove —
+	 * run against a REAL throwaway repo. The library makes its own git reads (facts, landed signals,
+	 * leases, ownership), so a fake answering the strings it happens to ask for today would prove only
+	 * that the fake matches the fixture. Every git call runs in the scratch repo, isolated from the
+	 * caller's own git config; herdr, where a test needs a binding, stays faked.
+	 */
+	describe('against a real repo', () => {
+		let parent: string
+		let repo: string
+		const gitEnv = {
+			...process.env,
+			GIT_AUTHOR_NAME: 'cyber-mux test',
+			GIT_AUTHOR_EMAIL: 'test@example.invalid',
+			GIT_COMMITTER_NAME: 'cyber-mux test',
+			GIT_COMMITTER_EMAIL: 'test@example.invalid',
+			GIT_CONFIG_GLOBAL: '/dev/null',
+			GIT_CONFIG_SYSTEM: '/dev/null',
+		}
+		const git = (cwd: string, ...args: string[]) =>
+			execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: gitEnv }).trim()
+		/** Real git in the scratch repo; any other binary answers from `herdr`, keyed by its first two args. */
+		const repoExec =
+			(herdr: Record<string, string> = {}): Exec =>
+			(cmd, args) => {
+				if (cmd !== 'git') return herdr[args.slice(0, 2).join(' ')] ?? null
+				try {
+					return git(repo, ...args)
+				} catch {
+					return null
+				}
+			}
+		const slot = (n: number) => join(parent, 'repo.worktrees', `repo-${n}`)
+		/** A slot worktree on `branch`, branched from main — landed until something commits to it. */
+		const addSlot = (n: number, branch: string) => git(repo, 'worktree', 'add', '-b', branch, slot(n), 'main')
+		const commitIn = (cwd: string, file: string) => {
+			writeFileSync(join(cwd, file), `${file}\n`)
+			git(cwd, 'add', '-A')
+			git(cwd, 'commit', '-m', `add ${file}`)
+		}
+		const json = async (args: string[], exec = repoExec(), env: Record<string, string> = {}) => {
+			logs.length = 0
+			await withArgv([...args, '--format', 'json'], () =>
+				run(buildProgram({ env, exec }), [...args, '--format', 'json']),
+			)
+			return JSON.parse(logs.join('\n'))
+		}
+		const human = async (args: string[], exec = repoExec(), env: Record<string, string> = {}) => {
+			logs.length = 0
+			await run(buildProgram({ env, exec }), args)
+			return logs.join('\n')
+		}
 
-	// This module's own directory stands in for "a worktree that exists on disk" — existsSync is real
-	// at the CLI boundary (no injected fs there), so the dirty-check path needs a real path.
-	const realExistingDir = new URL('.', import.meta.url).pathname.replace(/\/$/, '')
-
-	it('worktree-remove-refuses-dirty', async () => {
-		vi.spyOn(process, 'exit').mockImplementation(() => {
-			throw new Error('exit')
+		beforeEach(() => {
+			parent = realpathSync(mkdtempSync(join(tmpdir(), 'cyber-mux-cli-wt-')))
+			repo = join(parent, 'repo')
+			mkdirSync(repo)
+			git(repo, 'init', '--quiet', '--initial-branch=main')
+			commitIn(repo, 'a.txt')
 		})
-		const exec: Exec = (_cmd, args) => {
-			if (args[0] === 'rev-parse') return '/repo/.git'
-			return args[2] === 'status' ? ' M some/file' : ''
-		}
-		const program = buildProgram({ env: {}, exec })
-		await expect(run(program, ['worktree', 'remove', realExistingDir])).rejects.toThrow()
-		// The refusal must NAME --force as the way to discard them.
-		expect(logs.join('\n')).toMatch(/uncommitted changes[\s\S]*--force/)
-	})
 
-	it('worktree-remove-force-discards-dirty', async () => {
-		const calls: string[][] = []
-		const exec: Exec = (_cmd, args) => {
-			calls.push(args)
-			if (args[0] === 'rev-parse') return '/repo/.git'
-			return args[2] === 'status' ? ' M some/file' : ''
-		}
-		const program = buildProgram({ env: {}, exec })
-		await run(program, ['worktree', 'remove', realExistingDir, '--force'])
-		// The dirty check never ran, and the removal went through regardless.
-		expect(calls.some((c) => c[2] === 'status')).toBe(false)
-		expect(calls.at(-1)).toEqual(['-C', '/repo', 'worktree', 'remove', realExistingDir, '--force'])
+		afterEach(() => rmSync(parent, { recursive: true, force: true }))
+
+		it('worktree-add-default-path', async () => {
+			addSlot(1, 'feat/taken')
+			const payload = await json(['worktree', 'add', '--branch', 'my-feature'])
+			// Slot 1 is held, so the next free one — never the branch-named sibling.
+			expect(payload.root).toBe(slot(2))
+			expect(git(slot(2), 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('my-feature')
+		})
+
+		describe('worktree provision (the CLI verb over the library acquire)', () => {
+			it('worktree-provision-creates-fresh', async () => {
+				const payload = await json(['worktree', 'provision', '--branch', 'feat/new'])
+				expect(payload).toEqual({ action: 'created', root: slot(1), branch: 'feat/new', reused: null })
+				// Handed back unleased: git reports no lock on it.
+				expect(git(repo, 'worktree', 'list', '--porcelain')).not.toContain('locked')
+			})
+
+			it('worktree-provision-reuses-free', async () => {
+				addSlot(1, 'feat/landed')
+				const payload = await json(['worktree', 'provision', '--branch', 'feat/new'])
+				expect(payload).toEqual({
+					action: 'reused',
+					root: slot(1),
+					branch: 'feat/new',
+					reused: { root: slot(1), branch: 'feat/landed' },
+				})
+				expect(git(slot(1), 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('feat/new')
+				expect(existsSync(slot(2))).toBe(false)
+				expect(git(repo, 'worktree', 'list', '--porcelain')).not.toContain('locked')
+			})
+
+			it('worktree-provision-base', async () => {
+				git(repo, 'tag', 'v0')
+				commitIn(repo, 'b.txt')
+				await json(['worktree', 'provision', '--branch', 'feat/new', '--base', 'v0'])
+				expect(git(slot(1), 'rev-parse', 'HEAD')).toBe(git(repo, 'rev-parse', 'v0'))
+			})
+
+			it('worktree-provision-no-predicate-injection', () => {
+				const worktree = muxCommands({ env: {}, exec: () => null }).find((c) => c.name === 'worktree')
+				const provision = worktree?.commands?.find((c) => c.name === 'provision')
+				expect(provision).toBeDefined()
+				const flags = Object.keys(provision?.options ?? {}).map((o) => `--${o}`)
+				expect(flags).toEqual(['--branch', '--base'])
+			})
+		})
+
+		describe('worktree list marks a disposable worktree `(removable)`', () => {
+			it('worktree-list-marks-removable', async () => {
+				addSlot(1, 'feat/landed')
+				addSlot(2, 'feat/open')
+				commitIn(slot(2), 'b.txt')
+				addSlot(3, 'feat/dirty')
+				writeFileSync(join(slot(3), 'c.txt'), 'c\n')
+				const out = await human(['worktree', 'list'])
+				expect(out).toContain('feat/landed (removable)')
+				// Unmerged work and a dirty checkout are not disposable, and the primary checkout never is —
+				// `(removable)` and `(*)` are mutually exclusive, so BRANCH never carries two markers.
+				expect(out).not.toContain('feat/open (removable)')
+				expect(out).not.toContain('feat/dirty (removable)')
+				expect(out).toContain('main (*)')
+			})
+
+			it('worktree-list-marks-removable', async () => {
+				addSlot(1, 'feat/landed')
+				const bindings = JSON.stringify({ result: { worktrees: [{ path: slot(1), open_workspace_id: 'w21' }] } })
+				const out = await human(['worktree', 'list'], repoExec({ 'worktree list': bindings }), { CYBER_MUX: 'herdr' })
+				// Open in a workspace is in use, whatever git thinks of the branch.
+				expect(out).toContain('w21')
+				expect(out).not.toContain('(removable)')
+			})
+
+			it('worktree-list-no-composite-field', async () => {
+				addSlot(1, 'feat/landed')
+				const payload = await json(['worktree', 'list'])
+				expect(payload.worktrees.map((w: { merged: boolean }) => w.merged)).toEqual([true, true])
+				expect(payload.worktrees.map((w: { dirty: boolean }) => w.dirty)).toEqual([false, false])
+				expect(payload.worktrees.every((w: Record<string, unknown>) => !('removable' in w))).toBe(true)
+			})
+
+			it('worktree-list-undeterminable-not-removable', async () => {
+				addSlot(1, 'feat/landed')
+				git(repo, 'worktree', 'add', '--detach', slot(2), 'main')
+				const out = await human(['worktree', 'list'])
+				expect(out).toContain('(detached)')
+				expect(out).not.toContain('(detached) (removable)')
+				// The determined row is still marked, so the suppression is the missing signal's alone.
+				expect(out).toContain('feat/landed (removable)')
+				const payload = await json(['worktree', 'list'])
+				expect(payload.worktrees[2].merged).toBeUndefined()
+			})
+
+			it('worktree-prune-skips-foreign', async () => {
+				const legacy = join(parent, 'repo.worktrees', 'feat-legacy')
+				git(repo, 'worktree', 'add', '-b', 'feat/legacy', legacy, 'main')
+				expect(await human(['worktree', 'list'])).not.toContain('(removable)')
+				const payload = await json(['worktree', 'prune', '--force'])
+				expect(payload.removed).toEqual([])
+				expect(payload.skipped).toEqual([{ root: legacy, branch: 'feat/legacy', reason: expect.any(String) }])
+				expect(existsSync(legacy)).toBe(true)
+			})
+		})
+
+		describe('worktree prune', () => {
+			beforeEach(() => {
+				addSlot(1, 'feat/landed')
+				addSlot(2, 'feat/open')
+				commitIn(slot(2), 'b.txt')
+			})
+
+			it('worktree-prune-preview', async () => {
+				const out = await human(['worktree', 'prune'])
+				expect(out).toContain('feat/landed')
+				expect(out).toContain('cyber-mux worktree prune --force')
+				expect(existsSync(slot(1))).toBe(true)
+			})
+
+			it('worktree-prune-force-removes', async () => {
+				const payload = await json(['worktree', 'prune', '--force'])
+				expect(payload.applied).toBe(true)
+				expect(payload.removed).toEqual([{ root: slot(1), branch: 'feat/landed' }])
+				expect(payload.skipped).toEqual([
+					{ root: slot(2), branch: 'feat/open', reason: expect.stringMatching(/has not landed/) },
+				])
+				expect(existsSync(slot(1))).toBe(false)
+				expect(existsSync(slot(2))).toBe(true)
+			})
+		})
+
+		describe('worktree remove', () => {
+			it('worktree-remove-refuses-dirty', async () => {
+				addSlot(1, 'feat/x')
+				writeFileSync(join(slot(1), 'c.txt'), 'c\n')
+				await expect(human(['worktree', 'remove', slot(1)])).rejects.toThrow('exit:1')
+				// The refusal must NAME --force as the way to discard them.
+				expect(logs.join('\n')).toMatch(/uncommitted changes[\s\S]*--force/)
+				expect(existsSync(slot(1))).toBe(true)
+			})
+
+			it('worktree-remove-force-discards-dirty', async () => {
+				addSlot(1, 'feat/x')
+				writeFileSync(join(slot(1), 'c.txt'), 'c\n')
+				await human(['worktree', 'remove', slot(1), '--force'])
+				expect(existsSync(slot(1))).toBe(false)
+			})
+
+			it('removes a clean worktree the caller named, landed or not and slot or not', async () => {
+				const legacy = join(parent, 'repo.worktrees', 'feat-legacy')
+				git(repo, 'worktree', 'add', '-b', 'feat/legacy', legacy, 'main')
+				commitIn(legacy, 'b.txt')
+				await human(['worktree', 'remove', legacy])
+				expect(existsSync(legacy)).toBe(false)
+				// The branch ref survives: its commits are still reachable.
+				expect(git(repo, 'branch', '--list', 'feat/legacy')).toContain('feat/legacy')
+			})
+
+			it('worktree-remove-respects-lease-and-session', async () => {
+				const lease = await acquire({
+					primaryRoot: repo,
+					holder: 'test',
+					branch: 'feat/x',
+					exec: toHarnessExec(repoExec()),
+				})
+				await expect(human(['worktree', 'remove', lease.worktree, '--force'])).rejects.toThrow('exit:1')
+				expect(logs.join('\n')).toContain('leased')
+				expect(existsSync(lease.worktree)).toBe(true)
+			})
+		})
 	})
 
 	it('worktree-add-placement-fallback', async () => {
@@ -1199,7 +1164,7 @@ describe('cyber-mux/mux — cli-driven library surface', () => {
 						args = args.slice(1)
 					}
 					calls.push([cmd, ...args])
-					if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
+					if (cmd === 'git') return args.includes('--git-common-dir') ? '/repo/.git' : ''
 					if (cmd === 'tmux') {
 						if (args[0] !== 'new-window' && args[0] !== 'split-window') return ''
 						const id = n++
@@ -2191,7 +2156,7 @@ describe('cyber-mux/template — cli-driven library surface', () => {
 				args = args.slice(1)
 			}
 			calls.push([cmd, ...args])
-			if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
+			if (cmd === 'git') return args.includes('--git-common-dir') ? '/repo/.git' : ''
 			const [verb] = args
 			if (verb === 'new-window') {
 				const id = `@${n}`
@@ -2363,7 +2328,7 @@ describe('cyber-mux/template — cli-driven library surface', () => {
 					args = args.slice(1)
 				}
 				calls.push([cmd, ...args])
-				if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
+				if (cmd === 'git') return args.includes('--git-common-dir') ? '/repo/.git' : ''
 				if (args[0] === 'list-panes') {
 					return (
 						panes ??
@@ -2517,7 +2482,7 @@ describe('cyber-mux/template — cli-driven library surface', () => {
 		function herdrWorkspaceExec(calls: string[][], workspace: { tabs: HerdrTab[]; panes: HerdrPane[] }): Exec {
 			return (cmd, args) => {
 				calls.push([cmd, ...args])
-				if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
+				if (cmd === 'git') return args.includes('--git-common-dir') ? '/repo/.git' : ''
 				const verb = args.slice(0, 2).join(' ')
 				if (verb === 'pane get') {
 					const pane = workspace.panes.find((p) => p.pane_id === args[2])
@@ -2608,7 +2573,7 @@ describe('cyber-mux/template — cli-driven library surface', () => {
 					args = args.slice(1)
 				}
 				calls.push([cmd, ...args])
-				if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
+				if (cmd === 'git') return args.includes('--git-common-dir') ? '/repo/.git' : ''
 				// The tag field comes back EMPTY — tmux prints an unset user option as nothing at all.
 				if (args[0] === 'display-message') return '@1\t\tzsh'
 				if (args[0] === 'list-panes') {
@@ -2810,7 +2775,7 @@ describe('spec:cyber-mux/cli/placement', () => {
 				args = args.slice(1)
 			}
 			calls.push([cmd, ...args])
-			if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
+			if (cmd === 'git') return args.includes('--git-common-dir') ? '/repo/.git' : ''
 			if (cmd === 'tmux') return responses[args[0]!] ?? null
 			return responses[args.slice(0, 2).join(' ')] ?? null
 		}
@@ -3076,7 +3041,7 @@ describe('spec:cyber-mux/cli/lookup', () => {
 				args = args.slice(1)
 			}
 			calls.push([cmd, ...args])
-			if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
+			if (cmd === 'git') return args.includes('--git-common-dir') ? '/repo/.git' : ''
 			if (cmd === 'tmux') {
 				if (args[0] !== 'new-window' && args[0] !== 'split-window') return ''
 				const id = n++
@@ -3117,7 +3082,7 @@ describe('spec:cyber-mux/cli/lookup', () => {
 				args = args.slice(1)
 			}
 			calls.push([cmd, ...args])
-			if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
+			if (cmd === 'git') return args.includes('--git-common-dir') ? '/repo/.git' : ''
 			if (args[0] === 'new-window') return '%0\t@0'
 			if (args[0] === 'split-window') return ++splits === 3 ? null : `%${splits}\t@0`
 			return ''
@@ -3703,7 +3668,7 @@ describe('spec:cyber-mux/cli/lookup', () => {
 		captureStderr()
 		const diagnostic = 'no server running on /tmp/tmux-501/default'
 		const exec: Exec = (cmd, args) => {
-			if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
+			if (cmd === 'git') return args.includes('--git-common-dir') ? '/repo/.git' : ''
 			exec.lastError = diagnostic
 			return null
 		}
@@ -3886,7 +3851,7 @@ describe('spec:cyber-mux/cli/template/apply', () => {
 				args = args.slice(1)
 			}
 			calls.push([cmd, ...args])
-			if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
+			if (cmd === 'git') return args.includes('--git-common-dir') ? '/repo/.git' : ''
 			if (cmd === 'tmux') {
 				if (args[0] !== 'new-window' && args[0] !== 'split-window') return ''
 				const id = n++
@@ -3904,7 +3869,7 @@ describe('spec:cyber-mux/cli/template/apply', () => {
 		let tab = 0
 		return (cmd, args) => {
 			calls.push([cmd, ...args])
-			if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
+			if (cmd === 'git') return args.includes('--git-common-dir') ? '/repo/.git' : ''
 			const key = args.slice(0, 2).join(' ')
 			if (responses[key]) return responses[key]
 			if (key === 'workspace create' || key === 'tab create') {
@@ -4219,7 +4184,7 @@ describe('spec:cyber-mux/cli/template/capture', () => {
 				args = args.slice(1)
 			}
 			calls.push([cmd, ...args])
-			if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
+			if (cmd === 'git') return args.includes('--git-common-dir') ? '/repo/.git' : ''
 			if (args[0] === 'list-panes') {
 				return (
 					panes ??
@@ -4386,7 +4351,7 @@ describe('spec:cyber-mux/cli/template/capture', () => {
 	function herdrWorkspaceExec(calls: string[][], workspace: { tabs: HerdrTab[]; panes: HerdrPane[] }): Exec {
 		return (cmd, args) => {
 			calls.push([cmd, ...args])
-			if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
+			if (cmd === 'git') return args.includes('--git-common-dir') ? '/repo/.git' : ''
 			const verb = args.slice(0, 2).join(' ')
 			if (verb === 'pane get') {
 				const pane = workspace.panes.find((p) => p.pane_id === args[2])
@@ -4476,7 +4441,7 @@ describe('spec:cyber-mux/cli/template/capture', () => {
 				args = args.slice(1)
 			}
 			calls.push([cmd, ...args])
-			if (cmd === 'git') return args[0] === 'rev-parse' ? '/repo/.git' : ''
+			if (cmd === 'git') return args.includes('--git-common-dir') ? '/repo/.git' : ''
 			if (args[0] === 'display-message') return '@1\t\tzsh'
 			if (args[0] === 'list-panes') {
 				return ['%0\t0\t0\t119\t50\t/repo\tzeta\tzeta', '%1\t120\t0\t80\t50\t/repo/api\tzeta\tzeta'].join('\n')

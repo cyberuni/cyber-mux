@@ -79,8 +79,8 @@ importers:
   packages/cyber-mux:
     dependencies:
       '@cyberuni/agent-harness':
-        specifier: ^0.6.0
-        version: 0.6.0(typescript@6.0.3)
+        specifier: ^0.7.0
+        version: 0.7.0(clibuilder@12.0.0(js-yaml@4.3.0))
       clibuilder:
         specifier: ^12.0.0
         version: 12.0.0(js-yaml@4.3.0)
@@ -550,6 +550,16 @@ packages:
     resolution: {integrity: sha512-ELy0pcHiRb9vjaVymBIvCQTDaQTOyliVKEx3MdpiDLeaGAYkhBwgCfoIa/ov/hPFxed4gQdYLBv6O3UTNgr78A==}
     engines: {node: '>=22'}
     hasBin: true
+
+  '@cyberuni/agent-harness@0.7.0':
+    resolution: {integrity: sha512-d3I2Z2sg3JeRcOM6LGO2oPA7dGGxAeRzjEihx8SDkAWzXjOLtMf3umApsu7iej5FxsHkXJpiag7+UubbJdDHsA==}
+    engines: {node: '>=22'}
+    hasBin: true
+    peerDependencies:
+      clibuilder: ^12.0.0
+    peerDependenciesMeta:
+      clibuilder:
+        optional: true
 
   '@emmetio/abbreviation@2.3.3':
     resolution: {integrity: sha512-mgv58UrU3rh4YgbE/TzgLQwJ3pFsHHhCLqY20aJq+9comytTXUDNGG/SMtSeMJdkpxgXSXunBGLD8Boka3JyVA==}
@@ -3993,6 +4003,10 @@ snapshots:
       yaml: 2.9.0
     transitivePeerDependencies:
       - typescript
+
+  '@cyberuni/agent-harness@0.7.0(clibuilder@12.0.0(js-yaml@4.3.0))':
+    optionalDependencies:
+      clibuilder: 12.0.0(js-yaml@4.3.0)
 
   '@emmetio/abbreviation@2.3.3':
     dependencies:

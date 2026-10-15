@@ -13,10 +13,9 @@ import type { MuxAdapter, WorktreeWorkspace } from './mux.ts'
  * `.worktreeinclude` seeding. Re-exported here so a `cyber-mux/worktree` consumer reaches it through
  * one import, and so the one mux-specific piece it needs, `muxWorktreeCreator`, sits beside it.
  *
- * Three library names collide with this subpath's older synchronous API (`pruneWorktrees`,
- * `normalizeWorktreePath`, `ghForgeMergedProbe`) and keep their cyber-mux meaning until those are
- * removed; import the library's from `@cyberuni/agent-harness/worktrees` directly. The colliding types
- * are re-exported under a `Harness` prefix.
+ * cyber-mux's own synchronous `pruneWorktrees`, `normalizeWorktreePath`, and `ghForgeMergedProbe` are
+ * gone, so those names are the library's here. The `Harness`-prefixed type aliases are kept for
+ * callers written while the names collided.
  */
 export {
 	AcquireError,
@@ -32,7 +31,10 @@ export {
 	type Exec as HarnessExec,
 	type ExplainOptions,
 	explain,
+	type ForgeMergedProbe,
+	/** @deprecated Use `ForgeMergedProbe`. */
 	type ForgeMergedProbe as HarnessForgeMergedProbe,
+	ghForgeMergedProbe,
 	gitWorktreeCreator,
 	holdsLease,
 	type LandedSignal,
@@ -48,6 +50,7 @@ export {
 	listWorktrees,
 	nodeLeaseFs,
 	nodeSeedFs,
+	normalizeWorktreePath,
 	type OccupancyOptions,
 	occupants,
 	type PrimaryRootOptions,
@@ -63,9 +66,12 @@ export {
 	primaryRoot,
 	probeProcesses,
 	procfsProcessSource,
+	pruneWorktrees,
 	type ReleaseResult,
+	type RemoveWorktreeOptions,
 	readDirty,
 	release,
+	removeWorktree,
 	type SeedFs,
 	type SeedInventory,
 	type SeedSkip,
@@ -79,6 +85,9 @@ export {
 	slotPath,
 	WORKTREE_INCLUDE,
 	type WorktreeCreator,
+	type WorktreeCreatorUndo,
+	type WorktreeEntry,
+	/** @deprecated Use `WorktreeEntry`. */
 	type WorktreeEntry as HarnessWorktreeEntry,
 	type WorktreeOccupancy,
 	type WorktreeOwner,

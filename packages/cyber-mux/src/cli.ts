@@ -1,4 +1,5 @@
 import { join } from 'node:path'
+import type { PruneOutcome } from '@cyberuni/agent-harness/worktrees'
 import { cli, t as ct } from 'clibuilder'
 import pkg from '../package.json' with { type: 'json' }
 import { AgentLifecycleUnsupportedError, deriveAgentWait } from './agent.ts'
@@ -50,20 +51,16 @@ import {
 	type TemplateStore,
 	templateDirs,
 } from './template-store.ts'
-import {
-	gitWorktreeAdapter,
-	isWorktreeRemovable,
-	provisionWorktree,
-	pruneWorktrees,
-	resolvePrimaryRoot,
-	resolveWorktreePath,
-	WorktreeGitError,
-} from './worktree.ts'
+import { gitWorktreeAdapter, WorktreeGitError } from './worktree.ts'
 import {
 	addAndOpenWorktree,
 	listWorktrees,
+	nextSlotPath,
 	type OpenedWorktree,
 	openExistingWorktree,
+	primaryCheckout,
+	provisionWorktree,
+	pruneUnboundWorktrees,
 	removeWorktree,
 } from './worktree-session.ts'
 
@@ -1790,7 +1787,7 @@ function worktreeAddCommand(deps: Deps): MuxCommand {
 			env: ENV_OPTION,
 			label: LABEL_OPTION,
 		},
-		run({ branch, env, ...rest }) {
+		async run({ branch, env, ...rest }) {
 			try {
 				// Both refused before anything runs — no checkout, no pane, no git query.
 				const opts = {
@@ -1799,12 +1796,12 @@ function worktreeAddCommand(deps: Deps): MuxCommand {
 					env: parseEnv(env),
 					at: rest.at as MuxPlacement | undefined,
 				}
-				const primaryRoot = resolvePrimaryRoot(deps.exec)
+				const primaryRoot = await primaryCheckout(deps.exec)
 				// The primary flow this feature exists for. Resolve and validate FIRST: a typo in a
 				// template name, or a template that sets a cwd, must not leave a worktree behind.
 				if (opts.template) {
 					const { template } = resolveTemplate(deps, { name: opts.template })
-					const path = opts.path ?? resolveWorktreePath(primaryRoot, opts.branch)
+					const path = opts.path ?? (await nextSlotPath(deps.exec, primaryRoot))
 					const a = adapter(deps)
 					// No `launch`: the worktree's workspace opens blank and its root pane becomes the
 					// tree's root region — not a wasted pane, the one the walk splits into. Its `env`
@@ -1843,7 +1840,7 @@ function worktreeAddCommand(deps: Deps): MuxCommand {
 					}
 					return
 				}
-				const path = opts.path ?? resolveWorktreePath(primaryRoot, opts.branch)
+				const path = opts.path ?? (await nextSlotPath(deps.exec, primaryRoot))
 				// With no placement asked for AND nothing to put IN a pane, this IS a git operation: it
 				// creates a checkout, opens nothing, and needs no multiplexer to be inside of. There is
 				// nothing to group because nothing was opened — `worktree open` groups it later. `--env`
@@ -1882,59 +1879,44 @@ function worktreeAddCommand(deps: Deps): MuxCommand {
 }
 
 /**
- * `worktree provision` — reuse a free worktree or create a fresh one, the CLI wiring of the
- * `provisionWorktree` seam. The verb uses the DEFAULT availability gate (`isWorktreeRemovable`, the
- * exact set `worktree list` marks `(removable)` and `prune` removes) and offers NO flag to inject a
- * host predicate — that is the surface divergence from the library seam, which takes one. A host that
- * must exclude a live-session worktree calls `WorktreeApi.provision` directly. It reports what it did
- * (`reused` | `created`), the worktree, and on reuse the recycled entry — its prior branch and the
- * workspace it was open in; `printFields` drops the nullish reuse fields on a create.
+ * `worktree provision` — reuse an idle worktree or create one at the next free slot, the CLI wiring of
+ * the library's `acquire` with its default gates and the lease given back. It offers NO flag to inject
+ * an availability predicate or to choose the path: the library assigns slots, and a host that needs
+ * either, or needs to hold the lease, calls `acquire` directly. It reports what it did
+ * (`reused` | `created`), the worktree, and on reuse the recycled worktree's prior branch;
+ * `printFields` drops the nullish reuse field on a create.
  */
 function worktreeProvisionCommand(deps: Deps): MuxCommand {
 	return muxCommand({
 		name: 'provision',
 		description:
-			'Reuse a free worktree or create a fresh one — the default-gate wiring of the provision seam (a worktree `list` marks "(removable)"). Reports whether it reused or created',
+			'Reuse an idle worktree or create one at the next free slot — the library pool, with the lease given back. Reports whether it reused or created',
 		options: {
 			branch: {
 				description: 'Branch the provisioned worktree ends up on (required)',
 				type: ct.string().optional(),
 			},
 			base: {
-				description: 'Start point for the fresh branch (default: the resolved default branch, then HEAD)',
-				type: ct.string().optional(),
-			},
-			path: {
-				description:
-					'Where a fresh checkout goes when none is free to reuse (default: a sibling of the primary checkout)',
+				description: 'Start point for the fresh branch (default: the resolved default branch)',
 				type: ct.string().optional(),
 			},
 		},
-		run({ branch, ...rest }) {
+		async run({ branch, ...rest }) {
 			try {
 				const opts = {
 					...rest,
 					branch: requireOption(branch, 'branch', 'cyber-mux worktree provision --branch <branch>'),
 				}
-				const primaryRoot = resolvePrimaryRoot(deps.exec)
-				const path = opts.path ?? resolveWorktreePath(primaryRoot, opts.branch)
-				const result = provisionWorktree(deps.exec, primaryRoot, {
-					create: { path, branch: opts.branch, base: opts.base },
-				})
-				const reused = result.reused
-					? {
-							root: result.reused.root,
-							branch: result.reused.branch ?? null,
-							workspace: result.reused.workspace ?? null,
-						}
-					: null
-				output({ action: result.action, root: result.worktree.root, branch: result.worktree.branch, reused }, () =>
+				const primaryRoot = await primaryCheckout(deps.exec)
+				const result = await provisionWorktree(deps.exec, { primaryRoot, branch: opts.branch, base: opts.base })
+				const action = result.reused ? 'reused' : 'created'
+				const worktree = { root: result.worktree, branch: result.branch ?? opts.branch }
+				const reused = result.reused ? { root: result.worktree, branch: result.previousBranch ?? null } : null
+				output({ action, ...worktree, reused }, () =>
 					printFields({
-						action: result.action,
-						root: result.worktree.root,
-						branch: result.worktree.branch,
+						action,
+						...worktree,
 						'reused-from': reused ? (reused.branch ?? '(detached)') : undefined,
-						'reused-workspace': reused?.workspace ?? undefined,
 					}),
 				)
 			} catch (err) {
@@ -1955,14 +1937,14 @@ function worktreeOpenCommand(deps: Deps): MuxCommand {
 			env: ENV_OPTION,
 			label: LABEL_OPTION,
 		},
-		run({ path, env, ...rest }) {
+		async run({ path, env, ...rest }) {
 			try {
 				// Refused before anything runs — no git query, no pane.
 				const opts = { ...rest, env: parseEnv(env), at: rest.at as MuxPlacement | undefined }
-				const primaryRoot = resolvePrimaryRoot(deps.exec)
+				const primaryRoot = await primaryCheckout(deps.exec)
 				const a = adapter(deps)
 				reportOpenedWorktree(
-					openExistingWorktree(deps.exec, a, {
+					await openExistingWorktree(deps.exec, a, {
 						primaryRoot,
 						path,
 						launch: opts.launch,
@@ -1984,24 +1966,27 @@ function worktreeListCommand(deps: Deps): MuxCommand {
 	return muxCommand({
 		name: 'list',
 		description:
-			'Every worktree of the repo, and the workspace each is open in — BRANCH is marked "(*)" for the primary checkout (every other row is a linked worktree) or "(removable)" when the worktree looks disposable (its branch is merged into the default branch, the checkout is clean, and nothing is open in it), and ROOT is marked "(gone)" when the checkout no longer exists on disk(git can prune it)',
-		run() {
+			'Every worktree of the repo, and the workspace each is open in — BRANCH is marked "(*)" for the primary checkout (every other row is a linked worktree) or "(removable)" when `worktree prune --force` would remove it (a slot worktree whose branch is merged into the default branch, whose checkout is clean, and that nothing is open in), and ROOT is marked "(gone)" when the checkout no longer exists on disk(git can prune it)',
+		async run() {
 			try {
-				const primaryRoot = resolvePrimaryRoot(deps.exec)
-				const worktrees = listWorktrees(deps.exec, optionalAdapter(deps), { primaryRoot })
+				const primaryRoot = await primaryCheckout(deps.exec)
+				const worktrees = await listWorktrees(deps.exec, optionalAdapter(deps), { primaryRoot })
+				const outcomes = await pruneUnboundWorktrees(deps.exec, worktrees, { primaryRoot, apply: false })
+				const removable = new Set(outcomes.filter((o) => o.status === 'candidate').map((o) => o.root))
 				output({ worktrees }, () =>
 					printTable(worktrees, [
 						// `linked` is one BIT, so it does not earn a column: the primary checkout — the single
 						// row where it is false — is marked in BRANCH instead. The field itself stays intact in
 						// `--format json`, where a consumer reads the boolean rather than the marker.
-						// `(removable)` is the disposability COMPOSITE — merged AND clean AND unoccupied — compressed to
-						// one word, and it rides on BRANCH because the branch is what carries the work that landed.
-						// Its inputs (`merged`, `dirty`) stay raw and unmarked in `--format json`, where a consumer
-						// composes its own policy rather than inheriting this one.
+						// `(removable)` is the disposability COMPOSITE — prune's own dry run, so the marker and
+						// `worktree prune` can never disagree — compressed to one word, and it rides on BRANCH because
+						// the branch is what carries the work that landed. Its inputs (`merged`, `dirty`) stay raw and
+						// unmarked in `--format json`, where a consumer composes its own policy rather than inheriting
+						// this one.
 						{
 							label: 'branch',
 							get: (w) =>
-								`${w.branch ?? '(detached)'}${w.linked ? (isWorktreeRemovable(w) ? ' (removable)' : '') : ' (*)'}`,
+								`${w.branch ?? '(detached)'}${w.linked ? (removable.has(w.root) ? ' (removable)' : '') : ' (*)'}`,
 						},
 						// `prunable` is likewise one bit, and a rarer one — the marker rides on ROOT because the
 						// path is the thing that is actually gone. `(gone)` is git's own word for a target that
@@ -2023,10 +2008,10 @@ function worktreeRemoveCommand(deps: Deps): MuxCommand {
 		description: 'Remove a git worktree — refuses the primary checkout and uncommitted changes unless --force',
 		arguments: [{ name: 'path', description: 'Worktree path to remove' }],
 		options: { force: { description: 'Discard uncommitted changes in the worktree' } },
-		run({ path, ...opts }) {
+		async run({ path, ...opts }) {
 			try {
-				const primaryRoot = resolvePrimaryRoot(deps.exec)
-				removeWorktree(deps.exec, optionalAdapter(deps), path, { primaryRoot, force: opts.force })
+				const primaryRoot = await primaryCheckout(deps.exec)
+				await removeWorktree(deps.exec, optionalAdapter(deps), path, { primaryRoot, force: opts.force })
 			} catch (err) {
 				reportWorktreeFailure(err)
 			}
@@ -2036,15 +2021,44 @@ function worktreeRemoveCommand(deps: Deps): MuxCommand {
 
 /**
  * The bulk remove — every candidate `worktree list` already marks `(removable)`, gone in one call
- * instead of one `worktree remove` per path.
+ * instead of one `worktree remove` per path. The library's `pruneWorktrees` decides, over the worktrees
+ * no workspace holds; it removes only its own slot worktrees that are unleased, idle, clean, and landed.
  *
  * **Bare form previews, `--force` applies.** The gate is destructive (it discards checkouts,
  * irreversibly), so the default has to be the side-effect-free one — a caller can run this to see
  * what WOULD go, exactly as `template edit`'s bare form lists rather than mutates. `--force` here is
  * "actually do it", not `removeWorktreeSafely`'s "discard uncommitted changes": prune's candidates
- * are already clean by construction (`isWorktreeRemovable` requires `dirty === false`), so there is
- * nothing for that meaning to apply to.
+ * are already clean by construction, so there is nothing for that meaning to apply to.
  */
+/** Why prune left a worktree in place, in this CLI's words. */
+function pruneSkipProse(outcome: PruneOutcome): string {
+	if (outcome.status === 'failed') return 'git refused the removal'
+	switch (outcome.reason) {
+		case 'foreign':
+			return outcome.owner === 'self'
+				? 'not at a slot path'
+				: `owned by ${outcome.owner === 'unknown' ? 'another tool' : outcome.owner}`
+		case 'leased':
+			return 'leased — its holder must release it first'
+		case 'prunable':
+			return 'checkout already gone from disk — run `git worktree prune` to clear it'
+		case 'busy':
+			return 'a live agent session works in it'
+		case 'unverified':
+			return 'could not be checked for live agent sessions'
+		case 'dirty':
+			return 'has uncommitted changes'
+		case 'dirty-unknown':
+			return 'uncommitted changes could not be determined'
+		case 'unmerged':
+			return 'branch has not landed on the default branch — no ancestry, gone-upstream, or squash signal matched'
+		case 'merge-unknown':
+			return 'merge status could not be determined'
+		default:
+			return 'not removable'
+	}
+}
+
 function worktreePruneCommand(deps: Deps): MuxCommand {
 	return muxCommand({
 		name: 'prune',
@@ -2053,16 +2067,23 @@ function worktreePruneCommand(deps: Deps): MuxCommand {
 		options: {
 			force: { description: 'Remove the candidates instead of only previewing them' },
 		},
-		run(opts) {
+		async run(opts) {
 			try {
-				const primaryRoot = resolvePrimaryRoot(deps.exec)
-				const result = pruneWorktrees(deps.exec, primaryRoot, { dryRun: !opts.force })
-				const removed = result.removed.map((entry) => ({ root: entry.root, branch: entry.branch ?? null }))
-				const skipped = result.skipped.map((s) => ({
-					root: s.entry.root,
-					branch: s.entry.branch ?? null,
-					reason: s.reason,
-				}))
+				const primaryRoot = await primaryCheckout(deps.exec)
+				const worktrees = await listWorktrees(deps.exec, optionalAdapter(deps), { primaryRoot })
+				const outcomes = await pruneUnboundWorktrees(deps.exec, worktrees, { primaryRoot, apply: Boolean(opts.force) })
+				const removed = outcomes
+					.filter((o) => o.status === 'candidate' || o.status === 'removed')
+					.map((o) => ({ root: o.root, branch: o.branch ?? null }))
+				const skipped = [
+					// A worktree a workspace holds never reaches the library, which cannot see the binding.
+					...worktrees
+						.filter((w) => w.linked && w.workspace)
+						.map((w) => ({ root: w.root, branch: w.branch ?? null, reason: `open in workspace ${w.workspace}` })),
+					...outcomes
+						.filter((o) => o.status === 'skipped' || o.status === 'failed')
+						.map((o) => ({ root: o.root, branch: o.branch ?? null, reason: pruneSkipProse(o) })),
+				]
 				output({ applied: Boolean(opts.force), removed, skipped }, () => {
 					printTable(removed, [
 						{ label: opts.force ? 'removed' : 'would remove', get: (r) => tildify(r.root) },
