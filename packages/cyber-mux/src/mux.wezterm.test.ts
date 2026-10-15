@@ -54,17 +54,16 @@ describe('spec:cyber-mux/mux/placement', () => {
 
 		// Every wezterm pane belongs to SOME workspace, even the implicit "default" one — unlike tmux,
 		// which has no tier at all to report, this is never absent on any placement.
-		it.each<{ at: MuxPlacement }>([
-			{ at: 'workspace' },
-			{ at: 'tab' },
-			{ at: 'pane:right' },
-		])('placement-wezterm-workspace-never-absent', ({ at }) => {
-			const calls: string[][] = []
-			const exec = fakeExec(calls, { spawn: '9', 'split-pane': '9', list: LIST_ONE })
-			const target = weztermMuxAdapter.open(exec, { cwd: '/unit', at })
-			expect(target.workspace).toBeDefined()
-			expect(typeof target.workspace).toBe('string')
-		})
+		it.each<{ at: MuxPlacement }>([{ at: 'workspace' }, { at: 'tab' }, { at: 'pane:right' }])(
+			'placement-wezterm-workspace-never-absent',
+			({ at }) => {
+				const calls: string[][] = []
+				const exec = fakeExec(calls, { spawn: '9', 'split-pane': '9', list: LIST_ONE })
+				const target = weztermMuxAdapter.open(exec, { cwd: '/unit', at })
+				expect(target.workspace).toBeDefined()
+				expect(typeof target.workspace).toBe('string')
+			},
+		)
 
 		// No scenario in placement.feature pins the --bottom flag itself — left as an extra.
 		it('open() at pane:down splits with --bottom', () => {
@@ -202,16 +201,16 @@ describe('spec:cyber-mux/mux/placement', () => {
 
 		// A ratio is a split concept — a tab or workspace opens with `spawn`, which has no --percent
 		// flag at all, because a window is never sized against a pane.
-		it.each<{ at: MuxPlacement }>([
-			{ at: 'tab' },
-			{ at: 'workspace' },
-		])('placement-wezterm-ratio-not-for-tab-workspace', ({ at }) => {
-			const calls: string[][] = []
-			const exec = fakeExec(calls, { spawn: '9', list: LIST_ONE })
-			weztermMuxAdapter.open(exec, { cwd: '/unit', at, ratio: 0.333 })
-			const spawnCall = calls.find((c) => c[1] === 'spawn')!
-			expect(spawnCall).not.toContain('--percent')
-		})
+		it.each<{ at: MuxPlacement }>([{ at: 'tab' }, { at: 'workspace' }])(
+			'placement-wezterm-ratio-not-for-tab-workspace',
+			({ at }) => {
+				const calls: string[][] = []
+				const exec = fakeExec(calls, { spawn: '9', list: LIST_ONE })
+				weztermMuxAdapter.open(exec, { cwd: '/unit', at, ratio: 0.333 })
+				const spawnCall = calls.find((c) => c[1] === 'spawn')!
+				expect(spawnCall).not.toContain('--percent')
+			},
+		)
 
 		it('placement-from-names-split-target', () => {
 			const calls: string[][] = []

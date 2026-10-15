@@ -90,12 +90,12 @@ describe('spec:cyber-mux/mux/placement', () => {
 			{ adapter: herdrMuxAdapter, floats: false },
 			{ adapter: cmuxMuxAdapter, floats: false },
 			{ adapter: ottyMuxAdapter, floats: false },
-		])('@id:placement-float-declared — $adapter.name declares whether it can open a floating pane', ({
-			adapter,
-			floats,
-		}) => {
-			expect(canFloatPanes(adapter)).toBe(floats)
-		})
+		])(
+			'@id:placement-float-declared — $adapter.name declares whether it can open a floating pane',
+			({ adapter, floats }) => {
+				expect(canFloatPanes(adapter)).toBe(floats)
+			},
+		)
 
 		it('the refusal names the backend it refused', () => {
 			const err = new FloatingPanesUnsupportedError('herdr')

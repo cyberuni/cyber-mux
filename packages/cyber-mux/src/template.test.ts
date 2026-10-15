@@ -81,15 +81,12 @@ describe('spec:cyber-mux/template/apply', () => {
 
 	describe('a name is a lookup key, never a path', () => {
 		// The stem rule is the whole reason a name can never traverse out of the templates directory.
-		it.each([
-			'../../../etc/pwd',
-			'pool/../../out',
-			'Pool-4',
-			'-pool',
-			'pool_4',
-		])('refuses "%s" as a template name', (name) => {
-			expect(isValidTemplateName(name)).toBe(false)
-		})
+		it.each(['../../../etc/pwd', 'pool/../../out', 'Pool-4', '-pool', 'pool_4'])(
+			'refuses "%s" as a template name',
+			(name) => {
+				expect(isValidTemplateName(name)).toBe(false)
+			},
+		)
 
 		it('accepts a plain lower-case stem', () => {
 			for (const name of ['render-farm', 'p3', 'build-trio-2']) expect(isValidTemplateName(name)).toBe(true)
