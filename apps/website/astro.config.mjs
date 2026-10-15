@@ -94,6 +94,7 @@ export default defineConfig({
           items: [
             { label: "Overview", slug: "plugin" },
             { label: "The mux skill", slug: "plugin/mux-skill" },
+            { label: "The setup-tmux skill", slug: "plugin/setup-tmux-skill" },
           ],
         },
         {

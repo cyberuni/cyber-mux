@@ -3,9 +3,12 @@ title: Agent plugin
 description: Install the cyber-mux agent plugin and drive panes with its mux skill from Claude Code, Cursor, Codex, or GitHub Copilot CLI.
 ---
 
-`cyber-mux` also ships as an **agent plugin**. The plugin carries one skill, `mux`, that lets a coding
-agent drive multiplexer panes through the `cyber-mux` CLI: you type a command in the agent session,
-and the agent runs it and reports the result.
+`cyber-mux` also ships as an **agent plugin**. The plugin carries two skills:
+
+- `mux` lets a coding agent drive multiplexer panes through the `cyber-mux` CLI: you type a command in
+  the agent session, and the agent runs it and reports the result.
+- `setup-tmux` configures tmux to look and behave like herdr. See
+  [The setup-tmux skill](/cyber-mux/plugin/setup-tmux-skill/).
 
 The plugin follows the [Agent Plugins Specification](https://agent-plugins.org). One manifest,
 `packages/cyber-mux/plugin.json`, generates the vendor manifests, so the same skill loads in every
@@ -104,5 +107,6 @@ the skill finds the CLI, and more examples.
 ## Next steps
 
 - [The mux skill](/cyber-mux/plugin/mux-skill/): invocation, commands, and examples.
+- [The setup-tmux skill](/cyber-mux/plugin/setup-tmux-skill/): a herdr-style tmux config.
 - [CLI Reference](/cyber-mux/cli/): every command and flag the skill can pass through.
 - [AXI](/cyber-mux/concepts/axi/): the output contract behind `--format agent`.
