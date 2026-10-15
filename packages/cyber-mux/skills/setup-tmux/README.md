@@ -5,7 +5,7 @@ and a sidebar of workspaces and agents.
 
 ## When to use
 
-Run `/cyber-mux:setup-tmux`, or ask the agent to set up tmux like herdr. It asks before replacing
+Run `/cyber-mux:setup-tmux` (pnpm install: `pnpm-cyber-mux-setup-tmux`), or ask the agent to set up tmux like herdr. It asks before replacing
 an existing config and backs up whatever it replaces.
 
 ## What you get
