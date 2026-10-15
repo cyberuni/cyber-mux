@@ -15,8 +15,8 @@ Pass the invocation through to the `cyber-mux` CLI and report the result.
 - The user asks to detect the multiplexer, or to open, send to, read, wait on, focus, list, or close a
   pane, nudge a peer pane, or open a git worktree in a new pane, through cyber-mux.
 
-Out of scope: editing cyber-mux source, configuring a multiplexer, and driving a multiplexer with its
-own CLI (`tmux`, `herdr`, …) instead of cyber-mux.
+Out of scope: editing cyber-mux source, configuring a multiplexer (for tmux, use the `setup-tmux`
+skill), and driving a multiplexer with its own CLI (`tmux`, `herdr`, …) instead of cyber-mux.
 
 ## Workflow
 
