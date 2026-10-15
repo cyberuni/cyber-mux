@@ -11,7 +11,7 @@ Install a tmux config that matches herdr's defaults, plus the sidebar script it 
 ## When to use
 
 - The user asks to set up or configure tmux, or to make tmux look or behave like herdr.
-- The user invokes `/setup-tmux` (`/cyber-mux:setup-tmux`).
+- The user invokes `/setup-tmux` (`/cyber-mux:setup-tmux` (pnpm install: `pnpm-cyber-mux-setup-tmux`)).
 
 Out of scope: driving panes (use the `mux` skill), and configuring herdr itself.
 
