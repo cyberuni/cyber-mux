@@ -25,7 +25,7 @@ importers:
         version: 41.0.0
       '@cucumber/messages':
         specifier: ^34.1.0
-        version: 34.1.0
+        version: 34.2.1
       '@repobuddy/biome':
         specifier: ^2.3.1
         version: 2.3.1(@biomejs/biome@2.5.15)
@@ -543,8 +543,8 @@ packages:
   '@cucumber/messages@33.0.4':
     resolution: {integrity: sha512-i6P1a0bnmhecOHfvIW0rhMxv/gMKfBKwDMxmD9/Uo1HSqpQ17ocHms1JwWW6uTMLAopqqWlcz7l6Pax+qUOTzg==}
 
-  '@cucumber/messages@34.1.0':
-    resolution: {integrity: sha512-L8bSi+A+HDeP/WvlrqPFKUG7uqq8G+BnbUGE7CSCrFsaaXhtvUyR61hvfKRBDzd0puVhQGYgjURehPIF1IXO6Q==}
+  '@cucumber/messages@34.2.1':
+    resolution: {integrity: sha512-aj2iCAG9ZOpMVcMxcgShifv5fbR96b7SMgdWcPXXh2QbFp7OEcAnQ5MC5YfWUDSDasmw7FU5NJEsOrXdTQOU1A==}
 
   '@cyberuni/agent-harness@0.6.0':
     resolution: {integrity: sha512-ELy0pcHiRb9vjaVymBIvCQTDaQTOyliVKEx3MdpiDLeaGAYkhBwgCfoIa/ov/hPFxed4gQdYLBv6O3UTNgr78A==}
@@ -3989,7 +3989,7 @@ snapshots:
 
   '@cucumber/messages@33.0.4': {}
 
-  '@cucumber/messages@34.1.0': {}
+  '@cucumber/messages@34.2.1': {}
 
   '@cyberuni/agent-harness@0.6.0(typescript@6.0.3)':
     dependencies:
