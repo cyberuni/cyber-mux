@@ -80,10 +80,10 @@ importers:
     dependencies:
       '@cyberuni/agent-harness':
         specifier: ^0.7.0
-        version: 0.7.0(clibuilder@12.0.0(js-yaml@4.3.0))
+        version: 0.7.0(clibuilder@12.1.0(js-yaml@4.3.0))
       clibuilder:
         specifier: ^12.0.0
-        version: 12.0.0(js-yaml@4.3.0)
+        version: 12.1.0(js-yaml@4.3.0)
     devDependencies:
       '@types/node':
         specifier: ^24.10.1
@@ -1699,8 +1699,8 @@ packages:
   argparse@2.0.1:
     resolution: {integrity: sha512-8+9WqebbFzpX9OR+Wa6O29asIogeRMzcGtAINdpMHHyAg10f05aSFVBbcEqGf/PXw1EjAZ+q2/bEBg3DvurK3Q==}
 
-  args-minus@0.2.0:
-    resolution: {integrity: sha512-WnIUyzhO4me3xx841rxfCU2C/PMpD+M1MraKb8hF2aGY4xS67bSV2EhpmegLlFM0UV11+hV9uHPbNHnH7ypL0w==}
+  args-minus@0.2.1:
+    resolution: {integrity: sha512-ijdDYmXdl+XomAeOnIst6re1U4ezqaP7vnS1raonj7PaxKMi4he37ZBK7nndlc6Ii/DLomsm16CnhaNCKr8Riw==}
     engines: {node: '>=20'}
 
   argue-cli@3.1.0:
@@ -1799,8 +1799,8 @@ packages:
     resolution: {integrity: sha512-W84b3U2iR1g4ZIRU3ckmfHrSR2LIKNggQgUY9Thuke7UJBle6/+Yo/RgFbheuyJxgTj+NroxtUBwYLlTkLCa3g==}
     engines: {node: '>= 20.19'}
 
-  clibuilder@12.0.0:
-    resolution: {integrity: sha512-k4scud2B6EFqzVmxmTVQMiW4xu9KzxV9+KVIPQVJeJFqg735a0H2iDMGFMIsHQVNdxwLqPjmNiK4CEUU5ZxNfA==}
+  clibuilder@12.1.0:
+    resolution: {integrity: sha512-DqI6o/1AaGIAnp2zs7GF4FgaMzgS1cC/oQS8Ms1WmLdFc6Uz7/f+UQbT5+SJj0fP71tVyN9KN1DfKZ8v7zg17A==}
     engines: {node: '>= 20.19'}
     peerDependencies:
       js-yaml: ^4.1.0
@@ -3999,9 +3999,9 @@ snapshots:
     transitivePeerDependencies:
       - typescript
 
-  '@cyberuni/agent-harness@0.7.0(clibuilder@12.0.0(js-yaml@4.3.0))':
+  '@cyberuni/agent-harness@0.7.0(clibuilder@12.1.0(js-yaml@4.3.0))':
     optionalDependencies:
-      clibuilder: 12.0.0(js-yaml@4.3.0)
+      clibuilder: 12.1.0(js-yaml@4.3.0)
 
   '@emmetio/abbreviation@2.3.3':
     dependencies:
@@ -4884,7 +4884,7 @@ snapshots:
 
   argparse@2.0.1: {}
 
-  args-minus@0.2.0: {}
+  args-minus@0.2.1: {}
 
   argue-cli@3.1.0: {}
 
@@ -5055,10 +5055,10 @@ snapshots:
     transitivePeerDependencies:
       - typescript
 
-  clibuilder@12.0.0(js-yaml@4.3.0):
+  clibuilder@12.1.0(js-yaml@4.3.0):
     dependencies:
       '@toon-format/toon': 4.1.1
-      args-minus: 0.2.0
+      args-minus: 0.2.1
     optionalDependencies:
       js-yaml: 4.3.0
 
