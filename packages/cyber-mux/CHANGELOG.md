@@ -1,5 +1,11 @@
 # cyber-mux
 
+## 0.10.1
+
+### Patch Changes
+
+- 4e9601c: Move the worktree library from `@cyberuni/agent-harness` to `cyber-agentkit` 1.0.0. `cyber-mux/worktree` re-exports the same symbols from `cyber-agentkit/worktrees`. The lease marker is now `cyber-agentkit`; release cyber-mux together with cyberlegion.
+
 ## 0.10.0
 
 ### Minor Changes
