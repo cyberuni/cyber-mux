@@ -80,10 +80,10 @@ importers:
     dependencies:
       clibuilder:
         specifier: ^12.0.0
-        version: 12.0.0(js-yaml@4.3.0)
+        version: 12.0.0(js-yaml@4.3.2)
       cyber-agentkit:
         specifier: ^1.0.0
-        version: 1.0.0(clibuilder@12.0.0(js-yaml@4.3.0))
+        version: 1.0.0(clibuilder@12.0.0(js-yaml@4.3.2))
     devDependencies:
       '@types/node':
         specifier: ^24.10.1
@@ -2258,8 +2258,8 @@ packages:
   js-tokens@4.0.0:
     resolution: {integrity: sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ==}
 
-  js-yaml@4.3.0:
-    resolution: {integrity: sha512-1td788aAnnZ5qs7V2QIRl1owjtYpbKt749Y3xauqQgwIIGF/xXWz1wMTEBx5O3LK3lXLVuqXPdPxj2BoFHaW9Q==}
+  js-yaml@4.3.2:
+    resolution: {integrity: sha512-SFNOvSJ+Dgf/9An904Yx+CgSlIPCkIpao4qo51lpee25TIRejdH3rhR4EZMGoNx3/TP3O+wzWuiTFl4sqbltzA==}
     hasBin: true
 
   json-parse-even-better-errors@2.3.1:
@@ -3624,7 +3624,7 @@ snapshots:
       hast-util-to-string: 3.0.1
       hastscript: 9.0.1
       i18next: 26.3.6(typescript@6.0.3)
-      js-yaml: 4.3.0
+      js-yaml: 4.3.2
       klona: 2.0.6
       magic-string: 1.4.3
       mdast-util-directive: 3.1.0(supports-color@8.1.1)
@@ -5036,7 +5036,7 @@ snapshots:
     dependencies:
       find-installed-packages: 4.0.1
       import-meta-resolve: 4.2.0
-      js-yaml: 4.3.0
+      js-yaml: 4.3.2
       jsonc-parser: 3.3.1
       pad-right: 0.2.2
       search-packages: 2.2.3
@@ -5051,12 +5051,12 @@ snapshots:
     transitivePeerDependencies:
       - typescript
 
-  clibuilder@12.0.0(js-yaml@4.3.0):
+  clibuilder@12.0.0(js-yaml@4.3.2):
     dependencies:
       '@toon-format/toon': 4.1.1
       args-minus: 0.2.0
     optionalDependencies:
-      js-yaml: 4.3.0
+      js-yaml: 4.3.2
 
   cliui@9.0.1:
     dependencies:
@@ -5108,7 +5108,7 @@ snapshots:
     dependencies:
       env-paths: 2.2.1
       import-fresh: 3.3.1
-      js-yaml: 4.3.0
+      js-yaml: 4.3.2
       parse-json: 5.2.0
     optionalDependencies:
       typescript: 6.0.3
@@ -5145,9 +5145,9 @@ snapshots:
     dependencies:
       css-tree: 2.2.1
 
-  cyber-agentkit@1.0.0(clibuilder@12.0.0(js-yaml@4.3.0)):
+  cyber-agentkit@1.0.0(clibuilder@12.0.0(js-yaml@4.3.2)):
     optionalDependencies:
-      clibuilder: 12.0.0(js-yaml@4.3.0)
+      clibuilder: 12.0.0(js-yaml@4.3.2)
 
   debug@4.4.3(supports-color@8.1.1):
     dependencies:
@@ -5522,7 +5522,7 @@ snapshots:
 
   js-tokens@4.0.0: {}
 
-  js-yaml@4.3.0:
+  js-yaml@4.3.2:
     dependencies:
       argparse: 2.0.1
 
