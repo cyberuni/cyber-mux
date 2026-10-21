@@ -13,7 +13,7 @@ Feature: cyber-mux worktree — the CLI worktree surface
     When add runs
     Then the worktree is checked out at <parent>/<repo>.worktrees/<repo>-<n>, never nested inside the primary checkout
     And <n> is the lowest slot no worktree of the repo holds and nothing occupies on disk
-    # The slot path is the library's (@cyberuni/agent-harness/worktrees slotPath), so its prune and
+    # The slot path is the library's (cyber-agentkit/worktrees slotPath), so its prune and
     # reuse recognize the checkout as their own. The older <repo>.worktrees/<branch> naming is left to
     # age out, not adopted (agent-harness#73 item 4).
 
@@ -58,7 +58,7 @@ Feature: cyber-mux worktree — the CLI worktree surface
     # need not sit at a slot path.
 
   # ── worktree provision — reuse an idle worktree, else create, through the library's acquire ──
-  # The verb wires @cyberuni/agent-harness/worktrees acquire with its default gates: it reuses one of the
+  # The verb wires cyber-agentkit/worktrees acquire with its default gates: it reuses one of the
   # library's own slot worktrees that is unleased, idle, clean, and landed, else creates one at the
   # next free slot. A one-shot verb has no later moment to release, so it gives the lease straight
   # back. The CLI cannot inject a predicate or choose a path; a host needing either calls acquire.

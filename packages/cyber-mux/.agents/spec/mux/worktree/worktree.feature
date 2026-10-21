@@ -3,7 +3,7 @@ Feature: worktree seam — the library git-worktree contract
   The surface-independent worktree helpers cyber-mux keeps: removeWorktreeSafely, the git worktree
   adapter, and the worktreeApi built on them. git owns every worktree fact; a backend contributes only
   the workspace binding, and removal is never delegated to it. Listing, the merged/dirty/landed
-  signals, reuse (acquire), and prune are now specified by @cyberuni/agent-harness/worktrees, which
+  signals, reuse (acquire), and prune are now specified by cyber-agentkit/worktrees, which
   cyber-mux/worktree re-exports. This suite is the LIBRARY seam only — the `cyber-mux worktree ...`
   CLI surface (verbs, flags, table rendering) lives in ../../cli/worktree/worktree.feature.
 

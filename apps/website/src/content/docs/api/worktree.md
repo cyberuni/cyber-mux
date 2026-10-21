@@ -4,7 +4,7 @@ description: The cyber-mux/worktree entry — the async worktree library, the mu
 ---
 
 The `cyber-mux/worktree` subpath is the git-worktree adapter. The worktree logic lives in
-[`@cyberuni/agent-harness/worktrees`](https://github.com/cyberuni/agent-harness) (v0.7.0 and later),
+[`cyber-agentkit/worktrees`](https://github.com/cyber-uni/cyber-agentkit) (v0.7.0 and later),
 and this entry re-exports it, then adds the multiplexer binding and cyber-mux's own removal gates.
 Worktree *facts* (path, branch, landed, dirty) are always read from git on every backend — a
 multiplexer only contributes the [workspace binding](#binding-a-worktree-to-a-workspace).
@@ -22,7 +22,7 @@ import {
 } from 'cyber-mux/worktree'
 ```
 
-## The library — `@cyberuni/agent-harness/worktrees`
+## The library — `cyber-agentkit/worktrees`
 
 The library is async and takes its runner per call. Re-exported unchanged: `acquire` / `release` /
 `explain` with a git-lock lease, `primaryRoot`, `listWorktrees`, `pruneWorktrees`, `removeWorktree`,

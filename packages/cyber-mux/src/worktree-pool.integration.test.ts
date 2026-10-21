@@ -7,7 +7,7 @@ import type { Exec } from './exec.ts'
 import { acquire, muxWorktreeCreator, release, slotPath, toHarnessExec } from './worktree-pool.ts'
 
 /**
- * `acquire` from `@cyberuni/agent-harness/worktrees`, driven against real git through cyber-mux's own
+ * `acquire` from `cyber-agentkit/worktrees`, driven against real git through cyber-mux's own
  * synchronous runner and creator — the integration the re-export exists for. No multiplexer: the
  * herdr bind is covered by the unit suite; this proves the library accepts what cyber-mux hands it.
  */

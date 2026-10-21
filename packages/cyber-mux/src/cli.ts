@@ -1,6 +1,6 @@
 import { join } from 'node:path'
-import type { PruneOutcome } from '@cyberuni/agent-harness/worktrees'
 import { cli, t as ct } from 'clibuilder'
+import type { PruneOutcome } from 'cyber-agentkit/worktrees'
 import pkg from '../package.json' with { type: 'json' }
 import { AgentLifecycleUnsupportedError, deriveAgentWait } from './agent.ts'
 import { AgentWaitStatesUnsupportedError } from './agent-states.ts'

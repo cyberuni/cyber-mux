@@ -13,7 +13,7 @@ exist, how each defaults its flags, how it groups an opened checkout in a worksp
 binds, and how it renders git's facts into the human table and the structured payload. The
 surface-independent contract those verbs call is two layers: cyber-mux's own `removeWorktreeSafely`
 and `gitWorktreeAdapter` in the [`mux/worktree/`](../../mux/worktree/README.md) seam, and the async
-library `@cyberuni/agent-harness/worktrees` (listing, the merged / dirty / landed signals, `acquire`
+library `cyber-agentkit/worktrees` (listing, the merged / dirty / landed signals, `acquire`
 reuse, `removeWorktree`, prune). This node does not restate either, it drives them.
 
 The surface split exists because the CLI and the library **diverge in what they expose**: a verb
@@ -24,7 +24,7 @@ surface earns its own.
 ### Non-goals
 
 - **The library contract itself** — what `acquire` guarantees on reuse, how the landed signal is
-  computed, how prune decides. Those live in `@cyberuni/agent-harness/worktrees`. How
+  computed, how prune decides. Those live in `cyber-agentkit/worktrees`. How
   `removeWorktreeSafely` orders its gates against the binding release is the cyber-mux seam's, in
   [`mux/worktree/`](../../mux/worktree/README.md).
 - **Where a pane lands and what `open` reports back** — that is [`mux/placement/`](../../mux/placement/README.md)'s
