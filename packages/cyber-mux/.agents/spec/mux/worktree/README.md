@@ -20,7 +20,7 @@ delegated to the backend. Because the contract is the same however it is reached
 CLI verbs and a host calling the functions directly — rest on it.
 
 Listing, the merged / dirty / landed signals, reuse (`acquire`), and prune **moved to
-`@cyberuni/agent-harness/worktrees`** (v0.7.0), which `cyber-mux/worktree` re-exports. That behavior
+`cyber-agentkit/worktrees`** (v0.7.0), which `cyber-mux/worktree` re-exports. That behavior
 is specified there, not here; cyber-mux's old `listWorktreesFromGit`, `isWorktreeRemovable`,
 `provisionWorktree`, `pruneWorktrees`, and the layered landed-signal stack were deleted with it.
 
@@ -29,7 +29,7 @@ is specified there, not here; cyber-mux's old `listWorktreesFromGit`, `isWorktre
 - **The CLI presentation** — how a verb defaults its flags, groups an opened checkout, or renders
   git's facts into a `(*)` / `(gone)` / `(removable)` marked table. That is a **surface** concern and
   lives in [`cli/worktree/`](../../cli/worktree/README.md).
-- **Listing, disposability signals, reuse, and prune** — owned by `@cyberuni/agent-harness/worktrees`.
+- **Listing, disposability signals, reuse, and prune** — owned by `cyber-agentkit/worktrees`.
 - **Any worktree fact a backend reports of its own** — git answers those on every backend, so a
   multiplexer is never asked.
 
@@ -67,7 +67,7 @@ business; the worktree **binding** is a different question and neither answers f
 graph TD
   S["a worktree seam call"] --> SV{"which function"}
   SV -->|"session-layer listing"| GITF["path, branch, linked, prunable, merged, dirty from git via the library; only the binding from the backend"]
-  GITF -.->|"signals, reuse, prune"| LIB["specified by @cyberuni/agent-harness/worktrees"]
+  GITF -.->|"signals, reuse, prune"| LIB["specified by cyber-agentkit/worktrees"]
   SV -->|"removeWorktreeSafely"| GATES{"gates"}
   GATES -->|"primary checkout"| RREJ["refused, even with force"]
   GATES -->|"dirty and no force"| DREJ["refused, releaseBinding never called"]
@@ -81,7 +81,7 @@ graph TD
 ## Scenario map
 
 Every scenario in [`worktree.feature`](./worktree.feature), one row each, grouped by use case. Reuse,
-prune, and the merged / dirty / landed signals are scenarios of `@cyberuni/agent-harness/worktrees`.
+prune, and the merged / dirty / landed signals are scenarios of `cyber-agentkit/worktrees`.
 
 ### the worktree facts are git's
 

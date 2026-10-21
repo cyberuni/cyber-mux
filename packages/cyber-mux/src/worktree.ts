@@ -4,7 +4,7 @@ import { type Exec, nodeExec } from './exec.ts'
 
 /** Generic worktree seam — no host-specific concepts. */
 
-// The worktree library, `@cyberuni/agent-harness/worktrees` — facts, leases, reuse, prune, and single
+// The worktree library, `cyber-agentkit/worktrees` — facts, leases, reuse, prune, and single
 // remove — and the mux binding offered to it as its creator. The synchronous helpers below are the
 // pieces it has no equivalent for: creating at a caller-chosen path, and cyber-mux's remove gates.
 export * from './worktree-pool.ts'
@@ -80,7 +80,7 @@ export const gitWorktreeAdapter: WorktreeAdapter = {
 }
 
 /**
- * @deprecated Use `primaryRoot({ exec })` from `@cyberuni/agent-harness/worktrees` (re-exported here).
+ * @deprecated Use `primaryRoot({ exec })` from `cyber-agentkit/worktrees` (re-exported here).
  *
  * Resolve the primary checkout's root regardless of whether the caller's cwd is the primary
  * checkout or a linked worktree — `--git-common-dir` always points at the main repo's `.git`.

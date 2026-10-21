@@ -3,12 +3,12 @@ import {
 	gitWorktreeCreator,
 	type Exec as HarnessExec,
 	type WorktreeCreator,
-} from '@cyberuni/agent-harness/worktrees'
+} from 'cyber-agentkit/worktrees'
 import { type Exec, nodeExec } from './exec.ts'
 import type { MuxAdapter, WorktreeWorkspace } from './mux.ts'
 
 /**
- * The leased worktree pool, from `@cyberuni/agent-harness/worktrees` — the library the worktree logic
+ * The leased worktree pool, from `cyber-agentkit/worktrees` — the library the worktree logic
  * moved to (cyberuni/agent-harness#62): facts, ownership, leases, the process probe, prune, and
  * `.worktreeinclude` seeding. Re-exported here so a `cyber-mux/worktree` consumer reaches it through
  * one import, and so the one mux-specific piece it needs, `muxWorktreeCreator`, sits beside it.
@@ -94,7 +94,7 @@ export {
 	type WorktreeOwnerKind,
 	type WorktreeVerdict,
 	worktreesDir,
-} from '@cyberuni/agent-harness/worktrees'
+} from 'cyber-agentkit/worktrees'
 
 /**
  * Lift cyber-mux's synchronous `Exec` onto the library's async one, so a caller drives both halves

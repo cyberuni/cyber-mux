@@ -14,7 +14,7 @@ import {
 	slotNumber,
 	slotPath,
 	type WorktreeEntry,
-} from '@cyberuni/agent-harness/worktrees'
+} from 'cyber-agentkit/worktrees'
 import type { Exec } from './exec.ts'
 import type { MuxAdapter, MuxPlacement, MuxTarget, OpenedPane } from './mux.ts'
 import { assertDistinctFromPrimary, gitWorktreeAdapter, type Worktree, WorktreeGitError } from './worktree.ts'
