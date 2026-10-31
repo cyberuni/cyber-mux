@@ -56,7 +56,8 @@
 		".claude-plugin/plugin.json",
 		".cursor-plugin/plugin.json",
 		".codex-plugin/plugin.json",
-		"com.github.copilot/"
+		"com.github.copilot/",
+		"CHANGELOG.md"
 	],
 	"scripts": {
 		"build": "tsdown",
