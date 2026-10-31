@@ -22,11 +22,5 @@ allowBuilds:
 # it out or pinning an older mature version; an exclusion is a dated exception that
 # should carry its reason and the date it becomes removable.
 minimumReleaseAge: 1440 # 1 day
-minimumReleaseAgeExclude:
-  # min-release-age: lift clibuilder@12.0.0 until 2026-10-13T01:00:00Z
-  - 'clibuilder@12.0.0'
-  # min-release-age: lift args-minus@0.2.0 until 2026-10-12T11:00:00Z
-  - 'args-minus@0.2.0'
-  # min-release-age: lift cyber-agentkit@1.0.0 until 2026-10-22T08:00:00Z
-  - 'cyber-agentkit@1.0.0'
+minimumReleaseAgeExclude: []
 minimumReleaseAgeStrict: true
