@@ -34,7 +34,7 @@ skill), and driving a multiplexer with its own CLI (`tmux`, `herdr`, …) instea
    elif { [ -f bun.lock ] || [ -f bun.lockb ]; } && bunx cyber-mux --version >/dev/null 2>&1; then
      CMD="bunx cyber-mux"
    else
-     CMD="npx --yes cyber-mux@0.10.1"
+     CMD="npx --yes cyber-mux@0.10.2"
    fi
    ```
 
