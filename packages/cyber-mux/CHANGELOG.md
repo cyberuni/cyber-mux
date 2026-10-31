@@ -1,5 +1,11 @@
 # cyber-mux
 
+## 0.10.2
+
+### Patch Changes
+
+- fc0382d: Include `CHANGELOG.md` in the published package.
+
 ## 0.10.1
 
 ### Patch Changes
