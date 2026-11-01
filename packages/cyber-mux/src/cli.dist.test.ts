@@ -1,6 +1,7 @@
 /// <reference types="node" />
 
 import { spawnSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
@@ -68,6 +69,16 @@ describe('spec:cyber-mux/cli — built bin', () => {
 		const r = cyberMux('read', '--lines', '5', '%1')
 		expect(r.status).toBe(1)
 		expect(r.stdout).toContain('no-mux')
+	})
+
+	it('is self-contained: the bundle imports only node builtins', () => {
+		// An installed agent plugin directory has no `node_modules`, so the bin cannot resolve any package.
+		const source = readFileSync(join(pkgDir, 'dist', 'cli.mjs'), 'utf8')
+		const specifiers = [...source.matchAll(/^\s*(?:import|export)\b[^'"]*?\bfrom\s*['"]([^'"]+)['"]/gm)].map(
+			(m) => m[1] ?? '',
+		)
+		const dynamic = [...source.matchAll(/\bimport\(\s*['"]([^'"]+)['"]\s*\)/g)].map((m) => m[1] ?? '')
+		expect([...specifiers, ...dynamic].filter((s) => !s.startsWith('node:'))).toEqual([])
 	})
 
 	it('reports its package version', () => {

@@ -2506,6 +2506,13 @@ Decisions (`clibuilder-mux-plugin` — replace commander with clibuilder, and mo
 - **the plugin is a subpath** — DECIDED: `activate` ships from `cyber-mux/plugin`, not the package
   root, so importing the library never loads clibuilder. The plugin mounts the same `muxCommands()`
   list the binary mounts, under `mux`, and names the host in every usage-error fix.
+- **the bin is self-contained; clibuilder is an optional peer** — DECIDED: an installed agent plugin
+  directory is a copy of the package with no `node_modules`, so `dist/cli.mjs` is built by its own
+  tsdown config that inlines every runtime dependency into one file. The library entries keep
+  dependencies external. `clibuilder` is an optional peer plus a devDependency, because only
+  `cyber-mux/plugin` imports it and it must use the host's copy. `cyber-agentkit` stays a dependency
+  because `cyber-mux/worktree` imports it at runtime. `cli.dist.test.ts` asserts the bundle imports
+  only `node:` builtins.
 - **help text is verified out of process** — DECIDED: clibuilder prints help through a console that
   standard-log binds once per process, so no in-process spy observes it. The bare-group and `--help`
   output is asserted against the built bin in `cli.dist.test.ts`. The unit suite asserts only their

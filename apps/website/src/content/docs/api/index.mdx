@@ -18,8 +18,10 @@ process-owning surface is structurally unreachable from every import path below.
 npm install cyber-mux
 ```
 
-`cyber-mux` is ESM-only and ships its own types (`.d.mts`). It has one runtime dependency
-(`clibuilder`, used by the CLI and the `mux` plugin); the library entries pull in none of it.
+`cyber-mux` is ESM-only and ships its own types (`.d.mts`). It has one runtime dependency,
+`cyber-agentkit`, which `cyber-mux/worktree` and `cyber-mux/template` load for the worktree pool.
+`clibuilder` is an optional peer: only the `mux` plugin needs it, and it uses the host CLI's copy. The
+`cyber-mux` binary is self-contained and needs neither.
 
 ## Entry points
 
