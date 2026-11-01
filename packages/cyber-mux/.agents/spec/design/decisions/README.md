@@ -2510,7 +2510,9 @@ Decisions (`clibuilder-mux-plugin` — replace commander with clibuilder, and mo
   directory is a copy of the package with no `node_modules`, so `dist/cli.mjs` is built by its own
   tsdown config that inlines every runtime dependency into one file. The library entries keep
   dependencies external. `clibuilder` is an optional peer plus a devDependency, because only
-  `cyber-mux/plugin` imports it and it must use the host's copy. `cyber-agentkit` stays a dependency
+  `cyber-mux/plugin` imports it and it must use the host's copy. The range starts at 12.1.0: a plugin
+  and a host holding different clibuilder copies work together only from there, because args-minus
+  0.2.1 checks descriptors by a `Symbol.for` brand where 0.2.0 checked the prototype. `cyber-agentkit` stays a dependency
   because `cyber-mux/worktree` imports it at runtime. `cli.dist.test.ts` asserts the bundle imports
   only `node:` builtins.
 - **help text is verified out of process** — DECIDED: clibuilder prints help through a console that
