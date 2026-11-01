@@ -56,7 +56,7 @@ describe('spec:cyber-mux/library — published surface', () => {
 		})
 
 		it('emits non-empty .d.mts declarations for every entry (dts: true actually produced types)', () => {
-			for (const entry of ['index', 'worktree', 'template', 'agent', 'cli']) {
+			for (const entry of ['index', 'worktree', 'template', 'agent', 'plugin']) {
 				expect(statSync(`dist/${entry}.d.mts`).size).toBeGreaterThan(200)
 			}
 		})
