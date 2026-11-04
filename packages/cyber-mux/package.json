@@ -86,7 +86,7 @@
 		"provenance": true
 	},
 	"dependencies": {
-		"cyber-agentkit": "^1.0.0"
+		"cyber-agentkit": "^2.0.0"
 	},
 	"peerDependencies": {
 		"clibuilder": "^12.1.0"
