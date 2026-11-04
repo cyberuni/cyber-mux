@@ -1,5 +1,12 @@
 # cyber-mux
 
+## 0.10.3
+
+### Patch Changes
+
+- 664db5a: Move the `cyber-agentkit` dependency to `^2.0.0`. The `cyber-agentkit/worktrees` surface that `cyber-mux` uses is unchanged.
+- 5a8ca43: The `cyber-mux` binary now bundles its dependencies, so it runs from an installed agent plugin directory that has no `node_modules`. `clibuilder` moves from `dependencies` to an optional peer dependency. Only `cyber-mux/plugin` needs it, and it uses the host CLI's copy.
+
 ## 0.10.2
 
 ### Patch Changes
