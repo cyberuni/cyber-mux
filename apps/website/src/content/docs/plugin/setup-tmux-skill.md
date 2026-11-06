@@ -23,6 +23,11 @@ herdr.
 | --- | --- |
 | `~/.tmux.conf` | Keys, theme, tab row, mode bar, and the hooks that manage the sidebar |
 | `~/.config/tmux/herdr.sh` | Draws the sidebar and keeps it sized and cleaned up |
+| `~/.config/tmux/cyber-mux.conf` | The back key, `prefix+B`; loaded by `~/.tmux.conf` |
+| `~/.config/tmux/cyber-mux.sh` | Finds and runs cyber-mux for a key binding |
+
+To keep your own tmux config, ask for the back key alone. The skill adds one `source-file` line
+to your config, after a backup, and asks before taking over a key you already bound.
 
 A herdr workspace maps to a tmux session, a tab to a window, and a pane to a pane.
 
@@ -36,6 +41,10 @@ A herdr workspace maps to a tmux session, a tab to a window, and a pane to a pan
   branch and ahead/behind counts, then each agent with its state: ◐ working, ✓ done and not yet
   seen, ○ idle. Click a row to jump to it. `prefix+b` turns it on or off everywhere.
 - **Pane labels:** shown only on split windows; set one with `prefix+P`.
+- **Back key:** `prefix+B` runs `cyber-mux focus --back` and returns to the pane you jumped
+  from. It runs in the tmux server, so it works while the agent in the pane is mid-turn and costs
+  no model turn. It finds cyber-mux without your shell's PATH; if it cannot, it says so and names
+  `CYBER_MUX_BIN`.
 
 | Action | Key (after `ctrl+b`) |
 | --- | --- |
@@ -50,6 +59,7 @@ A herdr workspace maps to a tmux session, a tab to a window, and a pane to a pan
 | Workspace navigation / goto picker | `w` / `g` |
 | Detach / jump to the tab that rang | `q` / `o` |
 | Toggle sidebar / help / settings / reload | `b` / `?` / `s` / `R` |
+| Back to the pane you jumped from | `B` |
 
 herdr's prefix-free chords also work: `ctrl+alt` with `h` `j` `k` `l`, `[`, `]`, `c`, `d`, `D`,
 and `z`.
@@ -58,6 +68,9 @@ and `z`.
 
 - **Agent state is inferred.** A braille spinner in a pane title means working; a bell means done.
   tmux cannot see herdr's "blocked" state.
+- **The back key follows cyber-mux jumps only.** It returns along jumps made with
+  `cyber-mux focus`; a sidebar click or a tmux pane move is not recorded, and the key reports
+  `no jump into <pane>`. For tmux's own last pane, use `prefix+;`.
 - **Agents are recognized by name:** claude, codex, gemini, opencode, amp, and a few others.
 - **No pane gaps or outer frame.** tmux draws shared borders only.
 - **Layout cycling is unbound** (`prefix+Space`, `prefix+Alt+1`–`5`) because it would squash the
