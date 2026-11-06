@@ -1,5 +1,12 @@
 # cyber-mux
 
+## 0.11.0
+
+### Minor Changes
+
+- 0a52cbd: Follow the AXI conventions of clibuilder 12.2: a bare `cyber-mux` now answers with a home view (`bin`, `description`, the multiplexer, the live panes or `panes: none`, the verbs, and next steps) instead of a usage error, and every command carries `examples` that show in its `--help`. Requires `clibuilder` `^12.2.0`.
+- 2e48069: Record jump history and add `cyber-mux focus --back`. Every focus, through the CLI or the library (`MuxAdapter.focus`, `resolveMux().focus`), records the target pane as entered from the pane the focus ran in. `focus --back` follows that link for the pane it runs in: the latest jump into a pane wins, back records nothing, closed panes are skipped, and links from an earlier run of the multiplexer server are ignored. The history lives in `~/.agents/cyber-mux/jumps.json` (or `$CYBER_MUX_STATE_DIR/jumps.json`). The library exports `focusBack`, `focusAndRecord`, `recordJump`, `withJumpHistory`, and the `JumpStore` file seam.
+
 ## 0.10.3
 
 ### Patch Changes
