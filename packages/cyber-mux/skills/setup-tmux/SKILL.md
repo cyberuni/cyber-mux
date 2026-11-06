@@ -48,7 +48,7 @@ It looks in this order:
    `set-environment -g CYBER_MUX_BIN '/path/to/cyber-mux'`.
 2. `cyber-mux` on the server's PATH, then in the per-user bin directories: pnpm, mise shims,
    `~/.local/bin`, `~/bin`, volta, bun, `~/.npm-global/bin`, and the newest nvm, mise, or fnm node.
-3. `npx --yes cyber-mux@0.11.0`, the version this skill ships with, with `npx` found the same
+3. `npx --yes cyber-mux@0.12.0`, the version this skill ships with, with `npx` found the same
    way.
 
 On success it prints nothing. On failure it shows the first line of the error as a tmux message.
