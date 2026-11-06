@@ -110,6 +110,9 @@ On success it prints nothing. On failure it shows the first line of the error as
    chmod +x ~/.config/tmux/herdr.sh ~/.config/tmux/cyber-mux.sh
    ```
 
+   The `chmod +x` is required: the scripts ship without the executable bit, because the release
+   commits through the GitHub API, which cannot carry it.
+
    If `~/.config/tmux/tmux.conf` exists, tmux reads `~/.tmux.conf` first and ignores the other;
    tell the user that file is now unused.
 6. **Validate on a throwaway server.** This never touches the user's sessions. The server starts
