@@ -2,6 +2,7 @@ import { resolve } from 'node:path'
 import { envFallback } from './env-fallback.ts'
 import { type Exec, withReason } from './exec.ts'
 import { refuseFloatingPane } from './floating.ts'
+import { withJumpHistory } from './jump-history.ts'
 import type {
 	AgentStatus,
 	LivePane,
@@ -47,7 +48,7 @@ import { normalizeWorktreePathSync } from './worktree-path.ts'
  * `--current` sits. So the 0.7.4 caveat on it below stands, unmeasured against 0.8.2 rather than
  * re-confirmed.
  */
-export const herdrMuxAdapter: MuxAdapter = {
+export const herdrMuxAdapter: MuxAdapter = withJumpHistory({
 	name: 'herdr',
 
 	// `pane split --ratio` sizes a split — and sizes the ORIGINAL pane, which is the seam's own
@@ -690,7 +691,7 @@ export const herdrMuxAdapter: MuxAdapter = {
 			return status
 		},
 	},
-}
+})
 
 /**
  * The set of `agent_status` values herdr reports — unchanged through 0.8.0, whose socket schema still

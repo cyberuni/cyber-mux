@@ -61,7 +61,7 @@ read from, or self-identify by.
 | `cyber-mux submit` | Take a pane's turn: type the text if given, then press Enter |
 | `cyber-mux read` | Capture a pane's output |
 | `cyber-mux wait` | Block until a pane's output matches (exit 0), or the timeout elapses (exit 1) |
-| `cyber-mux focus` | Beam the attached client to a pane |
+| `cyber-mux focus` | Beam the attached client to a pane, or back with `--back` |
 | `cyber-mux close` | Close a pane |
 | `cyber-mux list` / `exists` | Enumerate live panes / probe whether one is still live |
 | `cyber-mux worktree` | Git worktree helpers for spawning and tearing down a session |

@@ -144,6 +144,8 @@ const pane = mux.open({
   carries the output either way, so a caller that guessed the wrong pattern still sees what the pane
   said. The one asynchronous method on the seam.
 - **`mux.focus(target, deps?)`** — beam the attached client to the pane, across workspace and tab.
+  It records the jump, the target as entered from the caller's pane, so `focusBack` and
+  `cyber-mux focus --back` can return along it — see [focus](/cyber-mux/cli/focus/#jump-history).
 - **`mux.nudge(target, message, opts?, deps?)`** — `submit` with a receipt; see
   [`nudge`](/cyber-mux/api/nudge/).
 

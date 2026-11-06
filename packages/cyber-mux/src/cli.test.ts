@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildProgram, type MuxCli, muxCommands } from './cli.ts'
 import type { Exec } from './exec.ts'
+import type { JumpStore } from './jump-history.ts'
 import { tmuxMuxAdapter } from './mux.tmux.ts'
 import type { PaneRect } from './mux.ts'
 import { collectPanes, resolveTree, type Template } from './template.ts'
@@ -3647,6 +3648,81 @@ describe('spec:cyber-mux/cli/lookup', () => {
 		expect(calls).toContainEqual(['select-pane', '-t', '%1'])
 		expect(out.join('')).toBe('')
 		expect(logs.join('\n')).toBe('')
+	})
+
+	describe('focus --back (jump history, cyber-mux#263)', () => {
+		/** One history file shared by every invocation, the way the real state file is. */
+		function jumpStore(): JumpStore & { contents: string | null } {
+			return {
+				contents: null,
+				read() {
+					return this.contents
+				},
+				write(contents) {
+					this.contents = contents
+				},
+			}
+		}
+		const inPane = (pane: string) => ({ TMUX: '/tmp/tmux-1000/default,100,0', TMUX_PANE: pane })
+		const PANES: FakePane[] = [{ id: '%1' }, { id: '%2' }, { id: '%3' }]
+
+		it('focus records the jump and --back, run in the target, returns along it without recording', async () => {
+			const jumps = jumpStore()
+			await run(buildProgram({ env: inPane('%1'), exec: paneServer([], PANES), jumps }), ['focus', '%2'])
+			const recorded = jumps.contents
+			expect(JSON.parse(recorded!).servers[0].links['%2'].from).toBe('%1')
+
+			const calls: string[][] = []
+			await run(buildProgram({ env: inPane('%2'), exec: paneServer(calls, PANES), jumps }), ['focus', '--back'])
+			expect(calls).toContainEqual(['select-pane', '-t', '%1'])
+			expect(jumps.contents).toBe(recorded)
+			expect(logs.join('\n')).toBe('')
+		})
+
+		it('--back with no jump into the pane fails, naming the last jump origin as the next step', async () => {
+			catchExit()
+			const jumps = jumpStore()
+			await run(buildProgram({ env: inPane('%1'), exec: paneServer([], PANES), jumps }), ['focus', '%2'])
+			await expect(
+				run(buildProgram({ env: inPane('%3'), exec: paneServer([], PANES), jumps }), ['focus', '--back']),
+			).rejects.toThrow('exit:1')
+			const out = logs.join('\n')
+			expect(out).toContain('no-jump')
+			expect(out).toContain('no jump into %3')
+			expect(out).toContain('cyber-mux focus %1')
+		})
+
+		it('--back fails when every pane up the chain is gone', async () => {
+			catchExit()
+			const jumps = jumpStore()
+			await run(buildProgram({ env: inPane('%1'), exec: paneServer([], PANES), jumps }), ['focus', '%2'])
+			await expect(
+				run(buildProgram({ env: inPane('%2'), exec: paneServer([], [{ id: '%2' }]), jumps }), ['focus', '--back']),
+			).rejects.toThrow('exit:1')
+			expect(logs.join('\n')).toContain('jump-chain-gone')
+		})
+
+		it('--back outside any pane fails rather than guessing one', async () => {
+			catchExit()
+			await expect(
+				run(buildProgram({ env: TMUX, exec: paneServer([], PANES), jumps: jumpStore() }), ['focus', '--back']),
+			).rejects.toThrow('exit:1')
+			expect(logs.join('\n')).toContain('no-caller-pane')
+		})
+
+		it('--back with a pane is a usage error: back follows the link for the pane it runs in', async () => {
+			catchExit()
+			const calls: string[][] = []
+			await expect(
+				run(buildProgram({ env: inPane('%2'), exec: paneServer(calls, PANES), jumps: jumpStore() }), [
+					'focus',
+					'%1',
+					'--back',
+				]),
+			).rejects.toThrow('exit:2')
+			expect(logs.join('\n')).toContain('usage-error')
+			expect(calls.some((c) => c[0] === 'select-pane')).toBe(false)
+		})
 	})
 
 	it('@id:lookup-error-no-backend-leak', async () => {

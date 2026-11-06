@@ -1,3 +1,5 @@
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { defineConfig } from 'vitest/config'
 
 // The real-boundary suite: drives the actual tmux, herdr, wezterm, and zellij binaries against a
@@ -24,5 +26,8 @@ export default defineConfig({
 		// wedged binary, not the thing that decides a pass — the poll loops still own that.
 		hookTimeout: 60_000,
 		testTimeout: 30_000,
+		// Every adapter's `focus` records a jump into `jumpStatePath(process.env)`. Point that at a throwaway
+		// directory so a test run inside a real pane never writes the person's own jump history.
+		env: { CYBER_MUX_STATE_DIR: join(tmpdir(), `cyber-mux-test-state-${process.pid}`) },
 	},
 })

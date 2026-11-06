@@ -10,6 +10,15 @@ import { AmbiguousPaneError, CliError, MissingPaneError, reportError } from './c
 import { AT_OPTION, ENV_OPTION, LABEL_OPTION, parseEnv } from './cli-options.ts'
 import { type Exec, nodeExec } from './exec.ts'
 import { canFloatPanes, FloatingPanesUnsupportedError } from './floating.ts'
+import {
+	focusAndRecord,
+	focusBack,
+	JumpBackError,
+	type JumpContext,
+	type JumpStore,
+	jumpStatePath,
+	nodeJumpStore,
+} from './jump-history.ts'
 import type { AgentStatus, LivePane, MuxAdapter, MuxPlacement, MuxTarget } from './mux.ts'
 import { currentPane, probeMultiplexer } from './mux-probe.ts'
 import { nodeNewId } from './new-id.ts'
@@ -81,6 +90,9 @@ export interface CliDeps {
 	 * FACTORY rather than a live prompt so no other verb pays stdin for its existence (`prompt.ts`
 	 * has the why). */
 	prompt?: OpenPrompt | undefined
+	/** The jump-history file `focus` records into and `focus --back` reads — injected for the same
+	 * reason `store` is. Defaults to `jumpStatePath(env)` on disk. */
+	jumps?: JumpStore | undefined
 }
 
 /** `CliDeps` with every optional dep resolved — what each command is actually handed. */
@@ -89,6 +101,7 @@ interface Deps {
 	exec: Exec
 	store: TemplateStore
 	prompt: OpenPrompt
+	jumps: JumpStore
 }
 
 const DEFAULT_DEPS: CliDeps = { env: process.env, exec: nodeExec, store: nodeTemplateStore, prompt: realPrompt }
@@ -1575,18 +1588,76 @@ function invalidWaitTimeout(timeout: number): CliError {
 function focusCommand(deps: Deps): MuxCommand {
 	return muxCommand({
 		name: 'focus',
-		examples: [{ command: 'cyber-mux focus %3', description: 'Beam the attached client to pane %3' }],
-		description: 'Beam the attached client to a pane',
+		examples: [
+			{ command: 'cyber-mux focus %3', description: 'Beam the attached client to pane %3' },
+			{ command: 'cyber-mux focus --back', description: 'Return to the pane this one was jumped into from' },
+		],
+		description: 'Beam the attached client to a pane, or back to where it came from',
 		arguments: [{ name: 'pane', description: 'Target pane id', type: ct.string().optional() }],
+		options: {
+			back: { description: 'Return to the pane the pane this runs in was jumped into from' },
+		},
 		run(args) {
-			guarded(args, ({ pane }) => {
+			guarded(args, ({ pane, back }) => {
+				const jumps = { env: deps.env, store: deps.jumps }
+				if (back) {
+					if (pane != null) {
+						throw new CliError(
+							'usage-error',
+							'focus --back takes no pane: it follows the link for the pane it runs in',
+							'run it in the pane you jumped into: cyber-mux focus --back',
+							2,
+						)
+					}
+					focusBackVerb(adapter(deps), deps.exec, jumps)
+					return
+				}
 				paneVerb(pane, () => {
 					const a = adapter(deps)
-					a.focus(deps.exec, resolveTarget(deps, a, pane))
+					// Every focus records target ← the pane it runs in, so `focus --back` can return along it.
+					focusAndRecord(a, deps.exec, resolveTarget(deps, a, pane), jumps)
 				})
 			})
 		},
 	})
+}
+
+/** `focus --back`, its `JumpBackError`s translated into this CLI's coded errors. */
+function focusBackVerb(a: MuxAdapter, exec: Exec, ctx: JumpContext): void {
+	try {
+		focusBack(a, exec, ctx)
+	} catch (err) {
+		if (!(err instanceof JumpBackError)) {
+			throw new CliError(
+				'focus-failed',
+				'the pane back could not be focused',
+				'list the live panes with: cyber-mux list',
+				1,
+			)
+		}
+		if (err.code === 'no-caller-pane') {
+			throw new CliError(
+				'no-caller-pane',
+				err.message,
+				'run it in the pane you jumped into, or name that pane in CYBER_MUX_PANE',
+				1,
+			)
+		}
+		if (err.code === 'no-jump') {
+			throw new CliError(
+				'no-jump',
+				err.message,
+				err.lastOrigin != null
+					? `the last jump came from ${err.lastOrigin}; go there with: cyber-mux focus ${err.lastOrigin}`
+					: 'no jump is recorded yet; jump with: cyber-mux focus <pane>',
+				1,
+				{ pane: err.pane ?? null, lastOrigin: err.lastOrigin ?? null },
+			)
+		}
+		throw new CliError('jump-chain-gone', err.message, 'list the live panes with: cyber-mux list', 1, {
+			pane: err.pane ?? null,
+		})
+	}
 }
 
 function closeCommand(deps: Deps): MuxCommand {
@@ -2343,6 +2414,7 @@ function resolveDeps(cliDeps: CliDeps): Deps {
 		exec: cliDeps.exec,
 		store: cliDeps.store ?? nodeTemplateStore,
 		prompt: cliDeps.prompt ?? realPrompt,
+		jumps: cliDeps.jumps ?? nodeJumpStore(jumpStatePath(cliDeps.env)),
 	}
 }
 

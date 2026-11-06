@@ -1,5 +1,6 @@
 import { envFallback } from './env-fallback.ts'
 import { type Exec, withReason } from './exec.ts'
+import { withJumpHistory } from './jump-history.ts'
 import { refusePaneBreak, refusePaneMove } from './move.ts'
 import type { LivePane, MuxAdapter, MuxReadOptions, OpenedPane } from './mux.ts'
 import { isReadTruncated } from './read-window.ts'
@@ -521,7 +522,7 @@ export function createZellijAdapter(deps: { session?: string | undefined }): Mux
 		// No `worktree`: Zellij has no `worktree` subcommand, so — like tmux and wezterm — it never binds
 		// a git worktree to a workspace; callers fall back to plain git plus `open()`.
 	}
-	return adapter
+	return withJumpHistory(adapter)
 }
 
 export const zellijMuxAdapter: MuxAdapter = createZellijAdapter({})

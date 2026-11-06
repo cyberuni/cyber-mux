@@ -7,7 +7,8 @@
  * here rather than on a subpath
  * because the verb it refuses, `open`, is on the surface everybody gets), the pane-resize refusal
  * (`resize.ts`, here for the same reason), the pane-zoom refusal (`zoom.ts`, likewise), the
- * pane-move and break-out refusals (`move.ts`, likewise), and the
+ * pane-move and break-out refusals (`move.ts`, likewise), the jump history every `focus` records
+ * and `focusBack` follows (`jump-history.ts`), and the
  * `Exec`/`NewId` seams (each a type PLUS its real implementation).
  *
  * Deliberately re-exports NONE of the CLI-only modules (`output.ts`, `cli-error.ts`, `cli-options.ts`,
@@ -19,6 +20,7 @@ export * from './backend.ts'
 export * from './exec.ts'
 export * from './floating.ts'
 export * from './focus-on-open.ts'
+export * from './jump-history.ts'
 export * from './move.ts'
 export * from './mux.herdr.ts'
 export * from './mux.rmux.ts'

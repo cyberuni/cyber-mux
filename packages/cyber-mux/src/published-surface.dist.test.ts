@@ -24,6 +24,7 @@ describe('spec:cyber-mux/library — published surface', () => {
 			expect(typeof lib.pollForOutput).toBe('function')
 			expect(typeof lib.nodeExec).toBe('function')
 			expect(typeof lib.nodeNewId).toBe('function')
+			expect(typeof lib.focusBack).toBe('function')
 			expect(lib.tmuxMuxAdapter.name).toBe('tmux')
 			expect(lib.herdrMuxAdapter.name).toBe('herdr')
 			expect(lib.weztermMuxAdapter.name).toBe('wezterm')
@@ -70,6 +71,8 @@ describe('spec:cyber-mux/library — published surface', () => {
 				'FloatingPanesUnsupportedError',
 				// The break-out and move refusals, beside the float and zoom ones and for their reason: the
 				// verbs they refuse are core pane control, on the surface everybody gets.
+				// Why `focusBack` could not go back — the jump history every `focus` records (#263).
+				'JumpBackError',
 				'PaneBreakUnsupportedError',
 				'PaneMoveUnsupportedError',
 				'PaneResizeUnsupportedError',
@@ -95,15 +98,21 @@ describe('spec:cyber-mux/library — published surface', () => {
 				// The pane-resize orchestrator, beside `refuseFloatingPane` and for its reason: an out-of-tree
 				// caller gates on the capability through one spelling of the refusal rather than its own.
 				'derivePaneResize',
+				// The jump history: what records a focus, and what follows it back.
+				'focusAndRecord',
+				'focusBack',
 				'herdrMuxAdapter',
 				'isReadTruncated',
 				'isStaged',
+				'jumpStatePath',
 				'matchWaitPattern',
 				'nodeExec',
+				'nodeJumpStore',
 				'nodeNewId',
 				'nudge',
 				'pollForOutput',
 				'probeMultiplexer',
+				'recordJump',
 				// The refusal helper rides out beside the error for the reason `pollForOutput` and `withReason`
 				// do: an out-of-tree adapter implementing `MuxAdapter` needs the one spelling of the refusal,
 				// not a second message of its own that could drift from this one.
@@ -128,6 +137,8 @@ describe('spec:cyber-mux/library — published surface', () => {
 				'soleFocusedPane',
 				'tmuxMuxAdapter',
 				'weztermMuxAdapter',
+				// Gives an out-of-tree adapter the same recording focus every in-tree adapter has.
+				'withJumpHistory',
 				'withReason',
 				'zellijMuxAdapter',
 			])

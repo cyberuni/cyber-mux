@@ -2,6 +2,7 @@ import { launchFallback } from './env-fallback.ts'
 import { type Exec, withReason } from './exec.ts'
 import { refuseFloatingPane } from './floating.ts'
 import { restoringFocus, soleFocusedPane } from './focus-on-open.ts'
+import { withJumpHistory } from './jump-history.ts'
 import { refusePaneMove } from './move.ts'
 import type { LivePane, MuxAdapter, MuxReadOptions, OpenedPane } from './mux.ts'
 import { pollForOutput } from './wait-output.ts'
@@ -531,7 +532,7 @@ export function createCmuxAdapter(deps: { workspace?: string | undefined }): Mux
 		// No `regions`: geometry is not available from cmux's CLI.
 		// No `worktree`: cmux has no worktree subcommand.
 	}
-	return adapter
+	return withJumpHistory(adapter)
 }
 
 export const cmuxMuxAdapter: MuxAdapter = createCmuxAdapter({})

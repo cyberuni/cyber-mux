@@ -1,5 +1,6 @@
 import type { Exec } from './exec.ts'
 import { withReason } from './exec.ts'
+import { withJumpHistory } from './jump-history.ts'
 import type { LivePane, MuxAdapter, MuxReadOptions, MuxTarget, OpenedPane, RegionPane, WorkspaceTab } from './mux.ts'
 import { assertRatioInRange } from './ratio.ts'
 import { isReadTruncated } from './read-window.ts'
@@ -77,7 +78,7 @@ function runTmux(exec: Exec, args: string[]): string | null {
 }
 
 /** tmux backend — detected via `$TMUX`. */
-export const tmuxMuxAdapter: MuxAdapter = {
+export const tmuxMuxAdapter: MuxAdapter = withJumpHistory({
 	name: 'tmux',
 
 	// `split-window -l N%` sizes a split; see `toTmuxSize` for the inversion it needs.
@@ -629,7 +630,7 @@ export const tmuxMuxAdapter: MuxAdapter = {
 			return tabs
 		},
 	},
-}
+})
 
 /**
  * One window, read as a tab: its id, the tab's OWN name, and its region's geometry.

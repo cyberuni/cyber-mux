@@ -1,4 +1,5 @@
 import { type Exec, nodeExec } from './exec.ts'
+import { focusAndRecord, jumpStatePath, nodeJumpStore } from './jump-history.ts'
 import { createCmuxAdapter } from './mux.cmux.ts'
 import { herdrMuxAdapter } from './mux.herdr.ts'
 import { createOttyAdapter } from './mux.otty.ts'
@@ -186,7 +187,7 @@ export function resolveMux(env: NodeJS.ProcessEnv, deps?: MuxDeps | undefined): 
 		submit: (target, text, d) => raw.submit(pick(d), target, text),
 		read: (target, opts, d) => raw.read(pick(d), target, opts),
 		waitForOutput: (target, opts, d) => raw.waitForOutput(pick(d), target, opts),
-		focus: (target, d) => raw.focus(pick(d), target),
+		focus: (target, d) => focusAndRecord(raw, pick(d), target, { env, store: nodeJumpStore(jumpStatePath(env)) }),
 		teardown: (target, d) => raw.teardown(pick(d), target),
 		paneExists: (target, d) => raw.paneExists(pick(d), target),
 		isPaneFocused: (target, d) => raw.isPaneFocused(pick(d), target),
