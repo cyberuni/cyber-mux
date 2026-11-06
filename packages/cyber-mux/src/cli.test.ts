@@ -4732,3 +4732,27 @@ describe('cyber-mux wait — portable wait-for-output', () => {
 		expect(logs.join('\n')).toContain('pane-not-found')
 	})
 })
+
+describe('home view', () => {
+	let logs: string[]
+
+	beforeEach(() => {
+		logs = []
+		vi.spyOn(console, 'log').mockImplementation((line: string) => {
+			logs.push(line)
+		})
+	})
+
+	afterEach(() => {
+		vi.restoreAllMocks()
+	})
+
+	it('a bare invocation answers with live data, not an error, even with no multiplexer', async () => {
+		const program = buildProgram({ env: {}, exec: () => null })
+		await run(program, [])
+		const out = logs.join('\n')
+		expect(out).toContain('description:')
+		expect(out).toContain('panes: none')
+		expect(out).toContain('verbs: open send')
+	})
+})

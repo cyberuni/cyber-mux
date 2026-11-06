@@ -79,7 +79,7 @@ describe('output --format', () => {
 		vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never)
 		reportError(new CliError('pane-not-found', 'no pane p9', 'list the live panes with: cyber-mux list', 1))
 		expect(logs.join('\n')).toBe(
-			'error:\n  code: pane-not-found\n  message: no pane p9\n  help: "list the live panes with: cyber-mux list"',
+			'error:\n  code: pane-not-found\n  message: no pane p9\n  help: list the live panes with: cyber-mux list',
 		)
 		expect(process.exit).toHaveBeenCalledWith(1)
 	})

@@ -1,5 +1,6 @@
 import { join } from 'node:path'
 import { cli, t as ct } from 'clibuilder'
+import { homeHeader } from 'clibuilder/axi'
 import type { PruneOutcome } from 'cyber-agentkit/worktrees'
 import pkg from '../package.json' with { type: 'json' }
 import { AgentLifecycleUnsupportedError, deriveAgentWait } from './agent.ts'
@@ -490,6 +491,7 @@ function reportApplyFailure(err: unknown, extra: Record<string, string | null> =
 function templateListCommand(deps: Deps): MuxCommand {
 	return muxCommand({
 		name: 'list',
+		examples: [{ command: 'cyber-mux template list', description: 'List every template resolvable from here' }],
 		description: 'Every template resolvable from here, with its source and pane count',
 		run(args) {
 			guarded(args, () => {
@@ -522,6 +524,10 @@ function templateListCommand(deps: Deps): MuxCommand {
 function templateShowCommand(deps: Deps): MuxCommand {
 	return muxCommand({
 		name: 'show',
+		examples: [
+			{ command: 'cyber-mux template show pool-4', description: 'Print the resolved template as JSON' },
+			{ command: 'cyber-mux template show pool-4 --desugar', description: 'Print the canonical tree apply builds' },
+		],
 		description: 'Print a resolved template as JSON',
 		arguments: [{ name: 'name', description: 'Template name', type: ct.string().optional() }],
 		options: {
@@ -549,6 +555,10 @@ function templateShowCommand(deps: Deps): MuxCommand {
 function templateValidateCommand(deps: Deps): MuxCommand {
 	return muxCommand({
 		name: 'validate',
+		examples: [
+			{ command: 'cyber-mux template validate pool-4', description: 'Validate a template by name' },
+			{ command: 'cyber-mux template validate --file ./pool-4.json', description: 'Validate a file directly' },
+		],
 		description: 'Validate a template — exit 0 valid, 1 invalid, every error at once with a JSON path',
 		arguments: [{ name: 'name', description: 'Template name', type: ct.string().optional() }],
 		options: {
@@ -600,6 +610,16 @@ function templateValidateCommand(deps: Deps): MuxCommand {
 function templateSaveCommand(deps: Deps): MuxCommand {
 	return muxCommand({
 		name: 'save',
+		examples: [
+			{
+				command: 'cyber-mux template save my-layout',
+				description: 'Capture the region around this pane into a repo template',
+			},
+			{
+				command: 'cyber-mux template save my-layout --from %3 --to user --force',
+				description: 'Capture around pane %3 into the user directory, overwriting',
+			},
+		],
 		description:
 			'Capture the live region around a pane into a named template\n' +
 			'\nA capture recovers geometry, labels and dirs — NOT commands. A backend can often say what is\n' +
@@ -807,6 +827,10 @@ const CAPTURED_DESCRIPTION = 'Captured from a live region — geometry only; add
 function templateEditCommand(deps: Deps): MuxCommand {
 	return muxCommand({
 		name: 'edit',
+		examples: [
+			{ command: 'cyber-mux template edit pool-4', description: 'List the panes of the template' },
+			{ command: 'cyber-mux template edit pool-4 --set 1=claude', description: 'Fill in the command of pane 1' },
+		],
 		description:
 			'Show a template’s panes, and fill them in with --set or --interactive\n' +
 			'\nPanes are addressed by ordinal, never by label (two panes may share one): "3" in a\n' +
@@ -1040,7 +1064,7 @@ async function askSlots(
 			// tabs template shows each one once — the grouping the author sees matches the one in the file.
 			if (slot.tab !== undefined && slot.tab !== tab) {
 				tab = slot.tab
-				// The count is the tab's OWN, not the walk's — a tabs template's panes are numbered within
+				// The count is the tab's OWN, not the walk's — a tabs panes of the template are numbered within
 				// each tab, so "4 panes" here is what the ordinals below actually run to.
 				const panes = slots.filter((other) => other.tab === tab).length
 				const label = slot.tabLabel ? ` "${slot.tabLabel}"` : ''
@@ -1106,6 +1130,7 @@ function templateCommand(deps: Deps): MuxCommand {
 function doctorCommand(deps: Deps): MuxCommand {
 	return muxCommand({
 		name: 'doctor',
+		examples: [{ command: 'cyber-mux doctor', description: 'Probe the multiplexer, self pane and backend' }],
 		description: 'Probe the multiplexer, self pane, and backend; print fast-path pins',
 		run() {
 			const probe = probeMultiplexer(deps.exec, deps.env)
@@ -1142,6 +1167,7 @@ function doctorCommand(deps: Deps): MuxCommand {
 function modeCommand(deps: Deps): MuxCommand {
 	return muxCommand({
 		name: 'mode',
+		examples: [{ command: 'cyber-mux mode', description: 'Report the detected backend' }],
 		description: 'Report the detected drivable backend (tmux / rmux / herdr / wezterm / zellij / cmux / otty / none)',
 		run() {
 			let name = 'none'
@@ -1158,6 +1184,10 @@ function modeCommand(deps: Deps): MuxCommand {
 function openCommand(deps: Deps): MuxCommand {
 	return muxCommand({
 		name: 'open',
+		examples: [
+			{ command: 'cyber-mux open --launch claude', description: 'Open a new pane running claude' },
+			{ command: 'cyber-mux open --cwd ~/code/app --label web', description: 'Open a labelled pane in a directory' },
+		],
 		description: 'Open a new pane/tab/workspace, optionally launching a command in it',
 		options: {
 			launch: { description: 'Command line to run in the new pane', type: ct.string().optional() },
@@ -1233,6 +1263,9 @@ function sendCommand(deps: Deps): MuxCommand {
 		commands: [
 			muxCommand({
 				name: 'text',
+				examples: [
+					{ command: 'cyber-mux send text %3 "hello"', description: 'Type text into pane %3 without pressing Enter' },
+				],
 				description: 'Type literal text into a pane, pressing no Enter (a key-named word is typed, not pressed)',
 				arguments: [
 					{ name: 'pane', description: 'Target pane id', type: ct.string().optional() },
@@ -1253,6 +1286,7 @@ function sendCommand(deps: Deps): MuxCommand {
 			}),
 			muxCommand({
 				name: 'keys',
+				examples: [{ command: 'cyber-mux send keys %3 Up Enter', description: 'Press Up then Enter in pane %3' }],
 				description: 'Press named keys in a pane, typing nothing (Up, Enter, Escape, C-c, F1 …)',
 				arguments: [
 					{ name: 'pane', description: 'Target pane id', type: ct.string().optional() },
@@ -1281,6 +1315,10 @@ function sendCommand(deps: Deps): MuxCommand {
 function submitCommand(deps: Deps): MuxCommand {
 	return muxCommand({
 		name: 'submit',
+		examples: [
+			{ command: 'cyber-mux submit %3 "run the tests"', description: 'Type the text into pane %3, then press Enter' },
+			{ command: 'cyber-mux submit %3', description: 'Flush an already-staged buffer with a bare Enter' },
+		],
 		description: "Take a pane's turn: type the text if given, then always press Enter (no text = bare-Enter flush)",
 		arguments: [
 			{ name: 'pane', description: 'Target pane id', type: ct.string().optional() },
@@ -1340,6 +1378,10 @@ function submitCommand(deps: Deps): MuxCommand {
 function readCommand(deps: Deps): MuxCommand {
 	return muxCommand({
 		name: 'read',
+		examples: [
+			{ command: 'cyber-mux read %3 --lines 50', description: 'Capture the last 50 lines of pane %3' },
+			{ command: 'cyber-mux read %3 --full', description: 'Capture the whole scrollback' },
+		],
 		description: "Capture a pane's output",
 		arguments: [{ name: 'pane', description: 'Target pane id', type: ct.string().optional() }],
 		options: {
@@ -1417,6 +1459,16 @@ const DEFAULT_WAIT_TIMEOUT_MS = 30_000
 function waitCommand(deps: Deps): MuxCommand {
 	return muxCommand({
 		name: 'wait',
+		examples: [
+			{
+				command: 'cyber-mux wait %3 --match "done" --timeout 30000',
+				description: 'Wait up to 30s for the pane to print done',
+			},
+			{
+				command: 'cyber-mux wait %3 --regex "pass(ed)?" --lines 20',
+				description: 'Wait for a pattern in the last 20 lines',
+			},
+		],
 		description: "Block until a pane's output matches, or the timeout elapses (exit 0 = matched, 1 = timed out)",
 		arguments: [{ name: 'pane', description: 'Target pane id', type: ct.string().optional() }],
 		options: {
@@ -1523,6 +1575,7 @@ function invalidWaitTimeout(timeout: number): CliError {
 function focusCommand(deps: Deps): MuxCommand {
 	return muxCommand({
 		name: 'focus',
+		examples: [{ command: 'cyber-mux focus %3', description: 'Beam the attached client to pane %3' }],
 		description: 'Beam the attached client to a pane',
 		arguments: [{ name: 'pane', description: 'Target pane id', type: ct.string().optional() }],
 		run(args) {
@@ -1539,6 +1592,7 @@ function focusCommand(deps: Deps): MuxCommand {
 function closeCommand(deps: Deps): MuxCommand {
 	return muxCommand({
 		name: 'close',
+		examples: [{ command: 'cyber-mux close %3', description: 'Close pane %3' }],
 		description: 'Close a pane',
 		arguments: [{ name: 'pane', description: 'Target pane id', type: ct.string().optional() }],
 		run(args) {
@@ -1555,6 +1609,7 @@ function closeCommand(deps: Deps): MuxCommand {
 function listCommand(deps: Deps): MuxCommand {
 	return muxCommand({
 		name: 'list',
+		examples: [{ command: 'cyber-mux list', description: 'Enumerate every live pane' }],
 		description: 'Enumerate every live pane the current backend can see',
 		run(args) {
 			guarded(args, () => {
@@ -1586,6 +1641,7 @@ function listCommand(deps: Deps): MuxCommand {
 function existsCommand(deps: Deps): MuxCommand {
 	return muxCommand({
 		name: 'exists',
+		examples: [{ command: 'cyber-mux exists %3', description: 'Exit 0 if pane %3 is live, 1 if gone' }],
 		description: 'Probe whether a single pane is still live (exit 0 = live, 1 = gone)',
 		arguments: [{ name: 'pane', description: 'Target pane id', type: ct.string().optional() }],
 		run(args) {
@@ -1662,6 +1718,7 @@ function agentStatesUnsupported(err: AgentWaitStatesUnsupportedError): CliError 
 function agentStatusCommand(deps: Deps): MuxCommand {
 	return muxCommand({
 		name: 'status',
+		examples: [{ command: 'cyber-mux agent status %3', description: 'Print the agent-lifecycle status of pane %3' }],
 		description: "Print a pane's agent-lifecycle status (herdr); degrades to no status on a backend with no feed",
 		arguments: [{ name: 'pane', description: 'Target pane id or label', type: ct.string().optional() }],
 		run(args) {
@@ -1699,6 +1756,13 @@ function agentStatusCommand(deps: Deps): MuxCommand {
 function agentWaitCommand(deps: Deps): MuxCommand {
 	return muxCommand({
 		name: 'wait',
+		examples: [
+			{
+				command: 'cyber-mux agent wait %3 --until idle --until done',
+				description: 'Block until the agent is idle or done',
+			},
+			{ command: 'cyber-mux agent wait %3 --until idle --timeout 60000', description: 'Wait up to 60s for idle' },
+		],
 		description:
 			"Block until a pane's agent reaches a state (herdr, otty); refused on a backend with no native wait\n" +
 			'\nagent wait drives a native per-pane agent-state wait, which only herdr and otty have — tmux,\n' +
@@ -1770,6 +1834,13 @@ function agentCommand(deps: Deps): MuxCommand {
 function worktreeAddCommand(deps: Deps): MuxCommand {
 	return muxCommand({
 		name: 'add',
+		examples: [
+			{ command: 'cyber-mux worktree add --branch feat/x', description: 'Create a worktree on a new branch' },
+			{
+				command: 'cyber-mux worktree add --branch feat/x --launch claude',
+				description: 'Create it and open a workspace running claude',
+			},
+		],
 		description: 'Create a git worktree, and open it when given a placement — grouped where the backend can',
 		options: {
 			branch: { description: 'Branch to create the worktree on (required)', type: ct.string().optional() },
@@ -1889,6 +1960,12 @@ function worktreeAddCommand(deps: Deps): MuxCommand {
 function worktreeProvisionCommand(deps: Deps): MuxCommand {
 	return muxCommand({
 		name: 'provision',
+		examples: [
+			{
+				command: 'cyber-mux worktree provision --branch feat/x',
+				description: 'Reuse an idle worktree or create one on feat/x',
+			},
+		],
 		description:
 			'Reuse an idle worktree or create one at the next free slot — the library pool, with the lease given back. Reports whether it reused or created',
 		options: {
@@ -1929,6 +2006,13 @@ function worktreeProvisionCommand(deps: Deps): MuxCommand {
 function worktreeOpenCommand(deps: Deps): MuxCommand {
 	return muxCommand({
 		name: 'open',
+		examples: [
+			{ command: 'cyber-mux worktree open ../app.worktrees/feat-x', description: 'Open an existing worktree' },
+			{
+				command: 'cyber-mux worktree open ../app.worktrees/feat-x --launch claude',
+				description: 'Open it and run claude',
+			},
+		],
 		description: 'Open an existing git worktree — groups it with the repo where the backend can bind',
 		arguments: [{ name: 'path', description: 'Worktree path to open' }],
 		options: {
@@ -1965,6 +2049,9 @@ function worktreeOpenCommand(deps: Deps): MuxCommand {
 function worktreeListCommand(deps: Deps): MuxCommand {
 	return muxCommand({
 		name: 'list',
+		examples: [
+			{ command: 'cyber-mux worktree list', description: 'List the worktrees of the repo and where each is open' },
+		],
 		description:
 			'Every worktree of the repo, and the workspace each is open in — BRANCH is marked "(*)" for the primary checkout (every other row is a linked worktree) or "(removable)" when `worktree prune --force` would remove it (a slot worktree whose branch is merged into the default branch, whose checkout is clean, and that nothing is open in), and ROOT is marked "(gone)" when the checkout no longer exists on disk(git can prune it)',
 		async run() {
@@ -2005,6 +2092,13 @@ function worktreeListCommand(deps: Deps): MuxCommand {
 function worktreeRemoveCommand(deps: Deps): MuxCommand {
 	return muxCommand({
 		name: 'remove',
+		examples: [
+			{ command: 'cyber-mux worktree remove ../app.worktrees/feat-x', description: 'Remove a worktree' },
+			{
+				command: 'cyber-mux worktree remove ../app.worktrees/feat-x --force',
+				description: 'Remove it, discarding uncommitted changes',
+			},
+		],
 		description: 'Remove a git worktree — refuses the primary checkout and uncommitted changes unless --force',
 		arguments: [{ name: 'path', description: 'Worktree path to remove' }],
 		options: { force: { description: 'Discard uncommitted changes in the worktree' } },
@@ -2062,6 +2156,10 @@ function pruneSkipProse(outcome: PruneOutcome): string {
 function worktreePruneCommand(deps: Deps): MuxCommand {
 	return muxCommand({
 		name: 'prune',
+		examples: [
+			{ command: 'cyber-mux worktree prune', description: 'Preview the disposable worktrees' },
+			{ command: 'cyber-mux worktree prune --force', description: 'Remove them' },
+		],
 		description:
 			'Remove every disposable worktree in one call — the same gate `worktree list` marks "(removable)" with. Bare form previews the candidates;pass --force to actually remove them',
 		options: {
@@ -2275,6 +2373,48 @@ export function muxCommands(cliDeps: CliDeps = DEFAULT_DEPS): MuxCommand[] {
 
 const DESCRIPTION = 'Cross-multiplexer pane control — one contract over tmux and herdr'
 
+/**
+ * The home view (AXI #8, content first): a bare `cyber-mux` answers with the live panes and the
+ * verbs, not a manual. With no multiplexer around it still answers, with a definitive `panes: none`
+ * and how to get one — a bare invocation is never an error.
+ */
+function homeCommand(deps: Deps) {
+	const verbs = ['open', 'send', 'submit', 'read', 'wait', 'focus', 'close', 'list', 'exists', 'doctor']
+	return {
+		description: DESCRIPTION,
+		examples: [{ command: 'cyber-mux', description: 'List the live panes and the available verbs' }],
+		run() {
+			let panes: LivePane[] = []
+			let mux: string | null = null
+			try {
+				const a = adapter(deps)
+				mux = a.name
+				panes = a.listPanes(deps.exec)
+			} catch {
+				// no multiplexer: the home view reports the zero rather than failing
+			}
+			const header = homeHeader({ description: DESCRIPTION })
+			const help = mux
+				? ['run `cyber-mux read <pane>` to see a pane', "run `cyber-mux <verb> --help` for a verb's arguments"]
+				: ['run cyber-mux inside tmux or herdr, or set CYBER_MUX to name one']
+			output({ ...header, mux, panes: panes.length === 0 ? 'none' : panes, verbs, help }, () => {
+				console.log(`bin: ${header.bin}`)
+				console.log(`description: ${header.description}`)
+				console.log(`mux: ${mux ?? 'none'}`)
+				if (panes.length === 0) console.log('panes: none')
+				else
+					printTable(panes, [
+						{ label: 'pane', get: (p) => p.id },
+						{ label: 'label', get: (p) => p.label ?? '' },
+						{ label: 'cwd', get: (p) => p.cwd ?? '' },
+					])
+				console.log(`verbs: ${verbs.join(' ')}`)
+				for (const h of help) console.log(`help: ${h}`)
+			})
+		},
+	}
+}
+
 /** The standalone CLI. */
 export interface MuxCli {
 	parse(argv: string[]): Promise<unknown>
@@ -2295,7 +2435,7 @@ export function buildProgram(cliDeps: CliDeps = DEFAULT_DEPS): MuxCli {
 		output: 'console',
 		format: 'text',
 		onUsageError: usageErrorHandler('cyber-mux'),
-	}).default({ commands: muxCommands(cliDeps) })
+	}).default({ ...homeCommand(resolveDeps(cliDeps)), commands: muxCommands(cliDeps) })
 	return { parse: (argv) => program.parse(normalizeFormatArgv(argv)) }
 }
 
