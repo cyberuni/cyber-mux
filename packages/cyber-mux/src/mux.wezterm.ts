@@ -2,6 +2,7 @@ import { envFallback } from './env-fallback.ts'
 import { type Exec, withReason } from './exec.ts'
 import { refuseFloatingPane } from './floating.ts'
 import { restoringFocus } from './focus-on-open.ts'
+import { withJumpHistory } from './jump-history.ts'
 import type { LivePane, MuxAdapter, MuxReadOptions, MuxTarget, OpenedPane } from './mux.ts'
 import { type NewId, nodeNewId } from './new-id.ts'
 import { assertRatioInRange } from './ratio.ts'
@@ -443,7 +444,7 @@ export function createWeztermAdapter(deps: { newId: NewId }): MuxAdapter {
 		// No `worktree`: no `worktree` subcommand exists in the CLI at all, so — like tmux — this backend
 		// never binds a git worktree to a workspace; callers fall back to plain git plus `open()`.
 	}
-	return adapter
+	return withJumpHistory(adapter)
 }
 
 export const weztermMuxAdapter: MuxAdapter = createWeztermAdapter({ newId: nodeNewId })

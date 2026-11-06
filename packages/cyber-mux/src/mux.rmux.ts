@@ -1,6 +1,7 @@
 import type { Exec } from './exec.ts'
 import { withReason } from './exec.ts'
 import { refuseFloatingPane } from './floating.ts'
+import { withJumpHistory } from './jump-history.ts'
 import type { LivePane, MuxAdapter, MuxReadOptions, MuxTarget, OpenedPane, RegionPane, WorkspaceTab } from './mux.ts'
 import { assertRatioInRange } from './ratio.ts'
 import { isReadTruncated } from './read-window.ts'
@@ -62,7 +63,7 @@ export const RMUX_WORKSPACE_GROUP_OPTION = '@cm_ws'
 export const RMUX_TAB_NAME_OPTION = '@cm_tab'
 
 /** rmux backend — detected via `$RMUX`. */
-export const rmuxMuxAdapter: MuxAdapter = {
+export const rmuxMuxAdapter: MuxAdapter = withJumpHistory({
 	name: 'rmux',
 
 	// `split-window -l N%` sizes a split; see `toRmuxSize` for the inversion it needs. Verified live
@@ -574,7 +575,7 @@ export const rmuxMuxAdapter: MuxAdapter = {
 			return tabs
 		},
 	},
-}
+})
 
 /**
  * One window, read as a tab: its id, the tab's OWN name, and its region's geometry.

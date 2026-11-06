@@ -3,6 +3,7 @@ import { launchFallback } from './env-fallback.ts'
 import { type Exec, withReason } from './exec.ts'
 import { refuseFloatingPane } from './floating.ts'
 import { restoringFocus, soleFocusedPane } from './focus-on-open.ts'
+import { withJumpHistory } from './jump-history.ts'
 import { refusePaneBreak, refusePaneMove } from './move.ts'
 import type { AgentStatus, LivePane, MuxAdapter, MuxReadOptions, OpenedPane } from './mux.ts'
 import { assertRatioInRange } from './ratio.ts'
@@ -503,7 +504,7 @@ export function createOttyAdapter(deps: { window?: string | undefined }): MuxAda
 		// No `regions`: geometry is not available from otty's CLI.
 		// No `worktree`: otty has no worktree subcommand.
 	}
-	return adapter
+	return withJumpHistory(adapter)
 }
 
 export const ottyMuxAdapter: MuxAdapter = createOttyAdapter({})
