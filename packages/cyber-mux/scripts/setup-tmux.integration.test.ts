@@ -9,7 +9,7 @@
 // `setup-tmux.test.ts`.
 
 import { execFileSync } from 'node:child_process'
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -75,6 +75,8 @@ describe.skipIf(!tmuxBin)('setup-tmux back key (real tmux)', () => {
 		const home = join(root, 'home')
 		mkdirSync(join(home, '.config/tmux'), { recursive: true })
 		copyFileSync(join(assets, 'cyber-mux.sh'), join(home, '.config/tmux/cyber-mux.sh'))
+		// The skill installs the wrapper with `chmod +x`: the repo copy is not executable.
+		chmodSync(join(home, '.config/tmux/cyber-mux.sh'), 0o755)
 		copyFileSync(join(assets, 'cyber-mux.conf'), join(home, '.config/tmux/cyber-mux.conf'))
 		// The server gets no user PATH: only where tmux and the system utilities live.
 		const { TMUX: _t, TMUX_PANE: _p, ...rest } = process.env
