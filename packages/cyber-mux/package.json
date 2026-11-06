@@ -72,7 +72,7 @@
 	},
 	"devDependencies": {
 		"@types/node": "^24.10.1",
-		"clibuilder": "^12.1.0",
+		"clibuilder": "^12.2.0",
 		"tsdown": "^0.23.0",
 		"tsx": "^4.22.3",
 		"typescript": "^6.0.0",
@@ -89,7 +89,7 @@
 		"cyber-agentkit": "^2.0.0"
 	},
 	"peerDependencies": {
-		"clibuilder": "^12.1.0"
+		"clibuilder": "^12.2.0"
 	},
 	"peerDependenciesMeta": {
 		"clibuilder": {
