@@ -1,6 +1,6 @@
+import { CliError, cli } from 'clibuilder'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { CliError, reportError } from './cli-error.ts'
-import { isAutomatedOutput, output, tildify } from './output.ts'
+import { answer, fields, step, table, tildify } from './output.ts'
 
 describe('tildify', () => {
 	it('collapses the home prefix so a table spends no width on it', () => {
@@ -25,62 +25,83 @@ describe('tildify', () => {
 	})
 })
 
-describe('output --format', () => {
-	let logs: string[]
-	const original = process.argv
+describe('fields', () => {
+	it('aligns the keys and drops nullish entries', () => {
+		expect(fields({ pane: '%1', workspace: null, branch: 'main' })).toBe('pane    %1\nbranch  main')
+	})
+})
 
-	function withFormat(...argv: string[]) {
-		process.argv = ['node', 'cyber-mux', 'list', ...argv]
-	}
+describe('table', () => {
+	it('prints an upper-case header and a rule', () => {
+		expect(table([{ id: 'p1' }], [{ label: 'pane', get: (r) => r.id }])).toBe('PANE\n----\np1  ')
+	})
+
+	it('says (none) for no rows', () => {
+		expect(table([], [{ label: 'pane', get: () => '' }])).toBe('(none)')
+	})
+})
+
+describe('answers and errors through core --format', () => {
+	let out: string[]
 
 	beforeEach(() => {
-		logs = []
-		vi.spyOn(console, 'log').mockImplementation((line: string) => {
-			logs.push(line)
+		out = []
+		vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+			out.push(String(chunk))
+			return true
 		})
 	})
 
 	afterEach(() => {
-		process.argv = original
+		process.exitCode = undefined
 		vi.restoreAllMocks()
 	})
 
 	const data = { panes: [{ id: 'p1', label: 'a' }] }
 
-	it('renders the human form by default', () => {
-		withFormat()
-		output(data, () => console.log('human'))
-		expect(logs).toEqual(['human'])
-		expect(isAutomatedOutput()).toBe(false)
+	function program(run: () => unknown) {
+		return cli({ name: 'cyber-mux', version: '0.0.0', description: 'test', output: 'axi', format: 'text' }).default({
+			description: 'test',
+			run,
+		})
+	}
+
+	it('renders the text form by default', async () => {
+		await program(() => answer(data, () => 'human')).parse(['node', 'cyber-mux'])
+		expect(out.join('')).toBe('human\n')
 	})
 
-	it('encodes json through axi', () => {
-		withFormat('--format', 'json')
-		output(data, () => console.log('human'))
-		expect(JSON.parse(logs.join('\n'))).toEqual(data)
-		expect(isAutomatedOutput()).toBe(true)
+	it('encodes json with core', async () => {
+		await program(() => answer(data, () => 'human')).parse(['node', 'cyber-mux', '--format', 'json'])
+		expect(JSON.parse(out.join(''))).toEqual(data)
 	})
 
-	it('keeps the hidden --json alias', () => {
-		withFormat('--json')
-		output(data, () => console.log('human'))
-		expect(JSON.parse(logs.join('\n'))).toEqual(data)
+	it('encodes toon with core', async () => {
+		await program(() => answer(data, () => 'human')).parse(['node', 'cyber-mux', '--format', 'toon'])
+		expect(out.join('')).toBe('panes[1]{id,label}:\n  p1,a\n')
 	})
 
-	it('encodes agent as TOON', () => {
-		withFormat('--format', 'agent')
-		output(data, () => console.log('human'))
-		expect(logs.join('\n')).toBe('panes[1]{id,label}:\n  p1,a')
-		expect(isAutomatedOutput()).toBe(true)
+	it('puts a step inside the answer as a help line', async () => {
+		await program(() => answer(data, () => 'human', [step('see one', 'cyber-mux read p1')])).parse([
+			'node',
+			'cyber-mux',
+			'--format',
+			'json',
+		])
+		expect(JSON.parse(out.join(''))).toEqual({ ...data, help: ['see one — run `cyber-mux read p1`'] })
 	})
 
-	it('encodes a structured error as TOON under agent', () => {
-		withFormat('--format', 'agent')
-		vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never)
-		reportError(new CliError('pane-not-found', 'no pane p9', 'list the live panes with: cyber-mux list', 1))
-		expect(logs.join('\n')).toBe(
-			'error:\n  code: pane-not-found\n  message: no pane p9\n  help: list the live panes with: cyber-mux list',
+	it('reports a CliError as a flat coded error in toon', async () => {
+		await program(() => {
+			throw new CliError({
+				code: 'pane-not-found',
+				message: 'no pane p9',
+				help: 'list the live panes with: cyber-mux list',
+			})
+		}).parse(['node', 'cyber-mux', '--format', 'toon'])
+		expect(out.join('')).toBe(
+			'error: no pane p9\ncode: pane-not-found\nhelp[1]: "list the live panes with: cyber-mux list"\n',
 		)
-		expect(process.exit).toHaveBeenCalledWith(1)
+		expect(process.exitCode).toBe(1)
 	})
 })

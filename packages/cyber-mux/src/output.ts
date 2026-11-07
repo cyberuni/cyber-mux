@@ -1,6 +1,13 @@
 import { homedir } from 'node:os'
 import { sep } from 'node:path'
-import { encode } from 'clibuilder/axi'
+import { type Answer, result } from 'clibuilder'
+
+/**
+ * Answers are clibuilder's own (`output: 'axi'`): a command RETURNS its answer, and core prints it once
+ * on stdout in the caller's `--format` — TOON for `toon` (`--format agent`), one line for `json`. What
+ * cyber-mux adds is the `text` form a person reads, given to core as the `text` renderer, so the machine
+ * formats are core's encoders and the human one stays the aligned fields and tables it always was.
+ */
 
 /**
  * A path with the caller's home directory collapsed to `~` — for HUMAN output only. Every worktree
@@ -20,95 +27,45 @@ export function tildify(path: string, home: string = homedir()): string {
 	return path
 }
 
-export function printFields(fields: Record<string, string | null | undefined>): void {
-	const entries = Object.entries(fields).filter(([, v]) => v != null) as [string, string][]
-	if (entries.length === 0) return
+/** `key  value` lines, keys aligned, nullish entries dropped. */
+export function fields(record: Record<string, string | null | undefined>): string {
+	const entries = Object.entries(record).filter(([, v]) => v != null) as [string, string][]
+	if (entries.length === 0) return ''
 	const width = Math.max(...entries.map(([k]) => k.length))
-	for (const [key, val] of entries) {
-		console.log(`${key.padEnd(width)}  ${val}`)
-	}
+	return entries.map(([key, val]) => `${key.padEnd(width)}  ${val}`).join('\n')
 }
 
-/**
- * A #9 contextual-disclosure suggestion: an obvious next move the caller can take, named as data
- * rather than prose. `message` says what is worth doing; `command` is the concrete invocation that
- * does it. Dynamic parts are the caller's OWN values (a name they passed, a branch they named), never
- * a guessed id.
- */
-export type HelpEntry = { message: string; command: string }
-
-/**
- * Render #9 suggestions as a `help[N]:` block on stdout — inside the structured payload, the stream an
- * agent reads, not stderr it never does. Each entry is a message line and its command, indented under
- * it. Prints NOTHING for an empty list: a self-contained result owes no suggestion (#9's
- * omit-when-self-contained rule), so the block never appears as noise.
- */
-export function printHelp(entries: HelpEntry[]): void {
-	entries.forEach((entry, i) => {
-		console.log(`help[${i}]: ${entry.message}`)
-		console.log(`  -> ${entry.command}`)
-	})
-}
-
-export function printTable<T>(items: T[], cols: { label: string; get: (item: T) => string }[]): void {
-	if (items.length === 0) {
-		console.log('(none)')
-		return
-	}
+/** An aligned table with an upper-case header and a rule under it, or `(none)` for no rows. */
+export function table<T>(items: T[], cols: { label: string; get: (item: T) => string }[]): string {
+	if (items.length === 0) return '(none)'
 	const widths = cols.map((c) => Math.max(c.label.length, ...items.map((i) => c.get(i).length)))
-	console.log(cols.map((c, i) => c.label.toUpperCase().padEnd(widths[i]!)).join('  '))
-	console.log(widths.map((w) => '-'.repeat(w)).join('  '))
-	for (const item of items) {
-		console.log(cols.map((c, i) => c.get(item).padEnd(widths[i]!)).join('  '))
-	}
+	return [
+		cols.map((c, i) => c.label.toUpperCase().padEnd(widths[i]!)).join('  '),
+		widths.map((w) => '-'.repeat(w)).join('  '),
+		...items.map((item) => cols.map((c, i) => c.get(item).padEnd(widths[i]!)).join('  ')),
+	].join('\n')
 }
 
-function getFormat(): string | undefined {
-	const argv = process.argv
-	const fmtIdx = argv.indexOf('--format')
-	if (fmtIdx !== -1) return argv[fmtIdx + 1]
-	const joined = argv.find((arg) => arg.startsWith('--format='))
-	if (joined) return joined.slice('--format='.length)
-	if (argv.includes('--json')) return 'json' // hidden backward-compat alias
-	return undefined
+/** Text blocks joined one per line, empty blocks dropped. */
+export function lines(...blocks: string[]): string {
+	return blocks.filter((b) => b !== '').join('\n')
 }
 
 /**
- * The `clibuilder/axi` format a machine-readable `--format` maps to, or `undefined` for the human
- * `text` default. cyber-mux keeps its own `text | json | agent` surface (text the default) and borrows
- * only axi's encoders: `json` is axi's JSON, `agent` is axi's TOON — the cheaper read for an agent.
+ * A #9 contextual-disclosure suggestion as one `help` line: what is worth doing, and the concrete
+ * invocation that does it. Dynamic parts are the caller's OWN values (a name they passed, a branch they
+ * named), never a guessed id.
  */
-function machineFormat(): 'json' | 'toon' | undefined {
-	const fmt = getFormat()
-	if (fmt === 'json') return 'json'
-	if (fmt === 'agent' || fmt === 'toon') return 'toon'
-	return undefined
+export function step(message: string, command: string): string {
+	return `${message} — run \`${command}\``
 }
 
 /**
- * Whether the caller asked for machine-readable output. Exported because `output()` is not the only
- * writer that owes it: a structured ERROR is rendered by `reportError` (`cli-error.ts`) rather than
- * through `output()`, and it has to honor `--format json|agent` exactly as the success path does. Both
- * write stdout — AXI's stream for everything the agent consumes, errors included.
+ * The answer `run()` returns: `value` for the machine formats, `text` for a person. `help` rides inside
+ * the answer as `help[N]`, and is left out when empty — a self-contained result owes no suggestion
+ * (#9's omit-when-self-contained rule).
  */
-export function isMachineOutput(): boolean {
-	return machineFormat() !== undefined
-}
-
-// True when the caller is a script or agent — suppress interactive prompts.
-export function isAutomatedOutput(): boolean {
-	return isMachineOutput()
-}
-
-/**
- * Write `data` in the machine format the caller asked for. Goes through `console.log` rather than
- * axi's `writeResult`, so every stdout line — success and error alike — leaves through one writer.
- */
-export function printMachine(data: object): void {
-	console.log(encode(data, machineFormat() ?? 'json'))
-}
-
-export function output(data: object, readable: () => void): void {
-	if (isMachineOutput()) printMachine(data)
-	else readable()
+export function answer<T>(value: T, text: (value: T) => string, help: string[] = []): Answer {
+	// Widened to `Answer`: a renderer of `T` is not a renderer of `unknown`, yet core only ever hands it this `value`.
+	return result(value, { help, render: { text } }) as Answer
 }

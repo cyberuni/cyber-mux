@@ -27,7 +27,8 @@ caller asked for it.
 cyber-mux send keys <pane> <keys...>
 ```
 
-Bare `cyber-mux send` (no `text`/`keys` subcommand) is incomplete input: help on stdout, exit `2`.
+Bare `cyber-mux send` (no `text`/`keys` subcommand) is incomplete input: a `missing-command` error on
+stdout that lists `text` and `keys`, exit `2`.
 
 `<pane>` takes either a pane id or a label — see [Pane](/cyber-mux/concepts/pane/) for resolution
 rules. See [`submit`](/cyber-mux/cli/submit/) to take a pane's turn instead of just driving its

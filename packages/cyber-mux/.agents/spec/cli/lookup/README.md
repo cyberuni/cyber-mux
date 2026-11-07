@@ -81,9 +81,10 @@ it drives it and renders its outcomes.
   three outcomes **by exit code, not by prose**: `0` live, `1` gone, `2` an ambiguous locator (which
   is not an answer to "is it live?" and reports its candidates instead).
 
-- **The shared AXI error/usage contract** — this node owns the one `fail()` / `reportError` /
-  `paneVerb` / `reportWorktreeFailure` surface **every** `cyber-mux` verb routes through, so the error
-  contract is pinned **once** rather than per verb. Every failure is a **structured error on stdout**,
+- **The shared AXI error/usage contract** — this node owns the error contract **every** `cyber-mux`
+  verb follows, pinned **once** rather than per verb. Since #266 the reporting is clibuilder's
+  (`output: 'axi'`): a verb throws a `CliError` (`paneVerb` and `worktreeFailure` translate backend
+  throws into one), and clibuilder ranks, codes and prints usage errors itself. Every failure is a **structured error on stdout**,
   under a **stable, discriminating `code`** (two failures never share one), with a **`help:`** line
   naming this CLI's own fixing command (never `see --help`, never the wrapped multiplexer's raw
   diagnostic). A **usage error exits 2** (unknown flag, missing required argument, ambiguous locator),

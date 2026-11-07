@@ -1,4 +1,4 @@
-import { type Descriptor, t } from 'clibuilder'
+import { type Descriptor, exitCodes, t } from 'clibuilder'
 import { CliError } from './cli-error.ts'
 
 type MuxPlacementName = 'pane:right' | 'pane:down' | 'pane:float' | 'tab' | 'workspace'
@@ -31,12 +31,12 @@ export function parseEnv(pairs: string[] | undefined): Record<string, string> | 
 	for (const pair of pairs) {
 		const eq = pair.indexOf('=')
 		if (eq <= 0) {
-			throw new CliError(
-				'invalid-value',
-				`--env expects KEY=VALUE, got "${pair}"`,
-				'pass each variable as --env KEY=VALUE',
-				2,
-			)
+			throw new CliError({
+				code: 'invalid-value',
+				message: `--env expects KEY=VALUE, got "${pair}"`,
+				help: 'pass each variable as --env KEY=VALUE',
+				exitCode: exitCodes.usage,
+			})
 		}
 		env[pair.slice(0, eq)] = pair.slice(eq + 1)
 	}

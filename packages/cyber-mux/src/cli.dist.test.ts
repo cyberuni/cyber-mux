@@ -89,20 +89,24 @@ describe('spec:cyber-mux/cli — built bin', () => {
 })
 
 describe('spec:cyber-mux/cli — mux plugin', () => {
-	it('mounts every verb under `mux` in the host', () => {
+	it("mounts every verb under `mux` in the host, answering in the host's format", () => {
+		// The host is a default clibuilder 12 CLI: `axi` output, `toon` format.
 		const r = host('mux', 'mode')
 		expect(r.status).toBe(0)
-		expect(r.stdout.trim()).toBe('none')
+		expect(r.stdout.trim()).toBe('backend: none')
+		// The text form is cyber-mux's own renderer, so it travels with the verb.
+		expect(host('mux', 'mode', '--format', 'text').stdout.trim()).toBe('none')
 	})
 
 	it('reports a usage error on the coded surface, spelled through the host', () => {
 		const r = host('mux', 'list', '--nope')
 		expect(r.status).toBe(2)
-		expect(r.stdout).toContain('unknown-flag')
-		expect(r.stdout).toContain('--format')
+		expect(r.stdout).toContain('unknown-option')
+		expect(r.stdout).toContain('Usage: host mux list')
 		const missing = host('mux', 'worktree', 'open')
 		expect(missing.status).toBe(2)
-		expect(missing.stdout).toContain('host mux worktree open <path>')
+		expect(missing.stdout).toContain('code: missing-argument')
+		expect(missing.stdout).toContain('Usage: host mux worktree open')
 	})
 
 	it('answers a bare `mux` with its verbs and exit 2', () => {

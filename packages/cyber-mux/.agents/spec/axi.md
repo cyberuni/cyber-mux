@@ -226,17 +226,18 @@ corruption — but a failed `read` captures nothing, so the bytes and the error 
 
   **What ships today, verified against source rather than asserted:**
 
-  - **The #6 error surface is built.** Every failure is now a `CliError` reported by `reportError`
-    (`src/cli-error.ts`) on **stdout** under a stable `code`, with an actionable `help:` line, honoring
-    `--format` — and the AXI exit split holds: a usage error (unknown flag, missing required argument, a
+  - **The #6 error surface is built, on clibuilder's own.** Since #266 the CLI runs on clibuilder's
+    `output: 'axi'`: every failure is a clibuilder `CliError`, which clibuilder reports on **stdout** as
+    one flat object (`error`, `code`, detail fields, `help`), honoring `--format` — and the AXI exit
+    split holds: a usage error (unknown flag, missing required argument, a
     malformed name, help-answered incomplete input) leaves `2`, an operation failure leaves `1`. The
     single `fail()` helper this node used to describe is **gone**; `src/cli.ts` has no `fail(` sites and
     writes no error to stderr. The `ambiguous-pane` report of [`mux/`](./mux/README.md)'s pane
     addressing (its `code`, candidates, and `--format` honoring) is the shape every site now uses.
   - **The two #9 suggestions now ship on stdout** — `template save`'s truncation reveal
-    (`noteTabsLeftOut`) and the `worktree` grouping hint (`reportOpenedWorktree`) ride in the structured
-    payload as `help[N]:` blocks (`{ message, command }`, rendered by `printHelp` in `output.ts`), each
-    emitted only when there is a next move (#9's omit-when-self-contained rule). This CR moved them off
+    (`noteTabsLeftOut`) and the `worktree` grouping hint (`openedWorktreeAnswer`) ride in the answer as
+    `help` lines (strings built by `step` in `output.ts`, encoded by clibuilder), each emitted only when
+    there is a next move (#9's omit-when-self-contained rule). This CR moved them off
     stderr. See #9.
   - **Backend text is translated everywhere, including the generic `worktree-failed` catch-all.** The
     coded error sites carry `cyber-mux`'s own text (the `template-not-found` lookup names the directories

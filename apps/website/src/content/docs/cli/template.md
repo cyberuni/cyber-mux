@@ -139,10 +139,10 @@ PANE  POSITION      LABEL    DIR           COMMAND
 2     bottom-left   web      apps/website
 3     top-right     logs                   tail -f log
 4     bottom-right  shell
-help[0]: 3 of 4 panes have no command — a template applies without one, but the pane just sits at a shell
-  -> cyber-mux template edit pool-4 --set 1=<command>
-help[1]: Fill them in one prompt at a time, with the current value pre-filled
-  -> cyber-mux template edit pool-4 --interactive
+
+help:
+  - 3 of 4 panes have no command — a template applies without one, but the pane just sits at a shell — run `cyber-mux template edit pool-4 --set 1=<command>`
+  - Fill them in one prompt at a time, with the current value pre-filled — run `cyber-mux template edit pool-4 --interactive`
 ```
 
 The `PANE` column is verbatim what `--set` takes. Panes are addressed by **ordinal, never by label** —
@@ -174,8 +174,11 @@ batch naming one pane that does not exist writes **none** of them, and the error
 identifier that would have worked:
 
 ```
-error: invalid-set: no pane "9" in this template — it has 4 panes: 1, 2, 3, 4
-help: list the panes and their identifiers with: cyber-mux template edit <name>
+error: no pane "9" in this template — it has 4 panes: 1, 2, 3, 4
+code: invalid-set
+
+help:
+  - list the panes and their identifiers with: cyber-mux template edit <name>
 ```
 
 **Interactive**

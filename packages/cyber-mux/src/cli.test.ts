@@ -13,14 +13,25 @@ import { captureWorkspaceTemplate } from './template-capture.ts'
 import type { TemplateStore } from './template-store.ts'
 import { acquire, toHarnessExec } from './worktree-pool.ts'
 
+/**
+ * A `process.stdout.write` stub that records what core prints, one entry per line, into the test's own
+ * `logs` — the same shape `console.log` once filled, so a test reads a printed answer the way it always did.
+ */
+function captureInto(logs: () => string[]) {
+	return (chunk: string | Uint8Array): boolean => {
+		logs().push(...String(chunk).replace(/\n$/, '').split('\n'))
+		return true
+	}
+}
+
 /** No ancestry available — forces every probe onto the env fast-path/hint, deterministic in CI. */
 const noAncestry: Exec = () => null
 
 /**
- * Drive the CLI the way the bin does. A coded failure calls `process.exit`, which would take the test
- * runner down with it, so it is stubbed to throw `exit:<code>` unless the test already stubbed it. A
- * status clibuilder records instead of exiting on (a bare group's usage error) is surfaced the same way,
- * so every non-zero exit reads alike to the assertions.
+ * Drive the CLI the way the bin does. clibuilder records a non-zero exit in `process.exitCode` rather
+ * than exiting, and the process ends with it once the CLI is done. The harness hands that status to
+ * `process.exit`, stubbed to throw `exit:<code>` unless the test already stubbed it, so a test asserts
+ * on the exit the way the bin's caller sees it.
  */
 async function run(program: MuxCli, args: string[]): Promise<void> {
 	if (!vi.isMockFunction(process.exit)) {
@@ -32,7 +43,7 @@ async function run(program: MuxCli, args: string[]): Promise<void> {
 	await program.parse(['node', 'cyber-mux', ...args])
 	const code = process.exitCode
 	process.exitCode = undefined
-	if (code) throw new Error(`exit:${code}`)
+	if (code) process.exit(code)
 }
 
 /**
@@ -73,27 +84,14 @@ function drives(calls: string[][]): string[][] {
 	return calls.filter((c) => !(c[0] === 'list-panes' && c[1] === '-a') && !(c[0] === 'pane' && c[1] === 'list'))
 }
 
-/** `output()` reads the real process.argv to pick a format, so a json test must supply one. */
-async function withArgv<T>(argv: string[], fn: () => Promise<T>): Promise<T> {
-	const original = process.argv
-	process.argv = ['node', 'cyber-mux', ...argv]
-	try {
-		return await fn()
-	} finally {
-		process.argv = original
-	}
-}
-
 describe('spec:cyber-mux/cli/worktree', () => {
 	let logs: string[]
 
 	beforeEach(() => {
 		logs = []
-		vi.spyOn(console, 'log').mockImplementation((line: string) => {
-			logs.push(line)
-		})
+		vi.spyOn(process.stdout, 'write').mockImplementation(captureInto(() => logs))
 		vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
-		vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+		vi.spyOn(process.stdout, 'write').mockImplementation(captureInto(() => logs))
 	})
 
 	afterEach(() => {
@@ -229,13 +227,11 @@ describe('spec:cyber-mux/cli/worktree', () => {
 		const calls: string[][] = []
 		const exec = fakeRepoExec(calls, { 'pane split': '{"result":{"pane":{"pane_id":"w3:pB","tab_id":"w3:t1"}}}' })
 		const program = buildProgram({ env: { CYBER_MUX: 'herdr' }, exec })
-		await withArgv(['worktree', 'add', '--branch', 'my-feature', '--at', 'pane:right', '--format', 'json'], () =>
-			run(program, ['worktree', 'add', '--branch', 'my-feature', '--at', 'pane:right', '--format', 'json']),
-		)
+		await run(program, ['worktree', 'add', '--branch', 'my-feature', '--at', 'pane:right', '--format', 'json'])
 		const payload = JSON.parse(logs.join('\n'))
 		expect(Array.isArray(payload.help)).toBe(true)
-		expect(payload.help[0].message).toContain('--at workspace')
-		expect(payload.help[0].command).toBe('cyber-mux worktree add --branch my-feature --at workspace')
+		expect(payload.help[0]).toContain('--at workspace')
+		expect(payload.help[0]).toContain('cyber-mux worktree add --branch my-feature --at workspace')
 	})
 
 	it('worktree-open-groups-existing', async () => {
@@ -326,9 +322,7 @@ describe('spec:cyber-mux/cli/worktree', () => {
 		expect(out).not.toContain('/repo (gone)')
 
 		logs.length = 0
-		await withArgv(['worktree', 'list', '--format', 'json'], () =>
-			run(program, ['worktree', 'list', '--format', 'json']),
-		)
+		await run(program, ['worktree', 'list', '--format', 'json'])
 		const payload = JSON.parse(logs.join('\n'))
 		expect(payload.worktrees.map((w: { prunable: boolean }) => w.prunable)).toEqual([false, true])
 		expect(payload.worktrees[1].root).toBe('/repo.worktrees/gone')
@@ -344,9 +338,7 @@ describe('spec:cyber-mux/cli/worktree', () => {
 		expect(logs.join('\n')).not.toContain(home)
 
 		logs.length = 0
-		await withArgv(['worktree', 'list', '--format', 'json'], () =>
-			run(program, ['worktree', 'list', '--format', 'json']),
-		)
+		await run(program, ['worktree', 'list', '--format', 'json'])
 		expect(JSON.parse(logs.join('\n')).worktrees[0].root).toBe(`${home}/code/app`)
 	})
 
@@ -361,9 +353,7 @@ describe('spec:cyber-mux/cli/worktree', () => {
 		].join('\n')
 		const exec = gitListExec(porcelain)
 		const program = buildProgram({ env: {}, exec })
-		await withArgv(['worktree', 'list', '--format', 'json'], () =>
-			run(program, ['worktree', 'list', '--format', 'json']),
-		)
+		await run(program, ['worktree', 'list', '--format', 'json'])
 		const payload = JSON.parse(logs.join('\n'))
 		expect(payload.worktrees.map((w: { linked: boolean }) => w.linked)).toEqual([false, true])
 		expect(payload.worktrees[0].branch).toBe('main')
@@ -465,9 +455,7 @@ describe('spec:cyber-mux/cli/worktree', () => {
 		}
 		const json = async (args: string[], exec = repoExec(), env: Record<string, string> = {}) => {
 			logs.length = 0
-			await withArgv([...args, '--format', 'json'], () =>
-				run(buildProgram({ env, exec }), [...args, '--format', 'json']),
-			)
+			await run(buildProgram({ env, exec }), [...args, '--format', 'json'])
 			return JSON.parse(logs.join('\n'))
 		}
 		const human = async (args: string[], exec = repoExec(), env: Record<string, string> = {}) => {
@@ -660,13 +648,11 @@ describe('spec:cyber-mux/cli/worktree', () => {
 		const calls: string[][] = []
 		const exec = fakeRepoExec(calls, { 'pane split': '{"result":{"pane":{"pane_id":"w3:pB","tab_id":"w3:t1"}}}' })
 		const program = buildProgram({ env: { CYBER_MUX: 'herdr' }, exec })
-		await withArgv(['worktree', 'add', '--branch', 'my-feature', '--at', 'pane:right', '--format', 'json'], () =>
-			run(program, ['worktree', 'add', '--branch', 'my-feature', '--at', 'pane:right', '--format', 'json']),
-		)
+		await run(program, ['worktree', 'add', '--branch', 'my-feature', '--at', 'pane:right', '--format', 'json'])
 		const payload = JSON.parse(logs.join('\n'))
 		expect(calls.some((c) => c[0] === 'git' && c.includes('add'))).toBe(true)
 		expect(payload.workspace).toBeNull()
-		expect(payload.help[0].message).toContain('--at workspace')
+		expect(payload.help[0]).toContain('--at workspace')
 	})
 
 	it('worktree-add-placement-fallback', async () => {
@@ -674,13 +660,11 @@ describe('spec:cyber-mux/cli/worktree', () => {
 		const calls: string[][] = []
 		const exec = fakeRepoExec(calls, { 'pane split': '{"result":{"pane":{"pane_id":"w3:pB","tab_id":"w3:t1"}}}' })
 		const program = buildProgram({ env: { CYBER_MUX: 'herdr' }, exec })
-		await withArgv(['worktree', 'add', '--branch', 'my-feature', '--at', 'pane:down', '--format', 'json'], () =>
-			run(program, ['worktree', 'add', '--branch', 'my-feature', '--at', 'pane:down', '--format', 'json']),
-		)
+		await run(program, ['worktree', 'add', '--branch', 'my-feature', '--at', 'pane:down', '--format', 'json'])
 		const payload = JSON.parse(logs.join('\n'))
 		expect(calls.some((c) => c[0] === 'git' && c.includes('add'))).toBe(true)
 		expect(payload.workspace).toBeNull()
-		expect(payload.help[0].message).toContain('--at workspace')
+		expect(payload.help[0]).toContain('--at workspace')
 	})
 
 	it('worktree-add-placement-fallback', async () => {
@@ -688,13 +672,11 @@ describe('spec:cyber-mux/cli/worktree', () => {
 		const calls: string[][] = []
 		const exec = fakeRepoExec(calls, { 'tab create': '{"result":{"root_pane":{"pane_id":"w3:pB","tab_id":"w3:t1"}}}' })
 		const program = buildProgram({ env: { CYBER_MUX: 'herdr' }, exec })
-		await withArgv(['worktree', 'add', '--branch', 'my-feature', '--at', 'tab', '--format', 'json'], () =>
-			run(program, ['worktree', 'add', '--branch', 'my-feature', '--at', 'tab', '--format', 'json']),
-		)
+		await run(program, ['worktree', 'add', '--branch', 'my-feature', '--at', 'tab', '--format', 'json'])
 		const payload = JSON.parse(logs.join('\n'))
 		expect(calls.some((c) => c[0] === 'git' && c.includes('add'))).toBe(true)
 		expect(payload.workspace).toBeNull()
-		expect(payload.help[0].message).toContain('--at workspace')
+		expect(payload.help[0]).toContain('--at workspace')
 	})
 
 	it('worktree-add-nonbinding-no-note', async () => {
@@ -703,9 +685,7 @@ describe('spec:cyber-mux/cli/worktree', () => {
 			env: { CYBER_MUX: 'tmux' },
 			exec: envExec(calls, { 'split-window': '%9\t@1' }),
 		})
-		await withArgv(['worktree', 'add', '--branch', 'my-feature', '--at', 'pane:right', '--format', 'json'], () =>
-			run(program, ['worktree', 'add', '--branch', 'my-feature', '--at', 'pane:right', '--format', 'json']),
-		)
+		await run(program, ['worktree', 'add', '--branch', 'my-feature', '--at', 'pane:right', '--format', 'json'])
 		const payload = JSON.parse(logs.join('\n'))
 		// tmux binds nothing, so there was never a grouping on offer to report losing.
 		expect(payload.workspace).toBeNull()
@@ -803,9 +783,7 @@ describe('cyber-mux/mux — cli-driven library surface', () => {
 
 		beforeEach(() => {
 			logs = []
-			vi.spyOn(console, 'log').mockImplementation((line: string) => {
-				logs.push(line)
-			})
+			vi.spyOn(process.stdout, 'write').mockImplementation(captureInto(() => logs))
 			// commander writes its own error text to stderr even with exitOverride() — silence it here so
 			// the deliberate --at rejection test doesn't spam the runner's real stderr.
 			vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
@@ -813,7 +791,7 @@ describe('cyber-mux/mux — cli-driven library surface', () => {
 			// axi's one raw-stream exception, so the spy above never catches it. Any test that drives
 			// `read` would otherwise leak its fixture's fake output into the runner's own stdout. A test
 			// asserting ON stdout still spies it locally; this only stops the spill.
-			vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+			vi.spyOn(process.stdout, 'write').mockImplementation(captureInto(() => logs))
 		})
 
 		afterEach(() => {
@@ -835,9 +813,7 @@ describe('cyber-mux/mux — cli-driven library surface', () => {
 						}),
 					}),
 				})
-				await withArgv(['open', '--at', 'workspace', '--format', 'json'], () =>
-					run(program, ['open', '--at', 'workspace', '--format', 'json']),
-				)
+				await run(program, ['open', '--at', 'workspace', '--format', 'json'])
 				expect(JSON.parse(logs.join('\n'))).toEqual({ pane: 'w7:p1', workspace: 'w7' })
 				// The report is free: opening the pane is the ONLY backend call — the workspace rode in on it,
 				// with no `pane get`/`workspace list` follow-up to resolve it.
@@ -854,9 +830,7 @@ describe('cyber-mux/mux — cli-driven library surface', () => {
 				env: { TMUX: '/tmp/tmux-1000/default,1,0' },
 				exec: fakeTmuxExec([], { 'new-window': '%20\t@1' }),
 			})
-			await withArgv(['open', '--at', 'workspace', '--format', 'json'], () =>
-				run(program, ['open', '--at', 'workspace', '--format', 'json']),
-			)
+			await run(program, ['open', '--at', 'workspace', '--format', 'json'])
 			expect(JSON.parse(logs.join('\n'))).toEqual({ pane: '%20', workspace: null })
 		})
 
@@ -1479,7 +1453,9 @@ describe('cyber-mux/mux — cli-driven library surface', () => {
 					const program = buildProgram({ env: XDG, exec: repoExec([]), store, prompt })
 					await run(program, ['template', 'edit', 'draft', '--interactive', '--dry-run'])
 					expect(store.writes).toEqual({})
-					expect(JSON.parse(logs.join('\n')).panes[0]).toEqual({ label: 'w1', command: 'claude' })
+					// The walk's prompts share the terminal; the template is the JSON document after them.
+					const printed = logs.slice(logs.indexOf('{')).join('\n')
+					expect(JSON.parse(printed).panes[0]).toEqual({ label: 'w1', command: 'claude' })
 				})
 
 				it('--field label edits labels instead', async () => {
@@ -1567,7 +1543,7 @@ describe('cyber-mux/mux — cli-driven library surface', () => {
 						const store = fakeStore({ [repo('draft')]: DRAFT })
 						const program = buildProgram({ env: XDG, exec: repoExec([]), store, prompt: fakePrompt([]) })
 						const argv = ['template', 'edit', 'draft', '--format', 'json']
-						await withArgv(argv, () => run(program, argv))
+						await run(program, argv)
 						const { panes } = JSON.parse(logs.join('\n'))
 						expect(panes.map((p: { pane: string }) => p.pane)).toEqual(['1', '2'])
 					})
@@ -1580,7 +1556,7 @@ describe('cyber-mux/mux — cli-driven library surface', () => {
 						const store = fakeStore({ [repo('two-tabs')]: tabs })
 						const program = buildProgram({ env: XDG, exec: repoExec([]), store, prompt: fakePrompt([]) })
 						const argv = ['template', 'edit', 'two-tabs', '--format', 'json']
-						await withArgv(argv, () => run(program, argv))
+						await run(program, argv)
 						const { panes } = JSON.parse(logs.join('\n'))
 						expect(panes.map((p: { pane: string }) => p.pane)).toEqual(['1.1', '1.2', '2.1'])
 					})
@@ -1589,12 +1565,12 @@ describe('cyber-mux/mux — cli-driven library surface', () => {
 						const store = fakeStore({ [repo('draft')]: DRAFT })
 						const program = buildProgram({ env: XDG, exec: repoExec([]), store, prompt: fakePrompt([]) })
 						const argv = ['template', 'edit', 'draft', '--format', 'json']
-						await withArgv(argv, () => run(program, argv))
+						await run(program, argv)
 						const { help } = JSON.parse(logs.join('\n'))
 						// Both panes of DRAFT lack a command, and the fix names a real pane identifier.
-						expect(help[0].message).toContain('2 of 2 panes have no command')
-						expect(help[0].command).toBe('cyber-mux template edit draft --set 1=<command>')
-						expect(help.some((h: { command: string }) => h.command.includes('--interactive'))).toBe(true)
+						expect(help[0]).toContain('2 of 2 panes have no command')
+						expect(help[0]).toContain('cyber-mux template edit draft --set 1=<command>')
+						expect(help.some((h: string) => h.includes('--interactive'))).toBe(true)
 					})
 				})
 
@@ -1704,9 +1680,7 @@ describe('cyber-mux/mux — cli-driven library surface', () => {
 					const store = fakeStore({ [repo('draft')]: DRAFT })
 					const program = buildProgram({ env: XDG, exec: repoExec([]), store, prompt: fakePrompt([]) })
 					const argv = ['template', 'edit', 'draft', '--interactive', '--format', 'json']
-					await withArgv(argv, async () => {
-						await expect(run(program, argv)).rejects.toThrow('exit:2')
-					})
+					await expect(run(program, argv)).rejects.toThrow('exit:2')
 					expect(stderr.join('') + logs.join('\n')).toContain('not-interactive')
 				})
 
@@ -1800,9 +1774,16 @@ describe('cyber-mux/mux — cli-driven library surface', () => {
 					const store = fakeStore({ [repo('agent-pool-3')]: AGENT_POOL_3 })
 					const exec = repoExec(calls, { 'worktree create': worktreeOut })
 					const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'herdr' }, exec, store })
-					await withArgv(['worktree', 'add', '--format', 'json'], () =>
-						run(program, ['worktree', 'add', '--branch', 'feat-x', '--template', 'agent-pool-3', '--format', 'json']),
-					)
+					await run(program, [
+						'worktree',
+						'add',
+						'--branch',
+						'feat-x',
+						'--template',
+						'agent-pool-3',
+						'--format',
+						'json',
+					])
 					const created = calls.find((c) => c[0] === 'herdr' && c[1] === 'worktree' && c[2] === 'create')!
 					expect(created).toBeDefined()
 					// The workspace opens with NO launch: the template owns what runs, and its root pane
@@ -2263,9 +2244,7 @@ describe('cyber-mux/template — cli-driven library surface', () => {
 
 	beforeEach(() => {
 		logs = []
-		vi.spyOn(console, 'log').mockImplementation((line: string) => {
-			logs.push(line)
-		})
+		vi.spyOn(process.stdout, 'write').mockImplementation(captureInto(() => logs))
 		vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
 	})
 
@@ -2284,9 +2263,7 @@ describe('cyber-mux/template — cli-driven library surface', () => {
 			// tmux: no worktree capability, so this route is plain git plus an `open` at the workspace
 			// placement — the region exists before the walk ever sees it.
 			const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'tmux' }, exec, store })
-			await withArgv(['worktree', 'add', '--format', 'json'], () =>
-				run(program, ['worktree', 'add', '--branch', 'feat-x', '--template', 'pool', '--format', 'json']),
-			)
+			await run(program, ['worktree', 'add', '--branch', 'feat-x', '--template', 'pool', '--format', 'json'])
 
 			// Three tabs, three windows, and EVERY one of them carries a group — the first included.
 			const tagged = [...windows.values()].map((w) => w.opts['@cm_ws'])
@@ -2616,11 +2593,9 @@ describe('spec:cyber-mux/cli/detection', () => {
 
 	beforeEach(() => {
 		logs = []
-		vi.spyOn(console, 'log').mockImplementation((line: string) => {
-			logs.push(line)
-		})
+		vi.spyOn(process.stdout, 'write').mockImplementation(captureInto(() => logs))
 		vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
-		vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+		vi.spyOn(process.stdout, 'write').mockImplementation(captureInto(() => logs))
 	})
 
 	afterEach(() => {
@@ -2655,11 +2630,9 @@ describe('spec:cyber-mux/cli/driving', () => {
 
 	beforeEach(() => {
 		logs = []
-		vi.spyOn(console, 'log').mockImplementation((line: string) => {
-			logs.push(line)
-		})
+		vi.spyOn(process.stdout, 'write').mockImplementation(captureInto(() => logs))
 		vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
-		vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+		vi.spyOn(process.stdout, 'write').mockImplementation(captureInto(() => logs))
 	})
 
 	afterEach(() => {
@@ -2717,11 +2690,9 @@ describe('spec:cyber-mux/cli/placement', () => {
 
 	beforeEach(() => {
 		logs = []
-		vi.spyOn(console, 'log').mockImplementation((line: string) => {
-			logs.push(line)
-		})
+		vi.spyOn(process.stdout, 'write').mockImplementation(captureInto(() => logs))
 		vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
-		vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+		vi.spyOn(process.stdout, 'write').mockImplementation(captureInto(() => logs))
 	})
 
 	afterEach(() => {
@@ -2974,11 +2945,9 @@ describe('spec:cyber-mux/cli/lookup', () => {
 
 	beforeEach(() => {
 		logs = []
-		vi.spyOn(console, 'log').mockImplementation((line: string) => {
-			logs.push(line)
-		})
+		vi.spyOn(process.stdout, 'write').mockImplementation(captureInto(() => logs))
 		vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
-		vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+		vi.spyOn(process.stdout, 'write').mockImplementation(captureInto(() => logs))
 	})
 
 	afterEach(() => {
@@ -3064,8 +3033,9 @@ describe('spec:cyber-mux/cli/lookup', () => {
 		const program = buildProgram({ env: XDG, exec: repoExec([]), store })
 		await expect(run(program, ['template', 'list', '--force'])).rejects.toThrow('exit:2')
 		const out = logs.join('\n')
+		expect(out).toContain('unknown-option')
 		expect(out).toContain('--force')
-		expect(out).toContain('--format')
+		expect(out).toContain('`list` takes no options')
 		expect(out).not.toContain('--from')
 		expect(out).not.toContain('--workspace')
 	})
@@ -3096,9 +3066,7 @@ describe('spec:cyber-mux/cli/lookup', () => {
 			},
 		})
 		const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'tmux' }, exec, store })
-		await withArgv(['open', '--template', 'render-farm', '--format', 'json'], async () => {
-			await expect(run(program, ['open', '--template', 'render-farm', '--format', 'json'])).rejects.toThrow('exit:1')
-		})
+		await expect(run(program, ['open', '--template', 'render-farm', '--format', 'json'])).rejects.toThrow('exit:1')
 		const manifest = JSON.parse(logs.join('\n'))
 		expect(manifest.panes.map((p: { label: string }) => p.label)).toEqual(['a', 'b', 'c'])
 		expect(calls.some((c) => c[1] === 'kill-pane')).toBe(false)
@@ -3251,15 +3219,13 @@ describe('spec:cyber-mux/cli/lookup', () => {
 			{ id: '%2', label: 'worker', cwd: '/repo/b' },
 		]
 		const program = buildProgram({ env: TMUX, exec: paneServer([], panes) })
-		await withArgv(['close', 'worker', '--format', 'json'], () =>
-			expect(run(program, ['close', 'worker', '--format', 'json'])).rejects.toThrow('exit:2'),
-		)
+		await expect(run(program, ['close', 'worker', '--format', 'json'])).rejects.toThrow('exit:2')
 		const parsed = JSON.parse(logs.join('\n'))
-		expect(parsed.error.code).toBe('ambiguous-pane')
-		expect(parsed.error.candidates).toEqual([
-			{ id: '%1', label: 'worker', cwd: '/repo/a' },
-			{ id: '%2', label: 'worker', cwd: '/repo/b' },
-		])
+		expect(parsed.code).toBe('ambiguous-pane')
+		// core keeps error details flat, so the candidates are index-aligned lists: the id, then what tells it apart
+		expect(parsed.candidates).toEqual(['%1', '%2'])
+		expect(parsed.labels).toEqual(['worker', 'worker'])
+		expect(parsed.cwds).toEqual(['/repo/a', '/repo/b'])
 		expect(stderr.join('')).toBe('')
 	})
 
@@ -3359,17 +3325,15 @@ describe('spec:cyber-mux/cli/lookup', () => {
 	it('@id:lookup-failure-codes-distinct', async () => {
 		catchExit()
 		captureStderr()
-		await withArgv(['read', 'worker', '--format', 'json'], () =>
-			expect(
-				run(buildProgram({ env: TMUX, exec: paneServer([], ALL_WORKER) }), ['read', 'worker', '--format', 'json']),
-			).rejects.toThrow('exit:2'),
-		)
-		const ambiguousCode = JSON.parse(logs.join('\n')).error.code
+		await expect(
+			run(buildProgram({ env: TMUX, exec: paneServer([], ALL_WORKER) }), ['read', 'worker', '--format', 'json']),
+		).rejects.toThrow('exit:2')
+		const ambiguousCode = JSON.parse(logs.join('\n')).code
 		logs.length = 0
-		await withArgv(['list', '--format', 'json'], () =>
-			expect(run(buildProgram({ env: {}, exec: noAncestry }), ['list', '--format', 'json'])).rejects.toThrow('exit:1'),
+		await expect(run(buildProgram({ env: {}, exec: noAncestry }), ['list', '--format', 'json'])).rejects.toThrow(
+			'exit:1',
 		)
-		const noMuxCode = JSON.parse(logs.join('\n')).error.code
+		const noMuxCode = JSON.parse(logs.join('\n')).code
 		expect(ambiguousCode).toBe('ambiguous-pane')
 		expect(noMuxCode).toBe('no-mux')
 		expect(ambiguousCode).not.toBe(noMuxCode)
@@ -3448,7 +3412,7 @@ describe('spec:cyber-mux/cli/lookup', () => {
 		).rejects.toThrow('exit:2')
 		const out = logs.join('\n')
 		expect(out).toContain('invalid-value')
-		expect(out).toContain('--lines takes: Trailing lines to capture')
+		expect(out).toContain('expected for --lines: int')
 		expect(drives(calls)).toEqual([])
 	})
 
@@ -3460,8 +3424,9 @@ describe('spec:cyber-mux/cli/lookup', () => {
 		)
 		expect(errExit).toHaveBeenCalledWith(2)
 		const out = logs.join('\n')
+		expect(out).toContain('unknown-option')
 		expect(out).toContain('--nope')
-		expect(out).toContain('--format')
+		expect(out).toContain('`list` takes no options')
 		expect(drives(calls)).toEqual([])
 	})
 
@@ -3478,11 +3443,11 @@ describe('spec:cyber-mux/cli/lookup', () => {
 	it('@id:lookup-error-honors-format-json', async () => {
 		catchExit()
 		const stderr = captureStderr()
-		await withArgv(['list', '--format', 'json'], () =>
-			expect(run(buildProgram({ env: {}, exec: noAncestry }), ['list', '--format', 'json'])).rejects.toThrow('exit:1'),
+		await expect(run(buildProgram({ env: {}, exec: noAncestry }), ['list', '--format', 'json'])).rejects.toThrow(
+			'exit:1',
 		)
 		const parsed = JSON.parse(logs.join('\n'))
-		expect(parsed.error.code).toBe('no-mux')
+		expect(parsed.code).toBe('no-mux')
 		expect(stderr.join('')).toBe('')
 	})
 
@@ -3497,8 +3462,9 @@ describe('spec:cyber-mux/cli/lookup', () => {
 		await expect(
 			run(buildProgram({ env: TMUX, exec: throwingExec('', 'capture-pane: no such pane') }), ['read', '%1']),
 		).rejects.toThrow('exit:1')
-		expect(out).toEqual([])
-		expect(logs.join('\n')).toContain('pane-not-found')
+		// one write, and it is the coded error: no partial pane output landed before it
+		expect(out).toHaveLength(1)
+		expect(out[0]).toContain('pane-not-found')
 	})
 
 	it('@id:lookup-read-writes-raw-bytes', async () => {
@@ -3518,7 +3484,7 @@ describe('spec:cyber-mux/cli/lookup', () => {
 
 	it('@id:lookup-read-lines-caps-trailing', async () => {
 		const calls: string[][] = []
-		vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+		vi.spyOn(process.stdout, 'write').mockImplementation(captureInto(() => logs))
 		const program = buildProgram({
 			env: TMUX,
 			exec: paneServer(calls, [{ id: '%1', cwd: '/repo' }], { 'capture-pane': 'x' }),
@@ -3548,11 +3514,12 @@ describe('spec:cyber-mux/cli/lookup', () => {
 		await run(buildProgram({ env: TMUX, exec }), ['read', '%1'])
 		// AXI #6: stdout is the stream the agent reads, stderr the one it does not — so no format hides
 		// the answer, and none of it is on stderr.
-		expect(logs.join('\n')).toContain('truncated  true')
-		expect(logs.join('\n')).toContain('-> cyber-mux read %1 --full')
+		const printed = out.join('')
+		expect(printed).toContain('truncated  true')
+		expect(printed).toContain('run `cyber-mux read %1 --full`')
 		expect(stderr.join('')).toBe('')
 		// The capture itself is untouched, and the hint follows the body (AXI #3's own shape).
-		expect(out.join('')).toBe('HELLO\n')
+		expect(printed.startsWith('HELLO\ntruncated  true\n')).toBe(true)
 	})
 
 	it('read leaves a complete capture as raw bytes alone — the hint is for a truncated one', async () => {
@@ -3575,25 +3542,23 @@ describe('spec:cyber-mux/cli/lookup', () => {
 	})
 
 	it('read --format json spells truncated even when the capture was complete', async () => {
-		vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+		vi.spyOn(process.stdout, 'write').mockImplementation(captureInto(() => logs))
 		const program = buildProgram({
 			env: TMUX,
 			exec: paneServer([], [{ id: '%1', cwd: '/repo' }], { 'capture-pane': 'HELLO' }),
 		})
-		await withArgv(['read', '%1', '--format', 'json'], () => run(program, ['read', '%1', '--format', 'json']))
+		await run(program, ['read', '%1', '--format', 'json'])
 		expect(JSON.parse(logs.join('\n'))).toEqual({ pane: '%1', text: 'HELLO', truncated: false })
 	})
 
 	it('read --full takes the whole scrollback, and costs no truncation probe to do it', async () => {
-		vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+		vi.spyOn(process.stdout, 'write').mockImplementation(captureInto(() => logs))
 		const calls: string[][] = []
 		const program = buildProgram({
 			env: TMUX,
 			exec: paneServer(calls, [{ id: '%1', cwd: '/repo' }], { 'capture-pane': 'OLDER\nHELLO' }),
 		})
-		await withArgv(['read', '%1', '--full', '--format', 'json'], () =>
-			run(program, ['read', '%1', '--full', '--format', 'json']),
-		)
+		await run(program, ['read', '%1', '--full', '--format', 'json'])
 		// `-S -` is tmux's own all-history spelling, and an unbounded window omitted nothing by
 		// construction — so `truncated` is false without a second capture spent proving it.
 		expect(calls.filter((c) => c[0] === 'capture-pane')).toEqual([['capture-pane', '-p', '-t', '%1', '-S', '-']])
@@ -3601,7 +3566,7 @@ describe('spec:cyber-mux/cli/lookup', () => {
 	})
 
 	it('read --format json carries truncated and the help entry in the payload', async () => {
-		vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+		vi.spyOn(process.stdout, 'write').mockImplementation(captureInto(() => logs))
 		const exec: Exec = (cmd, args) => {
 			// `-u` leads every tmux call (see paneServer's own comment, #177); this wrapper inspects args
 			// itself before delegating, so it strips the flag too rather than letting it leak into `-6`.
@@ -3611,14 +3576,12 @@ describe('spec:cyber-mux/cli/lookup', () => {
 			return paneServer([], [{ id: '%1', cwd: '/repo' }])(cmd, args)
 		}
 		const program = buildProgram({ env: TMUX, exec })
-		await withArgv(['read', '%1', '--lines', '5', '--format', 'json'], () =>
-			run(program, ['read', '%1', '--lines', '5', '--format', 'json']),
-		)
+		await run(program, ['read', '%1', '--lines', '5', '--format', 'json'])
 		expect(JSON.parse(logs.join('\n'))).toEqual({
 			pane: '%1',
 			text: 'HELLO',
 			truncated: true,
-			help: [{ message: 'older rows sit above this capture', command: 'cyber-mux read %1 --full' }],
+			help: ['older rows sit above this capture — run `cyber-mux read %1 --full`'],
 		})
 	})
 
@@ -3629,10 +3592,10 @@ describe('spec:cyber-mux/cli/lookup', () => {
 			exec: paneServer([], [{ id: '%1', cwd: '/repo' }], { 'capture-pane': 'HELLO' }),
 		})
 		await expect(run(program, ['read', '%1', '--lines', '5', '--full'])).rejects.toThrow('exit:2')
-		expect(logs.join('\n')).toContain('usage-error')
-		// Refused BEFORE the backend is touched: nothing was captured, so there is no partial answer to
-		// read past the error.
-		expect(logs.join('\n')).toContain('mutually exclusive')
+		// Refused by the parser BEFORE the backend is touched: nothing was captured, so there is no partial
+		// answer to read past the error.
+		expect(logs.join('\n')).toContain('conflicting-options')
+		expect(logs.join('\n')).toContain('option --full cannot be used with option --lines')
 	})
 
 	it('@id:lookup-focus-beams-view', async () => {
@@ -3720,7 +3683,7 @@ describe('spec:cyber-mux/cli/lookup', () => {
 					'--back',
 				]),
 			).rejects.toThrow('exit:2')
-			expect(logs.join('\n')).toContain('usage-error')
+			expect(logs.join('\n')).toContain('conflicting-options')
 			expect(calls.some((c) => c[0] === 'select-pane')).toBe(false)
 		})
 	})
@@ -3861,11 +3824,9 @@ describe('spec:cyber-mux/cli/template/apply', () => {
 
 	beforeEach(() => {
 		logs = []
-		vi.spyOn(console, 'log').mockImplementation((line: string) => {
-			logs.push(line)
-		})
+		vi.spyOn(process.stdout, 'write').mockImplementation(captureInto(() => logs))
 		vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
-		vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+		vi.spyOn(process.stdout, 'write').mockImplementation(captureInto(() => logs))
 	})
 
 	afterEach(() => {
@@ -4051,9 +4012,7 @@ describe('spec:cyber-mux/cli/template/apply', () => {
 	it('@id:template-apply-json-reports-panes', async () => {
 		const store = fakeStore({ [repo('agent-pool-3')]: AGENT_POOL_3 })
 		const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'tmux' }, exec: repoExec([]), store })
-		await withArgv(['open', '--template', 'agent-pool-3', '--format', 'json'], () =>
-			run(program, ['open', '--template', 'agent-pool-3', '--cwd', '/w/feat-x', '--format', 'json']),
-		)
+		await run(program, ['open', '--template', 'agent-pool-3', '--cwd', '/w/feat-x', '--format', 'json'])
 		const manifest = JSON.parse(logs.join('\n'))
 		expect(manifest.template).toBe('agent-pool-3')
 		expect(manifest.cwd).toBe('/w/feat-x')
@@ -4068,9 +4027,7 @@ describe('spec:cyber-mux/cli/template/apply', () => {
 	it('@id:template-apply-manifest-workspace-value', async () => {
 		const store = fakeStore({ [repo('pool-4')]: POOL_4 })
 		const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'herdr' }, exec: tabsExec([]), store })
-		await withArgv(['open', '--template', 'pool-4', '--format', 'json'], () =>
-			run(program, ['open', '--template', 'pool-4', '--format', 'json']),
-		)
+		await run(program, ['open', '--template', 'pool-4', '--format', 'json'])
 		// A real workspace id — the value the region actually opened in, not a flat null.
 		expect(JSON.parse(logs.join('\n')).workspace).toBe('w1')
 	})
@@ -4078,9 +4035,7 @@ describe('spec:cyber-mux/cli/template/apply', () => {
 	it('@id:template-apply-manifest-workspace-null-tmux', async () => {
 		const store = fakeStore({ [repo('pool-4')]: POOL_4 })
 		const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'tmux' }, exec: repoExec([]), store })
-		await withArgv(['open', '--template', 'pool-4', '--format', 'json'], () =>
-			run(program, ['open', '--template', 'pool-4', '--format', 'json']),
-		)
+		await run(program, ['open', '--template', 'pool-4', '--format', 'json'])
 		expect(JSON.parse(logs.join('\n')).workspace).toBeNull()
 	})
 
@@ -4089,9 +4044,7 @@ describe('spec:cyber-mux/cli/template/apply', () => {
 		// grouping tag is cyber-mux's own bookkeeping, never a workspace tier tmux actually has.
 		const store = fakeStore({ [repo('pool')]: POOL_TABS_SPLIT })
 		const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'tmux' }, exec: repoExec([]), store })
-		await withArgv(['open', '--template', 'pool', '--format', 'json'], () =>
-			run(program, ['open', '--template', 'pool', '--format', 'json']),
-		)
+		await run(program, ['open', '--template', 'pool', '--format', 'json'])
 		const out = JSON.parse(logs.join('\n'))
 		// The tabs really are grouped — a later tab's pane carries a non-zero tab index...
 		expect(out.panes.some((p: { tab: number | null }) => typeof p.tab === 'number' && p.tab > 0)).toBe(true)
@@ -4114,9 +4067,7 @@ describe('spec:cyber-mux/cli/template/apply', () => {
 			exec: tabsExec(calls, { 'worktree create': wtOut }),
 			store,
 		})
-		await withArgv(['worktree', 'add', '--format', 'json'], () =>
-			run(program, ['worktree', 'add', '--branch', 'feat-x', '--template', 'pool', '--format', 'json']),
-		)
+		await run(program, ['worktree', 'add', '--branch', 'feat-x', '--template', 'pool', '--format', 'json'])
 
 		// The worktree's own workspace is the ONLY workspace: no second one is opened for the tabs.
 		expect(calls.find((c) => c[1] === 'worktree' && c[2] === 'create')).toBeDefined()
@@ -4155,9 +4106,7 @@ describe('spec:cyber-mux/cli/template/apply', () => {
 		})
 		const exec = repoExec(calls, { 'worktree create': worktreeOut })
 		const program = buildProgram({ env: { ...XDG, CYBER_MUX: 'herdr' }, exec, store })
-		await withArgv(['worktree', 'add', '--format', 'json'], () =>
-			run(program, ['worktree', 'add', '--branch', 'feat-x', '--template', 'render-farm', '--format', 'json']),
-		)
+		await run(program, ['worktree', 'add', '--branch', 'feat-x', '--template', 'render-farm', '--format', 'json'])
 		// The workspace opens at the worktree root — that is what the binding pins...
 		const created = calls.find((c) => c[1] === 'worktree' && c[2] === 'create')!
 		expect(created).not.toContain('apps/render')
@@ -4192,11 +4141,9 @@ describe('spec:cyber-mux/cli/template/capture', () => {
 
 	beforeEach(() => {
 		logs = []
-		vi.spyOn(console, 'log').mockImplementation((line: string) => {
-			logs.push(line)
-		})
+		vi.spyOn(process.stdout, 'write').mockImplementation(captureInto(() => logs))
 		vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
-		vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+		vi.spyOn(process.stdout, 'write').mockImplementation(captureInto(() => logs))
 	})
 
 	afterEach(() => {
@@ -4489,7 +4436,7 @@ describe('spec:cyber-mux/cli/template/capture', () => {
 		expect(logs[0]).toBe(`path  ${repo('pool')}`)
 		const out = logs.join('\n')
 		expect(out).toContain('3 tabs')
-		expect(out).toContain('help[0]:')
+		expect(out).toContain('help:')
 		expect(out).toContain('cyber-mux template save pool --workspace')
 		expect(stderr.join('')).toBe('')
 	})
@@ -4497,14 +4444,12 @@ describe('spec:cyber-mux/cli/template/capture', () => {
 	it('@id:template-capture-json-path-and-help', async () => {
 		const store = fakeStore({})
 		const program = buildProgram({ env: HERDR_ENV, exec: herdrWorkspaceExec([], WS_3), store })
-		await withArgv(['template', 'save', 'pool', '--format', 'json'], () =>
-			run(program, ['template', 'save', 'pool', '--format', 'json']),
-		)
+		await run(program, ['template', 'save', 'pool', '--format', 'json'])
 		const payload = JSON.parse(logs.join('\n'))
 		expect(payload.path).toBe(repo('pool'))
 		expect(Array.isArray(payload.help)).toBe(true)
-		expect(payload.help[0].message).toContain('3 tabs')
-		expect(payload.help[0].command).toBe('cyber-mux template save pool --workspace')
+		expect(payload.help[0]).toContain('3 tabs')
+		expect(payload.help[0]).toContain('cyber-mux template save pool --workspace')
 	})
 
 	/** tmux with an unset grouping tag — a window nobody grouped, for the no-workspace-tier refusal. */
@@ -4552,11 +4497,9 @@ describe('spec:cyber-mux/cli/agent', () => {
 
 	beforeEach(() => {
 		logs = []
-		vi.spyOn(console, 'log').mockImplementation((line: string) => {
-			logs.push(line)
-		})
+		vi.spyOn(process.stdout, 'write').mockImplementation(captureInto(() => logs))
 		vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
-		vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+		vi.spyOn(process.stdout, 'write').mockImplementation(captureInto(() => logs))
 	})
 
 	afterEach(() => {
@@ -4587,10 +4530,8 @@ describe('spec:cyber-mux/cli/agent', () => {
 	})
 
 	it('cli-agent-status-json-payload', async () => {
-		await withArgv(['agent', 'status', 'w3:p1', '--format', 'json'], async () => {
-			const program = buildProgram({ env: HERDR_ENV, exec: fakeHerdrExec([], { 'pane list': PANE_LIST_WORKING }) })
-			await run(program, ['agent', 'status', 'w3:p1', '--format', 'json'])
-		})
+		const program = buildProgram({ env: HERDR_ENV, exec: fakeHerdrExec([], { 'pane list': PANE_LIST_WORKING }) })
+		await run(program, ['agent', 'status', 'w3:p1', '--format', 'json'])
 		expect(JSON.parse(logs.join('\n'))).toEqual({ pane: 'w3:p1', agentStatus: 'working' })
 	})
 
@@ -4711,11 +4652,9 @@ describe('cyber-mux wait — portable wait-for-output', () => {
 
 	beforeEach(() => {
 		logs = []
-		vi.spyOn(console, 'log').mockImplementation((line: string) => {
-			logs.push(line)
-		})
+		vi.spyOn(process.stdout, 'write').mockImplementation(captureInto(() => logs))
 		vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
-		vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+		vi.spyOn(process.stdout, 'write').mockImplementation(captureInto(() => logs))
 		vi.spyOn(process, 'exit').mockImplementation((code) => {
 			throw new Error(`exit:${code}`)
 		})
@@ -4740,13 +4679,11 @@ describe('cyber-mux wait — portable wait-for-output', () => {
 		const calls: string[][] = []
 		const exec = fakeTmuxExec(calls, { 'capture-pane': 'still booting', 'has-session': '' })
 		const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec })
-		await withArgv(['wait', '%3', '--match', 'ready', '--format', 'json'], async () => {
-			// `--timeout 0` still takes its one look at the pane, so this asserts the timeout path without
-			// spending the wall-clock a real deadline would.
-			await expect(
-				run(program, ['wait', '%3', '--match', 'ready', '--timeout', '0', '--format', 'json']),
-			).rejects.toThrow('exit:1')
-		})
+		// `--timeout 0` still takes its one look at the pane, so this asserts the timeout path without
+		// spending the wall-clock a real deadline would.
+		await expect(
+			run(program, ['wait', '%3', '--match', 'ready', '--timeout', '0', '--format', 'json']),
+		).rejects.toThrow('exit:1')
 		const payload = JSON.parse(logs.join('\n'))
 		expect(payload).toEqual({ pane: '%3', matched: false, output: 'still booting' })
 	})
@@ -4773,7 +4710,7 @@ describe('cyber-mux wait — portable wait-for-output', () => {
 		const calls: string[][] = []
 		const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: fakeTmuxExec(calls) })
 		await expect(run(program, ['wait', '%3'])).rejects.toThrow('exit:2')
-		expect(logs.join('\n')).toContain('usage-error')
+		expect(logs.join('\n')).toContain('missing-argument')
 		expect(drives(calls)).toEqual([])
 	})
 
@@ -4781,7 +4718,7 @@ describe('cyber-mux wait — portable wait-for-output', () => {
 		const calls: string[][] = []
 		const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: fakeTmuxExec(calls) })
 		await expect(run(program, ['wait', '%3', '--match', 'a', '--regex', 'a'])).rejects.toThrow('exit:2')
-		expect(logs.join('\n')).toContain('mutually exclusive')
+		expect(logs.join('\n')).toContain('conflicting-options')
 		expect(drives(calls)).toEqual([])
 	})
 
@@ -4796,7 +4733,8 @@ describe('cyber-mux wait — portable wait-for-output', () => {
 		const calls: string[][] = []
 		const program = buildProgram({ env: { CYBER_MUX: 'tmux' }, exec: fakeTmuxExec(calls) })
 		await expect(run(program, ['wait', '%3', '--match', 'ready', '--timeout', 'soon'])).rejects.toThrow('exit:2')
-		expect(logs.join('\n')).toContain('milliseconds')
+		expect(logs.join('\n')).toContain('invalid-value')
+		expect(logs.join('\n')).toContain('expected for --timeout: number')
 		expect(drives(calls)).toEqual([])
 	})
 
@@ -4814,9 +4752,7 @@ describe('home view', () => {
 
 	beforeEach(() => {
 		logs = []
-		vi.spyOn(console, 'log').mockImplementation((line: string) => {
-			logs.push(line)
-		})
+		vi.spyOn(process.stdout, 'write').mockImplementation(captureInto(() => logs))
 	})
 
 	afterEach(() => {
@@ -4829,6 +4765,7 @@ describe('home view', () => {
 		const out = logs.join('\n')
 		expect(out).toContain('description:')
 		expect(out).toContain('panes: none')
-		expect(out).toContain('verbs: open send')
+		// core appends the root's commands as the last help line
+		expect(out).toContain('valid commands for `cyber-mux`: doctor, mode, open, send')
 	})
 })

@@ -60,7 +60,7 @@ export interface TemplateManifest {
 	template: string
 	/** The injected target — the apply-time cwd. Never anything the template said. */
 	cwd: string
-	/** `null` on tmux, matching how `reportOpenedWorktree` already reports it. */
+	/** `null` on tmux, matching how `openedWorktreeAnswer` already reports it. */
 	workspace: string | null
 	panes: TemplatePaneReport[]
 }

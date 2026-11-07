@@ -32,14 +32,15 @@ hatch for taking all of it:
 silently winning.
 
 **`read` always reports whether that window left rows behind.** When it did, the capture is followed
-by a `truncated` field and a `help:` entry naming `--full` as the fix:
+by a `truncated` field and a `help` entry naming `--full` as the fix:
 
 ```
 $ cyber-mux read %3 --lines 20
 … the 20 rows …
 truncated  true
-help[0]: older rows sit above this capture
-  -> cyber-mux read %3 --full
+
+help:
+  - older rows sit above this capture — run `cyber-mux read %3 --full`
 ```
 
 A complete capture is the pane's raw bytes and nothing else, so `read | grep` is unchanged in the
