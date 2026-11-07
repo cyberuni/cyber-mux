@@ -1,40 +1,20 @@
-import { isMachineOutput, printMachine } from './output.ts'
+import { CliError, exitCodes } from 'clibuilder'
 
 /**
- * The error surface — AXI's #6, made concrete.
+ * The error surface is clibuilder's own (`output: 'axi'`, AXI's #6): a thrown `CliError` is reported
+ * once, on stdout, in the caller's `--format`, as `error`, `code`, the `details` fields, then `help`,
+ * and the CLI exits with its `exitCode`. cyber-mux supplies only what core cannot know:
  *
- * Every failure is a STRUCTURED, CODED error on **stdout**, because stdout is the stream AXI reserves
- * for what the agent consumes — data, errors and suggestions alike — while stderr is defined as debug
- * the agent does not read. A report whose whole purpose is telling a caller what went wrong and how to
- * fix it is the last thing that belongs on the ignored stream. This does not muddy the payload: a verb
- * either succeeds and writes its result or fails and writes its error, never both, so the exit code
- * tells the two apart before anything is parsed.
- *
- * Three things every error carries, and they are not decoration:
- * - a **stable `code`** a script matches on, so one failure mode is told from another without parsing
- *   prose (`no-mux` is not `pane-not-found` is not `ambiguous-pane`);
- * - a **`help`** line naming THIS CLI's command that fixes it — never "see --help", and never a
- *   dependency's own name: an agent handed a raw tmux/herdr diagnostic cannot act on it through
- *   cyber-mux, so a backend's text is TRANSLATED here rather than forwarded;
- * - an **`exit`** code that separates a usage error (2 — a missing or malformed argument, whose fix is
- *   a different invocation) from a genuine operation failure (1).
+ * - a **stable `code`** a script matches on (`no-mux` is not `pane-not-found` is not `ambiguous-pane`);
+ * - a **`help`** line naming THIS CLI's command that fixes it, never a dependency's own text: an agent
+ *   handed a raw tmux/herdr diagnostic cannot act on it through cyber-mux, so a backend's text is
+ *   TRANSLATED into a `CliError` rather than forwarded;
+ * - an **`exitCode`** that separates a usage error (2, the fix is a different invocation) from an
+ *   operation failure (1).
  */
-export class CliError extends Error {
-	constructor(
-		readonly code: string,
-		message: string,
-		readonly help: string,
-		readonly exit: 1 | 2,
-		/** Extra structured fields the JSON form carries beside code/message/help — e.g. an ambiguity's
-		 * candidates. Never free-text; a machine reads these. */
-		readonly extra?: Record<string, unknown> | undefined,
-	) {
-		super(message)
-		this.name = 'CliError'
-	}
-}
+export { CliError }
 
-/** The stable code the ambiguity error carries, in both formats — what a caller matches on. */
+/** The stable code the ambiguity error carries, in every format — what a caller matches on. */
 export const AMBIGUOUS_CODE = 'ambiguous-pane'
 
 /** One candidate of an ambiguous locator: what tells it apart, and what retries it. */
@@ -45,14 +25,26 @@ export interface PaneCandidate {
 }
 
 /**
- * An ambiguous locator — a `CliError` like any other, so the one renderer and the one verb-boundary
- * catch handle it with no special case, and so a caller sees the same `{ code, help, exit }` shape it
- * sees for every other failure.
+ * The candidates as `details` fields. Core keeps `details` flat (scalars, or lists of scalars), so the
+ * candidates are three index-aligned lists rather than a list of records: `candidates[i]` is the id —
+ * the retry — and `labels[i]` and `cwds[i]` are what tell that pane apart from the others.
+ */
+function candidateDetails(candidates: PaneCandidate[]): CliError.Details {
+	return {
+		candidates: candidates.map((c) => c.id),
+		labels: candidates.map((c) => c.label),
+		cwds: candidates.map((c) => c.cwd),
+	}
+}
+
+/**
+ * An ambiguous locator — a `CliError` like any other, so core reports it with no special case, and a
+ * caller sees the same `{ error, code, help }` shape it sees for every other failure.
  *
- * It is THROWN rather than reported where it is found: reporting in place would mean exiting from
- * inside `resolveTarget`, and a verb's own catch-all could then flatten an exit-2 ambiguity into an
- * exit-1 generic failure behind its back. A typed error is what makes the ambiguity visible to every
- * catch it passes through, so each one rethrows it deliberately instead of swallowing it by accident.
+ * It is THROWN rather than reported where it is found: a verb's own catch-all could otherwise flatten
+ * an exit-2 ambiguity into an exit-1 generic failure behind its back. A typed error is what makes the
+ * ambiguity visible to every catch it passes through, so each one rethrows it deliberately instead of
+ * swallowing it by accident.
  *
  * Each candidate carries its id, its label and its cwd: the id is the RETRY — paste it back and the
  * ambiguity is gone, since an id outranks every name — and the cwd is what actually tells three panes
@@ -63,14 +55,13 @@ export class AmbiguousPaneError extends CliError {
 		readonly locator: string,
 		readonly candidates: PaneCandidate[],
 	) {
-		super(
-			AMBIGUOUS_CODE,
-			`"${locator}" matches ${candidates.length} panes — an id resolves it`,
-			`retry with one of the ids: ${candidates.map((c) => c.id).join(' ')}`,
-			2,
-			{ candidates },
-		)
-		this.name = 'AmbiguousPaneError'
+		super({
+			code: AMBIGUOUS_CODE,
+			message: `"${locator}" matches ${candidates.length} panes — an id resolves it`,
+			details: { locator, ...candidateDetails(candidates) },
+			help: `retry with one of the ids: ${candidates.map((c) => c.id).join(' ')}`,
+			exitCode: exitCodes.usage,
+		})
 	}
 }
 
@@ -81,51 +72,24 @@ export const MISSING_PANE_CODE = 'missing-pane'
 
 /**
  * A pane verb invoked with no `<pane>` at all — a usage error (exit 2), the same shape the ambiguity
- * uses. The old "having called no backend" guarantee is deliberately gone (CR 95): the backend IS
- * queried so the live panes can be listed as candidates, since the caller's deterministic next move
- * after "missing pane" is `cyber-mux list`. Folding that answer into the error collapses a two-turn
- * correction into one, exactly as the ambiguity report already does.
+ * uses. The backend IS queried so the live panes can be listed as candidates (CR 95), since the
+ * caller's deterministic next move after "missing pane" is `cyber-mux list`. Folding that answer into
+ * the error collapses a two-turn correction into one, exactly as the ambiguity report already does.
  *
- * Carries its `candidates` in `extra` under the same key `AmbiguousPaneError` uses, so the one
- * renderer prints them `<id>  <label>  <cwd>` with no special case. When the backend could NOT be
- * enumerated the list is empty and the help points at `cyber-mux list` instead of the ids.
+ * Carries its candidates under the same `details` keys `AmbiguousPaneError` uses. When the backend
+ * could NOT be enumerated the lists are empty and the help points at `cyber-mux list` instead.
  */
 export class MissingPaneError extends CliError {
 	constructor(readonly candidates: PaneCandidate[]) {
-		super(
-			MISSING_PANE_CODE,
-			'no pane given — this command needs a target pane',
-			candidates.length > 0
-				? `pass one of the ids below: ${candidates.map((c) => c.id).join(' ')}`
-				: 'list the live panes with: cyber-mux list',
-			2,
-			{ candidates },
-		)
-		this.name = 'MissingPaneError'
+		super({
+			code: MISSING_PANE_CODE,
+			message: 'no pane given — this command needs a target pane',
+			details: candidateDetails(candidates),
+			help:
+				candidates.length > 0
+					? `pass one of the ids: ${candidates.map((c) => c.id).join(' ')}`
+					: 'list the live panes with: cyber-mux list',
+			exitCode: exitCodes.usage,
+		})
 	}
-}
-
-/**
- * The ONE renderer — every coded failure reaches stdout through here, and exits.
- *
- * `--format json|agent` emits the machine form: a single `{ error: { code, message, help, ...extra } }`
- * object (JSON or TOON), the stable code first, no free-text prose beside it. The readable form leads its human line
- * with the same `code` token a script branches on — so a person scanning the terminal sees exactly
- * what a `--format json` consumer matches on — then the `help` line, then (for an ambiguity) one line
- * per candidate: `<id>  <label>  <cwd>`, the id-first shape whose first column is the retry.
- */
-export function reportError(e: CliError): never {
-	if (isMachineOutput()) {
-		printMachine({ error: { code: e.code, message: e.message, help: e.help, ...e.extra } })
-	} else {
-		// The code leads the human line too: the stable token is the point of the whole surface, so it
-		// belongs where a person reads as much as where a script matches — not hidden in the JSON alone.
-		console.log(`error: ${e.code}: ${e.message}`)
-		console.log(`help: ${e.help}`)
-		const candidates = e.extra?.['candidates'] as PaneCandidate[] | undefined
-		if (candidates) {
-			for (const c of candidates) console.log(`  ${c.id}  ${c.label ?? ''}  ${c.cwd ?? ''}`)
-		}
-	}
-	process.exit(e.exit)
 }

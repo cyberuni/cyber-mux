@@ -1,12 +1,12 @@
 import { join } from 'node:path'
-import { cli, t as ct } from 'clibuilder'
+import { type Answer, cli, t as ct, document, exitCodes } from 'clibuilder'
 import { homeHeader } from 'clibuilder/axi'
 import type { PruneOutcome } from 'cyber-agentkit/worktrees'
 import pkg from '../package.json' with { type: 'json' }
 import { AgentLifecycleUnsupportedError, deriveAgentWait } from './agent.ts'
 import { AgentWaitStatesUnsupportedError } from './agent-states.ts'
 import { callerPane, resolveMuxAdapter } from './backend.ts'
-import { AmbiguousPaneError, CliError, MissingPaneError, reportError } from './cli-error.ts'
+import { AmbiguousPaneError, CliError, MissingPaneError } from './cli-error.ts'
 import { AT_OPTION, ENV_OPTION, LABEL_OPTION, parseEnv } from './cli-options.ts'
 import { type Exec, nodeExec } from './exec.ts'
 import { canFloatPanes, FloatingPanesUnsupportedError } from './floating.ts'
@@ -22,7 +22,7 @@ import {
 import type { AgentStatus, LivePane, MuxAdapter, MuxPlacement, MuxTarget } from './mux.ts'
 import { currentPane, probeMultiplexer } from './mux-probe.ts'
 import { nodeNewId } from './new-id.ts'
-import { type HelpEntry, isAutomatedOutput, output, printFields, printHelp, printTable, tildify } from './output.ts'
+import { answer, fields, lines, step, table, tildify } from './output.ts'
 import { type OpenPrompt, realPrompt } from './prompt.ts'
 import {
 	collectPanes,
@@ -136,23 +136,23 @@ function adapter(deps: Deps): MuxAdapter {
 
 /** No multiplexer around this process — an operation failure (exit 1), not a usage error. */
 function noMux(): CliError {
-	return new CliError(
-		'no-mux',
-		'no multiplexer detected around this process',
-		'run cyber-mux inside tmux or herdr, or set CYBER_MUX to name one',
-		1,
-	)
+	return new CliError({
+		code: 'no-mux',
+		message: 'no multiplexer detected around this process',
+		help: 'run cyber-mux inside tmux or herdr, or set CYBER_MUX to name one',
+		exitCode: exitCodes.error,
+	})
 }
 
 /** A locator that resolved to no live pane — a pane verb's not-found. Exit 1: a real operation
  * failure, distinct from a malformed argument. */
 function paneNotFound(locator: string): CliError {
-	return new CliError(
-		'pane-not-found',
-		`pane "${locator}" matched no live pane`,
-		'list the live panes with: cyber-mux list',
-		1,
-	)
+	return new CliError({
+		code: 'pane-not-found',
+		message: `pane "${locator}" matched no live pane`,
+		help: 'list the live panes with: cyber-mux list',
+		exitCode: exitCodes.error,
+	})
 }
 
 /**
@@ -164,29 +164,29 @@ function paneNotFound(locator: string): CliError {
  */
 function missingSendPayload(verb: 'text' | 'keys'): CliError {
 	return verb === 'text'
-		? new CliError(
-				'missing-argument',
-				'send text needs the text to type',
-				'pass the text: cyber-mux send text <pane> <text>',
-				2,
-			)
-		: new CliError(
-				'missing-argument',
-				'send keys needs at least one key to press',
-				'pass one or more keys: cyber-mux send keys <pane> <keys...>',
-				2,
-			)
+		? new CliError({
+				code: 'missing-argument',
+				message: 'send text needs the text to type',
+				help: 'pass the text: cyber-mux send text <pane> <text>',
+				exitCode: exitCodes.usage,
+			})
+		: new CliError({
+				code: 'missing-argument',
+				message: 'send keys needs at least one key to press',
+				help: 'pass one or more keys: cyber-mux send keys <pane> <keys...>',
+				exitCode: exitCodes.usage,
+			})
 }
 
 /** A malformed template name — a usage error (exit 2): the fix is a different name, nothing was
  * attempted. The same family a missing required argument is in. */
 function invalidTemplateName(name: string): CliError {
-	return new CliError(
-		'invalid-template-name',
-		`invalid template name "${name}" — a name must match [a-z0-9][a-z0-9-]* and be a plain filename stem`,
-		'use a lowercase stem like pool-4',
-		2,
-	)
+	return new CliError({
+		code: 'invalid-template-name',
+		message: `invalid template name "${name}" — a name must match [a-z0-9][a-z0-9-]* and be a plain filename stem`,
+		help: 'use a lowercase stem like pool-4',
+		exitCode: exitCodes.usage,
+	})
 }
 
 /**
@@ -200,25 +200,28 @@ function invalidTemplateName(name: string): CliError {
  * detail is not load-bearing for the agent and goes to stderr as a diagnostic only; stdout carries this
  * CLI's own coded, translated error.
  */
-function reportWorktreeFailure(err: unknown): never {
-	if (err instanceof CliError) reportError(err)
+function worktreeFailure(err: unknown): CliError {
+	if (err instanceof CliError) return err
 	// `--at pane:float` on a backend with no floating pane, asked through a worktree verb. The library's
 	// refusal, surfaced under its own code rather than swallowed by the generic `worktree-failed` below:
 	// nothing about the worktree failed, and telling a caller to "check the worktree path" would send
 	// them after the wrong thing entirely.
-	if (err instanceof FloatingPanesUnsupportedError) reportError(floatingUnsupported(err))
+	if (err instanceof FloatingPanesUnsupportedError) return floatingUnsupported(err)
 	if (err instanceof WorktreeGitError) {
-		reportError(new CliError('worktree-failed', err.message, 'check the worktree path and its state, then re-run', 1))
+		return new CliError({
+			code: 'worktree-failed',
+			message: err.message,
+			help: 'check the worktree path and its state, then re-run',
+			exitCode: exitCodes.error,
+		})
 	}
 	if (err instanceof Error && err.message) process.stderr.write(`${err.message}\n`)
-	reportError(
-		new CliError(
-			'worktree-failed',
-			'the worktree operation failed',
-			'check the worktree path and its state, then re-run',
-			1,
-		),
-	)
+	return new CliError({
+		code: 'worktree-failed',
+		message: 'the worktree operation failed',
+		help: 'check the worktree path and its state, then re-run',
+		exitCode: exitCodes.error,
+	})
 }
 
 /**
@@ -282,42 +285,6 @@ function resolveTarget(deps: Deps, a: MuxAdapter, locator: string | undefined): 
 }
 
 /**
- * Wrap a verb's action so ANY coded failure reports itself on stdout and exits — the one place that
- * turns a `CliError` (an ambiguity, a `no-mux`, a `pane-not-found`, a template refusal) into output, for
- * every verb.
- *
- * Here rather than deeper so the report is the OUTERMOST thing a verb does: by the time it runs, every
- * inner catch-all has already had its chance to rethrow, and nothing can convert an exit-2 usage error
- * into an exit-1 generic failure behind its back. A non-`CliError` is a bug, not a surface — it is
- * rethrown to the top-level handler rather than dressed up as a coded failure.
- */
-function guarded<T>(args: T, action: (args: T) => void): void {
-	try {
-		action(args)
-	} catch (err) {
-		if (err instanceof CliError) reportError(err)
-		throw err
-	}
-}
-
-/**
- * `guarded` for an action that awaits — the same contract, and separate rather than a widening of it.
- *
- * Making `guarded` return `void | Promise<void>` would put an ignored promise behind every sync verb's
- * action, where a rejection would escape the guard entirely and surface as an unhandled rejection
- * instead of a coded error. Two functions keeps the sync path provably sync; clibuilder's `parse`
- * awaits whichever `run` returns.
- */
-async function guardedAsync<T>(args: T, action: (args: T) => Promise<void>): Promise<void> {
-	try {
-		await action(args)
-	} catch (err) {
-		if (err instanceof CliError) reportError(err)
-		throw err
-	}
-}
-
-/**
  * Run a pane verb's body, translating a backend throw into a `pane-not-found` on the way out.
  *
  * `resolveTarget` hands an unmatched locator to the backend as an id, so a bad target surfaces as the
@@ -326,9 +293,9 @@ async function guardedAsync<T>(args: T, action: (args: T) => Promise<void>): Pro
  * an ambiguity from `resolveTarget`) is a coded surface and passes through untouched; anything else is
  * the multiplexer's raw failure and becomes this CLI's own code and help instead.
  */
-function paneVerb(locator: string | undefined, body: () => void): void {
+function paneVerb<T>(locator: string | undefined, body: () => T): T {
 	try {
-		body()
+		return body()
 	} catch (err) {
 		if (err instanceof CliError) throw err
 		// A missing locator is pre-empted by `resolveTarget`'s `MissingPaneError` (a `CliError`, rethrown
@@ -351,37 +318,29 @@ function optionalAdapter(deps: Deps): MuxAdapter | undefined {
 }
 
 /**
- * One shape for every verb that opens a worktree. `printFields` drops nullish entries, so a bare
+ * One shape for every verb that opens a worktree. The text form drops nullish fields, so a bare
  * `worktree add` — which opens nothing — prints exactly what it always did.
  *
  * When the chosen placement cost the workspace grouping, the backend could have grouped this worktree
- * and did not — worth saying out loud. Per axi/'s #9 that next move rides in the payload on STDOUT as
- * a `help[N]:` block, not on stderr the agent never reads; `workspace: null` is the machine-readable
- * half of the same report. `regroupCommand` is the caller's own verb re-stated with `--at workspace`,
- * so the flag that would have grouped it is named as a concrete command. Emitted only when a grouping
- * was actually lost (#9's omit-when-self-contained rule), so `help` never rides along otherwise.
+ * and did not — worth saying out loud. Per axi/'s #9 that next move rides in the answer on STDOUT as a
+ * `help` line, not on stderr the agent never reads; `workspace: null` is the machine-readable half of
+ * the same report. `regroupCommand` is the caller's own verb re-stated with `--at workspace`, so the
+ * flag that would have grouped it is named as a concrete command. Emitted only when a grouping was
+ * actually lost (#9's omit-when-self-contained rule), so `help` never rides along otherwise.
  */
-function reportOpenedWorktree(opened: OpenedWorktree, regroupCommand: string): void {
-	const help: HelpEntry[] = opened.degraded
-		? [{ message: 'opened ungrouped — pass --at workspace to group it with the repo', command: regroupCommand }]
+function openedWorktreeAnswer(opened: OpenedWorktree, regroupCommand: string): Answer {
+	const help = opened.degraded
+		? [step('opened ungrouped — pass --at workspace to group it with the repo', regroupCommand)]
 		: []
-	output(
+	return answer(
 		{
 			root: opened.worktree.root,
 			branch: opened.worktree.branch,
 			pane: opened.target.id,
 			workspace: opened.workspace ?? null,
-			...(help.length ? { help } : {}),
 		},
-		() => {
-			printFields({
-				root: opened.worktree.root,
-				branch: opened.worktree.branch,
-				pane: opened.target.id,
-				workspace: opened.workspace,
-			})
-			printHelp(help)
-		},
+		(v) => fields({ root: v.root, branch: v.branch, pane: v.pane, workspace: v.workspace }),
+		help,
 	)
 }
 
@@ -405,7 +364,12 @@ const TEMPLATE_OPTION = {
  */
 function requireOption(value: string | undefined, flag: string, usage: string): string {
 	if (value !== undefined) return value
-	throw new CliError('missing-argument', `missing required option --${flag}`, `provide it: ${usage}`, 2)
+	throw new CliError({
+		code: 'missing-argument',
+		message: `missing required option --${flag}`,
+		help: `provide it: ${usage}`,
+		exitCode: exitCodes.usage,
+	})
 }
 
 /**
@@ -435,45 +399,54 @@ function resolveTemplate(
 	} catch (err) {
 		// A well-formed name that resolves nowhere is a failed lookup, not malformed input (exit 1). The
 		// message is this CLI's own — it names the directories it searched — so it is kept, not a backend's.
-		throw new CliError(
-			'template-not-found',
-			err instanceof Error ? err.message : String(err),
-			'list the templates resolvable from here with: cyber-mux template list',
-			1,
-		)
+		throw new CliError({
+			code: 'template-not-found',
+			message: err instanceof Error ? err.message : String(err),
+			help: 'list the templates resolvable from here with: cyber-mux template list',
+			exitCode: exitCodes.error,
+		})
 	}
 	let parsed: unknown
 	try {
 		parsed = parseTemplate(resolved.raw)
 	} catch (err) {
-		throw new CliError(
-			'invalid-template',
-			`${resolved.path}: ${err instanceof Error ? err.message : String(err)}`,
-			'fix the template JSON, then re-run',
-			1,
-		)
+		throw new CliError({
+			code: 'invalid-template',
+			message: `${resolved.path}: ${err instanceof Error ? err.message : String(err)}`,
+			help: 'fix the template JSON, then re-run',
+			exitCode: exitCodes.error,
+		})
 	}
 	// A template's CONTENT being invalid is a predicate answer (exit 1), not a usage error — the
-	// invocation was well-formed, the fix is to the file. Every error at once, one per line, each naming
-	// its own JSON path — first-only would make a template with three mistakes take three runs to fix.
+	// invocation was well-formed, the fix is to the file. Every error at once, one `errors` entry each,
+	// each naming its own JSON path — first-only would make a template with three mistakes take three
+	// runs to fix.
 	const errors = validateTemplate(parsed, resolved.stem)
 	if (errors.length > 0) {
-		throw new CliError('invalid-template', errors.join('\n'), 'fix the fields named above, then re-run', 1)
+		throw new CliError({
+			code: 'invalid-template',
+			message: `template "${resolved.stem}" has ${errors.length} ${errors.length === 1 ? 'error' : 'errors'}`,
+			details: { path: resolved.path, errors },
+			help: 'fix the fields named in errors, then re-run',
+			exitCode: exitCodes.error,
+		})
 	}
 	return { ...resolved, template: parsed as Template }
 }
 
-/** The apply manifest — the handoff. `printFields`/`printTable` for humans, the raw object for json. */
-function reportManifest(manifest: TemplateManifest, extra: Record<string, string | null> = {}): void {
-	output({ ...extra, ...manifest }, () => {
-		printFields({ ...extra, template: manifest.template, cwd: manifest.cwd, workspace: manifest.workspace })
-		printTable(manifest.panes, [
-			{ label: 'label', get: (p) => p.label ?? '' },
-			{ label: 'pane', get: (p) => p.pane },
-			{ label: 'dir', get: (p) => p.dir },
-			{ label: 'command', get: (p) => p.command ?? '' },
-		])
-	})
+/** The apply manifest — the handoff: aligned fields and a pane table for humans, the raw object otherwise. */
+function manifestAnswer(manifest: TemplateManifest, extra: Record<string, string | null> = {}): Answer {
+	return answer({ ...extra, ...manifest }, () =>
+		lines(
+			fields({ ...extra, template: manifest.template, cwd: manifest.cwd, workspace: manifest.workspace }),
+			table(manifest.panes, [
+				{ label: 'label', get: (p) => p.label ?? '' },
+				{ label: 'pane', get: (p) => p.pane },
+				{ label: 'dir', get: (p) => p.dir },
+				{ label: 'command', get: (p) => p.command ?? '' },
+			]),
+		),
+	)
 }
 
 /**
@@ -481,24 +454,24 @@ function reportManifest(manifest: TemplateManifest, extra: Record<string, string
  * killing panes, and a kill is not obviously safer than a half-built template the caller can see and
  * finish.
  */
-function reportApplyFailure(err: unknown, extra: Record<string, string | null> = {}): never {
+function applyFailure(err: unknown, extra: Record<string, string | null> = {}): Answer {
 	if (err instanceof TemplateApplyError) {
-		// The manifest is the WHOLE of stdout — one result payload, with the failed pane named inside it,
-		// never a second structured error concatenated after it. The message is supplementary debug, so it
-		// goes to stderr: moving it to stdout would break the "stdout carries exactly one payload" invariant
-		// the stream decision rests on.
-		reportManifest(err.manifest, extra)
+		// The manifest is the WHOLE of stdout — one answer, with the failed pane named inside it, never a
+		// second structured error concatenated after it. The message is supplementary debug, so it goes to
+		// stderr: moving it to stdout would break the "stdout carries exactly one payload" invariant the
+		// stream decision rests on. The answer is printed, and the exit status still says it failed.
 		process.stderr.write(`${err.message}\n`)
-		process.exit(1)
+		process.exitCode = exitCodes.error
+		return manifestAnswer(err.manifest, extra)
 	}
 	// A totally-failed apply that produced no result — a predictable pre-open failure (a missing dir
 	// names the pane and the resolved path). Its message is this CLI's own text, exit 1.
-	throw new CliError(
-		'template-apply-failed',
-		err instanceof Error ? err.message : String(err),
-		'check the template and the target directory, then re-run',
-		1,
-	)
+	throw new CliError({
+		code: 'template-apply-failed',
+		message: err instanceof Error ? err.message : String(err),
+		help: 'check the template and the target directory, then re-run',
+		exitCode: exitCodes.error,
+	})
 }
 
 function templateListCommand(deps: Deps): MuxCommand {
@@ -506,30 +479,28 @@ function templateListCommand(deps: Deps): MuxCommand {
 		name: 'list',
 		examples: [{ command: 'cyber-mux template list', description: 'List every template resolvable from here' }],
 		description: 'Every template resolvable from here, with its source and pane count',
-		run(args) {
-			guarded(args, () => {
-				const dirs = templateDirs(deps.exec, deps.env)
-				const templates = listTemplates(deps.store, dirs).map((entry) => {
-					// A template that does not parse still LISTS — `list` answers "what is here", and
-					// `validate` answers "is it any good". Conflating them would hide a broken file entirely.
-					let panes = 0
-					try {
-						const raw = deps.store.read(entry.path)
-						if (raw) panes = collectPanes(resolveTree(parseTemplate(raw) as Template)).length
-					} catch {
-						panes = 0
-					}
-					return { ...entry, panes }
-				})
-				output({ templates }, () =>
-					printTable(templates, [
-						{ label: 'name', get: (l) => l.name },
-						{ label: 'source', get: (l) => l.source },
-						{ label: 'panes', get: (l) => String(l.panes) },
-						{ label: 'shadowed', get: (l) => (l.shadowed ? 'yes' : '') },
-					]),
-				)
+		run() {
+			const dirs = templateDirs(deps.exec, deps.env)
+			const templates = listTemplates(deps.store, dirs).map((entry) => {
+				// A template that does not parse still LISTS — `list` answers "what is here", and
+				// `validate` answers "is it any good". Conflating them would hide a broken file entirely.
+				let panes = 0
+				try {
+					const raw = deps.store.read(entry.path)
+					if (raw) panes = collectPanes(resolveTree(parseTemplate(raw) as Template)).length
+				} catch {
+					panes = 0
+				}
+				return { ...entry, panes }
 			})
+			return answer({ templates }, (v) =>
+				table(v.templates, [
+					{ label: 'name', get: (l) => l.name },
+					{ label: 'source', get: (l) => l.source },
+					{ label: 'panes', get: (l) => String(l.panes) },
+					{ label: 'shadowed', get: (l) => (l.shadowed ? 'yes' : '') },
+				]),
+			)
 		},
 	})
 }
@@ -547,20 +518,19 @@ function templateShowCommand(deps: Deps): MuxCommand {
 			file: { description: 'Read this path instead, skipping resolution entirely', type: ct.string().optional() },
 			desugar: { description: 'Print the canonical tree panes/arrange expands to — exactly what apply builds' },
 		},
-		run(args) {
-			guarded(args, ({ name, ...opts }) => {
-				if (!name && !opts.file) {
-					throw new CliError(
-						'missing-argument',
-						'template show needs a template name or --file <path>',
-						'pass a template name, or --file <path>',
-						2,
-					)
-				}
-				const { template } = resolveTemplate(deps, { name, file: opts.file })
-				// One desugarer, so `--desugar` and the walk can never disagree about what a flat template means.
-				console.log(JSON.stringify(opts.desugar ? resolveTree(template) : template, null, 2))
-			})
+		run({ name, ...opts }) {
+			if (!name && !opts.file) {
+				throw new CliError({
+					code: 'missing-argument',
+					message: 'template show needs a template name or --file <path>',
+					help: 'pass a template name, or --file <path>',
+					exitCode: exitCodes.usage,
+				})
+			}
+			const { template } = resolveTemplate(deps, { name, file: opts.file })
+			// One desugarer, so `--desugar` and the walk can never disagree about what a flat template means.
+			// The template IS the answer, so it is printed as the JSON file it is, in every format.
+			return document(JSON.stringify(opts.desugar ? resolveTree(template) : template, null, 2))
 		},
 	})
 }
@@ -577,20 +547,18 @@ function templateValidateCommand(deps: Deps): MuxCommand {
 		options: {
 			file: { description: 'Validate this path instead, skipping resolution entirely', type: ct.string().optional() },
 		},
-		run(args) {
-			guarded(args, ({ name, ...opts }) => {
-				if (!name && !opts.file) {
-					throw new CliError(
-						'missing-argument',
-						'template validate needs a template name or --file <path>',
-						'pass a template name, or --file <path>',
-						2,
-					)
-				}
-				// resolveTemplate already fails with every error, one per line. Reaching here means valid, and
-				// a valid template says nothing at all — this is the CI hook, so silence is the pass signal.
-				resolveTemplate(deps, { name, file: opts.file })
-			})
+		run({ name, ...opts }) {
+			if (!name && !opts.file) {
+				throw new CliError({
+					code: 'missing-argument',
+					message: 'template validate needs a template name or --file <path>',
+					help: 'pass a template name, or --file <path>',
+					exitCode: exitCodes.usage,
+				})
+			}
+			// resolveTemplate already fails with every error, one per line. Reaching here means valid, and
+			// a valid template says nothing at all — this is the CI hook, so silence is the pass signal.
+			resolveTemplate(deps, { name, file: opts.file })
 		},
 	})
 }
@@ -657,94 +625,89 @@ function templateSaveCommand(deps: Deps): MuxCommand {
 			},
 			force: { description: 'Overwrite an existing template of this name' },
 		},
-		run(args) {
-			guarded(args, ({ name, to = 'repo', ...opts }) => {
-				// Before the multiplexer is touched: a name is a lookup key that must also be a filename, so an
-				// unusable one should not cost a region read to find out. A usage error (exit 2), the same
-				// malformed-name family `show` refuses at 2.
-				if (!isValidTemplateName(name)) throw invalidTemplateName(name)
-				try {
-					const path = join(templateDirs(deps.exec, deps.env)[to], `${name}.json`)
-					// Checked BEFORE the capture, so a refusal costs nothing — and refused by default, because a
-					// template is hand-edited after it is saved (the commands are added by hand) and silently
-					// overwriting one would throw that work away.
-					if (!opts.force && deps.store.read(path) !== null) {
-						throw new CliError(
-							'template-exists',
-							`template "${name}" already exists at ${path} — pass --force to overwrite it`,
-							're-run with --force to replace it',
-							1,
-						)
-					}
-					const a = adapter(deps)
-					// The geometry-capability refusal is UNCONDITIONAL and so outranks the missing-pane usage
-					// error below: a backend that cannot report geometry (or enumerate a workspace) cannot be
-					// captured for ANY pane, so no --from rescues it. Telling such a caller to "pass --from"
-					// would send them down a dead end — pass it, rerun, and get exit 1 anyway. So the
-					// backend-unsupported refusal (exit 1) is raised BEFORE the target is resolved. The DECISION
-					// stays in the library: throw its typed `CaptureUnsupportedError`, mapped to
-					// `backend-unsupported` in the catch below, so the message and exit code are single-source.
-					// Each mode asks only for the member it needs (a backend is never refused for lacking one
-					// this run would not call), matching the derive orchestrator's own check.
-					if (!(opts.workspace ? a.regions?.describeWorkspace : a.regions?.describeRegion)) {
-						throw new CaptureUnsupportedError(a.name, opts.workspace ? 'workspace' : 'region')
-					}
-					// `--from` names a pane explicitly; otherwise capture around the pane THIS process sits in,
-					// which is what makes a bare `template save pool-4` mean "the screen I am looking at".
-					//
-					// Through the same resolver every flat verb uses, rather than the `{ id: opts.from }` this
-					// built inline: `--from` is a pane locator like any other, and a name that works on `read`
-					// and silently means nothing here is the drift a second spelling guarantees. The caller's
-					// OWN pane needs no resolution — `callerPane` already answers with a concrete id.
-					const target = opts.from ? resolveTarget(deps, a, opts.from) : callerPane(a, deps.env)
-					if (!target) {
-						// A required parameter is missing, not an operation that failed — a usage error (exit 2).
-						throw new CliError(
-							'missing-pane',
-							'template save needs a pane to capture the region around — pass --from <pane>, or run it inside one',
-							'pass --from <pane>, or run template save inside a pane',
-							2,
-						)
-					}
-					const captureOpts = { name, description: opts.description ?? CAPTURED_DESCRIPTION }
-					// The orchestrators re-check the same seam member and refuse the same way — that check is
-					// their own library contract (it is what makes the template/capture refusal provable at that
-					// node, independent of this verb). The early guard above only fixes the ORDER relative to the
-					// missing-pane error; reaching here, the member is already known present.
-					const { template, warnings } = opts.workspace
-						? deriveWorkspaceCapture(a, deps.exec, target, captureOpts)
-						: deriveRegionCapture(a, deps.exec, target, captureOpts)
-					deps.store.write(path, `${JSON.stringify(template, null, 2)}\n`)
-					// A capture warning (a dir outside the repo root) is a diagnostic, not part of the answer —
-					// it stays on stderr, where `capture.feature` pins it. The PAYLOAD is stdout.
-					for (const warning of warnings) process.stderr.write(`${warning}\n`)
-					// save's stdout is a structured payload: a `path` field, plus a `help[N]:` block only when a
-					// bare save left tabs behind (#9's reveal-a-truncated-list, omitted otherwise). This replaces
-					// the bare path, so programmatic composition reads `--format json | jq -r .path` instead.
-					const entry = opts.workspace ? null : noteTabsLeftOut(deps, a, target, name)
-					const help: HelpEntry[] = entry ? [entry] : []
-					output({ path, ...(help.length ? { help } : {}) }, () => {
-						printFields({ path })
-						printHelp(help)
+		run({ name, to = 'repo', ...opts }) {
+			// Before the multiplexer is touched: a name is a lookup key that must also be a filename, so an
+			// unusable one should not cost a region read to find out. A usage error (exit 2), the same
+			// malformed-name family `show` refuses at 2.
+			if (!isValidTemplateName(name)) throw invalidTemplateName(name)
+			try {
+				const path = join(templateDirs(deps.exec, deps.env)[to], `${name}.json`)
+				// Checked BEFORE the capture, so a refusal costs nothing — and refused by default, because a
+				// template is hand-edited after it is saved (the commands are added by hand) and silently
+				// overwriting one would throw that work away.
+				if (!opts.force && deps.store.read(path) !== null) {
+					throw new CliError({
+						code: 'template-exists',
+						message: `template "${name}" already exists at ${path} — pass --force to overwrite it`,
+						help: 're-run with --force to replace it',
+						exitCode: exitCodes.error,
 					})
-				} catch (err) {
-					// A coded failure (the refusals above, an ambiguity, a no-mux) is already a surface and
-					// passes through to `guarded`. Anything else is a capture that could not produce a tree — a
-					// region no splits could have built, or an empty one — reported under this CLI's own code,
-					// never the backend's raw text. Exit 1: the capture failed, the invocation was well-formed.
-					if (err instanceof CliError) throw err
-					// The library's geometry-capability refusal: the DECISION is the orchestrator's; the exit
-					// code, the fix hint and the exact sentence are this CLI's, composed from the backend name
-					// and which seam was missing. Exit 1 — a genuine operation failure, not a usage error.
-					if (err instanceof CaptureUnsupportedError) throw backendUnsupported(err)
-					throw new CliError(
-						'unsplittable-region',
-						'this region could not be captured — it is not a tree any sequence of splits could have produced',
-						'template save can only capture a region built by splitting',
-						1,
-					)
 				}
-			})
+				const a = adapter(deps)
+				// The geometry-capability refusal is UNCONDITIONAL and so outranks the missing-pane usage
+				// error below: a backend that cannot report geometry (or enumerate a workspace) cannot be
+				// captured for ANY pane, so no --from rescues it. Telling such a caller to "pass --from"
+				// would send them down a dead end — pass it, rerun, and get exit 1 anyway. So the
+				// backend-unsupported refusal (exit 1) is raised BEFORE the target is resolved. The DECISION
+				// stays in the library: throw its typed `CaptureUnsupportedError`, mapped to
+				// `backend-unsupported` in the catch below, so the message and exit code are single-source.
+				// Each mode asks only for the member it needs (a backend is never refused for lacking one
+				// this run would not call), matching the derive orchestrator's own check.
+				if (!(opts.workspace ? a.regions?.describeWorkspace : a.regions?.describeRegion)) {
+					throw new CaptureUnsupportedError(a.name, opts.workspace ? 'workspace' : 'region')
+				}
+				// `--from` names a pane explicitly; otherwise capture around the pane THIS process sits in,
+				// which is what makes a bare `template save pool-4` mean "the screen I am looking at".
+				//
+				// Through the same resolver every flat verb uses, rather than the `{ id: opts.from }` this
+				// built inline: `--from` is a pane locator like any other, and a name that works on `read`
+				// and silently means nothing here is the drift a second spelling guarantees. The caller's
+				// OWN pane needs no resolution — `callerPane` already answers with a concrete id.
+				const target = opts.from ? resolveTarget(deps, a, opts.from) : callerPane(a, deps.env)
+				if (!target) {
+					// A required parameter is missing, not an operation that failed — a usage error (exit 2).
+					throw new CliError({
+						code: 'missing-pane',
+						message:
+							'template save needs a pane to capture the region around — pass --from <pane>, or run it inside one',
+						help: 'pass --from <pane>, or run template save inside a pane',
+						exitCode: exitCodes.usage,
+					})
+				}
+				const captureOpts = { name, description: opts.description ?? CAPTURED_DESCRIPTION }
+				// The orchestrators re-check the same seam member and refuse the same way — that check is
+				// their own library contract (it is what makes the template/capture refusal provable at that
+				// node, independent of this verb). The early guard above only fixes the ORDER relative to the
+				// missing-pane error; reaching here, the member is already known present.
+				const { template, warnings } = opts.workspace
+					? deriveWorkspaceCapture(a, deps.exec, target, captureOpts)
+					: deriveRegionCapture(a, deps.exec, target, captureOpts)
+				deps.store.write(path, `${JSON.stringify(template, null, 2)}\n`)
+				// A capture warning (a dir outside the repo root) is a diagnostic, not part of the answer —
+				// it stays on stderr, where `capture.feature` pins it. The PAYLOAD is stdout.
+				for (const warning of warnings) process.stderr.write(`${warning}\n`)
+				// save's stdout is a structured answer: a `path` field, plus a `help` line only when a bare save
+				// left tabs behind (#9's reveal-a-truncated-list, omitted otherwise). Programmatic composition
+				// reads `--format json | jq -r .path`.
+				const entry = opts.workspace ? null : noteTabsLeftOut(deps, a, target, name)
+				return answer({ path }, (v) => fields({ path: v.path }), entry ? [entry] : [])
+			} catch (err) {
+				// A coded failure (the refusals above, an ambiguity, a no-mux) is already a surface and
+				// passes through to core, which reports it. Anything else is a capture that could not produce a tree — a
+				// region no splits could have built, or an empty one — reported under this CLI's own code,
+				// never the backend's raw text. Exit 1: the capture failed, the invocation was well-formed.
+				if (err instanceof CliError) throw err
+				// The library's geometry-capability refusal: the DECISION is the orchestrator's; the exit
+				// code, the fix hint and the exact sentence are this CLI's, composed from the backend name
+				// and which seam was missing. Exit 1 — a genuine operation failure, not a usage error.
+				if (err instanceof CaptureUnsupportedError) throw backendUnsupported(err)
+				throw new CliError({
+					code: 'unsplittable-region',
+					message: 'this region could not be captured — it is not a tree any sequence of splits could have produced',
+					help: 'template save can only capture a region built by splitting',
+					exitCode: exitCodes.error,
+				})
+			}
 		},
 	})
 }
@@ -754,7 +717,7 @@ function templateSaveCommand(deps: Deps): MuxCommand {
  * did not take, so the capture is honest about its own scope rather than letting a caller believe a
  * 3-tab workspace round-trips from a 1-tab template.
  *
- * Per axi/'s #9 this reveal rides in `save`'s stdout payload as a `help[N]:` block, not on stderr the
+ * Per axi/'s #9 this reveal rides in `save`'s stdout answer as a `help` line, not on stderr the
  * agent never reads — programmatic composition reads the path from `--format json`, not bare stdout.
  * It is a NOTE rather than a refusal: the template the caller asked for is correct and is already
  * written. Which is also why this is best-effort — a workspace read that fails or that the backend
@@ -771,21 +734,21 @@ function templateSaveCommand(deps: Deps): MuxCommand {
  */
 function backendUnsupported(err: CaptureUnsupportedError): CliError {
 	return err.capability === 'region'
-		? new CliError(
-				'backend-unsupported',
-				`${err.backend} cannot report a region's geometry — template save needs a backend that can`,
-				'run template save on a backend that reports geometry (tmux or herdr)',
-				1,
-			)
-		: new CliError(
-				'backend-unsupported',
-				`${err.backend} cannot enumerate a workspace's tabs — template save --workspace needs a backend that can`,
-				'run template save --workspace on a backend that enumerates tabs (tmux or herdr)',
-				1,
-			)
+		? new CliError({
+				code: 'backend-unsupported',
+				message: `${err.backend} cannot report a region's geometry — template save needs a backend that can`,
+				help: 'run template save on a backend that reports geometry (tmux or herdr)',
+				exitCode: exitCodes.error,
+			})
+		: new CliError({
+				code: 'backend-unsupported',
+				message: `${err.backend} cannot enumerate a workspace's tabs — template save --workspace needs a backend that can`,
+				help: 'run template save --workspace on a backend that enumerates tabs (tmux or herdr)',
+				exitCode: exitCodes.error,
+			})
 }
 
-function noteTabsLeftOut(deps: Deps, adapter: MuxAdapter, target: MuxTarget, name: string): HelpEntry | null {
+function noteTabsLeftOut(deps: Deps, adapter: MuxAdapter, target: MuxTarget, name: string): string | null {
 	const describeWorkspace = adapter.regions?.describeWorkspace
 	if (!describeWorkspace) return null
 	let tabs: number
@@ -795,12 +758,11 @@ function noteTabsLeftOut(deps: Deps, adapter: MuxAdapter, target: MuxTarget, nam
 		return null
 	}
 	if (tabs <= 1) return null
-	return {
-		message:
-			`this pane's workspace holds ${tabs} tabs — only the caller's own region was captured. ` +
+	return step(
+		`this pane's workspace holds ${tabs} tabs — only the caller's own region was captured. ` +
 			'Pass --workspace to capture every tab of it',
-		command: `cyber-mux template save ${name} --workspace`,
-	}
+		`cyber-mux template save ${name} --workspace`,
+	)
 }
 
 /**
@@ -872,74 +834,67 @@ function templateEditCommand(deps: Deps): MuxCommand {
 			},
 			'dry-run': { description: 'Print the edited template instead of writing it' },
 		},
-		async run(args) {
-			await guardedAsync(args, async ({ name, set = [], field = 'command', 'dry-run': dryRun, ...rest }) => {
-				const opts = { ...rest, set, field: field as EditField, dryRun }
-				if (!name && !opts.file) {
-					throw new CliError(
-						'missing-argument',
-						'template edit needs a template name or --file <path>',
-						'pass a template name, or --file <path>',
-						2,
-					)
-				}
-				// Two ways of saying what to write, given together, cannot be reconciled — the same
-				// malformed-input family `--template` with `--launch` is in (exit 2).
-				if (opts.interactive && opts.set.length > 0) {
-					throw new CliError(
-						'conflicting-options',
-						'template edit takes --set or --interactive, not both',
-						'pass --set for a scripted edit, or --interactive to be asked pane by pane',
-						2,
-					)
-				}
-				const resolved = resolveTemplate(deps, { name, file: opts.file })
-				const slots = planEdits(resolved.template)
-				if (slots.length === 0) {
-					throw new CliError(
-						'empty-template',
-						`template "${resolved.stem}" declares no panes to edit`,
-						'check the template with: cyber-mux template validate',
-						1,
-					)
-				}
-				// The bare form MUTATES NOTHING. It is the listing, so an agent that runs the verb to find
-				// out what is there cannot accidentally change anything by doing so.
-				if (!opts.interactive && opts.set.length === 0) {
-					printSlots(resolved, slots, opts.field)
-					return
-				}
-				const answers = opts.interactive
-					? await interactiveAnswers(deps, resolved, slots, opts.field)
-					: setAnswers(slots, opts.set, opts.field)
-				const edited = applyEdits(resolved.template, answers)
-				// Belt-and-braces, and honestly so: `resolveTemplate` already validated on the way in, and
-				// neither field this verb offers can be made invalid (both are free strings), so today this
-				// cannot fire. It is here because `--field` is the seam that grows — a `dir` can escape the
-				// apply-time root and a `ratio` can leave `(0,1)`, and the moment one of those is offered
-				// this is the check that stops an answer from writing a template apply would then refuse.
-				const errors = validateTemplate(edited, resolved.stem)
-				if (errors.length > 0) {
-					throw new CliError(
-						'invalid-template',
-						`those answers would make "${resolved.stem}" invalid:\n${errors.join('\n')}`,
-						'give a value the schema accepts',
-						1,
-					)
-				}
-				if (opts.dryRun) {
-					console.log(JSON.stringify(edited, null, 2))
-					return
-				}
-				// Unchanged writes nothing at all, and exits 0 — AXI's idempotent-mutation rule. Re-running the
-				// same `--set` is a no-op rather than an error, and a walk the author pressed Enter through
-				// leaves the file's mtime alone: a template is checked in, and a no-op edit that dirtied the
-				// working tree would show up as a change in review that is not one.
-				if (answers.length > 0) deps.store.write(resolved.path, `${JSON.stringify(edited, null, 2)}\n`)
-				output({ path: resolved.path, changed: answers.length }, () =>
-					printFields({ path: resolved.path, changed: String(answers.length) }),
-				)
-			})
+		async run({ name, set = [], field = 'command', 'dry-run': dryRun, ...rest }) {
+			const opts = { ...rest, set, field: field as EditField, dryRun }
+			if (!name && !opts.file) {
+				throw new CliError({
+					code: 'missing-argument',
+					message: 'template edit needs a template name or --file <path>',
+					help: 'pass a template name, or --file <path>',
+					exitCode: exitCodes.usage,
+				})
+			}
+			// Two ways of saying what to write, given together, cannot be reconciled — the same
+			// malformed-input family `--template` with `--launch` is in (exit 2).
+			if (opts.interactive && opts.set.length > 0) {
+				throw new CliError({
+					code: 'conflicting-options',
+					message: 'template edit takes --set or --interactive, not both',
+					help: 'pass --set for a scripted edit, or --interactive to be asked pane by pane',
+					exitCode: exitCodes.usage,
+				})
+			}
+			const resolved = resolveTemplate(deps, { name, file: opts.file })
+			const slots = planEdits(resolved.template)
+			if (slots.length === 0) {
+				throw new CliError({
+					code: 'empty-template',
+					message: `template "${resolved.stem}" declares no panes to edit`,
+					help: 'check the template with: cyber-mux template validate',
+					exitCode: exitCodes.error,
+				})
+			}
+			// The bare form MUTATES NOTHING. It is the listing, so an agent that runs the verb to find
+			// out what is there cannot accidentally change anything by doing so.
+			if (!opts.interactive && opts.set.length === 0) return slotsAnswer(resolved, slots, opts.field)
+			const answers = opts.interactive
+				? await interactiveAnswers(deps, resolved, slots, opts.field, this.format)
+				: setAnswers(slots, opts.set, opts.field)
+			const edited = applyEdits(resolved.template, answers)
+			// Belt-and-braces, and honestly so: `resolveTemplate` already validated on the way in, and
+			// neither field this verb offers can be made invalid (both are free strings), so today this
+			// cannot fire. It is here because `--field` is the seam that grows — a `dir` can escape the
+			// apply-time root and a `ratio` can leave `(0,1)`, and the moment one of those is offered
+			// this is the check that stops an answer from writing a template apply would then refuse.
+			const errors = validateTemplate(edited, resolved.stem)
+			if (errors.length > 0) {
+				throw new CliError({
+					code: 'invalid-template',
+					message: `those answers would make "${resolved.stem}" invalid`,
+					details: { errors },
+					help: 'give a value the schema accepts',
+					exitCode: exitCodes.error,
+				})
+			}
+			if (opts.dryRun) return document(JSON.stringify(edited, null, 2))
+			// Unchanged writes nothing at all, and exits 0 — AXI's idempotent-mutation rule. Re-running the
+			// same `--set` is a no-op rather than an error, and a walk the author pressed Enter through
+			// leaves the file's mtime alone: a template is checked in, and a no-op edit that dirtied the
+			// working tree would show up as a change in review that is not one.
+			if (answers.length > 0) deps.store.write(resolved.path, `${JSON.stringify(edited, null, 2)}\n`)
+			return answer({ path: resolved.path, changed: answers.length }, (v) =>
+				fields({ path: v.path, changed: String(v.changed) }),
+			)
 		},
 	})
 }
@@ -952,7 +907,7 @@ function templateEditCommand(deps: Deps): MuxCommand {
  * for the same reason it is in the prompt — apply order is a tree walk, not a reading order, so an
  * ordinal alone cannot tell a caller which pane on screen it is about to write to.
  */
-function printSlots(resolved: ResolvedTemplate & { template: Template }, slots: EditSlot[], field: EditField): void {
+function slotsAnswer(resolved: ResolvedTemplate & { template: Template }, slots: EditSlot[], field: EditField): Answer {
 	const missing = slots.filter((slot) => slot[field] === undefined)
 	const panes = slots.map((slot) => ({
 		pane: slotRef(slot),
@@ -965,31 +920,39 @@ function printSlots(resolved: ResolvedTemplate & { template: Template }, slots: 
 	// #9 disclosure: what to do next, parameterized rather than guessed. The name is echoed back from
 	// what the caller actually passed, so the suggestion is runnable as printed.
 	const subject = resolved.source === 'file' ? `--file ${resolved.path}` : resolved.stem
-	const help: HelpEntry[] = []
+	const help: string[] = []
 	if (missing.length > 0) {
-		help.push({
-			message: `${missing.length} of ${slots.length} panes have no ${field} — a template applies without one, but the pane just sits at a shell`,
-			command: `cyber-mux template edit ${subject} --set ${slotRef(missing[0]!)}=<${field}>`,
-		})
+		help.push(
+			step(
+				`${missing.length} of ${slots.length} panes have no ${field} — a template applies without one, but the pane just sits at a shell`,
+				`cyber-mux template edit ${subject} --set ${slotRef(missing[0]!)}=<${field}>`,
+			),
+		)
 	}
-	help.push({
-		message: 'Fill them in one prompt at a time, with the current value pre-filled',
-		command: `cyber-mux template edit ${subject} --interactive`,
-	})
-	output({ path: resolved.path, field, panes, help }, () => {
-		printFields({ template: resolved.stem, path: tildify(resolved.path), source: resolved.source })
-		printTable(panes, [
-			{ label: 'pane', get: (p) => p.pane },
-			// Dropped entirely for a single-region template rather than printed empty — a column of blanks
-			// is a claim that there is a tab tier to think about, and there is not.
-			...(resolved.template.tabs ? [{ label: 'tab', get: (p: (typeof panes)[number]) => p.tab }] : []),
-			{ label: 'position', get: (p) => p.position },
-			{ label: 'label', get: (p) => p.label },
-			{ label: 'dir', get: (p) => p.dir },
-			{ label: field, get: (p) => (field === 'label' ? p.label : p.command) },
-		])
-		printHelp(help)
-	})
+	help.push(
+		step(
+			'Fill them in one prompt at a time, with the current value pre-filled',
+			`cyber-mux template edit ${subject} --interactive`,
+		),
+	)
+	return answer(
+		{ path: resolved.path, field, panes },
+		() =>
+			lines(
+				fields({ template: resolved.stem, path: tildify(resolved.path), source: resolved.source }),
+				table(panes, [
+					{ label: 'pane', get: (p) => p.pane },
+					// Dropped entirely for a single-region template rather than printed empty — a column of blanks
+					// is a claim that there is a tab tier to think about, and there is not.
+					...(resolved.template.tabs ? [{ label: 'tab', get: (p: (typeof panes)[number]) => p.tab }] : []),
+					{ label: 'position', get: (p) => p.position },
+					{ label: 'label', get: (p) => p.label },
+					{ label: 'dir', get: (p) => p.dir },
+					{ label: field, get: (p) => (field === 'label' ? p.label : p.command) },
+				]),
+			),
+		help,
+	)
 }
 
 /**
@@ -1003,12 +966,12 @@ function setAnswers(slots: EditSlot[], specs: string[], field: EditField): EditA
 	try {
 		return resolveSets(slots, specs.map(parseSet), field)
 	} catch (err) {
-		throw new CliError(
-			'invalid-set',
-			err instanceof Error ? err.message : String(err),
-			'list the panes and their identifiers with: cyber-mux template edit <name>',
-			2,
-		)
+		throw new CliError({
+			code: 'invalid-set',
+			message: err instanceof Error ? err.message : String(err),
+			help: 'list the panes and their identifiers with: cyber-mux template edit <name>',
+			exitCode: exitCodes.usage,
+		})
 	}
 }
 
@@ -1021,28 +984,29 @@ async function interactiveAnswers(
 	resolved: ResolvedTemplate & { template: Template },
 	slots: EditSlot[],
 	field: EditField,
+	format: cli.Format,
 ): Promise<EditAnswer[]> {
 	// A prompt against a pipe would block forever with nothing on screen to say why — the one failure
 	// mode an agent driving this CLI cannot diagnose or escape. `--format json|agent` is refused for the
 	// same reason even on a tty: a caller asking for machine output has said it is not a human.
-	if (!process.stdin.isTTY || isAutomatedOutput()) {
-		throw new CliError(
-			'not-interactive',
-			'template edit --interactive asks questions and needs a terminal',
-			'set the values directly instead: cyber-mux template edit <name> --set <pane>=<value>',
-			2,
-		)
+	if (!process.stdin.isTTY || format !== 'text') {
+		throw new CliError({
+			code: 'not-interactive',
+			message: 'template edit --interactive asks questions and needs a terminal',
+			help: 'set the values directly instead: cyber-mux template edit <name> --set <pane>=<value>',
+			exitCode: exitCodes.usage,
+		})
 	}
 	const inputs = await askSlots(deps, resolved, slots, field)
 	// `undefined` is Ctrl-D — the human left. Nothing is written, and it is a failure rather than a
 	// quiet success so a caller that wrapped this can tell an abandoned edit from a finished one.
 	if (!inputs) {
-		throw new CliError(
-			'edit-aborted',
-			`edit of "${resolved.stem}" abandoned — nothing was written`,
-			'run it again to start over',
-			1,
-		)
+		throw new CliError({
+			code: 'edit-aborted',
+			message: `edit of "${resolved.stem}" abandoned — nothing was written`,
+			help: 'run it again to start over',
+			exitCode: exitCodes.error,
+		})
 	}
 	return toAnswers(slots, inputs, field)
 }
@@ -1160,19 +1124,19 @@ function doctorCommand(deps: Deps): MuxCommand {
 				pane: self?.pane ?? probe.pane ?? null,
 				backend,
 			}
-			output(data, () => {
-				printFields({
-					multiplexer: data.mux,
-					'detected via': data.via,
-					pane: data.pane ?? '(none)',
-					backend: data.backend,
-				})
-				if (self) {
-					console.log('')
-					console.log('Pin the fast-path to skip detection:')
-					console.log(`  export CYBER_MUX=${self.mux} CYBER_MUX_PANE=${self.pane}`)
-				}
-			})
+			return answer(data, (v) =>
+				lines(
+					fields({
+						multiplexer: v.mux,
+						'detected via': v.via,
+						pane: v.pane ?? '(none)',
+						backend: v.backend,
+					}),
+					self
+						? `\nPin the fast-path to skip detection:\n  export CYBER_MUX=${self.mux} CYBER_MUX_PANE=${self.pane}`
+						: '',
+				),
+			)
 		},
 	})
 }
@@ -1189,7 +1153,8 @@ function modeCommand(deps: Deps): MuxCommand {
 			} catch {
 				// no backend — reported as 'none'
 			}
-			output({ backend: name }, () => console.log(name))
+			// The text form is the bare name, so `$(cyber-mux mode)` reads it as is.
+			return answer({ backend: name }, (v) => v.backend)
 		},
 	})
 }
@@ -1210,57 +1175,54 @@ function openCommand(deps: Deps): MuxCommand {
 			env: ENV_OPTION,
 			label: LABEL_OPTION,
 		},
-		run(args) {
-			guarded(args, ({ env, cwd = process.cwd(), ...rest }) => {
-				// Malformed pairs are refused before anything else runs — no pane, no backend query.
-				const opts = { ...rest, cwd, env: parseEnv(env), at: rest.at as MuxPlacement | undefined }
-				// Refuse `--at pane:float` on a backend with no floating pane up front — the library's
-				// decision, read off the same declaration `open` re-checks, surfaced here as
-				// backend-unsupported. Checked BEFORE the template is resolved and before any backend is
-				// touched, so a float asked of wezterm/herdr opens nothing and writes nothing, and the
-				// refusal outranks a template name that would also have failed.
-				if (opts.at === 'pane:float') {
-					const backend = adapter(deps)
-					if (!canFloatPanes(backend)) throw floatingUnsupported(new FloatingPanesUnsupportedError(backend.name))
-				}
-				if (opts.template) {
-					// Resolve and validate BEFORE touching a backend, so an unresolvable name opens nothing.
-					const { template } = resolveTemplate(deps, { name: opts.template })
-					const a = adapter(deps)
-					try {
-						reportManifest(
-							openTemplate(deps.exec, a, template, {
-								cwd: opts.cwd,
-								// A fresh space is empty by construction, which is why the pool defaults there.
-								at: opts.at ?? 'workspace',
-								label: opts.label ?? template.name,
-								dirExists: deps.store.dirExists,
-								newId: nodeNewId,
-								from: callerPane(a, deps.env),
-							}),
-						)
-					} catch (err) {
-						reportApplyFailure(err)
-					}
-					return
-				}
+		run({ env, cwd = process.cwd(), ...rest }) {
+			// Malformed pairs are refused before anything else runs — no pane, no backend query.
+			const opts = { ...rest, cwd, env: parseEnv(env), at: rest.at as MuxPlacement | undefined }
+			// Refuse `--at pane:float` on a backend with no floating pane up front — the library's
+			// decision, read off the same declaration `open` re-checks, surfaced here as
+			// backend-unsupported. Checked BEFORE the template is resolved and before any backend is
+			// touched, so a float asked of wezterm/herdr opens nothing and writes nothing, and the
+			// refusal outranks a template name that would also have failed.
+			if (opts.at === 'pane:float') {
+				const backend = adapter(deps)
+				if (!canFloatPanes(backend)) throw floatingUnsupported(new FloatingPanesUnsupportedError(backend.name))
+			}
+			if (opts.template) {
+				// Resolve and validate BEFORE touching a backend, so an unresolvable name opens nothing.
+				const { template } = resolveTemplate(deps, { name: opts.template })
 				const a = adapter(deps)
-				const t = a.open(deps.exec, {
-					cwd: opts.cwd,
-					launch: opts.launch,
-					at: opts.at,
-					env: opts.env,
-					label: opts.label,
-					from: callerPane(a, deps.env),
-				})
-				// The workspace rides in on the open itself — the backend answered when the pane was born, so
-				// reporting it asks nothing extra; hiding it would discard a fact already in hand. `?? null`
-				// on the JSON side only, matching `reportOpenedWorktree`: absent is the seam's meaning, null
-				// is its spelling at the machine-readable boundary.
-				output({ pane: t.id, workspace: t.workspace ?? null }, () =>
-					printFields({ pane: t.id, workspace: t.workspace }),
-				)
+				try {
+					return manifestAnswer(
+						openTemplate(deps.exec, a, template, {
+							cwd: opts.cwd,
+							// A fresh space is empty by construction, which is why the pool defaults there.
+							at: opts.at ?? 'workspace',
+							label: opts.label ?? template.name,
+							dirExists: deps.store.dirExists,
+							newId: nodeNewId,
+							from: callerPane(a, deps.env),
+						}),
+					)
+				} catch (err) {
+					return applyFailure(err)
+				}
+			}
+			const a = adapter(deps)
+			const t = a.open(deps.exec, {
+				cwd: opts.cwd,
+				launch: opts.launch,
+				at: opts.at,
+				env: opts.env,
+				label: opts.label,
+				from: callerPane(a, deps.env),
 			})
+			// The workspace rides in on the open itself — the backend answered when the pane was born, so
+			// reporting it asks nothing extra; hiding it would discard a fact already in hand. `?? null`
+			// on the JSON side only, matching `openedWorktreeAnswer`: absent is the seam's meaning, null
+			// is its spelling at the machine-readable boundary.
+			return answer({ pane: t.id, workspace: t.workspace ?? null }, (v) =>
+				fields({ pane: v.pane, workspace: v.workspace }),
+			)
 		},
 	})
 }
@@ -1284,16 +1246,14 @@ function sendCommand(deps: Deps): MuxCommand {
 					{ name: 'pane', description: 'Target pane id', type: ct.string().optional() },
 					{ name: 'text', description: 'Literal text to type', type: ct.string().optional() },
 				],
-				run(args) {
-					guarded(args, ({ pane, text }) => {
-						paneVerb(pane, () => {
-							const a = adapter(deps)
-							// A missing pane resolves to a candidate listing here (exit 2); an absent text with a pane
-							// given is its own usage error, caught after resolution so the pane check outranks it.
-							const target = resolveTarget(deps, a, pane)
-							if (text === undefined) throw missingSendPayload('text')
-							a.sendText(deps.exec, target, text)
-						})
+				run({ pane, text }) {
+					paneVerb(pane, () => {
+						const a = adapter(deps)
+						// A missing pane resolves to a candidate listing here (exit 2); an absent text with a pane
+						// given is its own usage error, caught after resolution so the pane check outranks it.
+						const target = resolveTarget(deps, a, pane)
+						if (text === undefined) throw missingSendPayload('text')
+						a.sendText(deps.exec, target, text)
 					})
 				},
 			}),
@@ -1310,14 +1270,12 @@ function sendCommand(deps: Deps): MuxCommand {
 						type: ct.array(ct.string()).optional(),
 					},
 				],
-				run(args) {
-					guarded(args, ({ pane, keys = [] }) => {
-						paneVerb(pane, () => {
-							const a = adapter(deps)
-							const target = resolveTarget(deps, a, pane)
-							if (keys.length === 0) throw missingSendPayload('keys')
-							a.sendKeys(deps.exec, target, keys)
-						})
+				run({ pane, keys = [] }) {
+					paneVerb(pane, () => {
+						const a = adapter(deps)
+						const target = resolveTarget(deps, a, pane)
+						if (keys.length === 0) throw missingSendPayload('keys')
+						a.sendKeys(deps.exec, target, keys)
 					})
 				},
 			}),
@@ -1341,12 +1299,10 @@ function submitCommand(deps: Deps): MuxCommand {
 				type: ct.string().optional(),
 			},
 		],
-		run(args) {
-			guarded(args, ({ pane, text }) => {
-				paneVerb(pane, () => {
-					const a = adapter(deps)
-					a.submit(deps.exec, resolveTarget(deps, a, pane), text)
-				})
+		run({ pane, text }) {
+			paneVerb(pane, () => {
+				const a = adapter(deps)
+				a.submit(deps.exec, resolveTarget(deps, a, pane), text)
 			})
 		},
 	})
@@ -1401,30 +1357,31 @@ function readCommand(deps: Deps): MuxCommand {
 			lines: { description: 'Trailing lines to capture', type: ct.int().optional() },
 			full: { description: "Capture the pane's whole scrollback, however long", conflicts: ['lines'] },
 		},
-		run(args) {
-			guarded(args, ({ pane, ...opts }) => {
-				const lines = readWindow(opts)
-				paneVerb(pane, () => {
-					const a = adapter(deps)
-					const t = resolveTarget(deps, a, pane)
-					// A failed read captures nothing — there are no bytes for an error to land amid, so `paneVerb`
-					// throwing here means stdout is the structured error alone, with no partial pane output before it.
-					const result = a.read(deps.exec, t, { ...(lines != null ? { lines } : {}), truncation: true })
-					// #9 contextual disclosure: suggested only when there IS something above the window to go
-					// back for, and spelled with the caller's OWN locator rather than a guessed id. A complete
-					// capture is self-contained and owes no suggestion.
-					const help: HelpEntry[] = result.truncated
-						? [{ message: 'older rows sit above this capture', command: `cyber-mux read ${pane ?? t.id} --full` }]
-						: []
-					const payload = { pane: t.id, text: result.text, truncated: result.truncated }
-					output({ ...payload, ...(help.length ? { help } : {}) }, () => {
-						process.stdout.write(result.text.endsWith('\n') ? result.text : `${result.text}\n`)
-						// Only on a truncated capture, so a complete one is the raw bytes alone. `printFields`
-						// keeps a stable key beside the prose hint, for a caller parsing the text stream.
-						if (result.truncated) printFields({ truncated: 'true' })
-						printHelp(help)
-					})
-				})
+		run({ pane, ...opts }) {
+			const window = readWindow(opts)
+			return paneVerb(pane, () => {
+				const a = adapter(deps)
+				const t = resolveTarget(deps, a, pane)
+				// A failed read captures nothing — there are no bytes for an error to land amid, so `paneVerb`
+				// throwing here means stdout is the structured error alone, with no partial pane output before it.
+				const result = a.read(deps.exec, t, { ...(window != null ? { lines: window } : {}), truncation: true })
+				// #9 contextual disclosure: suggested only when there IS something above the window to go
+				// back for, and spelled with the caller's OWN locator rather than a guessed id. A complete
+				// capture is self-contained and owes no suggestion.
+				const help = result.truncated
+					? [step('older rows sit above this capture', `cyber-mux read ${pane ?? t.id} --full`)]
+					: []
+				// The text form is the pane's raw bytes. Only a truncated capture adds to them, so a complete
+				// one is the bytes alone; the `truncated` line keeps a stable key beside the prose hint, for a
+				// caller parsing the text stream.
+				return answer(
+					{ pane: t.id, text: result.text, truncated: result.truncated },
+					(v) => {
+						if (!v.truncated) return v.text
+						return `${v.text.endsWith('\n') ? v.text : `${v.text}\n`}${fields({ truncated: 'true' })}`
+					},
+					help,
+				)
 			})
 		},
 	})
@@ -1435,12 +1392,12 @@ function readCommand(deps: Deps): MuxCommand {
  * silent precedence rule, exactly as `waitPattern` refuses `--match` plus `--regex`. */
 function readWindow(opts: { lines?: number | undefined; full?: boolean | undefined }): number | 'all' | undefined {
 	if (opts.full && opts.lines != null) {
-		throw new CliError(
-			'usage-error',
-			'--lines and --full are mutually exclusive',
-			'bound the window: cyber-mux read <pane> --lines <n> — or take all of it: cyber-mux read <pane> --full',
-			2,
-		)
+		throw new CliError({
+			code: 'conflicting-options',
+			message: '--lines and --full are mutually exclusive',
+			help: 'bound the window: cyber-mux read <pane> --lines <n> — or take all of it: cyber-mux read <pane> --full',
+			exitCode: exitCodes.usage,
+		})
 	}
 	return opts.full ? 'all' : opts.lines
 }
@@ -1501,39 +1458,34 @@ function waitCommand(deps: Deps): MuxCommand {
 				type: ct.int().optional(),
 			},
 		},
-		async run(args) {
-			await guardedAsync(args, async ({ pane, timeout = DEFAULT_WAIT_TIMEOUT_MS, ...rest }) => {
-				const opts = { ...rest, timeout }
-				const pattern = waitPattern(opts)
-				if (!Number.isFinite(opts.timeout) || opts.timeout < 0) throw invalidWaitTimeout(opts.timeout)
-				const a = adapter(deps)
-				// Resolution runs BEFORE the wait: an ambiguous locator must not consume the whole timeout
-				// before reporting that the question had no single pane to be about.
-				const t = resolveTarget(deps, a, pane)
-				const result = await a
-					.waitForOutput(deps.exec, t, {
-						...pattern,
-						timeoutMs: opts.timeout,
-						...(opts.lines != null ? { lines: opts.lines } : {}),
-					})
-					// A gone pane throws out of the seam; it is this CLI's `pane-not-found`, not a raw backend
-					// diagnostic — `paneVerb`'s translation, applied to an async body.
-					.catch((err) => {
-						if (err instanceof CliError) throw err
-						// A missing locator never reaches here — `resolveTarget` already threw its
-						// `MissingPaneError` above — so this is `paneVerb`'s translation applied to an async
-						// body: a backend throw becomes this CLI's own coded not-found.
-						throw paneNotFound(pane ?? '')
-					})
-				output({ pane: t.id, ...result }, () => {
-					printFields({
-						pane: t.id,
-						matched: String(result.matched),
-						line: result.matchedLine ?? null,
-					})
+		async run({ pane, timeout = DEFAULT_WAIT_TIMEOUT_MS, ...rest }) {
+			const opts = { ...rest, timeout }
+			const pattern = waitPattern(opts)
+			if (!Number.isFinite(opts.timeout) || opts.timeout < 0) throw invalidWaitTimeout(opts.timeout)
+			const a = adapter(deps)
+			// Resolution runs BEFORE the wait: an ambiguous locator must not consume the whole timeout
+			// before reporting that the question had no single pane to be about.
+			const t = resolveTarget(deps, a, pane)
+			const result = await a
+				.waitForOutput(deps.exec, t, {
+					...pattern,
+					timeoutMs: opts.timeout,
+					...(opts.lines != null ? { lines: opts.lines } : {}),
 				})
-				if (!result.matched) process.exit(1)
-			})
+				// A gone pane throws out of the seam; it is this CLI's `pane-not-found`, not a raw backend
+				// diagnostic — `paneVerb`'s translation, applied to an async body.
+				.catch((err) => {
+					if (err instanceof CliError) throw err
+					// A missing locator never reaches here — `resolveTarget` already threw its
+					// `MissingPaneError` above — so this is `paneVerb`'s translation applied to an async
+					// body: a backend throw becomes this CLI's own coded not-found.
+					throw paneNotFound(pane ?? '')
+				})
+			// A timeout is an answer, not an error: the same payload, and the exit status carries the verdict.
+			if (!result.matched) process.exitCode = exitCodes.error
+			return answer({ pane: t.id, ...result }, (v) =>
+				fields({ pane: v.pane, matched: String(v.matched), line: v.matchedLine ?? null }),
+			)
 		},
 	})
 }
@@ -1545,44 +1497,44 @@ function waitPattern(opts: { match?: string | undefined; regex?: string | undefi
 	regex?: string
 } {
 	if (opts.match != null && opts.regex != null) {
-		throw new CliError(
-			'usage-error',
-			'--match and --regex are mutually exclusive',
-			'pass one pattern: cyber-mux wait <pane> --match <text>',
-			2,
-		)
+		throw new CliError({
+			code: 'conflicting-options',
+			message: '--match and --regex are mutually exclusive',
+			help: 'pass one pattern: cyber-mux wait <pane> --match <text>',
+			exitCode: exitCodes.usage,
+		})
 	}
 	if (opts.match != null) return { match: opts.match }
 	if (opts.regex != null) {
 		try {
 			new RegExp(opts.regex)
 		} catch {
-			throw new CliError(
-				'usage-error',
-				`--regex is not a valid expression: ${opts.regex}`,
-				'pass a valid pattern, or a literal with --match instead',
-				2,
-			)
+			throw new CliError({
+				code: 'invalid-value',
+				message: `--regex is not a valid expression: ${opts.regex}`,
+				help: 'pass a valid pattern, or a literal with --match instead',
+				exitCode: exitCodes.usage,
+			})
 		}
 		return { regex: opts.regex }
 	}
-	throw new CliError(
-		'usage-error',
-		'wait needs a pattern — pass --match or --regex',
-		'wait for a literal: cyber-mux wait <pane> --match <text>',
-		2,
-	)
+	throw new CliError({
+		code: 'missing-argument',
+		message: 'wait needs a pattern — pass --match or --regex',
+		help: 'wait for a literal: cyber-mux wait <pane> --match <text>',
+		exitCode: exitCodes.usage,
+	})
 }
 
 /** A `--timeout` that is not a non-negative number — a usage error: nothing was attempted, and the fix
  * is a different invocation. */
 function invalidWaitTimeout(timeout: number): CliError {
-	return new CliError(
-		'usage-error',
-		`--timeout must be a non-negative number of milliseconds — got ${timeout}`,
-		'pass milliseconds: cyber-mux wait <pane> --match <text> --timeout 30000',
-		2,
-	)
+	return new CliError({
+		code: 'invalid-value',
+		message: `--timeout must be a non-negative number of milliseconds — got ${timeout}`,
+		help: 'pass milliseconds: cyber-mux wait <pane> --match <text> --timeout 30000',
+		exitCode: exitCodes.usage,
+	})
 }
 
 function focusCommand(deps: Deps): MuxCommand {
@@ -1597,26 +1549,24 @@ function focusCommand(deps: Deps): MuxCommand {
 		options: {
 			back: { description: 'Return to the pane the pane this runs in was jumped into from' },
 		},
-		run(args) {
-			guarded(args, ({ pane, back }) => {
-				const jumps = { env: deps.env, store: deps.jumps }
-				if (back) {
-					if (pane != null) {
-						throw new CliError(
-							'usage-error',
-							'focus --back takes no pane: it follows the link for the pane it runs in',
-							'run it in the pane you jumped into: cyber-mux focus --back',
-							2,
-						)
-					}
-					focusBackVerb(adapter(deps), deps.exec, jumps)
-					return
+		run({ pane, back }) {
+			const jumps = { env: deps.env, store: deps.jumps }
+			if (back) {
+				if (pane != null) {
+					throw new CliError({
+						code: 'conflicting-options',
+						message: 'focus --back takes no pane: it follows the link for the pane it runs in',
+						help: 'run it in the pane you jumped into: cyber-mux focus --back',
+						exitCode: exitCodes.usage,
+					})
 				}
-				paneVerb(pane, () => {
-					const a = adapter(deps)
-					// Every focus records target ← the pane it runs in, so `focus --back` can return along it.
-					focusAndRecord(a, deps.exec, resolveTarget(deps, a, pane), jumps)
-				})
+				focusBackVerb(adapter(deps), deps.exec, jumps)
+				return
+			}
+			paneVerb(pane, () => {
+				const a = adapter(deps)
+				// Every focus records target ← the pane it runs in, so `focus --back` can return along it.
+				focusAndRecord(a, deps.exec, resolveTarget(deps, a, pane), jumps)
 			})
 		},
 	})
@@ -1628,34 +1578,41 @@ function focusBackVerb(a: MuxAdapter, exec: Exec, ctx: JumpContext): void {
 		focusBack(a, exec, ctx)
 	} catch (err) {
 		if (!(err instanceof JumpBackError)) {
-			throw new CliError(
-				'focus-failed',
-				'the pane back could not be focused',
-				'list the live panes with: cyber-mux list',
-				1,
-			)
+			throw new CliError({
+				code: 'focus-failed',
+				message: 'the pane back could not be focused',
+				help: 'list the live panes with: cyber-mux list',
+				exitCode: exitCodes.error,
+			})
 		}
 		if (err.code === 'no-caller-pane') {
-			throw new CliError(
-				'no-caller-pane',
-				err.message,
-				'run it in the pane you jumped into, or name that pane in CYBER_MUX_PANE',
-				1,
-			)
+			throw new CliError({
+				code: 'no-caller-pane',
+				message: err.message,
+				help: 'run it in the pane you jumped into, or name that pane in CYBER_MUX_PANE',
+				exitCode: exitCodes.error,
+			})
 		}
 		if (err.code === 'no-jump') {
-			throw new CliError(
-				'no-jump',
-				err.message,
-				err.lastOrigin != null
-					? `the last jump came from ${err.lastOrigin}; go there with: cyber-mux focus ${err.lastOrigin}`
-					: 'no jump is recorded yet; jump with: cyber-mux focus <pane>',
-				1,
-				{ pane: err.pane ?? null, lastOrigin: err.lastOrigin ?? null },
-			)
+			throw new CliError({
+				code: 'no-jump',
+				message: err.message,
+				help:
+					err.lastOrigin != null
+						? `the last jump came from ${err.lastOrigin}; go there with: cyber-mux focus ${err.lastOrigin}`
+						: 'no jump is recorded yet; jump with: cyber-mux focus <pane>',
+				exitCode: exitCodes.error,
+				details: { pane: err.pane ?? null, lastOrigin: err.lastOrigin ?? null },
+			})
 		}
-		throw new CliError('jump-chain-gone', err.message, 'list the live panes with: cyber-mux list', 1, {
-			pane: err.pane ?? null,
+		throw new CliError({
+			code: 'jump-chain-gone',
+			message: err.message,
+			help: 'list the live panes with: cyber-mux list',
+			exitCode: exitCodes.error,
+			details: {
+				pane: err.pane ?? null,
+			},
 		})
 	}
 }
@@ -1666,12 +1623,10 @@ function closeCommand(deps: Deps): MuxCommand {
 		examples: [{ command: 'cyber-mux close %3', description: 'Close pane %3' }],
 		description: 'Close a pane',
 		arguments: [{ name: 'pane', description: 'Target pane id', type: ct.string().optional() }],
-		run(args) {
-			guarded(args, ({ pane }) => {
-				paneVerb(pane, () => {
-					const a = adapter(deps)
-					a.teardown(deps.exec, resolveTarget(deps, a, pane))
-				})
+		run({ pane }) {
+			paneVerb(pane, () => {
+				const a = adapter(deps)
+				a.teardown(deps.exec, resolveTarget(deps, a, pane))
 			})
 		},
 	})
@@ -1682,29 +1637,27 @@ function listCommand(deps: Deps): MuxCommand {
 		name: 'list',
 		examples: [{ command: 'cyber-mux list', description: 'Enumerate every live pane' }],
 		description: 'Enumerate every live pane the current backend can see',
-		run(args) {
-			guarded(args, () => {
-				const panes = adapter(deps).listPanes(deps.exec)
-				// The agent-status column earns its slot only when a pane actually carries the field — true on
-				// herdr (the one backend with a per-pane agent-state feed), constant-absent on tmux/wezterm/
-				// zellij. A constant-absent column discriminates nothing (axi.md #2, the same rule that drops
-				// the constant `mux` column), so it is suppressed on those backends rather than printed empty.
-				// The JSON payload keeps `agentStatus` per pane regardless — column suppression is a
-				// human-table concern, and a structured consumer reads the field straight off the pane.
-				const hasAgent = panes.some((p) => p.agentStatus !== undefined)
-				const cols: { label: string; get: (p: LivePane) => string }[] = [
-					{ label: 'pane', get: (p) => p.id },
-					// `label` takes the slot `mux` held. Every row of one listing reports the same mux — one
-					// adapter is selected per session, so the column is constant by construction and
-					// discriminates nothing. The label is what a caller now types INSTEAD of the id, so it is
-					// the fact this row exists to carry. `doctor` is where the backend is a live question.
-					{ label: 'label', get: (p) => p.label ?? '' },
-					{ label: 'harness', get: (p) => p.harness ?? '' },
-					{ label: 'cwd', get: (p) => p.cwd ?? '' },
-				]
-				if (hasAgent) cols.push({ label: 'agent', get: (p) => p.agentStatus ?? '' })
-				output({ panes }, () => printTable(panes, cols))
-			})
+		run() {
+			const panes = adapter(deps).listPanes(deps.exec)
+			// The agent-status column earns its slot only when a pane actually carries the field — true on
+			// herdr (the one backend with a per-pane agent-state feed), constant-absent on tmux/wezterm/
+			// zellij. A constant-absent column discriminates nothing (axi.md #2, the same rule that drops
+			// the constant `mux` column), so it is suppressed on those backends rather than printed empty.
+			// The JSON payload keeps `agentStatus` per pane regardless — column suppression is a
+			// human-table concern, and a structured consumer reads the field straight off the pane.
+			const hasAgent = panes.some((p) => p.agentStatus !== undefined)
+			const cols: { label: string; get: (p: LivePane) => string }[] = [
+				{ label: 'pane', get: (p) => p.id },
+				// `label` takes the slot `mux` held. Every row of one listing reports the same mux — one
+				// adapter is selected per session, so the column is constant by construction and
+				// discriminates nothing. The label is what a caller now types INSTEAD of the id, so it is
+				// the fact this row exists to carry. `doctor` is where the backend is a live question.
+				{ label: 'label', get: (p) => p.label ?? '' },
+				{ label: 'harness', get: (p) => p.harness ?? '' },
+				{ label: 'cwd', get: (p) => p.cwd ?? '' },
+			]
+			if (hasAgent) cols.push({ label: 'agent', get: (p) => p.agentStatus ?? '' })
+			return answer({ panes }, (v) => table(v.panes, cols))
 		},
 	})
 }
@@ -1715,16 +1668,15 @@ function existsCommand(deps: Deps): MuxCommand {
 		examples: [{ command: 'cyber-mux exists %3', description: 'Exit 0 if pane %3 is live, 1 if gone' }],
 		description: 'Probe whether a single pane is still live (exit 0 = live, 1 = gone)',
 		arguments: [{ name: 'pane', description: 'Target pane id', type: ct.string().optional() }],
-		run(args) {
-			guarded(args, ({ pane }) => {
-				const a = adapter(deps)
-				// Resolution runs BEFORE any output: an ambiguous locator throws out of here, so `live`/`gone`
-				// is never printed for a question that has no single pane to be about.
-				const t = resolveTarget(deps, a, pane)
-				const live = a.paneExists(deps.exec, t)
-				output({ pane, live }, () => console.log(live ? 'live' : 'gone'))
-				if (!live) process.exit(1)
-			})
+		run({ pane }) {
+			const a = adapter(deps)
+			// Resolution runs BEFORE any output: an ambiguous locator throws out of here, so `live`/`gone`
+			// is never printed for a question that has no single pane to be about.
+			const t = resolveTarget(deps, a, pane)
+			const live = a.paneExists(deps.exec, t)
+			// `gone` is the answer to the question, so it is printed like `live`, and exit 1 carries it.
+			if (!live) process.exitCode = exitCodes.error
+			return answer({ pane, live }, (v) => (v.live ? 'live' : 'gone'))
 		},
 	})
 }
@@ -1745,21 +1697,21 @@ function existsCommand(deps: Deps): MuxCommand {
  * `backendUnsupported` already take.
  */
 function floatingUnsupported(err: FloatingPanesUnsupportedError): CliError {
-	return new CliError(
-		'backend-unsupported',
-		`${err.backend} cannot open a floating pane — --at pane:float needs a backend with a native floating pane (tmux 3.7+ or zellij)`,
-		'drop --at pane:float, or run it on tmux 3.7+ or zellij',
-		1,
-	)
+	return new CliError({
+		code: 'backend-unsupported',
+		message: `${err.backend} cannot open a floating pane — --at pane:float needs a backend with a native floating pane (tmux 3.7+ or zellij)`,
+		help: 'drop --at pane:float, or run it on tmux 3.7+ or zellij',
+		exitCode: exitCodes.error,
+	})
 }
 
 function agentUnsupported(err: AgentLifecycleUnsupportedError): CliError {
-	return new CliError(
-		'backend-unsupported',
-		`${err.backend} cannot wait on agent-lifecycle state — agent wait needs a backend with a native per-pane agent-state wait (herdr, otty)`,
-		'run agent wait on herdr or otty, the backends with a native agent-state wait',
-		1,
-	)
+	return new CliError({
+		code: 'backend-unsupported',
+		message: `${err.backend} cannot wait on agent-lifecycle state — agent wait needs a backend with a native per-pane agent-state wait (herdr, otty)`,
+		help: 'run agent wait on herdr or otty, the backends with a native agent-state wait',
+		exitCode: exitCodes.error,
+	})
 }
 
 /**
@@ -1770,12 +1722,12 @@ function agentUnsupported(err: AgentLifecycleUnsupportedError): CliError {
  * states this backend cannot reach, not "go run it on herdr".
  */
 function agentStatesUnsupported(err: AgentWaitStatesUnsupportedError): CliError {
-	return new CliError(
-		'backend-unsupported',
-		err.message,
-		`pass --until ${err.supported.join(' ')}, or omit --until to take ${err.backend}'s own default`,
-		1,
-	)
+	return new CliError({
+		code: 'backend-unsupported',
+		message: err.message,
+		help: `pass --until ${err.supported.join(' ')}, or omit --until to take ${err.backend}'s own default`,
+		exitCode: exitCodes.error,
+	})
 }
 
 /**
@@ -1792,22 +1744,20 @@ function agentStatusCommand(deps: Deps): MuxCommand {
 		examples: [{ command: 'cyber-mux agent status %3', description: 'Print the agent-lifecycle status of pane %3' }],
 		description: "Print a pane's agent-lifecycle status (herdr); degrades to no status on a backend with no feed",
 		arguments: [{ name: 'pane', description: 'Target pane id or label', type: ct.string().optional() }],
-		run(args) {
-			guarded(args, ({ pane }) => {
-				const a = adapter(deps)
-				const target = resolveTarget(deps, a, pane)
-				// The status rides on the same live listing a name resolves from. A listing that cannot be
-				// read degrades to "no status" rather than failing the snapshot — the pane is still named.
-				let agentStatus: AgentStatus | undefined
-				try {
-					agentStatus = a.listPanes(deps.exec).find((p) => p.id === target.id)?.agentStatus
-				} catch {
-					agentStatus = undefined
-				}
-				output({ pane: target.id, agentStatus: agentStatus ?? null }, () =>
-					printFields({ pane: target.id, agentStatus }),
-				)
-			})
+		run({ pane }) {
+			const a = adapter(deps)
+			const target = resolveTarget(deps, a, pane)
+			// The status rides on the same live listing a name resolves from. A listing that cannot be
+			// read degrades to "no status" rather than failing the snapshot — the pane is still named.
+			let agentStatus: AgentStatus | undefined
+			try {
+				agentStatus = a.listPanes(deps.exec).find((p) => p.id === target.id)?.agentStatus
+			} catch {
+				agentStatus = undefined
+			}
+			return answer({ pane: target.id, agentStatus: agentStatus ?? null }, (v) =>
+				fields({ pane: v.pane, agentStatus: v.agentStatus }),
+			)
 		},
 	})
 }
@@ -1852,38 +1802,37 @@ function agentWaitCommand(deps: Deps): MuxCommand {
 				type: ct.number().optional(),
 			},
 		},
-		run(args) {
-			guarded(args, ({ pane, ...opts }) => {
-				const a = adapter(deps)
-				// Refuse a backend with no agent-lifecycle capability up front — the library's decision,
-				// surfaced here as backend-unsupported. Checked before the pane is resolved so it outranks any
-				// resolution outcome, and kept out of the try below so it is never re-dressed as a wait failure.
-				if (!a.agentLifecycle) throw agentUnsupported(new AgentLifecycleUnsupportedError(a.name))
-				const target = resolveTarget(deps, a, pane)
-				let reached: AgentStatus
-				try {
-					reached = deriveAgentWait(a, deps.exec, target, {
-						until: opts.until as AgentStatus[] | undefined,
-						timeoutMs: opts.timeout,
-					})
-				} catch (err) {
-					if (err instanceof CliError) throw err
-					// Belt-and-braces: the early guard already refused a capability-less backend, but the
-					// orchestrator re-checks as its own contract, so honor its typed refusal here too.
-					if (err instanceof AgentLifecycleUnsupportedError) throw agentUnsupported(err)
-					// A backend that HAS the wait but cannot end it on every requested state — a different
-					// refusal with a different fix, so it is not folded into the one above.
-					if (err instanceof AgentWaitStatesUnsupportedError) throw agentStatesUnsupported(err)
-					// A wait the backend accepted but could not complete (an unparseable envelope, a lost pane).
-					throw new CliError(
-						'agent-wait-failed',
-						err instanceof Error ? err.message : String(err),
-						'check the pane still exists with: cyber-mux exists <pane>',
-						1,
-					)
-				}
-				output({ pane: target.id, agentStatus: reached }, () => console.log(reached))
-			})
+		run({ pane, ...opts }) {
+			const a = adapter(deps)
+			// Refuse a backend with no agent-lifecycle capability up front — the library's decision,
+			// surfaced here as backend-unsupported. Checked before the pane is resolved so it outranks any
+			// resolution outcome, and kept out of the try below so it is never re-dressed as a wait failure.
+			if (!a.agentLifecycle) throw agentUnsupported(new AgentLifecycleUnsupportedError(a.name))
+			const target = resolveTarget(deps, a, pane)
+			let reached: AgentStatus
+			try {
+				reached = deriveAgentWait(a, deps.exec, target, {
+					until: opts.until as AgentStatus[] | undefined,
+					timeoutMs: opts.timeout,
+				})
+			} catch (err) {
+				if (err instanceof CliError) throw err
+				// Belt-and-braces: the early guard already refused a capability-less backend, but the
+				// orchestrator re-checks as its own contract, so honor its typed refusal here too.
+				if (err instanceof AgentLifecycleUnsupportedError) throw agentUnsupported(err)
+				// A backend that HAS the wait but cannot end it on every requested state — a different
+				// refusal with a different fix, so it is not folded into the one above.
+				if (err instanceof AgentWaitStatesUnsupportedError) throw agentStatesUnsupported(err)
+				// A wait the backend accepted but could not complete (an unparseable envelope, a lost pane).
+				throw new CliError({
+					code: 'agent-wait-failed',
+					message: err instanceof Error ? err.message : String(err),
+					help: 'check the pane still exists with: cyber-mux exists <pane>',
+					exitCode: exitCodes.error,
+				})
+			}
+			// The text form is the bare state, so a shell reads it as is.
+			return answer({ pane: target.id, agentStatus: reached }, (v) => v.agentStatus)
 		},
 	})
 }
@@ -1961,7 +1910,7 @@ function worktreeAddCommand(deps: Deps): MuxCommand {
 					})
 					const extra = { root: opened.worktree.root, branch: opened.worktree.branch }
 					try {
-						reportManifest(
+						return manifestAnswer(
 							applyTemplateToRegion(deps.exec, a, template, {
 								root: opened.target,
 								cwd: opened.worktree.root,
@@ -1978,9 +1927,8 @@ function worktreeAddCommand(deps: Deps): MuxCommand {
 							extra,
 						)
 					} catch (err) {
-						reportApplyFailure(err, extra)
+						return applyFailure(err, extra)
 					}
-					return
 				}
 				const path = opts.path ?? (await nextSlotPath(deps.exec, primaryRoot))
 				// With no placement asked for AND nothing to put IN a pane, this IS a git operation: it
@@ -1990,16 +1938,15 @@ function worktreeAddCommand(deps: Deps): MuxCommand {
 				// so it can no longer be a bare add.
 				if (!opts.at && !opts.launch && !opts.env) {
 					const wt = gitWorktreeAdapter.add(deps.exec, { primaryRoot, path, branch: opts.branch, base: opts.base })
-					output({ root: wt.root, branch: wt.branch, pane: null, workspace: null }, () =>
-						printFields({ root: wt.root, branch: wt.branch }),
+					return answer({ root: wt.root, branch: wt.branch, pane: null, workspace: null }, (v) =>
+						fields({ root: v.root, branch: v.branch }),
 					)
-					return
 				}
 				// A launch or an env with no placement wants its own space, not a pane crowding the
 				// caller's — and `workspace` is the only placement a backend can bind a worktree to.
 				const at = opts.at ?? 'workspace'
 				const a = adapter(deps)
-				reportOpenedWorktree(
+				return openedWorktreeAnswer(
 					addAndOpenWorktree(deps.exec, a, {
 						primaryRoot,
 						branch: opts.branch,
@@ -2014,7 +1961,7 @@ function worktreeAddCommand(deps: Deps): MuxCommand {
 					`cyber-mux worktree add --branch ${opts.branch} --at workspace`,
 				)
 			} catch (err) {
-				reportWorktreeFailure(err)
+				throw worktreeFailure(err)
 			}
 		},
 	})
@@ -2026,7 +1973,7 @@ function worktreeAddCommand(deps: Deps): MuxCommand {
  * an availability predicate or to choose the path: the library assigns slots, and a host that needs
  * either, or needs to hold the lease, calls `acquire` directly. It reports what it did
  * (`reused` | `created`), the worktree, and on reuse the recycled worktree's prior branch;
- * `printFields` drops the nullish reuse field on a create.
+ * The text form drops the nullish reuse field on a create.
  */
 function worktreeProvisionCommand(deps: Deps): MuxCommand {
 	return muxCommand({
@@ -2060,15 +2007,15 @@ function worktreeProvisionCommand(deps: Deps): MuxCommand {
 				const action = result.reused ? 'reused' : 'created'
 				const worktree = { root: result.worktree, branch: result.branch ?? opts.branch }
 				const reused = result.reused ? { root: result.worktree, branch: result.previousBranch ?? null } : null
-				output({ action, ...worktree, reused }, () =>
-					printFields({
+				return answer({ action, ...worktree, reused }, () =>
+					fields({
 						action,
 						...worktree,
 						'reused-from': reused ? (reused.branch ?? '(detached)') : undefined,
 					}),
 				)
 			} catch (err) {
-				reportWorktreeFailure(err)
+				throw worktreeFailure(err)
 			}
 		},
 	})
@@ -2098,7 +2045,7 @@ function worktreeOpenCommand(deps: Deps): MuxCommand {
 				const opts = { ...rest, env: parseEnv(env), at: rest.at as MuxPlacement | undefined }
 				const primaryRoot = await primaryCheckout(deps.exec)
 				const a = adapter(deps)
-				reportOpenedWorktree(
+				return openedWorktreeAnswer(
 					await openExistingWorktree(deps.exec, a, {
 						primaryRoot,
 						path,
@@ -2111,7 +2058,7 @@ function worktreeOpenCommand(deps: Deps): MuxCommand {
 					`cyber-mux worktree open ${path} --at workspace`,
 				)
 			} catch (err) {
-				reportWorktreeFailure(err)
+				throw worktreeFailure(err)
 			}
 		},
 	})
@@ -2131,8 +2078,8 @@ function worktreeListCommand(deps: Deps): MuxCommand {
 				const worktrees = await listWorktrees(deps.exec, optionalAdapter(deps), { primaryRoot })
 				const outcomes = await pruneUnboundWorktrees(deps.exec, worktrees, { primaryRoot, apply: false })
 				const removable = new Set(outcomes.filter((o) => o.status === 'candidate').map((o) => o.root))
-				output({ worktrees }, () =>
-					printTable(worktrees, [
+				return answer({ worktrees }, () =>
+					table(worktrees, [
 						// `linked` is one BIT, so it does not earn a column: the primary checkout — the single
 						// row where it is false — is marked in BRANCH instead. The field itself stays intact in
 						// `--format json`, where a consumer reads the boolean rather than the marker.
@@ -2154,7 +2101,7 @@ function worktreeListCommand(deps: Deps): MuxCommand {
 					]),
 				)
 			} catch (err) {
-				reportWorktreeFailure(err)
+				throw worktreeFailure(err)
 			}
 		},
 	})
@@ -2178,7 +2125,7 @@ function worktreeRemoveCommand(deps: Deps): MuxCommand {
 				const primaryRoot = await primaryCheckout(deps.exec)
 				await removeWorktree(deps.exec, optionalAdapter(deps), path, { primaryRoot, force: opts.force })
 			} catch (err) {
-				reportWorktreeFailure(err)
+				throw worktreeFailure(err)
 			}
 		},
 	})
@@ -2253,28 +2200,34 @@ function worktreePruneCommand(deps: Deps): MuxCommand {
 						.filter((o) => o.status === 'skipped' || o.status === 'failed')
 						.map((o) => ({ root: o.root, branch: o.branch ?? null, reason: pruneSkipProse(o) })),
 				]
-				output({ applied: Boolean(opts.force), removed, skipped }, () => {
-					printTable(removed, [
-						{ label: opts.force ? 'removed' : 'would remove', get: (r) => tildify(r.root) },
-						{ label: 'branch', get: (r) => r.branch ?? '(detached)' },
-					])
-					if (skipped.length > 0) {
-						printTable(skipped, [
-							{ label: 'skipped', get: (s) => tildify(s.root) },
-							{ label: 'reason', get: (s) => s.reason },
-						])
-					}
-					if (!opts.force && removed.length > 0) {
-						printHelp([
-							{
-								message: `${removed.length} worktree${removed.length === 1 ? '' : 's'} would be removed`,
-								command: 'cyber-mux worktree prune --force',
-							},
-						])
-					}
-				})
+				const help =
+					!opts.force && removed.length > 0
+						? [
+								step(
+									`${removed.length} worktree${removed.length === 1 ? '' : 's'} would be removed`,
+									'cyber-mux worktree prune --force',
+								),
+							]
+						: []
+				return answer(
+					{ applied: Boolean(opts.force), removed, skipped },
+					() =>
+						lines(
+							table(removed, [
+								{ label: opts.force ? 'removed' : 'would remove', get: (r) => tildify(r.root) },
+								{ label: 'branch', get: (r) => r.branch ?? '(detached)' },
+							]),
+							skipped.length > 0
+								? table(skipped, [
+										{ label: 'skipped', get: (s) => tildify(s.root) },
+										{ label: 'reason', get: (s) => s.reason },
+									])
+								: '',
+						),
+					help,
+				)
 			} catch (err) {
-				reportWorktreeFailure(err)
+				throw worktreeFailure(err)
 			}
 		},
 	})
@@ -2293,119 +2246,6 @@ function worktreeCommand(deps: Deps): MuxCommand {
 			worktreePruneCommand(deps),
 		],
 	})
-}
-
-/**
- * Translate a parser-level rejection into the SAME coded error surface every verb uses. The parser's own
- * failures — a flag the command does not define, a required argument it never received, two
- * mutually-exclusive flags, a value of the wrong shape — are USAGE errors: the fix is a different
- * invocation, not a retry, so they exit 2, and they belong on stdout under a stable code exactly as an
- * operation failure does.
- *
- * clibuilder resolves this handler for the command actually matched, so `command` is the SUBCOMMAND
- * invoked — which is what lets an unknown flag be rejected against that subcommand's own flags
- * (`template list` does not share `template save`'s), and the offending flag be named beside them so the
- * agent self-corrects in one turn rather than a second `--help` round trip.
- *
- * One error is reported, the most actionable first: an unknown flag outranks everything (the rest of
- * the line may be misparsed because of it), then a conflict, then a bad value, then a missing or extra
- * argument.
- *
- * `usage` is the invocation prefix a fix is spelled with — `cyber-mux` standalone, `<host> mux` when the
- * verbs are mounted by a host CLI as a plugin.
- */
-export function usageErrorHandler(usage: string): cli.UsageErrorHandler {
-	return (errors, { command }) => reportError(usageError(usage, errors, command))
-}
-
-const USAGE_ERROR_RANK: cli.UsageError['type'][] = [
-	'invalid-key',
-	'conflicting-options',
-	'invalid-value',
-	'expect-single',
-	'missing-argument',
-	'extra-arguments',
-]
-
-function usageError(usage: string, errors: cli.UsageError[], command: MuxCommand): CliError {
-	const [e] = [...errors].sort((a, b) => USAGE_ERROR_RANK.indexOf(a.type) - USAGE_ERROR_RANK.indexOf(b.type))
-	const path = commandPath(usage, command)
-	switch (e?.type) {
-		case 'invalid-key': {
-			const flag = flagName(e.key)
-			// `--format` is clibuilder's global option, so it is on no command's own list but valid on every one.
-			const valid = [...Object.keys(command.options ?? {}), 'format'].map(flagName)
-			return new CliError(
-				'unknown-flag',
-				`unknown flag ${flag} for ${command.name}`,
-				valid.length > 0 ? `valid flags for ${command.name}: ${valid.join(' ')}` : `${command.name} takes no flags`,
-				2,
-			)
-		}
-		case 'conflicting-options':
-			return new CliError(
-				'usage-error',
-				`${flagName(e.key)} and ${flagName(e.conflictsWith)} are mutually exclusive`,
-				'pass only one of the conflicting flags, then re-run',
-				2,
-			)
-		case 'invalid-value':
-			return new CliError(
-				'invalid-value',
-				`invalid value for ${describeKey(e.key, command)}: ${e.message}, got "${e.value}"`,
-				expectedValue(e.key, command) ?? `see the accepted values with: ${path} --help`,
-				2,
-			)
-		case 'expect-single':
-			return new CliError(
-				'invalid-value',
-				`${describeKey(e.key, command)} takes a single value, got: ${[e.value].flat().join(', ')}`,
-				`pass it once: ${path} ${flagName(e.key)} <value>`,
-				2,
-			)
-		case 'missing-argument':
-			return new CliError(
-				'missing-argument',
-				`missing required argument: ${e.name}`,
-				`provide ${e.name}: ${path} <${e.name}>`,
-				2,
-			)
-		case 'extra-arguments':
-			return new CliError(
-				'usage-error',
-				`too many arguments for ${command.name}: ${e.values.join(' ')}`,
-				`see what ${command.name} takes with: ${path} --help`,
-				2,
-			)
-		default:
-			return new CliError('usage-error', `invalid invocation of ${command.name}`, `see: ${path} --help`, 2)
-	}
-}
-
-/** What an option takes, in its own declared words — the one line that fixes a bad value. */
-function expectedValue(key: string, command: MuxCommand): string | undefined {
-	const option = Object.entries(command.options ?? {}).find(
-		([name, entry]) => name === key || entry.alias?.some((a) => (typeof a === 'string' ? a : a.alias) === key),
-	)
-	return option ? `${flagName(option[0])} takes: ${option[1].description}` : undefined
-}
-
-function flagName(key: string): string {
-	return key.length === 1 ? `-${key}` : `--${key}`
-}
-
-function describeKey(key: string, command: MuxCommand): string {
-	return command.arguments?.some((a: cli.Command.Argument) => a.name === key) ? `<${key}>` : flagName(key)
-}
-
-/** `cyber-mux template save` — the invocation that reaches `command`, from the parent links clibuilder
- * sets on every mounted command. The root (and a plugin host's own root) carries no name of its own. */
-function commandPath(usage: string, command: MuxCommand): string {
-	const names: string[] = []
-	for (let c: (MuxCommand & { parent?: MuxCommand }) | undefined = command; c; c = c.parent) {
-		if (c.name) names.unshift(c.name)
-	}
-	return [usage, ...names.filter((n) => n !== MUX_PLUGIN_COMMAND)].join(' ')
 }
 
 function resolveDeps(cliDeps: CliDeps): Deps {
@@ -2446,12 +2286,12 @@ export function muxCommands(cliDeps: CliDeps = DEFAULT_DEPS): MuxCommand[] {
 const DESCRIPTION = 'Cross-multiplexer pane control — one contract over tmux and herdr'
 
 /**
- * The home view (AXI #8, content first): a bare `cyber-mux` answers with the live panes and the
- * verbs, not a manual. With no multiplexer around it still answers, with a definitive `panes: none`
- * and how to get one — a bare invocation is never an error.
+ * The home view (AXI #8, content first): a bare `cyber-mux` answers with the live panes, not a manual.
+ * With no multiplexer around it still answers, with a definitive `panes: none` and how to get one — a
+ * bare invocation is never an error. Core appends the root's commands as the last `help` line (AXI
+ * change 2), so the view names no verbs of its own.
  */
 function homeCommand(deps: Deps) {
-	const verbs = ['open', 'send', 'submit', 'read', 'wait', 'focus', 'close', 'list', 'exists', 'doctor']
 	return {
 		description: DESCRIPTION,
 		examples: [{ command: 'cyber-mux', description: 'List the live panes and the available verbs' }],
@@ -2469,20 +2309,23 @@ function homeCommand(deps: Deps) {
 			const help = mux
 				? ['run `cyber-mux read <pane>` to see a pane', "run `cyber-mux <verb> --help` for a verb's arguments"]
 				: ['run cyber-mux inside tmux or herdr, or set CYBER_MUX to name one']
-			output({ ...header, mux, panes: panes.length === 0 ? 'none' : panes, verbs, help }, () => {
-				console.log(`bin: ${header.bin}`)
-				console.log(`description: ${header.description}`)
-				console.log(`mux: ${mux ?? 'none'}`)
-				if (panes.length === 0) console.log('panes: none')
-				else
-					printTable(panes, [
-						{ label: 'pane', get: (p) => p.id },
-						{ label: 'label', get: (p) => p.label ?? '' },
-						{ label: 'cwd', get: (p) => p.cwd ?? '' },
-					])
-				console.log(`verbs: ${verbs.join(' ')}`)
-				for (const h of help) console.log(`help: ${h}`)
-			})
+			return answer(
+				{ ...header, mux, panes: panes.length === 0 ? 'none' : panes },
+				() =>
+					lines(
+						`bin: ${header.bin}`,
+						`description: ${header.description}`,
+						`mux: ${mux ?? 'none'}`,
+						panes.length === 0
+							? 'panes: none'
+							: table(panes, [
+									{ label: 'pane', get: (p) => p.id },
+									{ label: 'label', get: (p) => p.label ?? '' },
+									{ label: 'cwd', get: (p) => p.cwd ?? '' },
+								]),
+					),
+				help,
+			)
 		},
 	}
 }
@@ -2494,19 +2337,17 @@ export interface MuxCli {
 
 /** Assembles the full CLI against the given deps (real env/exec in production, fakes in tests).
  *
- * A bare group (`cyber-mux send`, or a bare `cyber-mux`) is incomplete input: clibuilder prints its help
- * on stdout and exits 2, the status that separates bad input from a failed operation. An explicit
- * `--help` is not an error and exits 0. */
+ * clibuilder's `axi` output owns the surface: a command returns its answer and core prints it on
+ * stdout in the caller's `--format`; a thrown `CliError` and a usage error are reported there too,
+ * coded, and exit 1 or 2. A bare group (`cyber-mux send`) is a `missing-command` usage error that
+ * lists the group's commands. `text` stays the default format, the one a person reads. */
 export function buildProgram(cliDeps: CliDeps = DEFAULT_DEPS): MuxCli {
 	const program = cli({
 		name: 'cyber-mux',
 		version: pkg.version,
 		description: DESCRIPTION,
-		// cyber-mux writes its own answers and errors (`output.ts`, `cli-error.ts`), so it keeps clibuilder 11's
-		// console mode, and `text` stays the default of the one global `--format`.
-		output: 'console',
+		output: 'axi',
 		format: 'text',
-		onUsageError: usageErrorHandler('cyber-mux'),
 	}).default({ ...homeCommand(resolveDeps(cliDeps)), commands: muxCommands(cliDeps) })
 	return { parse: (argv) => program.parse(normalizeFormatArgv(argv)) }
 }
@@ -2537,8 +2378,7 @@ export async function main(): Promise<void> {
 	try {
 		await buildProgram().parse(process.argv)
 	} catch (err) {
-		// A coded failure that reached here unguarded still owes the caller its structured error on stdout.
-		if (err instanceof CliError) reportError(err)
+		// core reports every `CliError` itself, so what reaches here is a defect, not a coded failure.
 		process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`)
 		process.exit(1)
 	}

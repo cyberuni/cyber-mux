@@ -6,9 +6,9 @@ description: The cyber-mux verb surface — conventions shared by every command.
 Every command runs against the multiplexer the current process is inside (resolved by
 [detection](/cyber-mux/concepts/detection/)). Commands that produce data accept `--format
 text|json|agent` — human table by default, machine-readable with `--format json` (JSON) or `--format
-agent` ([TOON](https://github.com/toon-format/toon), the cheaper read for an agent). Every failure is a structured error on **stdout** with a stable `code` and an actionable
-`help:` line — see [AXI](/cyber-mux/concepts/axi/) for the full output contract, exit codes, and
-pane-addressing rules.
+agent` ([TOON](https://github.com/toon-format/toon), the cheaper read for an agent). Every failure is a
+structured error on **stdout** with a stable `code` and an actionable `help` line — see
+[AXI](/cyber-mux/concepts/axi/) for the full output contract, exit codes, and pane-addressing rules.
 
 **Pane arguments** (`<pane>`) take either a pane **id** or a human **label** — an id is matched
 first, and only a locator that matches no id is checked against labels. A label matching more than
@@ -20,7 +20,8 @@ handed straight to the backend as an id and takes that verb's own not-found path
 **Exit codes**, consistent across every verb: `0` success, `1` a well-formed operation that failed
 (no pane, no multiplexer, a refused removal), `2` a usage error (missing argument, unknown flag,
 conflicting flags, a malformed value) — the fix is a different invocation, not a retry. A group run
-without a subcommand (`cyber-mux send`) prints its help and exits `2`; `--help` exits `0`.
+without a subcommand (`cyber-mux send`) is a `missing-command` error that lists the group's commands,
+and exits `2`; `--help` exits `0`.
 
 **Flags and positionals** can come in any order. A flag that takes a value takes exactly one
 (`read --lines 5 <pane>`); a repeatable flag (`--env`, `--set`, `--until`) takes every value up to the
@@ -36,8 +37,10 @@ built on clibuilder can offer every verb under `mux` — `<host> mux list` is `c
 { "plugins": ["cyber-mux/plugin"] }
 ```
 
-The verbs, flags, output, and exit codes are the same as the standalone binary's. A usage error
-spells its fix through the host (`provide path: <host> mux worktree open <path>`).
+The verbs, flags, and exit codes are the same as the standalone binary's. The host's clibuilder
+prints their answers and errors, so they come out in the host's output mode and default format: a
+clibuilder 12 host answers in TOON unless the caller passes `--format text` or `--format json`. A usage
+error spells its fix through the host (`Usage: <host> mux worktree open <arguments> [options]`).
 
 ## Diagnostics
 

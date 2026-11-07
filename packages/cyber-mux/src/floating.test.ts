@@ -11,10 +11,9 @@ import { weztermMuxAdapter } from './mux.wezterm.ts'
 import { createZellijAdapter, zellijMuxAdapter } from './mux.zellij.ts'
 
 /**
- * Drive the CLI the way the bin does. A coded failure calls `process.exit`, which would take the test
- * runner down with it, so it is stubbed to throw `exit:<code>` unless the test already stubbed it. A
- * status clibuilder records instead of exiting on (a bare group's usage error) is surfaced the same way,
- * so every non-zero exit reads alike to the assertions.
+ * Drive the CLI the way the bin does. clibuilder records a non-zero exit in `process.exitCode` rather
+ * than exiting; it is surfaced as a thrown `exit:<code>`, so every non-zero exit reads alike to the
+ * assertions.
  */
 async function run(program: MuxCli, args: string[]): Promise<void> {
 	if (!vi.isMockFunction(process.exit)) {
@@ -262,11 +261,12 @@ describe('spec:cyber-mux/cli/placement', () => {
 
 	beforeEach(() => {
 		logs = []
-		vi.spyOn(console, 'log').mockImplementation((line: string) => {
-			logs.push(line)
-		})
 		vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
-		vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+		// what core prints on stdout, one entry per line
+		vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+			logs.push(...String(chunk).replace(/\n$/, '').split('\n'))
+			return true
+		})
 	})
 
 	afterEach(() => {
