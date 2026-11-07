@@ -31,8 +31,4 @@ minimumReleaseAgeExclude:
   - 'cyber-agentkit@1.0.0'
   # min-release-age: lift cyber-agentkit@2.0.0 until 2026-11-05T05:00:00Z
   - 'cyber-agentkit@2.0.0'
-  # min-release-age: lift clibuilder@12.2.0 until 2026-11-07T10:00:00Z
-  - 'clibuilder@12.2.0'
-  # min-release-age: lift args-minus@0.2.3 until 2026-11-07T10:00:00Z
-  - 'args-minus@0.2.3'
 minimumReleaseAgeStrict: true
