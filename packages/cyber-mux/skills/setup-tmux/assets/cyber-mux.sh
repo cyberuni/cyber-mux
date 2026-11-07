@@ -9,7 +9,7 @@
 #      set-environment -g CYBER_MUX_BIN '/path/to/cyber-mux')
 #   2. cyber-mux on the server's PATH, then in the usual per-user bin directories
 #      (pnpm, mise shims, ~/.local/bin, volta, bun, npm, and the newest nvm, mise, or fnm node)
-#   3. npx --yes cyber-mux@0.12.0 with node found the same way
+#   3. npx --yes cyber-mux@0.13.0 with node found the same way
 # Success is silent. A failure shows its first line as a tmux message, never as text in the pane.
 
 pane=$1
@@ -46,7 +46,7 @@ if [ -n "${CYBER_MUX_BIN:-}" ]; then
 elif command -v cyber-mux >/dev/null 2>&1; then
 	set -- cyber-mux "$@"
 elif command -v npx >/dev/null 2>&1; then
-	set -- npx --yes cyber-mux@0.12.0 "$@"
+	set -- npx --yes cyber-mux@0.13.0 "$@"
 else
 	notify "not found; install it, or set CYBER_MUX_BIN with: tmux set-environment -g CYBER_MUX_BIN /path/to/cyber-mux"
 	exit 0
