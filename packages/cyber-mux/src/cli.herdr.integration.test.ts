@@ -118,8 +118,8 @@ describe.skipIf(!runnable)('spec:cyber-mux/mux', () => {
 			expect(run.status).toBe(0)
 			// The whole point of the scenario: the note is NOT on the stream the agent does not read.
 			expect(run.stderr).toBe('')
-			// The help block itself, and the flag that would have grouped what was opened.
-			expect(run.stdout).toMatch(/^help\[\d+]:/m)
+			// The help list itself, and the flag that would have grouped what was opened.
+			expect(run.stdout).toMatch(/^help:$/m)
 			expect(run.stdout).toContain('--at workspace')
 		})
 	})
