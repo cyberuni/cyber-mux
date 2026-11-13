@@ -31,4 +31,6 @@ minimumReleaseAgeExclude:
   - 'cyber-agentkit@1.0.0'
   # min-release-age: lift cyber-agentkit@2.0.0 until 2026-11-05T05:00:00Z
   - 'cyber-agentkit@2.0.0'
+  # Renovate security update: astro@7.4.7
+  - astro@7.4.7
 minimumReleaseAgeStrict: true
