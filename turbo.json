@@ -6,6 +6,10 @@
 			"cache": false,
 			"outputs": []
 		},
+		"//#check:plugin": {
+			"cache": false,
+			"outputs": []
+		},
 		"//#check-version": {
 			"cache": false,
 			"outputs": []
@@ -36,6 +40,7 @@
 			"dependsOn": [
 				"//#check:ci",
 				"//#check:features",
+				"//#check:plugin",
 				"//#check-version",
 				"build",
 				"typecheck",
