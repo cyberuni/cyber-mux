@@ -15,6 +15,9 @@
 		"org.cyberuni.universal-plugin": {
 			"vendors": ["claude-code", "cursor", "codex", "copilot-cli"],
 			"skills": "./skills/",
+			"scripts": {
+				"skills/mux/scripts/cyber-mux.mjs": { "forward": "cyber-mux" }
+			},
 			"harnesses": {
 				"claude-code": {},
 				"cursor": {},

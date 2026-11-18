@@ -9,7 +9,8 @@ also loads it when asked to open, send to, read, or close a pane through cyber-m
 
 ## What it does
 
-- Resolves `cyber-mux` from `PATH`, then the repository's package manager, then a pinned `npx`.
+- Runs `cyber-mux` through the forwarder in its `scripts/` folder: the enclosing checkout or
+  package when there is one, otherwise `npx` pinned to the plugin's version.
 - Passes the arguments through verbatim; with none, prints the CLI help.
 - Reports the result, quoting any error unchanged.
 

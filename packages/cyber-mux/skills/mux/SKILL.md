@@ -22,20 +22,10 @@ skill), and driving a multiplexer with its own CLI (`tmux`, `herdr`, …) instea
 
 1. **Read the arguments.** Claude Code appends them as `ARGUMENTS: <value>`; other runtimes pass the
    text after the skill name. No text means no arguments.
-2. **Resolve the CLI once.** Use the first command that succeeds for every later call:
+2. **Name the CLI.** Every call runs the forwarder in this skill's folder, which picks the CLI to run:
 
    ```bash
-   if command -v cyber-mux >/dev/null 2>&1 && cyber-mux --version >/dev/null 2>&1; then
-     CMD="cyber-mux"
-   elif [ -f pnpm-lock.yaml ] && pnpm exec cyber-mux --version >/dev/null 2>&1; then
-     CMD="pnpm exec cyber-mux"
-   elif [ -f yarn.lock ] && yarn exec cyber-mux --version >/dev/null 2>&1; then
-     CMD="yarn exec cyber-mux"
-   elif { [ -f bun.lock ] || [ -f bun.lockb ]; } && bunx cyber-mux --version >/dev/null 2>&1; then
-     CMD="bunx cyber-mux"
-   else
-     CMD="npx --yes cyber-mux@0.12.0"
-   fi
+   CMD="node <this skill's folder>/scripts/cyber-mux.mjs"
    ```
 
 3. **Choose the command.**
