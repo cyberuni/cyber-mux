@@ -62,13 +62,12 @@ The [CLI Reference](/cyber-mux/cli/) documents every flag.
 
 ## How the skill finds the CLI
 
-You do not need to install the CLI first. The skill resolves the command once per invocation and
-uses it for every call, taking the first that works:
+You do not need to install the CLI first. Every call runs `node scripts/cyber-mux.mjs` from the
+skill's folder. That forwarder passes the arguments, stdio, and exit code through to the CLI it picks:
 
-1. `cyber-mux` on your `PATH`.
-2. The repository's package manager, when its lockfile is present and the package is installed:
-   `pnpm exec cyber-mux`, `yarn exec cyber-mux`, or `bunx cyber-mux`.
-3. `npx --yes cyber-mux@<version>`, pinned to the plugin's version.
+1. The `cyber-mux` checkout or installed package the skill sits in, found by walking up from the
+   forwarder's real path. In a development checkout this runs your local build.
+2. Otherwise, `npx -y cyber-mux@<version>`, pinned to the plugin's version.
 
 ## Output
 
