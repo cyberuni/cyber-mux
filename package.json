@@ -8,13 +8,14 @@
 		"check": "biome check --write",
 		"check:ci": "biome ci",
 		"check:features": "node scripts/check-features.mjs",
+		"check-version": "universal-plugin publish check-version --root packages/cyber-mux",
 		"cs": "changeset",
 		"prepare": "node -e \"if(!(process.env.CI||process.env.GITHUB_ACTIONS))require('child_process').execSync('husky',{stdio:'inherit'})\"",
 		"release": "node scripts/release.mjs",
 		"test": "turbo test",
 		"typecheck": "turbo typecheck",
 		"verify": "turbo verify",
-		"version": "changeset version && universal-plugin publish sync-version --root packages/cyber-mux && node scripts/sync-skill-pins.mjs && biome format --write packages/cyber-mux .claude-plugin .cursor-plugin .agents/plugins .github/plugin",
+		"version": "changeset version && universal-plugin plugin version --from-package --root packages/cyber-mux && node scripts/sync-skill-pins.mjs && biome format --write packages/cyber-mux .claude-plugin .cursor-plugin .agents/plugins .github/plugin",
 		"web": "pnpm run --filter=website"
 	},
 	"devDependencies": {
@@ -29,7 +30,7 @@
 		"husky": "^9.1.7",
 		"turbo": "^2.9.14",
 		"typescript": "^6.0.0",
-		"universal-plugin": "^0.20.0"
+		"universal-plugin": "^0.22.0"
 	},
 	"packageManager": "pnpm@12.21.0",
 	"engines": {

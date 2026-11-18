@@ -6,6 +6,10 @@
 			"cache": false,
 			"outputs": []
 		},
+		"//#check-version": {
+			"cache": false,
+			"outputs": []
+		},
 		"//#check:features": {
 			"cache": false,
 			"outputs": []
@@ -29,7 +33,16 @@
 			"persistent": true
 		},
 		"verify": {
-			"dependsOn": ["//#check:ci", "//#check:features", "build", "typecheck", "lint", "test", "test:dist"]
+			"dependsOn": [
+				"//#check:ci",
+				"//#check:features",
+				"//#check-version",
+				"build",
+				"typecheck",
+				"lint",
+				"test",
+				"test:dist"
+			]
 		}
 	}
 }

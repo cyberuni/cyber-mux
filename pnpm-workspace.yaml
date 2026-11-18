@@ -31,4 +31,6 @@ minimumReleaseAgeExclude:
   - 'cyber-agentkit@1.0.0'
   # min-release-age: lift cyber-agentkit@2.0.0 until 2026-11-05T05:00:00Z
   - 'cyber-agentkit@2.0.0'
+  # min-release-age: lift universal-plugin@0.22.0 until 2026-11-19T09:00:00Z
+  - 'universal-plugin@0.22.0'
 minimumReleaseAgeStrict: true
