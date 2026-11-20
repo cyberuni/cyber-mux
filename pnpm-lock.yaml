@@ -188,8 +188,8 @@ importers:
         specifier: ^21.2.3
         version: 21.2.3
       '@cucumber/gherkin':
-        specifier: ^42.0.0
-        version: 42.0.1
+        specifier: ^43.0.0
+        version: 43.0.0
       '@cucumber/messages':
         specifier: ^34.1.0
         version: 34.1.0
@@ -697,8 +697,8 @@ packages:
     resolution: {integrity: sha512-kzyuwOAQnXJNLS9PSyrk0CWk35nWJW/zl/6KvnTBMFK65gm7U1/Z5BqjxeapjZCIhQcM/DsrEmcbRwDyXyXK4A==}
     engines: {node: '>=14'}
 
-  '@cucumber/gherkin@42.0.1':
-    resolution: {integrity: sha512-Kqg0ULhWqbXp/a1c04ND4sS4KTlIL831tQ0NhZLXWdEhT6LiNsZ5LFRzy/lBy7QQpcKhroKp/i3C2WdEnRBKNg==}
+  '@cucumber/gherkin@43.0.0':
+    resolution: {integrity: sha512-WaEgGoOVJ8yU2kyMBLxhdlSXmF/zOjdH6EUIzxEZV1UrgAekuOFjDzqYoC5LuN3PGWjjBYX9pu8l9MBn6mFMow==}
 
   '@cucumber/messages@34.1.0':
     resolution: {integrity: sha512-L8bSi+A+HDeP/WvlrqPFKUG7uqq8G+BnbUGE7CSCrFsaaXhtvUyR61hvfKRBDzd0puVhQGYgjURehPIF1IXO6Q==}
@@ -3764,7 +3764,7 @@ snapshots:
 
   '@ctrl/tinycolor@4.2.0': {}
 
-  '@cucumber/gherkin@42.0.1':
+  '@cucumber/gherkin@43.0.0':
     dependencies:
       '@cucumber/messages': 34.1.0
 
