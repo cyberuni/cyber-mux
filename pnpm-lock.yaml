@@ -191,8 +191,8 @@ importers:
         specifier: ^43.0.0
         version: 43.0.0
       '@cucumber/messages':
-        specifier: ^34.1.0
-        version: 34.1.0
+        specifier: ^35.0.0
+        version: 35.0.0
       '@repobuddy/biome':
         specifier: ^2.3.1
         version: 2.3.1(@biomejs/biome@2.5.15)
@@ -700,8 +700,8 @@ packages:
   '@cucumber/gherkin@43.0.0':
     resolution: {integrity: sha512-WaEgGoOVJ8yU2kyMBLxhdlSXmF/zOjdH6EUIzxEZV1UrgAekuOFjDzqYoC5LuN3PGWjjBYX9pu8l9MBn6mFMow==}
 
-  '@cucumber/messages@34.1.0':
-    resolution: {integrity: sha512-L8bSi+A+HDeP/WvlrqPFKUG7uqq8G+BnbUGE7CSCrFsaaXhtvUyR61hvfKRBDzd0puVhQGYgjURehPIF1IXO6Q==}
+  '@cucumber/messages@35.0.0':
+    resolution: {integrity: sha512-lubB5srgXxXwz9uVIJXdk4dm+CdKj7qfrGNHqFvlBtt4wrUb9413KBOJUpdUWTasJmQe9pYAa2rYNIl3yfW4Ag==}
 
   '@emmetio/abbreviation@2.3.3':
     resolution: {integrity: sha512-mgv58UrU3rh4YgbE/TzgLQwJ3pFsHHhCLqY20aJq+9comytTXUDNGG/SMtSeMJdkpxgXSXunBGLD8Boka3JyVA==}
@@ -3766,9 +3766,9 @@ snapshots:
 
   '@cucumber/gherkin@43.0.0':
     dependencies:
-      '@cucumber/messages': 34.1.0
+      '@cucumber/messages': 35.0.0
 
-  '@cucumber/messages@34.1.0': {}
+  '@cucumber/messages@35.0.0': {}
 
   '@emmetio/abbreviation@2.3.3':
     dependencies:
