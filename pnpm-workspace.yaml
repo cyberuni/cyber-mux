@@ -33,4 +33,6 @@ minimumReleaseAgeExclude:
   - 'cyber-agentkit@2.0.0'
   # min-release-age: lift universal-plugin@0.23.0 until 2026-11-19T18:00:00Z
   - 'universal-plugin@0.23.0'
+  # Renovate security update: astro@7.4.7
+  - astro@7.4.7
 minimumReleaseAgeStrict: true
